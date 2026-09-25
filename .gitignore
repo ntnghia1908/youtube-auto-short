@@ -1,0 +1,32 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local media and generated artifacts
+input/
+output/
+work/
+temp/
+models/
+*.mp4
+*.mkv
+*.webm
+*.wav
+*.mp3
+*.aac
+*.m4a
+
+# Secrets / local config
+.env
+.env.*
+config.yaml
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
