@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -136,9 +136,18 @@ Không chạm database, security model hay public API contract mạng. CLI thêm
 
 ## Result
 
-- Main changes:
-- Tests:
-- Review:
+- Main changes: subpackage `src/auto_short/analysis/` (`detect.py` ffmpeg scene/silencedetect + parser, `candidates.py` content window/cut point/unit/candidate/trims/validate, `stage.py`); config `[analysis]` typed (17 key); CLI `auto-short analysis`; decision record `docs/decisions/CP4-analysis-contract.md` ACCEPTED; CP1 §8 thêm `silences.json`; project profile, README. IMPLEMENTER commits `69b3d93`, `ef689fc`, `7ee7e56`.
+- Tests (ORCHESTRATOR chạy lại độc lập):
+  - `~/miniconda3/envs/auto-short/bin/pytest -q` → `134 passed`.
+  - Chạy thật `rbjfCfFq3Dk` (IMPLEMENTER, `--force`): 88.6 s wall, RSS 171 MB. Content `22.875 → 3554.6` (intro: `s00001` + silence 19.667–22.875; outro: `s00815`); 14 chuyển shot (khớp đo trước); 720 silence (1645.4 s); 195 unit; **1484 candidate**, 325 in_target (60–90 s); content 3531.7 s → 2523.1 s sau trim. Unit đầu "các vị đồng tu Xin chào mọi người" (lời giới thiệu đã loại); unit cuối kết ở 3554.01 "… A Di Đà Phật".
+  - Chạy lại (ORCHESTRATOR) → `analysis: skip (up to date)`, sha256 ba artifact không đổi; `--force` lần hai (IMPLEMENTER) byte-identical. `auto-short status` → `analysis done`.
+  - Script kiểm độc lập của ORCHESTRATOR trên output thật (content window, không chứa `non_speech`/silence ≥ 10 s, mép `silence` nằm trong khoảng lặng ≥ 3.0 s, mép khác không nằm giữa segment, trims còn đúng 1.0 s, `duration` = nguồn − trims ∈ [30,180]) → 0 vi phạm / 1484. Script kiểm của IMPLEMENTER → 0 vi phạm.
+  - Render thử 3 candidate ngẫu nhiên (`c00182`, `c00500`, `c00689`) có áp trims: thời lượng file khớp `duration` (±0.04 s).
+  - `pyproject.toml` không đổi (không dependency mới). `node scripts/framework-check.mjs` → PASS.
+- Review: ACCEPTED (dual-agent, ORCHESTRATOR review diff-first); không có blocking finding.
 - Important findings / decisions:
-- Known limitations:
+  - Số candidate thực 1484 / 195 unit (ước lượng 1722 / 189) vì 8 nhãn `[âm nhạc]` giữa bài là hard break (A4a); bỏ các nhãn đó cho đúng 189 unit. Shot guard loại 0 candidate trên video test.
+  - Quyết định cục bộ của IMPLEMENTER trong A1–A11 ghi ở decision record: mép cạnh nhãn/content lấy theo khoảng lặng gần nhất và không vượt ranh giới; clip không bắt đầu trước `content.start`; segment gán unit theo trung điểm vùng cắt; đoạn không có lời giữa hai điểm cắt thì bỏ điểm cắt `silence` ngắn hơn (giữa hai hard break → không có unit, vd nhạc chen 131–173 s); silence chồng nhãn `non_speech` gộp thành một hard break; outro phải bắt đầu sau `content.start`; trims tính phần khoảng lặng trong clip; params ghi dạng float; mọi phép tính theo ms nguyên.
+  - Non-blocking: một số nhãn `[âm nhạc]` ngắn giữa bài có vẻ là caption nhận nhầm khoảng lặng (vd `s00275` 1248.15, `s00539` 2380.59) → cắt bớt candidate. Có thể xem lại ở CP5/CP9.
+- Known limitations: điểm cắt chỉ là điều kiện cần cho "không cắt giữa câu" (vd `c00182` bắt đầu "trong Bồ Tát đặc biệt …" — trọn ý do CP5/CP9 đánh giá). Đổi bất kỳ key `[analysis]` chạy lại cả stage (~90 s). Transcript không có nhãn `[…]` (Whisper) → không phát hiện intro/outro. Manual checklist: nghe thử chờ Tech Lead.
 - PR:

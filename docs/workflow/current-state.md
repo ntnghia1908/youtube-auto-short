@@ -8,12 +8,12 @@ Chỉ ghi operational state không suy ra được từ Git, task contract hoặ
 
 ## Current focus
 
-CP4 — Shot / Segment Analysis (`docs/tasks/CP4-analysis.md`): APPROVED 2026-09-26, IMPLEMENTER thực thi trên `feature/cp4-analysis`.
+CP4 — Shot / Segment Analysis (`docs/tasks/CP4-analysis.md`): READY trên `feature/cp4-analysis` (review ACCEPTED), chờ HUMAN LEAD duyệt push + PR.
 
 ## Next proposed action
 
-1. IMPLEMENTER hoàn thành CP4 + required verification; ORCHESTRATOR review.
-2. READY → HUMAN LEAD duyệt push + PR.
+1. HUMAN LEAD nghe thử 3 candidate (manual checklist), duyệt push + PR CP4.
+2. Sau merge: HUMAN LEAD quyết mở CP5 — AI Clip Selection (roadmap §4 CP5).
 
 Đây là PROPOSED, không authorize implementation tiếp theo.
 

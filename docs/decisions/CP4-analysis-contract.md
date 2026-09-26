@@ -2,8 +2,8 @@
 
 | Metadata | Value |
 |---|---|
-| Status | PROPOSED |
-| Accepted by | — (A1–A11 duyệt cùng APPROVE TASK 2026-09-26; chờ review ACCEPTED) |
+| Status | ACCEPTED |
+| Accepted by | HUMAN LEAD, 2026-09-26 (A1–A11 duyệt cùng APPROVE TASK; review ACCEPTED) |
 | Checkpoint | CP4 (S2) |
 | Roadmap | `AUTO_SHORT_CHECKPOINT_PLAN.md` §4 CP4 |
 | Task contract | `docs/tasks/CP4-analysis.md` |
