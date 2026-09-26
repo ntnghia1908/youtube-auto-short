@@ -79,3 +79,32 @@ head_cut_pad = 0.1           # seconds kept before the first kept word
 ollama_host = "http://127.0.0.1:11437"
 timeout = 600                # seconds per Ollama request
 retry_backoff = [5, 15]      # seconds to wait before retry 1, 2 (the last value repeats for more retries)
+
+[titling]
+# Header (deterministic) + AI title per selected clip via Ollama
+# (docs/decisions/CP6-titling-contract.md). Changing any key below except
+# ollama_host/timeout/retry_backoff re-runs the stage (and so does a different resolved header).
+model = "qwen3:30b"
+think = true
+temperature = 0
+seed = 42
+num_ctx = 16384
+prompt_version = "v1"        # prompt text lives in code (titling/prompt.py)
+n_options = 3                # the model proposes this many titles per clip, best first
+min_chars = 10               # title length limits (characters, NFC)
+max_chars = 60               # CP1 §6; titles longer than ~35 chars may take 3 lines / smaller font (CP7)
+retries = 2                  # extra attempts per clip on HTTP/timeout/JSON/schema errors or no valid option
+# Execution-only (not part of the config hash). Env OLLAMA_HOST overrides ollama_host.
+ollama_host = "http://127.0.0.1:11437"
+timeout = 600                # seconds per Ollama request
+retry_backoff = [5, 15]      # seconds to wait before retry 1, 2 (the last value repeats)
+
+[titling.header]
+# Each field: CLI flag (--speaker/--series/--episode) > this value (non-empty) > the named group
+# of title_pattern matched against the video title (metadata.json). Empty string = not set.
+speaker = "HT.Tịnh Không"
+series = ""
+episode = ""
+title_pattern = '^(?:Phật Thuyết\s+)?(?P<series>.+?)\s+tập\s+(?P<episode>\d+)\b'   # empty = off
+# 1-3 header lines; fields {speaker}, {series}, {episode}. A field used here must resolve.
+lines = ["{speaker}", "{series} (tập {episode})"]

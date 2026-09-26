@@ -11,6 +11,7 @@ from . import config as config_mod
 from .analysis import AnalysisError, run_analysis
 from .ingest import IngestError, run_ingest
 from .selection import SelectionError, run_selection
+from .titling import TitlingError, run_titling
 from .transcript import TranscriptError, run_transcript
 from .workspace import PENDING, STAGES, Workspace, WorkspaceError, validate_episode_id
 
@@ -43,6 +44,14 @@ def _build_parser() -> argparse.ArgumentParser:
     c.add_argument("--force", action="store_true", help="re-run even if up to date")
     c.add_argument("--config", type=Path, help="config TOML (default: ./config.toml if present)")
 
+    ti = sub.add_parser("titling", help="header + AI title per selected clip -> titles.json")
+    ti.add_argument("episode_id")
+    ti.add_argument("--speaker", help="header speaker (overrides [titling.header] speaker)")
+    ti.add_argument("--series", help="header series (overrides config and the metadata title)")
+    ti.add_argument("--episode", help="header episode number (overrides config and the metadata title)")
+    ti.add_argument("--force", action="store_true", help="re-run even if up to date")
+    ti.add_argument("--config", type=Path, help="config TOML (default: ./config.toml if present)")
+
     s = sub.add_parser("status", help="show stage status of an episode")
     s.add_argument("episode_id")
     s.add_argument("--config", type=Path, help="config TOML (default: ./config.toml if present)")
@@ -72,6 +81,14 @@ def _cmd_analysis(args: argparse.Namespace, cfg: config_mod.Config) -> int:
 def _cmd_selection(args: argparse.Namespace, cfg: config_mod.Config) -> int:
     result = run_selection(args.episode_id, cfg, force=args.force)
     state = f"selected ({result.clips} clips)" if result.ran else "skipped (up to date)"
+    print(f"{result.episode_id}\t{state}\t{result.path}")
+    return 0
+
+
+def _cmd_titling(args: argparse.Namespace, cfg: config_mod.Config) -> int:
+    result = run_titling(args.episode_id, cfg, force=args.force, speaker=args.speaker, series=args.series,
+                         episode=args.episode)
+    state = f"titled ({result.titled}/{result.clips} clips)" if result.ran else "skipped (up to date)"
     print(f"{result.episode_id}\t{state}\t{result.path}")
     return 0
 
@@ -126,8 +143,10 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_analysis(args, cfg)
         if args.command == "selection":
             return _cmd_selection(args, cfg)
+        if args.command == "titling":
+            return _cmd_titling(args, cfg)
         return _cmd_status(args, cfg)
     except (config_mod.ConfigError, IngestError, TranscriptError, AnalysisError, SelectionError,
-            WorkspaceError) as exc:
+            TitlingError, WorkspaceError) as exc:
         print(f"auto-short: error: {exc}", file=sys.stderr)
         return 1
