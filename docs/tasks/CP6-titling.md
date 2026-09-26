@@ -103,7 +103,7 @@ Từ một episode đã có `clips.json` (CP5), stage `titling` sinh `work/<id>/
   - Vẫn chính xác, chỉ dùng thông tin có trong đoạn; **không giật tít** (không hứa hẹn/phóng đại, không "sốc", "bí mật", "không thể tin"…), không emoji, không dấu chấm than. Dấu hỏi được phép.
   - Ví dụ minh họa trong prompt không lấy từ video test (tránh khớp mẫu).
   - Validation G5, schema, evidence (P2) không đổi. Đo lại v2 với cả `qwen3:30b` + think và `qwen3:14b` think off; HUMAN LEAD đọc rồi chốt model + prompt.
-- **Cơ chế người dùng tự sửa title (HUMAN LEAD 2026-09-26):** yêu cầu ghi nhận; phạm vi (CP6 hay CP9 review approve/reject/edit) chờ HUMAN LEAD chốt.
+- **Cơ chế người dùng tự sửa title (HUMAN LEAD 2026-09-26):** làm ở **CP9** (review approve/reject/edit: chọn từ `alternatives` hoặc gõ tay, lưu `review.json`; CP7 render dùng title đã duyệt; sửa title không gọi lại AI). CP6 không đổi; decision record CP6 ghi pointer cho CP9.
 - Tham số (chốt cùng APPROVE TASK 2026-09-26):
   - **P1 `max_chars` — chốt (HUMAN LEAD 2026-09-26): 60** (config, mặc định; giữ giới hạn CP1 §6). Title dài hơn sức chứa 2 dòng ở cỡ chữ mẫu (≈ 34–36 ký tự) được phép hiển thị **3 dòng hoặc thu nhỏ chữ** — CP7 quyết cách fit với font chốt. Sửa CP1 §4 (title "tối đa 2 dòng") và §6 ("≤ 60 ký tự, tối đa 2 dòng") theo đó. `min_chars` 10.
   - **P2 Kiểm `evidence` — chốt: chặn** (đề xuất) (option có evidence không nằm trong text → `invalid`). Phương án khác: chỉ ghi log. Nếu đo thấy tỉ lệ invalid do evidence cao (model sửa chính tả khi trích) → báo HUMAN LEAD trước khi nới.
