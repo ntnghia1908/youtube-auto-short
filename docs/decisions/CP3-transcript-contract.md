@@ -2,8 +2,8 @@
 
 | Metadata | Value |
 |---|---|
-| Status | PROPOSED |
-| Accepted by | — (HUMAN LEAD duyệt T1–T9 cùng APPROVE TASK 2026-09-26; record chuyển ACCEPTED sau review) |
+| Status | ACCEPTED |
+| Accepted by | HUMAN LEAD, 2026-09-26 (T1–T9 duyệt cùng APPROVE TASK; review ACCEPTED) |
 | Checkpoint | CP3 (S2) |
 | Roadmap | `AUTO_SHORT_CHECKPOINT_PLAN.md` §4 CP3 |
 | Task contract | `docs/tasks/CP3-transcript.md` |

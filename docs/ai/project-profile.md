@@ -14,7 +14,7 @@
 
 ## 2. Authority order
 
-1. HUMAN LEAD decisions / approved task contracts và accepted decision records trong `docs/decisions/` (hiện có `docs/decisions/CP1-product-contract.md` — product contract & architecture baseline; `docs/decisions/CP2-workspace-contract.md` — workspace/manifest/stage convention; `docs/decisions/CP3-transcript-contract.md` — transcript provider/validation/normalization và schema `transcript.json`, có hiệu lực khi ACCEPTED);
+1. HUMAN LEAD decisions / approved task contracts và accepted decision records trong `docs/decisions/` (hiện có `docs/decisions/CP1-product-contract.md` — product contract & architecture baseline; `docs/decisions/CP2-workspace-contract.md` — workspace/manifest/stage convention; `docs/decisions/CP3-transcript-contract.md` — transcript provider/validation/normalization và schema `transcript.json`);
 2. `docs/ai/workflow.md`, `docs/ai/execution-profiles.md` và file này cho workflow/policy;
 3. source code và tests hiện hành cho implementation state;
 4. `docs/workflow/current-state.md` chỉ là operational state, không phải authority;

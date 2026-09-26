@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -116,9 +116,19 @@ Không chạm database, security model hay public API contract mạng. CLI mở 
 
 ## Result
 
-- Main changes:
-- Tests:
-- Review:
+- Main changes: subpackage `src/auto_short/transcript/` (parsers json3/srt/vtt, normalize + validate, 3 provider, stage); config `[transcript]` typed; CLI `auto-short transcript`; `faster-whisper==1.2.1`; decision record `docs/decisions/CP3-transcript-contract.md` ACCEPTED; project profile, README. IMPLEMENTER commits `d7ded46`, `0a569a0`.
+- Tests (ORCHESTRATOR chạy lại độc lập):
+  - `~/miniconda3/envs/auto-short/bin/pytest -q` → `92 passed`.
+  - Local `rbjfcffq3dk-7271326dbe93`: `local_subtitle/subtitle_json3` (sidecar `rbjfCfFq3Dk.vi.json3`), 827 segment (10 `non_speech`), 5298 từ, coverage 0.808; chạy lại → `skip (up to date)`, sha256 `transcript.json` `b18641f7…c5d1d3` không đổi.
+  - YouTube `rbjfCfFq3Dk`: `youtube/youtube_auto_caption`, track `vi-orig`, attempts chỉ `youtube accepted` (Whisper không gọi); chạy lại → skip, sha256 `0d47d6d3…f1c92` không đổi; `transcript_sha256` trùng run local.
+  - Whisper: clip 120 s đầu (workspace scratchpad, không sidecar) `--force` → `whisper/faster_whisper`, `large-v3-turbo` cpu int8 48 thread, attempts youtube/local_subtitle `unavailable` → whisper `accepted`; 32 segment, 147 từ, coverage 0.663; **80.85 s wall** (gồm load model; model 1.6 GB đã có trong `models/`).
+  - Output thật: segment không chồng lấn, start < end, word nằm trong segment → True.
+  - `node scripts/framework-check.mjs` → PASS. `pyproject.toml` chỉ thêm `faster-whisper==1.2.1`.
+- Review: ACCEPTED (dual-agent, ORCHESTRATOR review diff-first); không có blocking finding.
 - Important findings / decisions:
-- Known limitations:
-- PR:
+  - Cần HUMAN LEAD xác nhận: `faster-whisper` kéo `pyyaml` (transitive qua `ctranslate2`/`huggingface-hub`) cùng numpy, protobuf, httpx… (danh sách đủ ở decision record T4). Project không import `pyyaml`; CP1 §10 “không thêm pyyaml” hiểu là không dùng làm config/dep trực tiếp.
+  - Non-blocking: nếu hai segment liền nhau có cùng `start`, cắt chồng lấn làm segment trước có `start = end` → validation reject cả transcript (chưa gặp ở dữ liệu thật; có thể gặp ở SRT nhiều người nói).
+  - Non-blocking: chất lượng Whisper trên clip test có lỗi tên riêng (“Tịnh Khâu” thay “Tịnh Không”); coverage 0.663 với nhạc intro — ngưỡng 0.5 có thể sát với video nhiều nhạc/im lặng (chỉnh qua config).
+  - Quyết định nhỏ của IMPLEMENTER trong phạm vi T1–T9 ghi ở decision record (bảng `[transcript.providers]`, `cpu_threads = 0` = số CPU, `models_dir` không vào config hash, word timing json3 chỉ khi mỗi seg là một token).
+- Known limitations: caption auto không dấu câu — ranh giới câu/ý thuộc CP4. Chưa đo Whisper cả video 1 giờ (CP11).
+- PR: pending (chờ HUMAN LEAD approve push + PR).
