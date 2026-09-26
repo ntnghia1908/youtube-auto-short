@@ -97,6 +97,13 @@ Từ một episode đã có `clips.json` (CP5), stage `titling` sinh `work/<id>/
     - `[titling]` là section riêng (CP1 §11: titling chốt model riêng), mặc định `qwen3:30b`, `think = true`, `temperature 0`, `seed 42`, `num_ctx 16384`, `timeout 600`.
     - Dùng lại `ChatClient`, `OllamaClient`, `ChatError`, `resolve_host` từ `auto_short.selection.client` bằng import; không di chuyển/sửa code CP5 (tránh shared abstraction mới). Backoff: cùng quy tắc CP5 B5 (được import hàm từ selection hoặc viết lại hàm nhỏ trong titling — IMPLEMENTER chọn, không đổi hành vi CP5).
     - Đo trên video test: `qwen3:30b` think on và `qwen3:14b` think off → thời gian, số option valid/invalid theo lý do, số retry/untitled, bảng 13 title của mỗi cấu hình; HUMAN LEAD đọc và chốt model (ghi CP1 §11). Chạy lại `--force` cùng config → ghi mức khác biệt (không tất định như CP5, không che).
+- **Sửa G4 (HUMAN LEAD 2026-09-26, sau đọc title v1):** title v1 quá cao siêu (thuật ngữ Hán Việt, văn giảng kinh). Thêm prompt **v2**, mặc định `prompt_version = "v2"`, v1 giữ nguyên văn để so sánh:
+  - Người đọc: người học Phật tại gia và người bình dân. Title là **hook YouTube**: đọc vào là hiểu ngay, lời lẽ đời thường, gần gũi, gợi một chút tò mò (vd nêu câu hỏi hoặc vấn đề đời sống mà đoạn trả lời).
+  - Tránh thuật ngữ khó (Hán Việt, Duy thức…) khi có cách nói đời thường tương đương; nếu phải giữ thuật ngữ thì đặt trong ý dễ hiểu.
+  - Vẫn chính xác, chỉ dùng thông tin có trong đoạn; **không giật tít** (không hứa hẹn/phóng đại, không "sốc", "bí mật", "không thể tin"…), không emoji, không dấu chấm than. Dấu hỏi được phép.
+  - Ví dụ minh họa trong prompt không lấy từ video test (tránh khớp mẫu).
+  - Validation G5, schema, evidence (P2) không đổi. Đo lại v2 với cả `qwen3:30b` + think và `qwen3:14b` think off; HUMAN LEAD đọc rồi chốt model + prompt.
+- **Cơ chế người dùng tự sửa title (HUMAN LEAD 2026-09-26):** yêu cầu ghi nhận; phạm vi (CP6 hay CP9 review approve/reject/edit) chờ HUMAN LEAD chốt.
 - Tham số (chốt cùng APPROVE TASK 2026-09-26):
   - **P1 `max_chars` — chốt (HUMAN LEAD 2026-09-26): 60** (config, mặc định; giữ giới hạn CP1 §6). Title dài hơn sức chứa 2 dòng ở cỡ chữ mẫu (≈ 34–36 ký tự) được phép hiển thị **3 dòng hoặc thu nhỏ chữ** — CP7 quyết cách fit với font chốt. Sửa CP1 §4 (title "tối đa 2 dòng") và §6 ("≤ 60 ký tự, tối đa 2 dòng") theo đó. `min_chars` 10.
   - **P2 Kiểm `evidence` — chốt: chặn** (đề xuất) (option có evidence không nằm trong text → `invalid`). Phương án khác: chỉ ghi log. Nếu đo thấy tỉ lệ invalid do evidence cao (model sửa chính tả khi trích) → báo HUMAN LEAD trước khi nới.
