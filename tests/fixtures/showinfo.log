@@ -1,0 +1,11 @@
+Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'work/rbjfCfFq3Dk/source.mp4':
+  Duration: 01:00:22.00, start: 0.000000, bitrate: 1534 kb/s
+Stream mapping:
+  Stream #0:0 -> #0:0 (h264 (native) -> wrapped_avframe (native))
+[Parsed_showinfo_2 @ 0x5581d7a0c2c0] config in time_base: 1/30000, frame_rate: 30000/1001
+[Parsed_showinfo_2 @ 0x5581d7a0c2c0] config out time_base: 0/0, frame_rate: 0/0
+[Parsed_showinfo_2 @ 0x5581d7a0c2c0] n:   0 pts: 639639 pts_time:21.3213 duration:   1001 duration_time:0.0333667 fmt:yuv420p cl:left sar:1/1 s:320x240 i:P iskey:0 type:P checksum:2F1B3C0D plane_checksum:[1A2B3C4D 5E6F7A8B 9C0D1E2F] mean:[97 124 134] stdev:[52.1 7.3 8.8]
+[Parsed_showinfo_2 @ 0x5581d7a0c2c0] color_range:tv color_space:bt709 color_primaries:bt709 color_trc:bt709
+[Parsed_showinfo_2 @ 0x5581d7a0c2c0] n:   1 pts:1438437 pts_time:47.9479 duration:   1001 duration_time:0.0333667 fmt:yuv420p cl:left sar:1/1 s:320x240 i:P iskey:0 type:P checksum:0C1D2E3F plane_checksum:[11223344 55667788 99AABBCC] mean:[90 125 133] stdev:[50.0 7.1 8.5]
+[Parsed_showinfo_2 @ 0x5581d7a0c2c0] n:   2 pts:108647539 pts_time:3621.58 duration:   1001 duration_time:0.0333667 fmt:yuv420p cl:left sar:1/1 s:320x240 i:P iskey:0 type:P checksum:DEADBEEF plane_checksum:[01020304 05060708 090A0B0C] mean:[16 128 128] stdev:[0.0 0.0 0.0]
+[out#0/null @ 0x5581d7a0b100] video:0KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: unknown
