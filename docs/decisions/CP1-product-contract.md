@@ -33,7 +33,8 @@ Mỗi mục §1–§11 dưới đây là quyết định cuối. Thay đổi b�
   - `input/rbjfCfFq3Dk/rbjfCfFq3Dk.mp4` — H.264 1440×1080 (4:3), 29.97 fps, Opus audio, 3622 s, sha256 `7271326d…c3b77b`;
   - `rbjfCfFq3Dk.vi.json3` (= `vi-orig`) — caption YouTube tiếng Việt **auto-generated** (827 event, không dấu câu, có nhãn `[âm nhạc]`), không có phụ đề thủ công;
   - `rbjfCfFq3Dk.info.json` — metadata.
-  - `input/` đã gitignore; file không commit. Tải lại: `yt-dlp -f "bv*[height<=1080]+ba/b" --merge-output-format mp4 --write-info-json --write-auto-subs --sub-langs vi --sub-format json3 -o "input/%(id)s/%(id)s.%(ext)s" <url>`.
+  - `input/` đã gitignore; file không commit. Tải lại: `yt-dlp -f "bv*+ba/b" --merge-output-format mp4 --write-info-json --write-auto-subs --sub-langs vi --sub-format json3 -o "input/%(id)s/%(id)s.%(ext)s" <url>`.
+  - Sửa đổi HUMAN LEAD 2026-09-26 (sau review CP2): lệnh tải dùng chất lượng tốt nhất `bv*+ba/b` (bỏ `height<=1080`); với video test bản tốt nhất vẫn là 1440×1080.
 
 ## 2. Output contract
 
@@ -130,7 +131,7 @@ Nguyên tắc: stdlib trước; không thêm dependency ngoài danh sách dướ
 
 | Library | Purpose | Scope |
 |---|---|---|
-| Python ≥ 3.11 + `venv` + `pip`, `pyproject.toml` (hatchling) | runtime + packaging | `.venv/` trong repo (đã gitignore) |
+| Python 3.12 trong conda env riêng (không dùng base) + pip, `pyproject.toml` (hatchling) | runtime + packaging | conda env `auto-short` |
 | `yt-dlp` | tải video + lấy caption YouTube (kể cả auto-generated) | runtime |
 | `faster-whisper` | fallback transcript khi không có caption hợp lệ; local, có timestamp | runtime, model tải về `models/` |
 | `pytest` | test | dev only |
@@ -139,7 +140,8 @@ Nguyên tắc: stdlib trước; không thêm dependency ngoài danh sách dướ
 | `tomllib` (stdlib) | đọc config TOML | không thêm dep |
 
 - Config dùng **TOML / `tomllib`**; **không** thêm `pyyaml`.
-- Đã cân nhắc, không chọn: `uv`/conda env, `youtube-transcript-api`, `openai-whisper`, PySceneDetect, `ollama` python client, `pyyaml`.
+- Đã cân nhắc, không chọn: `uv`, `.venv` system Python, `youtube-transcript-api`, `openai-whisper`, PySceneDetect, `ollama` python client, `pyyaml`.
+- Sửa đổi HUMAN LEAD 2026-09-26 (sau review CP2): runtime đổi từ `.venv` system Python sang conda env riêng (không dùng base); `yt-dlp` pin phiên bản theo `docs/decisions/CP2-workspace-contract.md` D2.
 
 ## 11. Local GPU / Ollama assumptions
 

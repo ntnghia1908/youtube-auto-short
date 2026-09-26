@@ -1,0 +1,12 @@
+# Copy to config.toml (gitignored) and adjust locally.
+
+[workspace]
+# Root of per-episode workspaces: <dir>/<episode_id>/. Relative paths resolve
+# against the current working directory.
+dir = "work"
+
+[ingest]
+# yt-dlp format selector for YouTube sources (best video + best audio, merged to mp4).
+youtube_format = "bv*+ba/b"
+# JavaScript runtimes yt-dlp may use for YouTube challenges; must be on PATH.
+js_runtimes = ["node"]

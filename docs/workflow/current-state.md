@@ -8,20 +8,20 @@ Chỉ ghi operational state không suy ra được từ Git, task contract hoặ
 
 ## Current focus
 
-CP1 — Product Contract & Architecture Baseline (S2), pha EXECUTE theo profile `dual-agent`. Task contract `docs/tasks/CP1-product-contract.md` đã APPROVED; decision record `docs/decisions/CP1-product-contract.md` ACCEPTED. Roadmap canonical: `AUTO_SHORT_CHECKPOINT_PLAN.md`. CP0 DONE (PR #1 merged).
+CP2 — Media Input + Artifact Workspace: READY, PR #3 chờ HUMAN LEAD merge. FW-v4.1 (session scope + framework history, `docs/tasks/FW-v4.1-session-scope.md`): READY trên branch local `feature/framework-session-scope` (chưa push), chờ HUMAN LEAD approve push/PR.
 
 ## Next proposed action
 
-1. ORCHESTRATOR review diff + verification evidence → READY.
-2. PR #2 chờ HUMAN LEAD merge.
-3. Sau merge: mở CP2 — Media Input + Artifact Workspace (HUMAN LEAD, 2026-09-26); cần task contract riêng và approval trước khi implement.
+1. HUMAN LEAD merge PR #3 (CP2).
+2. HUMAN LEAD approve push/PR cho `feature/framework-session-scope`; sau khi merge, đồng bộ file này với framework v4.1.
+3. HUMAN LEAD quyết mở CP3 — Transcript Acquisition & Normalization (roadmap §4 CP3).
 
 Đây là PROPOSED, không authorize implementation tiếp theo.
 
 ## Open decisions
 
-- Không còn cho CP1.
+- Mở CP3 hay chưa.
 
 ## Blockers
 
-- Không. `ffmpeg` 6.1.1 đã cài; Ollama `127.0.0.1:11435` phản hồi.
+- Không. Runtime: conda env `auto-short` (Python 3.12); YouTube cần `node` trên PATH (nvm).

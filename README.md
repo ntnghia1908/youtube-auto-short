@@ -4,7 +4,7 @@ Greenfield project for automatically turning Vietnamese long-form lecture videos
 
 ## Current stage
 
-**CP0 — Framework v4 + project bootstrap**
+**CP2 — Media input + artifact workspace.** Only the `ingest` stage is implemented: a YouTube URL or a local video enters a per-episode workspace and gets a `metadata.json` and a resumable `manifest.json`. Conventions: `docs/decisions/CP2-workspace-contract.md`.
 
 The project adopts the universal parts of AI Development Framework v4 from `ntnghia1908/dang-vu-spring`, while keeping this repository independent.
 
@@ -26,7 +26,41 @@ AI generates title/panel text
 multiple Short outputs
 ```
 
-This pipeline is planned, not implemented in CP0.
+Only the first step (ingest) is implemented; the rest of the pipeline is planned.
+
+## Setup
+
+Requirements: conda (Miniconda) for a dedicated Python 3.12 env (never the `base` env) and `ffmpeg`/`ffprobe` on `PATH`.
+YouTube downloads may also need a JavaScript runtime on `PATH` (default config uses `node`).
+
+```bash
+conda create -n auto-short python=3.12
+conda activate auto-short
+pip install -e ".[dev]"
+cp config.example.toml config.toml   # local, gitignored; edit as needed
+```
+
+Run tests (no network needed):
+
+```bash
+pytest -q
+```
+
+## Usage
+
+```bash
+# Local file: referenced in place (not copied); episode id = <slug>-<sha256[:12]>
+auto-short ingest input/rbjfCfFq3Dk/rbjfCfFq3Dk.mp4
+
+# YouTube URL: downloaded to work/<video_id>/source.mp4 (best quality); episode id = video id
+auto-short ingest https://youtu.be/rbjfCfFq3Dk
+
+# Options: --episode-id ID, --force (re-run even if up to date), --config PATH
+auto-short status <episode_id>
+```
+
+`python -m auto_short ...` works the same. Re-running `ingest` skips when the source and the
+relevant config are unchanged. Artifacts go to `work/<episode_id>/` (`manifest.json`, `metadata.json`).
 
 ## Reference project
 

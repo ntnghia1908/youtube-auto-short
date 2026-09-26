@@ -3,7 +3,7 @@
 | Metadata | Value |
 |---|---|
 | Status | CURRENT |
-| Project stage | CP1 — Product contract & architecture baseline |
+| Project stage | CP2 — Media input + artifact workspace |
 
 ## 1. Project
 
@@ -14,7 +14,7 @@
 
 ## 2. Authority order
 
-1. HUMAN LEAD decisions / approved task contracts và accepted decision records trong `docs/decisions/` (hiện có `docs/decisions/CP1-product-contract.md` — product contract & architecture baseline);
+1. HUMAN LEAD decisions / approved task contracts và accepted decision records trong `docs/decisions/` (hiện có `docs/decisions/CP1-product-contract.md` — product contract & architecture baseline; `docs/decisions/CP2-workspace-contract.md` — workspace/manifest/stage convention);
 2. `docs/ai/workflow.md`, `docs/ai/execution-profiles.md` và file này cho workflow/policy;
 3. source code và tests hiện hành cho implementation state;
 4. `docs/workflow/current-state.md` chỉ là operational state, không phải authority;
@@ -24,17 +24,18 @@ Không có database, security hay public API authority ở CP0/CP1. Nếu nhữn
 
 ## 3. Module map
 
-Các boundary dưới đây là **planned module boundaries**, chưa phải implemented modules. Stage và artifact tương ứng theo `docs/decisions/CP1-product-contract.md` §8:
+Các boundary dưới đây là **planned module boundaries**, chưa phải implemented modules, trừ mục ghi *implemented*. Stage và artifact tương ứng theo `docs/decisions/CP1-product-contract.md` §8; package layout, manifest và stage convention theo `docs/decisions/CP2-workspace-contract.md`:
 
 | Path | Stage / vai trò | Rule riêng |
 |---|---|---|
-| `src/ingest/` | ingest: input/download/metadata | chưa có module rule |
-| `src/transcript/` | transcript: caption YouTube / subtitle local / Whisper + timestamps | chưa có module rule |
-| `src/analysis/` | analysis: shot detection + candidate generation (deterministic) | chưa có module rule |
-| `src/selection/` | selection: AI chọn clip trong candidates + validate | chưa có module rule |
-| `src/titling/` | titling: AI sinh title/hook + validate | chưa có module rule |
-| `src/review/` | review: human approve/reject/edit | chưa có module rule |
-| `src/render/` | render: composition 9:16 theo template + export | chưa có module rule |
+| `src/auto_short/` (`workspace.py`, `hashing.py`, `config.py`, `cli.py`) | stage framework dùng chung, config, CLI — *implemented* (CP2) | `docs/decisions/CP2-workspace-contract.md` |
+| `src/auto_short/ingest/` | ingest: input/download/metadata — *implemented* (CP2) | `docs/decisions/CP2-workspace-contract.md` |
+| `src/auto_short/transcript/` | transcript: caption YouTube / subtitle local / Whisper + timestamps | chưa có module rule |
+| `src/auto_short/analysis/` | analysis: shot detection + candidate generation (deterministic) | chưa có module rule |
+| `src/auto_short/selection/` | selection: AI chọn clip trong candidates + validate | chưa có module rule |
+| `src/auto_short/titling/` | titling: AI sinh title/hook + validate | chưa có module rule |
+| `src/auto_short/review/` | review: human approve/reject/edit | chưa có module rule |
+| `src/auto_short/render/` | render: composition 9:16 theo template + export | chưa có module rule |
 | `tests/` | automated verification | project workflow applies |
 | `docs/` | authority, tasks, decisions, workflow | authority by section |
 | `scripts/` | development/check tooling | project workflow applies |
@@ -71,5 +72,7 @@ HUMAN LEAD giữ scope, architecture, dependency, project-wide conventions, inte
 ## 8. Setup / tools
 
 Runtime, packaging, dependency được duyệt và giả định GPU/Ollama: xem `docs/decisions/CP1-product-contract.md` §10 (canonical owner của danh sách dependency) và §11. Không thêm dependency ngoài danh sách đó khi chưa qua dependency proposal.
+
+Cài đặt môi trường (conda env `auto-short`, `pip install -e ".[dev]"`, `config.toml`, `ffmpeg`) và cách chạy CLI: xem `README.md` (Setup / Usage).
 
 Framework checker: `node scripts/framework-check.mjs`.
