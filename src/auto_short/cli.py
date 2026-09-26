@@ -9,6 +9,7 @@ from pathlib import Path
 
 from . import config as config_mod
 from .ingest import IngestError, run_ingest
+from .transcript import TranscriptError, run_transcript
 from .workspace import PENDING, STAGES, Workspace, WorkspaceError, validate_episode_id
 
 log = logging.getLogger("auto_short")
@@ -24,6 +25,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--force", action="store_true", help="re-run even if up to date")
     p.add_argument("--config", type=Path, help="config TOML (default: ./config.toml if present)")
 
+    t = sub.add_parser("transcript", help="produce transcript.json (YouTube caption -> subtitle -> Whisper)")
+    t.add_argument("episode_id")
+    t.add_argument("--subtitle", type=Path, help="local subtitle file (.srt/.vtt/.json3); overrides a sidecar")
+    t.add_argument("--force", action="store_true", help="re-run even if up to date")
+    t.add_argument("--config", type=Path, help="config TOML (default: ./config.toml if present)")
+
     s = sub.add_parser("status", help="show stage status of an episode")
     s.add_argument("episode_id")
     s.add_argument("--config", type=Path, help="config TOML (default: ./config.toml if present)")
@@ -33,6 +40,13 @@ def _build_parser() -> argparse.ArgumentParser:
 def _cmd_ingest(args: argparse.Namespace, cfg: config_mod.Config) -> int:
     result = run_ingest(args.source, cfg, episode_id=args.episode_id, force=args.force)
     print(f"{result.episode_id}\t{'ingested' if result.ran else 'skipped (up to date)'}\t{result.workspace}")
+    return 0
+
+
+def _cmd_transcript(args: argparse.Namespace, cfg: config_mod.Config) -> int:
+    result = run_transcript(args.episode_id, cfg, subtitle=args.subtitle, force=args.force)
+    state = f"transcribed ({result.source}/{result.method})" if result.ran else "skipped (up to date)"
+    print(f"{result.episode_id}\t{state}\t{result.path}")
     return 0
 
 
@@ -80,7 +94,9 @@ def main(argv: list[str] | None = None) -> int:
         cfg = config_mod.load(args.config)
         if args.command == "ingest":
             return _cmd_ingest(args, cfg)
+        if args.command == "transcript":
+            return _cmd_transcript(args, cfg)
         return _cmd_status(args, cfg)
-    except (config_mod.ConfigError, IngestError, WorkspaceError) as exc:
+    except (config_mod.ConfigError, IngestError, TranscriptError, WorkspaceError) as exc:
         print(f"auto-short: error: {exc}", file=sys.stderr)
         return 1
