@@ -69,7 +69,7 @@ Một video (YouTube URL hoặc file local) đi vào workspace `work/<episode_id
 
 ## Required verification
 
-- `.venv/bin/pytest -q` → PASS (AC1–AC3, AC5, AC6; AC4 với fake downloader).
+- `pytest -q` trong conda env `auto-short` → PASS (AC1–AC3, AC5, AC6; AC4 với fake downloader).
 - Chạy thật: `auto-short ingest input/rbjfCfFq3Dk/rbjfCfFq3Dk.mp4` hai lần → lần 2 skip, `sha256sum work/<id>/metadata.json` giống nhau, thời gian lần 2 ngắn (AC1, AC2).
 - Chạy thật: `auto-short ingest https://youtu.be/rbjfCfFq3Dk` → tải vào workspace + metadata (AC4).
 - `auto-short status <id>` (AC6).
@@ -102,4 +102,5 @@ Không chạm database hay security model. CLI là giao diện người dùng đ
   - Non-blocking: `yt-dlp` không pin version; YouTube thay đổi có thể cần nâng cấp hoặc `yt-dlp[default]` (thêm `yt-dlp-ejs`) — là dependency decision nếu xảy ra.
   - Môi trường: máy thiếu `python3.12-venv` (ensurepip) → venv tạo bằng `--without-pip` + pip wheel local (README ghi cách); cách sạch là `sudo apt install python3.12-venv`. Node chỉ có trên PATH sau khi nạp nvm.
 - Known limitations: chưa có transcript/analysis/AI/render (CP3+). YouTube ingest cần mạng và JS runtime trên PATH.
-- PR: chưa; chờ HUMAN LEAD approve integration.
+- Amendment sau review (HUMAN LEAD 2026-09-26, IMPLEMENTER `e3097a2`): conda env `auto-short` (Python 3.12.14) thay `.venv`; `yt-dlp==2026.8.19` (stable mới nhất trên PyPI, bản đã chạy thật); format YouTube mặc định `bv*+ba/b` (chất lượng tốt nhất). ORCHESTRATOR chạy lại: `~/miniconda3/envs/auto-short/bin/pytest -q` → `36 passed`; ingest local lần 1 run, lần 2 skip, `metadata.json` sha256 `aa2c8687…` không đổi. Video test tốt nhất vẫn 1440×1080 nên file đã tải không đổi; YouTube ingest lần sau báo `config changed` và tải lại (đúng D6).
+- PR: pending (HUMAN LEAD approved push + PR 2026-09-26).
