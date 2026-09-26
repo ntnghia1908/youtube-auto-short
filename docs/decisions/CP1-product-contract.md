@@ -41,7 +41,7 @@
 
 - **Đề xuất:** mục tiêu 30–60 s, tối thiểu 20 s, tối đa 60 s; không cắt giữa câu.
 - Lựa chọn khác: cho phép tới 180 s (YouTube Shorts hiện hỗ trợ tới 3 phút).
-- **Cần HUMAN LEAD:** chốt min/target/max.
+- **Quyết định HUMAN LEAD (2026-09-26):** min 30 s / mục tiêu 60–90 s / max 180 s; không cắt giữa câu.
 
 ## 4. Composition 9:16
 
@@ -79,7 +79,7 @@
 
 - **Đề xuất:** burn-in subtitle tiếng Việt từ transcript đã normalize, mỗi dòng ≤ ~32 ký tự, tối đa 2 dòng, ở lower panel.
 - Lựa chọn khác: không có subtitle; hoặc subtitle kiểu karaoke/từng từ (cần timestamp từng từ → phụ thuộc Whisper, không có với YouTube captions).
-- **Cần HUMAN LEAD:** bật/tắt subtitle mặc định.
+- **Quyết định HUMAN LEAD (2026-09-26):** **tắt** subtitle mặc định. Lower panel không chứa subtitle; nội dung lower panel theo mẫu layout (§4).
 
 ## 8. Artifact model & pipeline boundaries
 
@@ -112,24 +112,24 @@ Nguyên tắc: stdlib trước; mỗi dependency qua dependency proposal; không
 | Python ≥ 3.11 + `venv` + `pip`, `pyproject.toml` (hatchling) | runtime + packaging | giống reference, không cần tool thêm | `uv`, conda env | `.venv/` trong repo (đã gitignore) |
 | `yt-dlp` | tải video + lấy caption YouTube (kể cả auto-generated) | một lib cho cả download và transcript YouTube | `youtube-transcript-api` (+ vẫn cần downloader) | runtime |
 | `faster-whisper` | fallback transcript khi không có caption hợp lệ | local, có timestamp, đã kiểm chứng ở reference | `openai-whisper` (nặng hơn) | runtime, model tải về `models/` |
-| `pyyaml` | đọc `config.yaml` | config dễ sửa | JSON/TOML (`tomllib` stdlib) | runtime |
 | `pytest` | test | chuẩn | `unittest` stdlib | dev only |
 | `ffmpeg`/`ffprobe` (system binary) | probe, cắt, compose, render; scene detect bằng filter `select=gt(scene,…)` | không có thay thế thực tế | PySceneDetect (thêm dep) | cần cài hệ thống |
 | Ollama HTTP API qua `urllib` | clip selection + title | không cần SDK | `ollama` python client | không thêm dep |
 
-- **Cần HUMAN LEAD:** `tomllib` (stdlib, không dep) thay cho `pyyaml`? Agent đề xuất **TOML/`tomllib`** để giảm một dependency; YAML nếu muốn đồng nhất với reference.
+- **Quyết định HUMAN LEAD (2026-09-26):** config dùng **TOML / `tomllib`** (stdlib); **không** thêm `pyyaml`.
 
 ## 11. Local GPU / Ollama assumptions
 
 - Ollama chạy trên **máy GPU riêng**, truy cập qua `OLLAMA_HOST` (mặc định đề xuất `http://127.0.0.1:11435` theo HUMAN LEAD); code không hard-code host/model.
-- Model: **đề xuất** bắt đầu với `gemma3:12b` (đã kiểm chứng tiếng Việt ở reference); chốt lại bằng đo đạc ở CP5/CP10.
+- **Quyết định HUMAN LEAD (2026-09-26):** host mặc định `http://127.0.0.1:11435`, model khởi đầu `gemma3:12b`; chốt lại bằng đo đạc ở CP5/CP10.
 - Whisper chỉ là fallback; trên VM không GPU chạy CPU (`int8`, 48 core). Đo thực tế ở CP11.
 - **Blocker môi trường cần HUMAN LEAD xử lý trước CP5:** Ollama trên port 11435 hiện không phản hồi. **Trước CP2:** cài `ffmpeg` (cần `sudo apt install ffmpeg`).
 
 ## 12. Open questions cho HUMAN LEAD
 
-1. Duration: min/target/max (§3).
-2. Mẫu yellow panel: file ảnh/thông số (§4).
-3. Subtitle mặc định bật/tắt (§7).
-4. Config format TOML vs YAML (§10).
-5. Xác nhận Ollama host `127.0.0.1:11435` + model khởi đầu (§11).
+Đã chốt 2026-09-26: duration (§3), subtitle (§7), config format (§10), Ollama host/model (§11).
+
+Còn mở:
+
+1. Mẫu layout / yellow panel: file ảnh hoặc thông số (§4).
+2. Chấp nhận hoặc sửa các đề xuất còn lại: §1, §2, §5, §6, §8, §9 và danh sách dependency §10.
