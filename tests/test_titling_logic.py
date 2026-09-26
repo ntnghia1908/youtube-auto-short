@@ -85,14 +85,14 @@ def test_header_config_invalid(header):
 def test_titling_config_parsing():
     t = config_mod.Config().titling
     assert (t.model, t.think, t.temperature, t.seed, t.num_ctx, t.prompt_version) == \
-        ("qwen3:30b", True, 0.0, 42, 16384, "v2")
+        ("qwen3:14b", False, 0.0, 42, 16384, "v2")
     assert (t.n_options, t.min_chars, t.max_chars, t.retries, t.timeout, t.retry_backoff) == \
         (3, 10, 60, 2, 600.0, (5.0, 15.0))
     assert t.ollama_host == "http://127.0.0.1:11437" and t.header == TitlingHeaderConfig()
-    t = config_mod.from_dict({"titling": {"model": "qwen3:14b", "think": False, "max_chars": 40,
+    t = config_mod.from_dict({"titling": {"model": "qwen3:30b", "think": True, "max_chars": 40,
                                           "header": {"episode": 9, "lines": ["{speaker}"]}}}).titling
     assert (t.model, t.think, t.max_chars, t.header.episode, t.header.lines) == \
-        ("qwen3:14b", False, 40, "9", ("{speaker}",))
+        ("qwen3:30b", True, 40, "9", ("{speaker}",))
 
 
 @pytest.mark.parametrize("data", [

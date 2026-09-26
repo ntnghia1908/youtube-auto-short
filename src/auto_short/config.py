@@ -134,8 +134,8 @@ class TitlingHeaderConfig:
 class TitlingConfig:
     """AI title / hook generation via Ollama (docs/decisions/CP6-titling-contract.md)."""
 
-    model: str = "qwen3:30b"
-    think: bool = True
+    model: str = "qwen3:14b"  # chosen by HUMAN LEAD 2026-09-26 (CP1 §11)
+    think: bool = False
     temperature: float = 0.0
     seed: int = 42
     num_ctx: int = 16384

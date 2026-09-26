@@ -114,7 +114,7 @@ AI title / hook (after selection; same Ollama host rules, section `[titling]`):
 # Header (no AI): speaker / series / episode from --speaker/--series/--episode > [titling.header]
 # > regex title_pattern on the video title; default lines "HT.Tịnh Không" / "<series> (tập <n>)".
 # Then one Ollama call per clip: 3 title options (<= 60 chars) each quoting evidence from the clip
-# text; code keeps the first valid one. Default model: qwen3:30b with thinking (~9 min for 13 clips).
+# text; code keeps the first valid one. Default: qwen3:14b, thinking off, prompt v2 (~35 s for 13 clips).
 auto-short titling <episode_id>   # options: --force, --config PATH, --speaker S, --series S, --episode N
 ```
 

@@ -84,8 +84,8 @@ retry_backoff = [5, 15]      # seconds to wait before retry 1, 2 (the last value
 # Header (deterministic) + AI title per selected clip via Ollama
 # (docs/decisions/CP6-titling-contract.md). Changing any key below except
 # ollama_host/timeout/retry_backoff re-runs the stage (and so does a different resolved header).
-model = "qwen3:30b"
-think = true
+model = "qwen3:14b"          # chosen by HUMAN LEAD 2026-09-26 with prompt v2 (CP1 §11)
+think = false                # thinking off (~3 s per clip)
 temperature = 0
 seed = 42
 num_ctx = 16384

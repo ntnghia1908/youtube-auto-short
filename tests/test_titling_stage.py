@@ -60,7 +60,7 @@ def test_request_follows_g4(tcfg):
     run_titling(EID, tcfg, client=fake)
     assert [c["clip"] for c in fake.calls] == [2, 7]  # one call per clip, clip order
     call = fake.calls[0]
-    assert call["model"] == "qwen3:30b" and call["think"] is True
+    assert call["model"] == "qwen3:14b" and call["think"] is False
     assert call["options"] == {"temperature": 0, "seed": 42, "num_ctx": 16384}
     assert call["format"] == RESPONSE_SCHEMA
     system, user = call["messages"]
@@ -74,10 +74,10 @@ def test_request_follows_g4(tcfg):
 
     two = {n: [reply(*json.loads(good_reply(n))["options"][:2])] for n in (2, 7)}
     fake2 = FakeClient(two)
-    run_titling(EID, _ti(tcfg, model="qwen3:14b", think=False, seed=7, num_ctx=8192, temperature=0.2,
+    run_titling(EID, _ti(tcfg, model="qwen3:30b", think=True, seed=7, num_ctx=8192, temperature=0.2,
                          max_chars=40, n_options=2), client=fake2, sleep=NoSleep())
     call = fake2.calls[0]
-    assert (call["model"], call["think"]) == ("qwen3:14b", False)
+    assert (call["model"], call["think"]) == ("qwen3:30b", True)
     assert call["options"] == {"temperature": 0.2, "seed": 7, "num_ctx": 8192}
     assert "tối đa 40 ký tự" in call["messages"][0]["content"] and "đúng 2 phương án" in call["messages"][0]["content"]
 
@@ -102,7 +102,7 @@ def test_titles_and_log_documents(tcfg):
     assert doc["clips_sha256"] == _sha(clips_doc) and doc["candidates_sha256"] == _sha(cands)
     assert doc["header"]["lines"] == HEADER
     assert doc["header"]["sources"] == {"speaker": "config", "series": "metadata", "episode": "metadata"}
-    assert doc["model"] == {"provider": "ollama", "name": "qwen3:30b", "think": True,
+    assert doc["model"] == {"provider": "ollama", "name": "qwen3:14b", "think": False,
                             "options": {"temperature": 0, "seed": 42, "num_ctx": 16384}}
     assert doc["prompt_version"] == "v2" and doc["prompt_sha256"] == prompt_sha256("v2")
     assert doc["params"] == {"n_options": 3, "min_chars": 10, "max_chars": 60, "retries": 2}
@@ -127,7 +127,7 @@ def test_titles_and_log_documents(tcfg):
     assert call["attempt"] == 1 and call["error"] is None and call["backoff_seconds"] == 0
     assert call["request"]["messages"][0]["content"] == lg["system_prompt"]
     assert call["request"]["stream"] is False and call["request"]["format"] == RESPONSE_SCHEMA
-    assert call["response"] == {"content": BAD_FIRST[2][0], "thinking": "nghĩ", "eval_count": 10,
+    assert call["response"] == {"content": BAD_FIRST[2][0], "thinking": None, "eval_count": 10,
                                 "prompt_eval_count": 100, "total_duration": 123, "done_reason": "stop"}
     assert [(o["status"], o["reject_reason"]) for o in call["options"]] == [
         ("invalid", "exclamation mark"), ("invalid", "too short (9 < 10 chars)"), ("valid", None)]
@@ -298,7 +298,7 @@ def test_rerun_skips_and_config_changes(tcfg, caplog):
                 replace(tcfg, selection=replace(tcfg.selection, min_score=9))):
         assert not run_titling(EID, cfg, client=fake).ran
     # hashed keys -> run
-    for kw in ({"model": "qwen3:14b"}, {"think": False}, {"temperature": 0.5}, {"seed": 1}, {"num_ctx": 8192},
+    for kw in ({"model": "qwen3:30b"}, {"think": True}, {"temperature": 0.5}, {"seed": 1}, {"num_ctx": 8192},
                {"n_options": 2}, {"min_chars": 5}, {"max_chars": 40}, {"retries": 1}):
         cfg = _ti(tcfg, **kw)
         n = kw.get("n_options", 3)
