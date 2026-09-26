@@ -94,7 +94,7 @@ class SelectionConfig:
     temperature: float = 0.0
     seed: int = 42
     num_ctx: int = 16384
-    prompt_version: str = "v1"
+    prompt_version: str = "v2"
     max_clips: int = 25
     min_score: int = 7
     max_window_words: int = 2500

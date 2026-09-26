@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import hashlib
 
-PROMPT_VERSION = "v1"
+PROMPT_VERSION = "v2"
 
 SYSTEM_PROMPT_V1 = """\
 Bạn là biên tập viên video. Nhiệm vụ: đọc bản ghi lời (caption) của một đoạn bài giảng tiếng Việt và \
@@ -48,7 +48,56 @@ Video: {title}
 Danh sách unit (id | thời lượng s | ranh giới trước | lời nói):
 {lines}"""
 
-PROMPTS = {"v1": (SYSTEM_PROMPT_V1, USER_TEMPLATE_V1)}
+# v2 (HUMAN LEAD 2026-09-26, after measuring v1): cumulative Short time per unit so the model can
+# check 30-180 s itself; stricter guidance on judging the first sentence.
+SYSTEM_PROMPT_V2 = """\
+Bạn là biên tập viên video. Nhiệm vụ: đọc bản ghi lời (caption) của một đoạn bài giảng tiếng Việt và \
+đề xuất các đoạn trích có thể đăng thành YouTube Shorts ĐỘC LẬP.
+
+Dữ liệu vào là danh sách "unit" liên tiếp theo thời gian. Mỗi dòng:
+id | từ X | đến Y | ranh giới trước unit | lời nói
+X, Y là mốc thời gian (giây) trên đồng hồ Short tính từ đầu danh sách, đã rút khoảng lặng. Một đề xuất là dãy unit \
+liên tiếp từ first_unit đến last_unit (tính cả hai đầu).
+
+CÁCH TÍNH THỜI LƯỢNG: thời lượng đoạn = "đến" của last_unit − "từ" của first_unit.
+Ví dụ: first_unit có "từ 40.2", last_unit có "đến 118.9" → thời lượng 78.7 giây.
+Luôn tính thời lượng như vậy TRƯỚC khi đề xuất.
+
+Ràng buộc:
+- Chỉ dùng id unit có trong danh sách; first_unit đứng trước hoặc trùng last_unit.
+- Thời lượng bắt buộc 30–180 giây; lý tưởng 60–90 giây. Đoạn dưới 30 giây hoặc trên 180 giây bị loại bỏ. \
+Một unit thường quá ngắn: hãy nối nhiều unit liên tiếp cho tới khi trọn ý và đủ thời lượng.
+- QUAN TRỌNG NHẤT: mỗi đoạn phải trình bày TRỌN MỘT Ý.
+  - Câu đầu tự đứng được: người xem chưa nghe gì trước đó vẫn hiểu. Nếu lời nói của first_unit mở đầu bằng từ \
+nối hoặc từ chỉ ngược về câu trước — ví dụ "cho nên", "vì vậy", "thế nên", "thế là", "do đó", "còn", "và", \
+"nhưng", "mà", "rồi", "thì", "cái này", "điều đó", "việc này", "như vậy", "ở đây" — hoặc bắt đầu giữa câu, \
+thì start_complete PHẢI là false. Khi đó hãy chọn first_unit khác (sớm hơn, nơi ý bắt đầu thật sự).
+  - Câu cuối kết thúc ý: không dừng giữa câu, không bỏ dở lập luận hay ví dụ; nếu last_unit dừng giữa câu \
+thì end_complete PHẢI là false.
+  - Thà không đề xuất còn hơn đề xuất đoạn cụt ý.
+- Caption tạo tự động: không có dấu câu, có thể sai chính tả; tự suy ra ranh giới câu theo nghĩa. \
+Đầu và cuối danh sách có thể rơi giữa một ý.
+- Các đề xuất được phép chồng lấn nhau; hệ thống sẽ tự chọn. Tối đa 12 đề xuất, ưu tiên đoạn tốt nhất.
+
+Mỗi đề xuất gồm:
+- first_unit, last_unit: id unit đầu và cuối.
+- topic: chủ đề ngắn bằng tiếng Việt (tối đa 10 từ).
+- reason: 1–2 câu ngắn tiếng Việt: thời lượng đã tính, vì sao đoạn này hay và trọn ý (hoặc thiếu gì).
+- start_complete: true chỉ khi câu đầu tự đứng được theo quy tắc trên; end_complete: true chỉ khi câu cuối kết \
+thúc ý. Đánh giá trung thực, nghiêm khắc.
+- score: số nguyên 1–10, giá trị làm một Short độc lập (ý rõ ràng, có ích hoặc hấp dẫn, người xem không cần \
+ngữ cảnh trước đó).
+
+Trả lời đúng JSON {"clips": [...]}. Không có đoạn phù hợp thì trả {"clips": []}."""
+
+USER_TEMPLATE_V2 = """\
+Video: {title}
+Đoạn {window_id}: {n_units} unit, {start}–{end} s trong video gốc. Trước đoạn: {before}. Sau đoạn: {after}.
+
+Danh sách unit (id | từ X | đến Y | ranh giới trước | lời nói); thời lượng đoạn = đến(last_unit) − từ(first_unit):
+{lines}"""
+
+PROMPTS = {"v1": (SYSTEM_PROMPT_V1, USER_TEMPLATE_V1), "v2": (SYSTEM_PROMPT_V2, USER_TEMPLATE_V2)}
 
 # Property order is the generation order: judge (topic/reason/flags) before the score.
 RESPONSE_SCHEMA = {
@@ -97,15 +146,33 @@ def break_label(brk: dict, *, edge: str) -> str:
     return f"{edge} nội dung"
 
 
+def cumulative_marks(units: list[dict], durations: dict[str, float], max_pause: float,
+                     pad: float) -> list[tuple[float, float]]:
+    """(from, to) Short clock per unit, relative to the window start, such that
+    ``to[b] - from[a]`` equals ``logic.estimate_seconds(units[a..b])``: unit durations after
+    trimming + boundary silences shortened to ``max_pause`` + ``2 * pad``."""
+    marks, t = [], 0.0
+    for i, u in enumerate(units):
+        start = t
+        end = t + durations[u["id"]] + 2 * pad
+        marks.append((start, end))
+        t += durations[u["id"]] + (min(u["break_after"]["seconds"] or 0.0, max_pause) if i < len(units) - 1 else 0)
+    return marks
+
+
 def render_user_prompt(version: str, *, title: str, window_id: str, units: list[dict],
-                       durations: dict[str, float]) -> str:
+                       durations: dict[str, float], max_pause: float = 1.0, pad: float = 0.3) -> str:
     _, template = prompt_texts(version)
+    marks = cumulative_marks(units, durations, max_pause, pad) if version != "v1" else None
     lines = []
     for i, u in enumerate(units):
         before = break_label(u["break_before"], edge="đầu")
         if i == 0 and u["break_before"]["kind"] == "silence":
             before += " (đầu danh sách)"
-        lines.append(f"{u['id']} | {durations[u['id']]:.1f} | {before} | {u['text']}")
+        if marks is None:  # v1: id | duration | boundary | text
+            lines.append(f"{u['id']} | {durations[u['id']]:.1f} | {before} | {u['text']}")
+        else:
+            lines.append(f"{u['id']} | từ {marks[i][0]:.1f} | đến {marks[i][1]:.1f} | {before} | {u['text']}")
     return template.format(
         title=title or "(không rõ)", window_id=window_id, n_units=len(units),
         start=f"{units[0]['start']:.1f}", end=f"{units[-1]['end']:.1f}",

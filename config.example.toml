@@ -65,7 +65,7 @@ think = false                # model "thinking" mode (qwen3)
 temperature = 0
 seed = 42
 num_ctx = 16384              # Ollama context window (tokens)
-prompt_version = "v1"        # prompt text lives in code (selection/prompt.py)
+prompt_version = "v2"        # prompt text lives in code (selection/prompt.py); "v1" kept for comparison
 max_clips = 25               # at most this many Shorts per episode (CP1 §5)
 min_score = 7                # keep AI proposals with score >= this (1-10)
 max_window_words = 2500      # longer windows are split into overlapping sub-windows

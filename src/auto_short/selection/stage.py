@@ -164,7 +164,8 @@ def select(episode_id: str, cand_doc: dict, metadata: dict, silences_doc: dict, 
             continue
         messages = [{"role": "system", "content": system},
                     {"role": "user", "content": render_user_prompt(
-                        cfg.prompt_version, title=title, window_id=win.id, units=win.units, durations=durations)}]
+                        cfg.prompt_version, title=title, window_id=win.id, units=win.units, durations=durations,
+                        max_pause=params["max_pause"], pad=params["boundary_pad"])}]
         t0 = time.monotonic()
         proposals = _call_window(client, cfg, messages, win, wlog)
         recs = map_proposals(proposals, win, by_units, durations, params)
