@@ -34,10 +34,16 @@ Implementation tham chiếu: `src/auto_short/titling/` (`prompt.py`, `logic.py`,
 - `clips.json.candidates_sha256` phải bằng sha256 canonical JSON của `candidates.json` đã đọc, nếu không → `failed`. `unit_ids` không có trong `candidates.json` → `failed`.
 - `clips: []` → `titles: []`, stage `done`, không gọi AI.
 
-## G4. Prompt (version `prompt_version`, mặc định `"v1"`)
+## G4. Prompt (version `prompt_version`, mặc định `"v2"` — Sửa G4)
 
-- Prompt là hằng trong `titling/prompt.py` (`PROMPTS[version] = (system, user template)`). **Đổi bất kỳ chữ nào phải thêm version mới**; `prompt_sha256` = sha256(`system + "\n\0\n" + template`) (template có chỗ trống) nằm trong `config_hash`. `prompt_version` không có trong code → lỗi (exit 1, manifest không đổi). v1: `prompt_sha256` `8fe349ed…069037e4`.
+- Prompt là hằng trong `titling/prompt.py` (`PROMPTS[version] = (system, user template)`). **Đổi bất kỳ chữ nào phải thêm version mới**; `prompt_sha256` = sha256(`system + "\n\0\n" + template`) (template có chỗ trống) nằm trong `config_hash`. `prompt_version` không có trong code → lỗi (exit 1, manifest không đổi). Version trong code: `v1` (bản đầu, giữ nguyên văn để so sánh; `prompt_sha256` `8fe349ed…069037e4`) và `v2` (mặc định, **Sửa G4**; `0cc8abbf…d78c8359`). Mô tả dưới là v1; khác biệt của v2 ở mục **G4 v2**.
 - System prompt v1 (tiếng Việt): biên tập viên kênh Phật pháp đặt tiêu đề cho Short cắt từ bài giảng; dữ liệu vào là caption tự động (không dấu câu, viết hoa lộn xộn, có thể sai chính tả); tiêu đề nêu đúng ý chính **của chính đoạn này**; tiếng Việt, một dòng, tối đa `<<MAX_CHARS>>` ký tự; viết hoa chữ đầu câu và danh từ riêng (ví dụ "Các bậc thang tu học Phật pháp"); chỉ dùng thông tin trong đoạn, không thêm tên người giảng/tên kinh/số tập; không emoji, hashtag, dấu chấm than, ngoặc kép bao ngoài, không viết hoa toàn bộ, không giật tít/phóng đại; được sửa chính tả hiển nhiên nhưng không đổi ý; đúng `<<N_OPTIONS>>` phương án, tốt nhất trước; `evidence` trích **nguyên văn** 3–25 từ liên tiếp, chép đúng như caption (giữ cả lỗi chính tả, không thêm dấu câu). `<<MAX_CHARS>>`, `<<N_OPTIONS>>` điền từ config (cả hai trong `config_hash`); `system_prompt` trong log là bản đã render.
+- **G4 v2** (Sửa G4, HUMAN LEAD 2026-09-26, sau đọc title v1: v1 quá cao siêu — thuật ngữ Hán Việt, văn giảng kinh). User message, `RESPONSE_SCHEMA`, validation G5 và evidence (P2) **không đổi**; chỉ đổi system prompt:
+  - Kênh dành cho người học Phật tại gia và người bình dân; title là câu "móc" (hook) YouTube: đọc vào hiểu ngay, lời lẽ đời thường, gần gũi, gợi một chút tò mò (có thể nêu câu hỏi / vấn đề đời sống mà đoạn trả lời).
+  - Tránh thuật ngữ khó (Hán Việt, thuật ngữ kinh luận) khi có cách nói đời thường tương đương; nếu phải giữ thì đặt trong ý dễ hiểu.
+  - Vẫn đúng ý chính của chính đoạn, chỉ thông tin trong đoạn, không thêm tên người giảng/tên kinh/số tập; không giật tít (không hứa hẹn, phóng đại, không "sốc", "bí mật", "không thể tin", "chấn động"); không emoji, hashtag, dấu chấm than, ngoặc kép bao ngoài, viết hoa toàn bộ; **được dùng dấu hỏi**; viết hoa kiểu câu (chỉ chữ đầu câu và danh từ riêng).
+  - Ví dụ minh họa **không lấy từ video test**: đoạn giảng về giữ bình tĩnh khi bị nói xấu — tốt: "Bị người khác nói xấu, nên làm gì?", "Vì sao bị nói xấu mà không cần cãi lại"; không tốt: "Tu nhẫn nhục ba la mật trước nghịch duyên" (thuật ngữ khó), "Bí mật khiến kẻ nói xấu bạn phải hối hận" (giật tít).
+  - Hướng dẫn `evidence` như v1, thêm "không ghép các chỗ khác nhau" (quyết định khi implement: đo v1 có evidence ghép hai chỗ không liền nhau, `k12`).
 - User message mỗi clip: `Video: <metadata.title | (không rõ)>`, `Thời lượng Short: <clip.duration, 1 chữ số> giây`, dòng trống, `Lời nói của đoạn:` + text G3. Không đưa `topic`/`reason` của CP5 (P4).
 - Output JSON theo `RESPONSE_SCHEMA` qua `format`: `{"options": [{"evidence": string, "title": string}]}` (thứ tự property = thứ tự sinh: căn cứ trước title). Schema không ràng buộc số phần tử; số option kiểm ở G6.
 - Mỗi clip một lời gọi: `POST <host>/api/chat`, `stream: false`, `think`, `options = {temperature, seed, num_ctx}` (như CP5 B3).
@@ -58,6 +64,7 @@ Implementation tham chiếu: `src/auto_short/titling/` (`prompt.py`, `logic.py`,
   10. evidence chuẩn hóa không phải chuỗi con **trọn từ** của text clip chuẩn hóa (so `" ev "` trong `" text "`) → `evidence not in clip text` (P2: chặn).
 - Title = option `valid` đầu tiên theo thứ tự AI; các option `valid` còn lại → `alternatives` (`[{title, evidence}]`, cho CP9).
 - Clickbait/sai nội dung ở mức ý nghĩa không kiểm được bằng code: dựa vào prompt + HUMAN LEAD đọc + CP9.
+- Sửa title bằng tay (chọn từ `alternatives` hoặc gõ tay) thuộc **CP9** review (`review.json`, không gọi lại AI); CP7 render dùng title đã duyệt, không đọc thẳng `titles.json` (HUMAN LEAD 2026-09-26, `docs/tasks/CP6-titling.md`).
 
 ## G6. Response lỗi, retry, untitled
 
@@ -82,7 +89,7 @@ Thứ tự key cố định:
             "sources": {"speaker": "config", "series": "metadata", "episode": "metadata"}},
  "model": {"provider": "ollama", "name": "qwen3:30b", "think": true,
            "options": {"temperature": 0, "seed": 42, "num_ctx": 16384}},
- "prompt_version": "v1", "prompt_sha256": "<G4>",
+ "prompt_version": "v2", "prompt_sha256": "<G4>",
  "params": {"n_options": 3, "min_chars": 10, "max_chars": 60, "retries": 2},
  "stats": {"clips": 13, "ai_calls": 13, "titled": 13, "untitled": 0},
  "titles": [{"clip_id": "k09", "candidate_id": "c00723", "title": "Tướng và môi trường sống tùy tâm chuyển",
@@ -133,7 +140,7 @@ Dùng `run_stage` của CP2 nguyên trạng:
 
 ## Config `[titling]`
 
-Xem `config.example.toml`: `model`, `think`, `temperature` (0–2), `seed` (≥ 0), `num_ctx` (≥ 512), `prompt_version` (`v1`), `n_options` (1–10), `min_chars` (≥ 1), `max_chars` (≥ `min_chars`), `retries` (≥ 0) — trong hash; `ollama_host`, `timeout` (> 0), `retry_backoff` (list số 0–3600) — thực thi. `[titling.header]`: `speaker`, `series`, `episode` (chuỗi; `episode` nhận cả số nguyên TOML; rỗng = không đặt), `title_pattern` (regex hợp lệ; rỗng = tắt), `lines` (1–3 chuỗi không rỗng, chỉ trường `{speaker}` `{series}` `{episode}`).
+Xem `config.example.toml`: `model`, `think`, `temperature` (0–2), `seed` (≥ 0), `num_ctx` (≥ 512), `prompt_version` (`v1` | `v2`, mặc định `v2`), `n_options` (1–10), `min_chars` (≥ 1), `max_chars` (≥ `min_chars`), `retries` (≥ 0) — trong hash; `ollama_host`, `timeout` (> 0), `retry_backoff` (list số 0–3600) — thực thi. `[titling.header]`: `speaker`, `series`, `episode` (chuỗi; `episode` nhận cả số nguyên TOML; rỗng = không đặt), `title_pattern` (regex hợp lệ; rỗng = tắt), `lines` (1–3 chuỗi không rỗng, chỉ trường `{speaker}` `{series}` `{episode}`).
 
 ## Quyết định khi implement (không có trong task contract)
 
@@ -146,7 +153,7 @@ Xem `config.example.toml`: `model`, `think`, `temperature` (0–2), `seed` (≥ 
 - `RESPONSE_SCHEMA` không có `minItems`/`maxItems` (hằng, không phụ thuộc config); số option kiểm trong code.
 - `prompt_sha256` tính trên template có chỗ trống `<<MAX_CHARS>>`/`<<N_OPTIONS>>` (như CP5 v3 với `<<HEAD_CUT_WORDS>>`).
 
-## Đo thực tế (2026-09-26, video test `rbjfCfFq3Dk`, Ollama 0.34.4, port 11437)
+## Đo thực tế — prompt v1 (2026-09-26, video test `rbjfCfFq3Dk`, Ollama 0.34.4, port 11437)
 
 `clips.json` 13 clip (2 `head_cut`), prompt v1, `temperature 0`, `seed 42`, `num_ctx 16384`, `n_options 3`, `max_chars 60`. Không lần gọi nào lỗi/retry; không clip `untitled`. Header: `["HT.Tịnh Không", "Thập Thiện Nghiệp Đạo Kinh (tập 9)"]` (speaker từ config, series/episode từ metadata).
 
@@ -179,5 +186,40 @@ Title chọn (số ký tự) — ~15 từ đầu text clip:
 - Evidence bị loại (`30b`): model ghép/diễn đạt lại khi trích — `k12` "người này khiêm tốn cung kính chắc chắn thi đỗ" ghép hai chỗ không liền nhau (text có "người khiêm tốn cung kính" và "người này chắc chắn thi đỗ"); `k02` "không nghĩ thì chân tướng sự thật liền hiện tiền ngay" (text: "không nghĩ không bạn thì chân tướng…"); `k01` (`--force`) "bất khả tư nghị giải thích" (text: "bất khả tư nghị để giải thích"). `k12` chỉ còn 1/3 option valid. P2 hoạt động đúng; tỉ lệ invalid do evidence 3–4/39 (≈ 8–10 %), không clip nào thành `untitled`.
 - Script kiểm độc lập trên `titles.json` thật (không import `auto_short`: sha256 canonical `clips.json`/`candidates.json`, header, thứ tự entry, text G3 tự dựng lại kể cả head cut, luật G5 cho title + alternatives, evidence trọn từ trong text): PASS cả ba lần.
 - Chạy lại không đổi → `skip (up to date)` 0.15 s, không gọi AI, sha256 `titles.json` không đổi (`a8e07373…41ce2b8c8e`, lần chạy mặc định đầu).
-- **Tất định:** `--force` cùng config (model đã nạp) → 12/13 clip giống hệt (title + alternatives); `k01` khác: title "Thế Tôn dùng bất khả tư nghị giải thích chân tướng" → "Bất khả tư nghị giải thích chân tướng sự thật" (alternative cũ lên làm title; option thứ ba mới bị loại vì evidence). Như CP5: cùng seed/temperature 0 không bảo đảm tất định tuyệt đối giữa các trạng thái server. Workspace cuối là kết quả lần `--force` (`qwen3:30b` think on, cấu hình mặc định).
+- **Tất định:** `--force` cùng config (model đã nạp) → 12/13 clip giống hệt (title + alternatives); `k01` khác: title "Thế Tôn dùng bất khả tư nghị giải thích chân tướng" → "Bất khả tư nghị giải thích chân tướng sự thật" (alternative cũ lên làm title; option thứ ba mới bị loại vì evidence). Như CP5: cùng seed/temperature 0 không bảo đảm tất định tuyệt đối giữa các trạng thái server. (Khi đó) workspace cuối là kết quả lần `--force` (`qwen3:30b` think on, v1).
 - `status` → `titling done`.
+
+## Đo thực tế — prompt v2 (Sửa G4, 2026-09-26, cùng video/clip, port 11437)
+
+Cùng `clips.json`, `temperature 0`, `seed 42`, `num_ctx 16384`, `n_options 3`, `max_chars 60`. Không lần gọi nào lỗi/retry; không clip `untitled`. Header như v1. (Trước lần đo, Ollama `127.0.0.1:11437` trả "empty reply" ~5 phút; lần chạy `14b` đầu `failed` đúng G6 — 3 lần thử, backoff 5/15 s, không artifact; chạy lại khi server lên.)
+
+| Cấu hình | Wall (CLI) | Σ gọi AI | Gọi / clip | Token sinh | Prompt lớn nhất | Tổng token lớn nhất / gọi | Option valid | Invalid (lý do) | Titled | Title dạng câu hỏi |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `qwen3:14b` think off, v2 | 35.8 s | 35.5 s | 1.6–9.0 s | 2.1k | 1008 | 1170 | 38/39 | 1 `evidence not in clip text` | 13/13 | 9/13 |
+| `qwen3:30b` think on, v2 (mặc định, workspace) | 537.3 s | 537.1 s | 23.2–54.3 s | 88.9k | 1002 | 9862 (60 % `num_ctx`) | 34/39 | 3 `evidence not in clip text`, 2 `too long` (61) | 13/13 | 13/13 |
+
+Title chọn (số ký tự), đặt cạnh v1 `qwen3:30b` (lần đo v1 đầu):
+
+| Clip | v1 `30b` think on | v2 `30b` think on | v2 `14b` think off |
+|---|---|---|---|
+| k01 | Thế Tôn dùng bất khả tư nghị giải thích chân tướng (50) | Tại sao nghe Phật nói về sự thật mà vẫn khó hiểu? (49) | Tại sao nói tự tính như huyễn như mộng như bèo bọt? (51) |
+| k02 | Bất Khả tư nghị không mơ hồ (27) | Không nghĩ, sự thật hiện ra ngay? (33) | Chân tướng sự thật không thể nói ra hay tưởng tượng (51) |
+| k03 | Người có tâm địa thiện lương thì tướng mạo từ bi (48) | Tướng mạo từ bi từ tâm tốt, đáng sợ vì tâm xấu? (47) | Tâm thiện thì tướng mạo cũng từ bi (34) |
+| k04 | Niệm niệm không dừng trong A lại da thức (40) | Tại sao niệm niệm không dừng khiến tâm chứa hành động? (54) | Hành là gì? Vì sao không ngừng nghỉ (35) |
+| k05 | Sắc pháp nói 11 điều Tâm pháp nói một điều (42) | Vì sao Phật nói nhiều khi người mê nặng? (40) | Tâm pháp chỉ có một điều, sao lại nói 11 pháp? (46) |
+| k06 | Phàm phu thành Phật chỉ trong một niệm (38) | Bình thường thành Phật chỉ trong một niệm? (42) | Biết rồi thì thành Phật chỉ trong một niệm (42) |
+| k07 | Biến hóa khôn lường trong sáu cõi (33) | Tại sao suy nghĩ ta thay đổi không ngừng? (41) | Tại sao con người lại biến hóa khó lường như vậy? (49) |
+| k08 | Nguyên do nghiệp chướng sâu nặng tự mình không thể biết (55) | Tại sao nguyên do nghiệp chướng sâu nặng ta không thể biết? (59) | Tập tính thành tự nhiên là do đâu? (34) |
+| k09 | Tướng và môi trường sống tùy tâm chuyển (39) | Vì sao môi trường sống và cơ thể thay đổi theo tâm? (51) | Tâm thay đổi, thế giới cũng thay đổi (36) |
+| k10 | Một cái móng tay có 900 ý nghĩ (30) | Một giây có bao nhiêu suy nghĩ? (31) | Một ngày bạn có bao nhiêu suy nghĩ? (35) |
+| k11 | Chỉ buông xả ngọn mà không buông xả gốc rễ (42) | Chỉ buông xả cái ngọn có đủ không? (34) | Tại sao trẻ 6 tuổi lại có phước đức lớn đến vậy? (48) |
+| k12 | Người khiêm tốn cung kính thành tựu (35) | Người khiêm tốn chắc chắn thi đỗ, người kiêu căng rớt? (54) | Không hiểu bản thân, làm sao tu học được? (41) |
+| k13 | Khởi tâm động niệm đều là tội lỗi (33) | Tại sao suy nghĩ vì mình lại là tội lỗi? (40) | Mỗi suy nghĩ đều là tội lỗi? (28) |
+
+- Độ dài title chọn: v2 `30b` 31–59 (median 42, 3/13 ≤ 36 ký tự); v2 `14b` 28–51 (median 41, 6/13 ≤ 36); v1 `30b` 27–55 (median 39, 5/13).
+- v2 bớt thuật ngữ rõ rệt ở cả hai model ("A lại da thức", "bất khả tư nghị", "sắc pháp/tâm pháp" biến mất khỏi title `30b`). `14b` think off ở v2 viết hoa kiểu câu đúng ở 13/13 (v1: Hoa Mỗi Chữ 10/13).
+- `30b` v2 đặt **mọi** title (13/13, cả alternatives) thành câu hỏi, vài câu gượng hoặc lệch ý: `k06` "Bình thường thành Phật…" (đoạn nói "phàm phu"), `k12` "Người khiêm tốn chắc chắn thi đỗ, người kiêu căng rớt?" (sát ví dụ trong đoạn nhưng dễ đọc thành hứa hẹn), `k04` còn "niệm niệm", `k08` 59 ký tự.
+- `14b` v2 có title bám lỗi nhận dạng caption: `k11` "Tại sao trẻ 6 tuổi lại có phước đức lớn đến vậy?" (caption "chúng sanh 6 tuổi…", nhiều khả năng nhận dạng sai) — code không bắt được (evidence nguyên văn vẫn đúng).
+- Evidence bị loại vẫn do model ghép/cắt chữ (`30b` `k01` "mộng bèo bọt", `k10`, `k12`; `14b` `k07`); 2 option `30b` quá dài 61 ký tự. `k12` `30b` chỉ còn 1/3 option valid.
+- Script kiểm độc lập (như v1): PASS cả hai lần. Chạy lại không đổi → skip, không gọi AI, sha256 `titles.json` không đổi (`b97cb33b…927c4247`). `status` → `titling done`. Workspace cuối: v2 + `qwen3:30b` think on (mặc định).
+- Model + prompt titling **chưa chốt**: HUMAN LEAD đọc bảng trên (và `alternatives` trong `titling_log.json` / `titles.json`) rồi chốt, ghi CP1 §11.
