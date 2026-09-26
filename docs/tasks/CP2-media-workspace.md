@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -87,9 +87,18 @@ Không chạm database hay security model. CLI là giao diện người dùng đ
 
 ## Result
 
-- Main changes:
-- Tests:
-- Review:
+- Main changes: package `auto_short` (src-layout, hatchling, `yt-dlp` + dev `pytest`); typed TOML config; manifest v1 + stage skip/stale framework (`workspace.py`, `hashing.py`); ingest local/YouTube (`ingest/`); CLI `ingest`/`status`; 36 tests; decision record `docs/decisions/CP2-workspace-contract.md` ACCEPTED; project profile, README, current-state. IMPLEMENTER commits `f696fa8`, `7389c2f`, `4ac2300`.
+- Tests (ORCHESTRATOR chạy lại độc lập, workspace sạch trong scratchpad):
+  - `.venv/bin/pytest -q` → `36 passed` (venv: system Python 3.12.3, `yt-dlp` 2026.8.19, `pytest` 9.1.1).
+  - `auto-short ingest input/rbjfCfFq3Dk/rbjfCfFq3Dk.mp4` lần 1: run, 2.70 s; lần 2: `skip (up to date)`, 0.089 s; `metadata.json` sha256 `aa2c8687…7a35` giống nhau; `--force` chạy lại.
+  - `status` → ingest `done`, các stage sau `pending`.
+  - Lỗi: file không tồn tại → exit 1; `README.md` với `--episode-id` → exit 1, manifest ghi `failed` + `error`, không để `metadata.json`; URL không phải YouTube → exit 1.
+  - YouTube (IMPLEMENTER chạy thật): `ingest https://youtu.be/rbjfCfFq3Dk` → exit 0, 11m03s, `work/rbjfCfFq3Dk/source.mp4` sha256 trùng file local; ORCHESTRATOR chạy lại → `skip (up to date)` 0.089 s, không gọi mạng.
+  - `node scripts/framework-check.mjs` → PASS; `work/`, `.venv/`, `config.toml` không bị track.
+- Review: ACCEPTED (dual-agent, ORCHESTRATOR review diff-first); không có blocking finding. Chi tiết IMPLEMENTER tự chọn trong phạm vi D1–D8 (ghi ở decision record): status `stale` (D6 yêu cầu đánh stale), `source.mtime_ns` làm key cache hash, config key `ingest.js_runtimes` (mặc định `["node"]`, không vào config hash).
 - Important findings / decisions:
-- Known limitations:
-- PR:
+  - Non-blocking: `--force` YouTube mà tải lại thất bại sẽ xóa cả `source.mp4` cũ (nhất quán với quy tắc stage `failed` không giữ artifact, nhưng phải tải lại ~700 MB); comment trong `_ingest_youtube` nói "chỉ thay sau khi probe OK" chưa phản ánh nhánh lỗi.
+  - Non-blocking: `yt-dlp` không pin version; YouTube thay đổi có thể cần nâng cấp hoặc `yt-dlp[default]` (thêm `yt-dlp-ejs`) — là dependency decision nếu xảy ra.
+  - Môi trường: máy thiếu `python3.12-venv` (ensurepip) → venv tạo bằng `--without-pip` + pip wheel local (README ghi cách); cách sạch là `sudo apt install python3.12-venv`. Node chỉ có trên PATH sau khi nạp nvm.
+- Known limitations: chưa có transcript/analysis/AI/render (CP3+). YouTube ingest cần mạng và JS runtime trên PATH.
+- PR: chưa; chờ HUMAN LEAD approve integration.

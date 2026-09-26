@@ -12,8 +12,8 @@ CP2 — Media Input + Artifact Workspace (S2), pha EXECUTE (dual-agent). Task co
 
 ## Next proposed action
 
-1. ORCHESTRATOR review diff + chạy lại required verification.
-2. Fix/retest nếu có blocking finding → READY → HUMAN LEAD approve integration.
+1. CP2 READY (review ACCEPTED).
+2. HUMAN LEAD approve integration (push/PR/merge).
 
 Đây là PROPOSED, không authorize implementation tiếp theo.
 
