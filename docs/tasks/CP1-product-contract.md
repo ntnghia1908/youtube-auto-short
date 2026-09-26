@@ -72,4 +72,4 @@ Không chạm database, security model hoặc public API contract. Task là S2 a
 - Review: ACCEPTED (dual-agent: IMPLEMENTER commit `5bf66cf`; ORCHESTRATOR review diff-first, chạy lại toàn bộ verification). Một micro-fix ORCHESTRATOR: §6 header thêm `speaker` cho khớp §1/§4.
 - Important findings / decisions: toàn bộ quyết định HUMAN LEAD 2026-09-26 ở decision record. `gemma3:12b` chưa có trên máy GPU → model khởi đầu `qwen3:14b`.
 - Known limitations: thông số layout đo từ ảnh chụp 576×1280 (xấp xỉ); CP7 dùng so sánh trực quan với ảnh mẫu làm acceptance. Session ORCHESTRATOR không nạp được `.claude/agents/implementer` (session bắt đầu trước khi file tồn tại), nên IMPLEMENTER chạy bằng general-purpose agent với nguyên văn định nghĩa implementer.
-- PR: chưa; chờ HUMAN LEAD approve integration.
+- PR: https://github.com/ntnghia1908/youtube-auto-short/pull/2 (awaiting HUMAN LEAD merge)

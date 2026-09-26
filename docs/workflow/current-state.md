@@ -13,8 +13,8 @@ CP1 — Product Contract & Architecture Baseline (S2), pha EXECUTE theo profile 
 ## Next proposed action
 
 1. ORCHESTRATOR review diff + verification evidence → READY.
-2. HUMAN LEAD approve integration (push/PR/merge).
-3. CP2 — chưa được authorize; cần task contract riêng và approval.
+2. PR #2 chờ HUMAN LEAD merge.
+3. Sau merge: mở CP2 — Media Input + Artifact Workspace (HUMAN LEAD, 2026-09-26); cần task contract riêng và approval trước khi implement.
 
 Đây là PROPOSED, không authorize implementation tiếp theo.
 
