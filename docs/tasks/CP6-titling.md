@@ -170,4 +170,4 @@ Không chạm database, security model hay public API contract mạng (chỉ g�
   - Còn thuật ngữ ở vài title (k01, k05); đa số title > 36 ký tự nên CP7 cần 3 dòng hoặc chữ nhỏ hơn.
   - AI không hoàn toàn tất định giữa các lần `--force` (30b: 1/13 clip khác; 14b v2 hai lần chạy trùng 13/13).
   - CLI flag header không được lưu; chạy lại không flag có thể chạy lại/`failed`.
-- PR: chưa (chờ HUMAN LEAD approve push + PR).
+- PR: #8 https://github.com/ntnghia1908/youtube-auto-short/pull/8 (HUMAN LEAD approved push + PR 2026-09-26).
