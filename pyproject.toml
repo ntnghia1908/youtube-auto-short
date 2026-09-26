@@ -11,6 +11,8 @@ requires-python = ">=3.11"
 dependencies = [
     # Pinned: last version verified against YouTube. Bump via a new task when YouTube changes.
     "yt-dlp==2026.8.19",
+    # Whisper fallback for transcripts (CP3, docs/decisions/CP3-transcript-contract.md T4).
+    "faster-whisper==1.2.1",
 ]
 
 [project.optional-dependencies]

@@ -4,7 +4,10 @@ Greenfield project for automatically turning Vietnamese long-form lecture videos
 
 ## Current stage
 
-**CP2 — Media input + artifact workspace.** Only the `ingest` stage is implemented: a YouTube URL or a local video enters a per-episode workspace and gets a `metadata.json` and a resumable `manifest.json`. Conventions: `docs/decisions/CP2-workspace-contract.md`.
+**CP3 — Transcript acquisition & normalization.** Implemented stages:
+
+- `ingest`: a YouTube URL or a local video enters a per-episode workspace and gets a `metadata.json` and a resumable `manifest.json`. Conventions: `docs/decisions/CP2-workspace-contract.md`.
+- `transcript`: a Vietnamese `transcript.json` with segment/word timestamps, from the YouTube caption, else a local subtitle, else `faster-whisper`. Contract: `docs/decisions/CP3-transcript-contract.md`.
 
 The project adopts the universal parts of AI Development Framework v4 from `ntnghia1908/dang-vu-spring`, while keeping this repository independent.
 
@@ -26,7 +29,7 @@ AI generates title/panel text
 multiple Short outputs
 ```
 
-Only the first step (ingest) is implemented; the rest of the pipeline is planned.
+Only the first two steps (ingest, transcription) are implemented; the rest of the pipeline is planned.
 
 ## Setup
 
@@ -58,6 +61,22 @@ auto-short ingest https://youtu.be/rbjfCfFq3Dk
 # Options: --episode-id ID, --force (re-run even if up to date), --config PATH
 auto-short status <episode_id>
 ```
+
+Transcript (after ingest):
+
+```bash
+# Tries YouTube caption (vi manual > vi-orig auto > vi auto) -> local subtitle -> faster-whisper;
+# the first transcript that passes validation wins, later providers are not run.
+auto-short transcript <episode_id>
+
+# Local subtitle: --subtitle wins over a sidecar next to the local video
+# (<stem>.vi.srt|.vi.vtt|.vi.json3|.srt|.vtt|.json3). Options: --force, --config PATH
+auto-short transcript <episode_id> --subtitle path/to/lecture.srt
+```
+
+Output: `work/<episode_id>/transcript.json` (plus `transcript/youtube.<track>.json3` for YouTube captions).
+The Whisper fallback (`large-v3-turbo`, CPU `int8` by default, see `[transcript.whisper]` in
+`config.example.toml`) downloads its model (~1.6 GB) from Hugging Face into `models/` on first use.
 
 `python -m auto_short ...` works the same. Re-running `ingest` skips when the source and the
 relevant config are unchanged. Artifacts go to `work/<episode_id>/` (`manifest.json`, `metadata.json`).

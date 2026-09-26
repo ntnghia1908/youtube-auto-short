@@ -53,3 +53,33 @@ def test_python_dash_m(video, config_file, tmp_path):
     episode_id = proc.stdout.split("\t")[0]
     manifest = json.loads((tmp_path / "work" / episode_id / "manifest.json").read_text())
     assert manifest["stages"]["ingest"]["status"] == "done"
+
+
+def test_cli_transcript_with_sidecar(video, config_file, capsys):
+    video.with_name(video.stem + ".vi.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,900\nxin chào quý vị\n", encoding="utf-8")
+    assert main(["ingest", str(video), "--config", str(config_file)]) == 0
+    episode_id = capsys.readouterr().out.split("\t")[0]
+
+    assert main(["transcript", episode_id, "--config", str(config_file)]) == 0
+    out = capsys.readouterr()
+    ep, state, path = out.out.rstrip("\n").split("\t")
+    assert (ep, state) == (episode_id, "transcribed (local_subtitle/subtitle_srt)")
+    assert path.endswith(f"{episode_id}/transcript.json")
+    assert "transcript: youtube unavailable (source is not YouTube)" in out.err
+    assert "transcript: local_subtitle accepted" in out.err
+
+    assert main(["transcript", episode_id, "--config", str(config_file)]) == 0
+    out = capsys.readouterr()
+    assert out.out.split("\t")[1] == "skipped (up to date)"
+    assert "transcript: skip (up to date)" in out.err
+
+    assert main(["status", episode_id, "--config", str(config_file)]) == 0
+    assert "transcript  done" in capsys.readouterr().out
+
+
+def test_cli_transcript_errors(config_file, tmp_path, capsys):
+    assert main(["transcript", "nope", "--config", str(config_file)]) == 1
+    assert "auto-short: error: no manifest" in capsys.readouterr().err
+    assert main(["transcript", "nope", "--subtitle", str(tmp_path / "x.srt"), "--config", str(config_file)]) == 1
+    capsys.readouterr()

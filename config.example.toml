@@ -10,3 +10,28 @@ dir = "work"
 youtube_format = "bv*+ba/b"
 # JavaScript runtimes yt-dlp may use for YouTube challenges; must be on PATH.
 js_runtimes = ["node"]
+
+[transcript]
+# Provider order is fixed: youtube caption -> local subtitle -> faster-whisper.
+# The first transcript that passes validation wins; later providers are not called.
+language = "vi"
+# Acceptance thresholds (docs/decisions/CP3-transcript-contract.md T5).
+min_vietnamese_ratio = 0.3   # share of words with Vietnamese-specific letters
+min_coverage = 0.5           # speech seconds / video duration
+min_words_per_minute = 30    # words / video minutes
+
+[transcript.providers]
+# Config can only disable a provider, not reorder them.
+youtube = true
+local_subtitle = true
+whisper = true
+
+[transcript.whisper]
+model = "large-v3-turbo"
+device = "cpu"
+compute_type = "int8"
+vad_filter = true
+word_timestamps = true
+# Execution-only (not part of the config hash): CPU threads (0 = all CPUs) and model cache dir.
+cpu_threads = 0
+models_dir = "models"
