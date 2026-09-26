@@ -96,6 +96,7 @@ Tham số đo từ ảnh mẫu (576×1280), biểu diễn theo chiều rộng kh
 - Sửa đổi HUMAN LEAD 2026-09-26 (chốt CP4):
   - "Không jump cut" nghĩa là không ghép các ý/đoạn không liên tục. **Rút khoảng lặng** bên trong một đoạn liên tục được phép: mọi khoảng lặng audio trong clip dài hơn `max_pause` = **1.0 s** được rút còn `max_pause` khi render (CP7). Lý do: video giảng pháp nhịp chậm, khoảng lặng chiếm ~45 % thời lượng (đo video test). Giá trị 1.0 s chọn sau khi nghe thử so sánh với 0.5 s, 0.7 s và phương án 2 tầng (`docs/tasks/CP4-analysis.md`).
   - Phần giới thiệu tên kinh/tập/người giảng ngay sau nhạc mở đầu thuộc intro, bị loại cùng nhạc intro.
+- Sửa đổi HUMAN LEAD 2026-09-26 (mở CP5): tối đa **25** Short mỗi episode (config `[selection] max_clips`), thay cho 20 ở trên. Ưu tiên trọn ý vẫn đứng trên số lượng. Rule chọn clip: `docs/decisions/CP5-selection-contract.md`.
 
 ## 6. Title / header structure
 
@@ -154,6 +155,7 @@ Nguyên tắc: stdlib trước; không thêm dependency ngoài danh sách dướ
 
 - Ollama chạy trên **máy GPU riêng**, truy cập qua `OLLAMA_HOST`, mặc định `http://127.0.0.1:11435`; code không hard-code host/model.
 - Model khởi đầu: **`qwen3:14b`** (có sẵn trên máy GPU; thay cho `gemma3:12b` ghi trước đó). CP5/CP10 đo so sánh với `gemma3:12b` và `qwen3:30b` rồi chốt lại.
+- Đo CP5 (2026-09-26, video test, chi tiết `docs/decisions/CP5-selection-contract.md` § Đo thực tế): `qwen3:14b` think off 120 s → 25 clip / 1058 s; `qwen3:14b` think on 305 s → 24 clip / 1206 s; `qwen3:30b` think off → 0 clip (bản chỉ-suy-luận, không dùng được với think off); `qwen3:30b` think on 564 s → 13 clip / 780 s. Model + `think` chưa chốt (HUMAN LEAD nghe mẫu); mặc định tạm `qwen3:14b`, think off.
 - Whisper chỉ là fallback; trên VM không GPU chạy CPU (`int8`, 48 core). Đo thực tế ở CP11.
 
 ## 12. Open questions

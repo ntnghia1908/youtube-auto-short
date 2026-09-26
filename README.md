@@ -4,10 +4,12 @@ Greenfield project for automatically turning Vietnamese long-form lecture videos
 
 ## Current stage
 
-**CP3 — Transcript acquisition & normalization.** Implemented stages:
+**CP5 — AI clip selection.** Implemented stages:
 
 - `ingest`: a YouTube URL or a local video enters a per-episode workspace and gets a `metadata.json` and a resumable `manifest.json`. Conventions: `docs/decisions/CP2-workspace-contract.md`.
 - `transcript`: a Vietnamese `transcript.json` with segment/word timestamps, from the YouTube caption, else a local subtitle, else `faster-whisper`. Contract: `docs/decisions/CP3-transcript-contract.md`.
+- `analysis`: shot/silence detection and deterministic clip candidates (`candidates.json`). Contract: `docs/decisions/CP4-analysis-contract.md`.
+- `selection`: a local Ollama model picks up to 25 non-overlapping, self-contained clips among the candidates (`clips.json` + `selection_log.json`). Contract: `docs/decisions/CP5-selection-contract.md`.
 
 The project adopts the universal parts of AI Development Framework v4 from `ntnghia1908/dang-vu-spring`, while keeping this repository independent.
 
@@ -29,7 +31,7 @@ AI generates title/panel text
 multiple Short outputs
 ```
 
-Only the first two steps (ingest, transcription) are implemented; the rest of the pipeline is planned.
+Ingest, transcription, analysis and AI clip selection are implemented; title generation, composition/render and review are planned.
 
 ## Setup
 
@@ -89,6 +91,20 @@ auto-short analysis <episode_id>   # options: --force, --config PATH
 Output: `work/<episode_id>/shots.json`, `silences.json` and `candidates.json` (schemas and rules:
 `docs/decisions/CP4-analysis-contract.md`; parameters in `[analysis]` of `config.example.toml`).
 Detection takes about 90 s for a 1-hour video; changing any `[analysis]` key re-runs the stage.
+
+AI clip selection (after analysis; needs Ollama, default `http://127.0.0.1:11435`, env `OLLAMA_HOST` overrides):
+
+```bash
+# One Ollama call per continuous content window (between hard breaks); the model proposes unit
+# ranges that each present one complete idea; code keeps only existing candidates, then picks
+# up to 25 non-overlapping clips (score >= 7, complete start and end).
+auto-short selection <episode_id>   # options: --force, --config PATH
+```
+
+Output: `work/<episode_id>/clips.json` (selected clips, referencing `candidates.json` by `candidate_id`) and
+`selection_log.json` (every prompt, raw response and the status of each proposal). Rules and schemas:
+`docs/decisions/CP5-selection-contract.md`; parameters in `[selection]` of `config.example.toml`. Changing
+`ollama_host`/`timeout` does not re-run the stage; changing the model, `think`, options or limits does.
 
 `python -m auto_short ...` works the same. Re-running `ingest` skips when the source and the
 relevant config are unchanged. Artifacts go to `work/<episode_id>/` (`manifest.json`, `metadata.json`).
