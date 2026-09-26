@@ -310,6 +310,9 @@ def test_start_connector_whole_word_normalized():
     assert start_connector("Ở ĐÂY là", B) == "ở đây" and start_connector("ở đâyy", B) is None
     assert start_connector("thìa khóa", B) is None and start_connector("và", B) == "và"
     assert start_connector("chúng ta cho nên", B) is None  # only at the start
+    assert start_connector("Tại vì sao có hiện tượng này", B) == "tại vì sao"
+    assert start_connector("tại vì chúng ta", B) == "tại vì" and start_connector("vì sao vậy", B) == "vì sao"
+    assert start_connector("tại vìa", B) is None
     assert start_connector("cho nên", ()) is None
     assert start_connector("cho nên điều", ("cho", "cho nên")) == "cho nên"  # longest match named
 

@@ -63,8 +63,8 @@ def test_selection_config_parsing():
     d = config_mod.Config().selection
     assert (d.model, d.think, d.temperature, d.seed, d.num_ctx) == ("qwen3:30b", True, 0.0, 42, 32768)
     assert (d.prompt_version, d.max_clips, d.min_score, d.max_window_words, d.retries) == ("v2", 25, 7, 2500, 2)
-    assert d.ollama_host == "http://127.0.0.1:11435"
-    assert d.start_blocklist[:2] == ("cho nên", "vì vậy") and len(d.start_blocklist) == 16
+    assert d.ollama_host == "http://127.0.0.1:11437" and d.retry_backoff == (5.0, 15.0)
+    assert d.start_blocklist[:2] == ("cho nên", "vì vậy") and len(d.start_blocklist) == 19 and d.start_blocklist[-3:] == ("tại vì", "tại vì sao", "vì sao")
     assert config_mod.from_dict({"selection": {"start_blocklist": []}}).selection.start_blocklist == ()
     assert config_mod.from_dict({"selection": {"start_blocklist": ["à"]}}).selection.start_blocklist == ("à",)
 
@@ -83,6 +83,10 @@ def test_selection_config_parsing():
     {"selection": {"start_blocklist": ["cho nên", ""]}},
     {"selection": {"start_blocklist": ["  "]}},
     {"selection": {"start_blocklist": [1]}},
+    {"selection": {"retry_backoff": 5}},
+    {"selection": {"retry_backoff": [-1]}},
+    {"selection": {"retry_backoff": ["5"]}},
+    {"selection": {"retry_backoff": [True]}},
 ])
 def test_selection_config_invalid(data):
     with pytest.raises(ConfigError):

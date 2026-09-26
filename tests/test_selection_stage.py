@@ -17,7 +17,7 @@ from auto_short.hashing import canonical_json, config_hash, sha256_file
 from auto_short.selection import SelectionError, run_selection
 from auto_short.selection.client import ChatError, OllamaClient, resolve_host
 from auto_short.selection.prompt import RESPONSE_SCHEMA, prompt_sha256, prompt_texts
-from auto_short.selection.stage import used_config
+from auto_short.selection.stage import backoff_before, used_config
 from analysis_helpers import FakeAnalyzer
 from selection_helpers import (
     SYN_ANALYSIS,
@@ -199,16 +199,26 @@ def _assert_failed(ws, needle):
     assert not any((ws.dir / n).exists() for n in ARTIFACTS)
 
 
+class FakeSleep:
+    def __init__(self):
+        self.waits: list[float] = []
+
+    def __call__(self, seconds):
+        self.waits.append(seconds)
+
+
 def test_retry_then_success(scfg):
     ws = make_selection_episode(scfg.workspace.dir)
-    fake = FakeClient({"w01": [http_error(), "not json", GOOD["w01"][0]]})
-    assert run_selection("rbjfCfFq3Dk", scfg, client=fake).ran
+    fake, sleep = FakeClient({"w01": [http_error(), "not json", GOOD["w01"][0]]}), FakeSleep()
+    assert run_selection("rbjfCfFq3Dk", scfg, client=fake, sleep=sleep).ran
+    assert sleep.waits == [5.0, 15.0]  # before attempts 2 and 3; none before the first
     assert [c["window"] for c in fake.calls] == ["w01", "w01", "w01", "w02"]
     calls = _load(ws, "selection_log.json")["windows"][0]["ai_calls"]
     assert [c["attempt"] for c in calls] == [1, 2, 3]
     assert "HTTP 500" in calls[0]["error"] and calls[0]["response"] is None
     assert "not valid JSON" in calls[1]["error"] and calls[1]["response"]["content"] == "not json"
     assert calls[2]["error"] is None
+    assert [c["backoff_seconds"] for c in calls] == [0.0, 5.0, 15.0]
     assert _load(ws, "clips.json")["stats"]["ai_calls"] == 4
 
 
@@ -217,9 +227,10 @@ def test_retry_then_success(scfg):
 def test_retries_exhausted_fails_without_artifacts(scfg, reply, needle):
     ws = make_selection_episode(scfg.workspace.dir)
     assert run_selection("rbjfCfFq3Dk", scfg, client=FakeClient(GOOD)).ran
-    fake = FakeClient({"w02": [reply]})
+    fake, sleep = FakeClient({"w02": [reply]}), FakeSleep()
     with pytest.raises(SelectionError, match="window w02: .*after 2 attempts"):
-        run_selection("rbjfCfFq3Dk", _sel(scfg, retries=1), client=fake)
+        run_selection("rbjfCfFq3Dk", _sel(scfg, retries=1), client=fake, sleep=sleep)
+    assert sleep.waits == [5.0]  # no wait after the last attempt
     assert [c["window"] for c in fake.calls] == ["w01", "w02", "w02"]
     _assert_failed(ws, needle)
 
@@ -230,8 +241,23 @@ def test_unreachable_ollama_fails(scfg):
         s.bind(("127.0.0.1", 0))
         port = s.getsockname()[1]  # closed after the block -> connection refused
     with pytest.raises(SelectionError, match="cannot reach Ollama"):
-        run_selection("rbjfCfFq3Dk", _sel(scfg, ollama_host=f"http://127.0.0.1:{port}", retries=0))
+        run_selection("rbjfCfFq3Dk", _sel(scfg, ollama_host=f"http://127.0.0.1:{port}", retries=0),
+                      sleep=FakeSleep())
     _assert_failed(ws, "cannot reach Ollama")
+
+
+def test_backoff_schedule_repeats_last_value_and_is_not_hashed(scfg):
+    make_selection_episode(scfg.workspace.dir)
+    fake, sleep = FakeClient({"w01": [http_error()] * 4 + [GOOD["w01"][0]]}), FakeSleep()
+    assert run_selection("rbjfCfFq3Dk", _sel(scfg, retries=4), client=fake, sleep=sleep).ran
+    assert sleep.waits == [5.0, 15.0, 15.0, 15.0]
+    assert backoff_before(1, (5.0, 15.0)) == 0 and backoff_before(2, ()) == 0
+    assert backoff_before(3, (2.0,)) == 2.0
+    assert used_config(_sel(scfg, retry_backoff=(1.0,))) == used_config(scfg)
+    sleep = FakeSleep()  # empty schedule: retry immediately
+    fake = FakeClient({"w01": [http_error(), GOOD["w01"][0]]})
+    assert run_selection("rbjfCfFq3Dk", _sel(scfg, retry_backoff=()), client=fake, sleep=sleep, force=True).ran
+    assert sleep.waits == []
 
 
 def test_analysis_not_done_is_refused(scfg):
@@ -366,9 +392,9 @@ def test_ollama_client_request_and_errors(ollama):
 
 def test_resolve_host_env_overrides_config(monkeypatch):
     monkeypatch.delenv("OLLAMA_HOST", raising=False)
-    assert resolve_host("http://127.0.0.1:11435/") == "http://127.0.0.1:11435"
+    assert resolve_host("http://127.0.0.1:11437/") == "http://127.0.0.1:11437"
     monkeypatch.setenv("OLLAMA_HOST", "gpu-box:11434")
-    assert resolve_host("http://127.0.0.1:11435") == "http://gpu-box:11434"
+    assert resolve_host("http://127.0.0.1:11437") == "http://gpu-box:11434"
 
 
 def test_cli_selection_end_to_end(tmp_path, ollama, monkeypatch, capsys):
@@ -379,7 +405,7 @@ def test_cli_selection_end_to_end(tmp_path, ollama, monkeypatch, capsys):
     ws = make_selection_episode(root)
     cfg_file = tmp_path / "config.toml"
     cfg_file.write_text(f'[workspace]\ndir = "{root.as_posix()}"\n[analysis]\noutro_window = 5.0\n'
-                        '[selection]\nollama_host = "http://127.0.0.1:1"\n', encoding="utf-8")
+                        '[selection]\nollama_host = "http://127.0.0.1:1"\nretry_backoff = []\n', encoding="utf-8")
     assert config_mod.load(cfg_file).analysis == SYN_ANALYSIS
 
     assert main(["selection", "rbjfCfFq3Dk", "--config", str(cfg_file)]) == 0
