@@ -73,7 +73,8 @@ retries = 2                  # extra attempts per window on HTTP/timeout/JSON/sc
 # Proposals whose first unit starts with one of these phrases (whole words, case-insensitive)
 # are ineligible: the clip would depend on what came before. Empty list = filter off.
 start_blocklist = ["cho nên", "vì vậy", "thế nên", "thế là", "do đó", "còn", "và", "nhưng", "mà", "rồi",
-                   "thì", "cái này", "điều đó", "việc này", "như vậy", "ở đây"]
+                   "thì", "cái này", "điều đó", "việc này", "như vậy", "ở đây", "tại vì", "tại vì sao", "vì sao"]
 # Execution-only (not part of the config hash). Env OLLAMA_HOST overrides ollama_host.
-ollama_host = "http://127.0.0.1:11435"
+ollama_host = "http://127.0.0.1:11437"
 timeout = 600                # seconds per Ollama request
+retry_backoff = [5, 15]      # seconds to wait before retry 1, 2 (the last value repeats for more retries)

@@ -87,7 +87,7 @@ class AnalysisConfig:
 
 # B11: opening connectors that make a clip start depend on what came before (same list as prompt v2).
 DEFAULT_START_BLOCKLIST = ("cho nên", "vì vậy", "thế nên", "thế là", "do đó", "còn", "và", "nhưng", "mà", "rồi",
-                           "thì", "cái này", "điều đó", "việc này", "như vậy", "ở đây")
+                           "thì", "cái này", "điều đó", "việc này", "như vậy", "ở đây", "tại vì", "tại vì sao", "vì sao")
 
 
 @dataclass(frozen=True)
@@ -106,8 +106,9 @@ class SelectionConfig:
     retries: int = 2
     start_blocklist: tuple[str, ...] = DEFAULT_START_BLOCKLIST  # empty = filter off
     # Execution-only settings (not part of the config hash); env OLLAMA_HOST overrides ollama_host.
-    ollama_host: str = "http://127.0.0.1:11435"
+    ollama_host: str = "http://127.0.0.1:11437"
     timeout: float = 600.0
+    retry_backoff: tuple[float, ...] = (5.0, 15.0)  # wait before attempt 2, 3 (last value repeats)
 
 
 @dataclass(frozen=True)
@@ -234,6 +235,10 @@ def _selection(data: dict) -> SelectionConfig:
     blocklist = se.get("start_blocklist", list(d.start_blocklist))
     if not isinstance(blocklist, list) or not all(isinstance(x, str) and x.strip() for x in blocklist):
         raise ConfigError(f"{w}.start_blocklist must be a list of non-empty strings")
+    backoff = se.get("retry_backoff", list(d.retry_backoff))
+    if not isinstance(backoff, list) or not all(
+            isinstance(x, (int, float)) and not isinstance(x, bool) and 0 <= x <= 3600 for x in backoff):
+        raise ConfigError(f"{w}.retry_backoff must be a list of numbers between 0 and 3600 (seconds)")
     return SelectionConfig(
         model=_str(se, "model", d.model, w),
         think=_bool(se, "think", d.think, w),
@@ -248,6 +253,7 @@ def _selection(data: dict) -> SelectionConfig:
         start_blocklist=tuple(blocklist),
         ollama_host=_str(se, "ollama_host", d.ollama_host, w),
         timeout=_number(se, "timeout", d.timeout, w, lo=1),
+        retry_backoff=tuple(float(x) for x in backoff),
     )
 
 

@@ -9,6 +9,7 @@ import hashlib
 import json
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -103,13 +104,25 @@ def _read_json(path: Path, what: str) -> dict:
         raise SelectionError(f"cannot read {path}: {exc}; re-run 'auto-short {what}'") from exc
 
 
+def backoff_before(attempt: int, backoff: tuple[float, ...]) -> float:
+    """Seconds to wait before ``attempt`` (1-based): none before the first; then the backoff
+    list in order, repeating its last value (B5)."""
+    if attempt <= 1 or not backoff:
+        return 0.0
+    return backoff[min(attempt - 2, len(backoff) - 1)]
+
+
 def _call_window(client: ChatClient, cfg: SelectionConfig, messages: list[dict], window: Window,
-                 wlog: dict) -> list[dict]:
-    """Call the model for one window with retries (B5); returns parsed proposals."""
+                 wlog: dict, sleep: Callable[[float], None]) -> list[dict]:
+    """Call the model for one window with retries and backoff (B5); returns parsed proposals."""
     opts = options(cfg)
     last_error = None
     for attempt in range(1, cfg.retries + 2):
-        call = {"attempt": attempt, "seconds": None,
+        wait = backoff_before(attempt, cfg.retry_backoff)
+        if wait > 0:
+            log.info("%s: window %s: waiting %g s before attempt %d", STAGE, window.id, wait, attempt)
+            sleep(wait)
+        call = {"attempt": attempt, "backoff_seconds": wait, "seconds": None,
                 "request": {"model": cfg.model, "messages": messages, "format": RESPONSE_SCHEMA, "options": opts,
                             "think": cfg.think, "stream": False},
                 "response": None, "error": None}
@@ -134,7 +147,7 @@ def _call_window(client: ChatClient, cfg: SelectionConfig, messages: list[dict],
 
 
 def select(episode_id: str, cand_doc: dict, metadata: dict, silences_doc: dict, cfg: SelectionConfig,
-           client: ChatClient) -> tuple[dict, dict]:
+           client: ChatClient, sleep: Callable[[float], None] = time.sleep) -> tuple[dict, dict]:
     """Stage body without I/O: inputs -> (clips document, selection log document)."""
     system, _ = prompt_texts(cfg.prompt_version)
     p_sha = prompt_sha256(cfg.prompt_version)
@@ -169,7 +182,7 @@ def select(episode_id: str, cand_doc: dict, metadata: dict, silences_doc: dict, 
                         cfg.prompt_version, title=title, window_id=win.id, units=win.units, durations=durations,
                         max_pause=params["max_pause"], pad=params["boundary_pad"])}]
         t0 = time.monotonic()
-        proposals = _call_window(client, cfg, messages, win, wlog)
+        proposals = _call_window(client, cfg, messages, win, wlog, sleep)
         recs = map_proposals(proposals, win, by_units, durations, params)
         wlog["proposals"] = recs
         records.extend(recs)
@@ -214,7 +227,8 @@ def select(episode_id: str, cand_doc: dict, metadata: dict, silences_doc: dict, 
 
 
 def run_selection(episode_id: str, config: Config, *, force: bool = False,
-                  client: ChatClient | None = None) -> SelectionResult:
+                  client: ChatClient | None = None,
+                  sleep: Callable[[float], None] = time.sleep) -> SelectionResult:
     cfg = config.selection
     try:
         prompt_texts(cfg.prompt_version)
@@ -251,7 +265,7 @@ def run_selection(episode_id: str, config: Config, *, force: bool = False,
         silences_doc = _read_json(sil_path, "analysis")
         log.info("%s: model %s (think=%s) via %s", STAGE, cfg.model, cfg.think,
                  getattr(chat, "host", type(chat).__name__))
-        clips_doc, log_doc = select(ws.episode_id, cand_doc, metadata, silences_doc, cfg, chat)
+        clips_doc, log_doc = select(ws.episode_id, cand_doc, metadata, silences_doc, cfg, chat, sleep)
         try:
             _remove_outputs(ws)
             atomic_write_json(ws.dir / LOG_NAME, log_doc)

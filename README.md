@@ -92,7 +92,7 @@ Output: `work/<episode_id>/shots.json`, `silences.json` and `candidates.json` (s
 `docs/decisions/CP4-analysis-contract.md`; parameters in `[analysis]` of `config.example.toml`).
 Detection takes about 90 s for a 1-hour video; changing any `[analysis]` key re-runs the stage.
 
-AI clip selection (after analysis; needs Ollama, default `http://127.0.0.1:11435`, env `OLLAMA_HOST` overrides):
+AI clip selection (after analysis; needs Ollama, default `http://127.0.0.1:11437`, env `OLLAMA_HOST` overrides):
 
 ```bash
 # One Ollama call per continuous content window (between hard breaks); the model proposes unit
