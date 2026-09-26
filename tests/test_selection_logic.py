@@ -354,6 +354,11 @@ def test_head_cut_prefers_silence_before_kept_word():
     assert cut["source_start"] == 11.2
     cut, _ = head_cut(_cand(), seg, [(5.0, 9.9)], CUT, 0.1)  # silence before the last dropped word: ignored
     assert cut["method"] == "word" and cut["source_start"] == 11.4
+    # the clip's boundary silence (starts before source_start 9.7) is ignored even if caption timing of the
+    # connector is early and makes it overlap: real case c00457 "thì" (silence 1248.63-1250.29)
+    seg = {"words": _words("thì tương đối", 9.9)}  # "thì" 9.9-10.4, "tương" 10.4
+    cut, _ = head_cut(_cand(), seg, [(8.0, 10.2)], CUT, 0.1)
+    assert (cut["method"], cut["source_start"]) == ("word", 10.3)
 
 
 def test_head_cut_skipped_without_timing_or_when_all_words_dropped():

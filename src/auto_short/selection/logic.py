@@ -245,13 +245,16 @@ def head_cut(cand: dict, segment: dict | None, silences: list[tuple[float, float
         return None, f"'{dropped}' is the whole first segment"
     last_drop, keep = words[n - 1], words[n]
     lo, hi = _ms(last_drop["start"]), _ms(keep["start"])
-    sil = [(a, b) for a, b in silences if _ms(a) < hi and _ms(b) > lo]  # silence meets [last dropped, kept)
+    orig = _ms(cand["source_start"])
+    # A silence meeting [last dropped word, first kept word) and starting inside the clip; the clip's own
+    # boundary silence (starting before source_start) is excluded: caption timing of the first word is
+    # often early, so that silence usually precedes the connector itself.
+    sil = [(a, b) for a, b in silences if _ms(a) < hi and _ms(b) > lo and _ms(a) > orig]
     if sil:
         a, b = sil[-1]
         t, method = max(_ms(b) - _ms(pad), _ms(a)), "silence"
     else:
         t, method = hi - _ms(pad), "word"
-    orig = _ms(cand["source_start"])
     if t <= orig:
         return None, f"cut point {t / 1000} not after source_start {cand['source_start']} ('{dropped}')"
     if t >= _ms(cand["source_end"]):
