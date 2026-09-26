@@ -8,19 +8,20 @@ Chỉ ghi operational state không suy ra được từ Git, task contract hoặ
 
 ## Current focus
 
-CP2 — Media Input + Artifact Workspace (S2), pha EXECUTE (dual-agent). Task contract `docs/tasks/CP2-media-workspace.md` APPROVED; D1–D8 ghi ở `docs/decisions/CP2-workspace-contract.md`. CP1 DONE (PR #2 merged).
+CP2 — Media Input + Artifact Workspace: READY, PR #3 chờ HUMAN LEAD merge. FW-v4.1 (session scope + framework history, `docs/tasks/FW-v4.1-session-scope.md`): READY trên branch local `feature/framework-session-scope` (chưa push), chờ HUMAN LEAD approve push/PR.
 
 ## Next proposed action
 
-1. CP2 READY (review ACCEPTED).
-2. HUMAN LEAD approve integration (push/PR/merge).
+1. HUMAN LEAD merge PR #3 (CP2).
+2. HUMAN LEAD approve push/PR cho `feature/framework-session-scope`; sau khi merge, đồng bộ file này với framework v4.1.
+3. HUMAN LEAD quyết mở CP3 — Transcript Acquisition & Normalization (roadmap §4 CP3).
 
 Đây là PROPOSED, không authorize implementation tiếp theo.
 
 ## Open decisions
 
-- Không.
+- Mở CP3 hay chưa.
 
 ## Blockers
 
-- Không. `ffmpeg` 6.1.1 đã cài; Ollama `127.0.0.1:11435` phản hồi.
+- Không. Runtime: conda env `auto-short` (Python 3.12); YouTube cần `node` trên PATH (nvm).
