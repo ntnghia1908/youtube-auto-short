@@ -57,10 +57,36 @@ if (exists('FRAMEWORK_ADOPTION.md')) {
   for (const token of ['Adopted', 'Adapted', 'Not adopted']) if (!a.includes(token)) fail(`FRAMEWORK_ADOPTION.md missing section: ${token}`);
 }
 
+// Task contracts: required metadata and sections from docs/ai/workflow.md §4.
+const taskFields = {
+  'Status': ['DRAFT', 'APPROVED', 'IN_PROGRESS', 'READY'],
+  'Type': null,
+  'Change class': ['S1', 'S2'],
+  'Owner': null,
+  'Execution profile': ['single-agent', 'dual-agent'],
+  'Implementation authorized': ['YES', 'NO'],
+};
+const taskSections = ['Goal', 'Scope', 'Acceptance Criteria', 'Required verification'];
+const tasks = exists('docs/tasks')
+  ? fs.readdirSync(path.join(ROOT, 'docs/tasks')).filter((f) => f.endsWith('.md') && f !== '_template.md').sort()
+  : [];
+for (const file of tasks) {
+  const rel = `docs/tasks/${file}`;
+  const lines = read(rel).split('\n');
+  for (const [field, allowed] of Object.entries(taskFields)) {
+    const line = lines.find((x) => x.startsWith(`- ${field}:`));
+    const value = line ? line.slice(`- ${field}:`.length).trim() : '';
+    if (!value) fail(`${rel}: missing field: ${field}`);
+    else if (allowed && !allowed.includes(value)) fail(`${rel}: invalid ${field}: ${value}`);
+  }
+  for (const section of taskSections) if (!lines.includes(`## ${section}`)) fail(`${rel}: missing section: ${section}`);
+}
+
 if (errors.length) {
   for (const e of errors) console.log(`FAIL: ${e}`);
   process.exit(1);
 }
 
 for (const rel of required) console.log(`PASS: ${rel}`);
+for (const file of tasks) console.log(`PASS: task contract docs/tasks/${file}`);
 console.log('PASS: framework structure');

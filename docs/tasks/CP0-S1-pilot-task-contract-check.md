@@ -2,14 +2,14 @@
 
 ## Status / Approval
 
-- Status: DRAFT
+- Status: READY
 - Type: CHANGE
 - Change class: S1
 - Owner: HUMAN LEAD
 - Execution profile: single-agent
-- Base commit / branch: `f1072b7` / `feat/cp0-framework-bootstrap`
-- Human Lead approval: pending
-- Implementation authorized: NO
+- Base commit / branch: `d04bb13` / `feat/cp0-framework-bootstrap`
+- Human Lead approval: accepted (APPROVE TASK, 2026-09-26)
+- Implementation authorized: YES
 
 Lifecycle: `DRAFT → APPROVED → IN_PROGRESS → READY`. DONE suy ra từ Git sau khi merge.
 
@@ -57,9 +57,9 @@ Không chạm database, security model hoặc public API contract; manual test l
 
 ## Result
 
-- Main changes:
-- Tests:
-- Review:
-- Important findings / decisions:
-- Known limitations:
-- PR:
+- Main changes: `scripts/framework-check.mjs` kiểm metadata (`Status`, `Type`, `Change class`, `Owner`, `Execution profile`, `Implementation authorized`) và section bắt buộc của mọi `docs/tasks/*.md` trừ `_template.md`.
+- Tests: `node scripts/framework-check.mjs` → exit 0 (2 task contract PASS). Negative test trên bản copy tạm: xóa `Change class`, `Execution profile: triple-agent`, xóa `## Acceptance Criteria` → exit 1 với đúng message; `_template.md` hỏng vẫn exit 0. `git diff --stat` → chỉ checker + contract này.
+- Review: ACCEPTED (single-agent review riêng: contract → diff → AC → evidence); không có blocking finding.
+- Important findings / decisions: checker chỉ enforce rule đã có ở workflow §4, không tạo rule mới.
+- Known limitations: giá trị field phải khớp chính xác (không cho ghi chú sau `Status`); section so khớp theo dòng LF, file CRLF sẽ báo thiếu section.
+- PR: chưa; chờ HUMAN LEAD quyết integration.
