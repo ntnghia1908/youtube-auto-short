@@ -139,7 +139,7 @@ class TitlingConfig:
     temperature: float = 0.0
     seed: int = 42
     num_ctx: int = 16384
-    prompt_version: str = "v1"
+    prompt_version: str = "v2"
     n_options: int = 3
     min_chars: int = 10
     max_chars: int = 60

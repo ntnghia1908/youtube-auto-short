@@ -64,7 +64,7 @@ def test_request_follows_g4(tcfg):
     assert call["options"] == {"temperature": 0, "seed": 42, "num_ctx": 16384}
     assert call["format"] == RESPONSE_SCHEMA
     system, user = call["messages"]
-    assert system == {"role": "system", "content": system_prompt("v1", max_chars=60, n_options=3)}
+    assert system == {"role": "system", "content": system_prompt("v2", max_chars=60, n_options=3)}
     assert user["role"] == "user"
     assert user["content"].startswith("Video: Phật Thuyết Thập Thiện Nghiệp Đạo Kinh tập 9 - Lão Pháp Sư Tịnh Không\n"
                                       "Thời lượng Short: ")
@@ -104,7 +104,7 @@ def test_titles_and_log_documents(tcfg):
     assert doc["header"]["sources"] == {"speaker": "config", "series": "metadata", "episode": "metadata"}
     assert doc["model"] == {"provider": "ollama", "name": "qwen3:30b", "think": True,
                             "options": {"temperature": 0, "seed": 42, "num_ctx": 16384}}
-    assert doc["prompt_version"] == "v1" and doc["prompt_sha256"] == prompt_sha256("v1")
+    assert doc["prompt_version"] == "v2" and doc["prompt_sha256"] == prompt_sha256("v2")
     assert doc["params"] == {"n_options": 3, "min_chars": 10, "max_chars": 60, "retries": 2}
     assert doc["stats"] == {"clips": 2, "ai_calls": 2, "titled": 2, "untitled": 0}
     t1, t2 = doc["titles"]
@@ -308,6 +308,21 @@ def test_rerun_skips_and_config_changes(tcfg, caplog):
         assert not run_titling(EID, cfg, client=f).ran, kw
     assert run_titling(EID, _hdr(tcfg, speaker="Pháp sư Tịnh Không"), client=fake).ran
     assert run_titling(EID, _hdr(tcfg, speaker="Pháp sư Tịnh Không"), force=True, client=fake).ran
+
+
+def test_prompt_v1_still_selectable_and_rehashes(tcfg):
+    ws = make_titling_episode(tcfg.workspace.dir)
+    run_titling(EID, tcfg, client=FakeClient())
+    h2 = manifest_of(ws)["stages"]["titling"]["config_hash"]
+    fake = FakeClient()
+    cfg1 = _ti(tcfg, prompt_version="v1")
+    assert run_titling(EID, cfg1, client=fake).ran  # different prompt_sha256 -> config changed
+    assert fake.calls[0]["messages"][0]["content"] == system_prompt("v1", max_chars=60, n_options=3)
+    doc = _load(ws, "titles.json")
+    assert doc["prompt_version"] == "v1" and doc["prompt_sha256"] == prompt_sha256("v1")
+    h1 = manifest_of(ws)["stages"]["titling"]["config_hash"]
+    assert h1 != h2 and h1 == config_hash(used_config(cfg1, HEADER))
+    assert not run_titling(EID, cfg1, client=fake).ran
 
 
 def test_unknown_prompt_version(tcfg):

@@ -85,7 +85,7 @@ def test_header_config_invalid(header):
 def test_titling_config_parsing():
     t = config_mod.Config().titling
     assert (t.model, t.think, t.temperature, t.seed, t.num_ctx, t.prompt_version) == \
-        ("qwen3:30b", True, 0.0, 42, 16384, "v1")
+        ("qwen3:30b", True, 0.0, 42, 16384, "v2")
     assert (t.n_options, t.min_chars, t.max_chars, t.retries, t.timeout, t.retry_backoff) == \
         (3, 10, 60, 2, 600.0, (5.0, 15.0))
     assert t.ollama_host == "http://127.0.0.1:11437" and t.header == TitlingHeaderConfig()
@@ -126,13 +126,29 @@ def test_clip_text_drops_head_cut_words():
 
 # --- AC3 prompt -----------------------------------------------------------------------------------------
 
-def test_prompt_text():
-    s = system_prompt("v1", max_chars=60, n_options=3)
+def test_prompt_versions():
+    assert prompt_sha256("v1") != prompt_sha256("v2")
+    v1, v2 = (system_prompt(v, max_chars=60, n_options=3) for v in ("v1", "v2"))
+    assert v1 != v2 and "Các bậc thang tu học Phật pháp" in v1  # v1 kept verbatim
+    for phrase in ("người học Phật tại gia và người bình dân", "hook", "đời thường", "Gợi một chút tò mò",
+                   "Tránh thuật ngữ khó", "Không giật tít", "không hứa hẹn", "Được dùng dấu hỏi",
+                   "Viết hoa kiểu câu", "tối đa 60 ký tự", "đúng 3 phương án", "NGUYÊN VĂN", "không dấu chấm than",
+                   "Không emoji", "Không thêm tên người giảng, tên kinh, số tập"):
+        assert phrase in v2, phrase
+    assert "<<" not in v2
+    assert render_user_prompt("v2", title="T", duration=1, text="x") == render_user_prompt("v1", title="T", duration=1,
+                                                                                          text="x")
+
+
+@pytest.mark.parametrize("version", ["v1", "v2"])
+def test_prompt_text(version):
+    s = system_prompt(version, max_chars=60, n_options=3)
     assert "tối đa 60 ký tự" in s and "đúng 3 phương án" in s and "<<" not in s
-    for phrase in ("CHÍNH ĐOẠN NÀY", "Không thêm tên người giảng, tên kinh, số tập", "Không emoji",
-                   "không hashtag", "không dấu chấm than", "không giật tít", "NGUYÊN VĂN", "một dòng"):
-        assert phrase in s
-    assert render_user_prompt("v1", title="", duration=38.379, text="abc") == \
+    for phrase in ("CHÍNH ĐOẠN NÀY", "Không thêm tên người giảng, tên kinh, số tập", "không hashtag",
+                   "không dấu chấm than", "NGUYÊN VĂN", "một dòng"):
+        assert phrase in s, phrase
+    assert "giật tít" in s.lower() and "không emoji" in s.lower()
+    assert render_user_prompt(version, title="", duration=38.379, text="abc") == \
         "Video: (không rõ)\nThời lượng Short: 38.4 giây\n\nLời nói của đoạn:\nabc"
     assert len(prompt_sha256("v1")) == 64
     with pytest.raises(ValueError):
