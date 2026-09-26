@@ -8,24 +8,20 @@ Chỉ ghi operational state không suy ra được từ Git, task contract hoặ
 
 ## Current focus
 
-CP0 — Framework v4 adoption + greenfield project bootstrap. Roadmap canonical: `AUTO_SHORT_CHECKPOINT_PLAN.md`.
+CP1 — Product Contract & Architecture Baseline (S2), pha DISCUSS. Roadmap canonical: `AUTO_SHORT_CHECKPOINT_PLAN.md`. CP0 DONE (PR #1 merged).
 
 ## Next proposed action
 
-1. Verify CP0 structure and checker.
-2. Human Lead review CP0 diff/commit.
-3. Integrate CP0 into `main`.
-4. Sau CP0, tạo task/decision cho CP1 — Product Contract & Architecture Baseline (S2).
+1. HUMAN LEAD trả lời open questions trong `docs/decisions/CP1-product-contract.md` §12 (DECIDE).
+2. Ghi quyết định cuối, đổi Status ACCEPTED (DOCUMENT); approve `docs/tasks/CP1-product-contract.md`.
+3. Execute → review → READY → PR.
 
 Đây là PROPOSED, không authorize implementation tiếp theo.
 
 ## Open decisions
 
-- Execution profile mặc định cho feature development: chưa khóa; từng task phải ghi profile.
-- Runtime stack/model versions: chưa khóa.
-- Exact short-selection policy: chưa khóa.
-- Exact yellow-panel template dimensions/typography: chưa khóa.
+- Xem `docs/decisions/CP1-product-contract.md` §12.
 
 ## Blockers
 
-None. CP0 READY; PR vào `main` chờ HUMAN LEAD merge. CP1 mở sau merge (HUMAN LEAD, 2026-09-26).
+- Môi trường (không chặn CP1, chặn checkpoint sau): `ffmpeg` chưa cài (trước CP2); Ollama `127.0.0.1:11435` trả `Connection reset` (trước CP5).
