@@ -86,6 +86,7 @@ Từ một episode đã có `candidates.json` (CP4), stage `selection` gọi Oll
     - Chạy lại selection → downstream stale; analysis chạy lại → selection stale.
     - CLI `auto-short selection <episode_id> [--force] [--config PATH]` — stdout `<episode_id>\t<selected (<n> clips)|skipped (up to date)>\t<path clips.json>`; log (mỗi window: số unit, số đề xuất, thời gian gọi; tổng valid/eligible/selected, tổng thời lượng) ra stderr; exit code theo CP2 D8.
   - **B10 Model / reproducibility:** mặc định `qwen3:14b`, `temperature 0`, `seed 42`. `think` là tham số đo (P1). Đo trên video test: `qwen3:14b` think off, `qwen3:14b` think on, `qwen3:30b` think off → thời gian, số đề xuất/valid/selected, và mẫu clip để HUMAN LEAD nghe; HUMAN LEAD chốt model + `think` (ghi CP1 §11). Chạy lại cùng config với `--force` → so sánh `clips.json` (kỳ vọng giống; nếu Ollama không deterministic thì ghi nhận mức khác biệt, không che).
+- **Sửa B3 (HUMAN LEAD 2026-09-26, sau đo v1):** thêm prompt **v2** — mỗi dòng unit có thêm thời gian cộng dồn (thời lượng Short thực tế tính từ đầu window, theo cách tính của đề xuất) để model tự kiểm 30–180 s; `prompt_version` mặc định `"v2"`, giữ v1 trong code để so sánh. Đo lại v2 với các cấu hình B10 (bỏ `qwen3:30b` think off — không dùng được, xem Result) và render mẫu; HUMAN LEAD nghe một lượt cả v1/v2 rồi chốt P1 + model.
 - Tham số HUMAN LEAD cần chốt (đề xuất mặc định, có thể chốt lại sau đo như P1 của CP4):
   - **P1 `think`:** đề xuất quyết sau đo (mặc định `false` cho tới khi chốt).
   - **P2 `min_score`:** 7 / 10.
