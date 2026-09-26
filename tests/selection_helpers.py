@@ -18,11 +18,22 @@ from analysis_helpers import REAL, FakeAnalyzer, make_analysis_episode, real_seg
 SYN_ANALYSIS = AnalysisConfig(outro_window=5.0)
 
 
-def synthetic_lecture() -> tuple[list[dict], list[tuple[float, float]], list[float], float]:
+def _timed(segment: dict) -> dict:
+    """Give a segment evenly spaced word timings (like caption word timing)."""
+    toks = segment["text"].split()
+    step = (segment["end"] - segment["start"]) / len(toks)
+    segment["words"] = [{"start": round(segment["start"] + k * step, 3),
+                         "end": round(segment["start"] + (k + 1) * step, 3), "text": t} for k, t in enumerate(toks)]
+    return segment
+
+
+def synthetic_lecture(prefix: dict[int, str] | None = None
+                      ) -> tuple[list[dict], list[tuple[float, float]], list[float], float]:
     """Two windows separated by a ``[âm nhạc]`` hard break: 6 + 5 units of 20 s speech
     (two segments with a 2 s inner pause) separated by 4 s silences. One shot change right
     after the start of u0003 so candidates starting at u0003 are removed by the shot guard.
-    Returns (segments, silences, shot_changes, duration)."""
+    ``prefix`` maps a unit number (1-based) to words put before its first segment's text.
+    Speech segments carry evenly spaced word timings. Returns (segments, silences, shot_changes, duration)."""
     segments, silences, n = [], [], 1
     starts = []
 
@@ -30,9 +41,11 @@ def synthetic_lecture() -> tuple[list[dict], list[tuple[float, float]], list[flo
         nonlocal n
         for k in range(count):
             starts.append(t)
-            segments.append(seg(n, t, t + 9.0, f"ý thứ {len(starts)} phần đầu chúng ta học kinh")); n += 1
+            head = (prefix or {}).get(len(starts), "")
+            segments.append(_timed(seg(n, t, t + 9.0, f"{head} ý thứ {len(starts)} phần đầu chúng ta học kinh".strip())))
+            n += 1
             silences.append((t + 9.0, t + 11.0))
-            segments.append(seg(n, t + 11.0, t + 20.0, f"ý thứ {len(starts)} phần cuối xin nhớ kỹ")); n += 1
+            segments.append(_timed(seg(n, t + 11.0, t + 20.0, f"ý thứ {len(starts)} phần cuối xin nhớ kỹ"))); n += 1
             silences.append((t + 20.0, t + 24.0))
             t += 24.0
         return t
@@ -102,9 +115,9 @@ def http_error() -> ChatError:
     return ChatError("HTTP 500 from fake: boom")
 
 
-def make_selection_episode(root: Path, *, analysis_status: str = "done"):
+def make_selection_episode(root: Path, *, analysis_status: str = "done", prefix: dict[int, str] | None = None):
     """Workspace with ingest + transcript + analysis done on the synthetic lecture."""
-    segments, silences, changes, duration = synthetic_lecture()
+    segments, silences, changes, duration = synthetic_lecture(prefix)
     ws = make_analysis_episode(root, segments=segments, duration=duration)
     from auto_short.config import Config, WorkspaceConfig
     cfg = Config(workspace=WorkspaceConfig(dir=root), analysis=SYN_ANALYSIS)

@@ -12,11 +12,11 @@ import pytest
 from auto_short import config as config_mod
 from auto_short.analysis import run_analysis
 from auto_short.cli import main
-from auto_short.config import DEFAULT_START_BLOCKLIST, Config, WorkspaceConfig
+from auto_short.config import DEFAULT_HEAD_CUT_WORDS, Config, WorkspaceConfig
 from auto_short.hashing import canonical_json, config_hash, sha256_file
 from auto_short.selection import SelectionError, run_selection
 from auto_short.selection.client import ChatError, OllamaClient, resolve_host
-from auto_short.selection.prompt import RESPONSE_SCHEMA, prompt_sha256, prompt_texts
+from auto_short.selection.prompt import RESPONSE_SCHEMA, prompt_sha256, prompt_texts, system_prompt
 from auto_short.selection.stage import backoff_before, used_config
 from analysis_helpers import FakeAnalyzer
 from selection_helpers import (
@@ -69,6 +69,7 @@ def test_request_follows_b3(scfg):
     assert call["format"] == RESPONSE_SCHEMA
     system, user = call["messages"]
     assert system["role"] == "system" and "TRỌN MỘT Ý" in system["content"]
+    assert system["content"] == system_prompt("v3", DEFAULT_HEAD_CUT_WORDS) and '"cho nên", "vì vậy"' in system["content"]
     assert user["role"] == "user" and user["content"].startswith("Video: (không rõ)\n")  # no title in metadata
     assert "u0001 | từ 0.0 | đến 19.6 | đầu nội dung | ý thứ 1" in user["content"]
     assert "u0002 | từ 20.0 | đến 39.6 | lặng 4.0 s | ý thứ 2" in user["content"]
@@ -101,12 +102,13 @@ def test_clips_and_log_documents(scfg):
     assert doc["candidates_sha256"] == hashlib.sha256(canonical_json(cands).encode()).hexdigest()
     assert doc["model"] == {"provider": "ollama", "name": "qwen3:30b", "think": True,
                             "options": {"temperature": 0, "seed": 42, "num_ctx": 32768}}
-    assert doc["prompt_version"] == "v2" and doc["prompt_sha256"] == prompt_sha256("v2")
+    assert doc["prompt_version"] == "v3" and doc["prompt_sha256"] == prompt_sha256("v3")
     assert doc["params"] == {"max_clips": 25, "min_score": 7, "max_window_words": 2500, "retries": 2,
-                             "start_blocklist": list(DEFAULT_START_BLOCKLIST)}
-    assert doc["stats"] == {"windows": 2, "ai_calls": 2, "proposals": 6, "valid": 5, "filtered_start": 0,
+                             "head_cut_words": list(DEFAULT_HEAD_CUT_WORDS), "head_cut_pad": 0.1}
+    assert doc["stats"] == {"windows": 2, "ai_calls": 2, "proposals": 6, "valid": 5,
                             "eligible": 3, "selected": 2,
-                            "selected_seconds": round(by_id["c00008"]["duration"] + by_id["c00015"]["duration"], 3)}
+                            "selected_seconds": round(by_id["c00008"]["duration"] + by_id["c00015"]["duration"], 3),
+                            "head_cut": 0}
     assert [(c["id"], c["candidate_id"], c["window"]) for c in doc["clips"]] == [("k01", "c00008", "w01"),
                                                                                ("k02", "c00015", "w02")]
     k1 = doc["clips"][0]
@@ -137,7 +139,8 @@ def test_clips_and_log_documents(scfg):
     entry = manifest_of(ws)["stages"]["selection"]
     assert entry["status"] == "done" and entry["artifacts"] == ARTIFACTS
     assert entry["inputs"] == [{"path": "candidates.json", "sha256": sha256_file(ws.dir / "candidates.json")},
-                               {"path": "metadata.json", "sha256": sha256_file(ws.dir / "metadata.json")}]
+                               {"path": "metadata.json", "sha256": sha256_file(ws.dir / "metadata.json")},
+                               {"path": "transcript.json", "sha256": sha256_file(ws.dir / "transcript.json")}]
     assert entry["config_hash"] == config_hash(used_config(scfg))
 
 
@@ -145,7 +148,8 @@ def test_used_config_excludes_execution_keys(scfg):
     used = used_config(scfg)
     assert set(used) == {f"selection.{k}" for k in ("model", "think", "temperature", "seed", "num_ctx",
                                                      "prompt_version", "max_clips", "min_score", "max_window_words",
-                                                     "retries", "start_blocklist", "prompt_sha256")}
+                                                     "retries", "head_cut_words", "head_cut_pad",
+                                                     "prompt_sha256")}
     assert used_config(_sel(scfg, ollama_host="http://x:1", timeout=5)) == used
 
 
@@ -159,18 +163,29 @@ def test_no_clip_is_done_with_empty_list_and_warning(scfg, caplog):
     assert "no clip met the criteria" in caplog.text
 
 
-def test_start_blocklist_filter_in_stage(scfg):
-    ws = make_selection_episode(scfg.workspace.dir)
-    run_selection("rbjfCfFq3Dk", _sel(scfg, start_blocklist=("ý thứ 2", "ý thứ 7")), client=FakeClient(GOOD))
+def test_head_cut_in_stage(scfg, caplog):
+    # u0002 opens with "thế là còn": its first segment 29.0-38.0 has 12 evenly timed words (0.75 s each)
+    ws = make_selection_episode(scfg.workspace.dir, prefix={2: "thế là còn", 7: "do đó"})
+    caplog.set_level("INFO", logger="auto_short")
+    run_selection("rbjfCfFq3Dk", scfg, client=FakeClient(GOOD))
+    cands = {c["id"]: c for c in _load(ws, "candidates.json")["candidates"]}
     doc = _load(ws, "clips.json")
-    # c00008 (u0002..) and c00015 (u0007..) filtered; c00002 (u0001..u0003) no longer overlapped
-    assert [c["candidate_id"] for c in doc["clips"]] == ["c00002"]
-    assert doc["params"]["start_blocklist"] == ["ý thứ 2", "ý thứ 7"]
-    assert doc["stats"]["filtered_start"] == 2 and doc["stats"]["valid"] == 5 and doc["stats"]["eligible"] == 1
-    props = [p for w in _load(ws, "selection_log.json")["windows"] for p in w["proposals"]]
-    assert [(p["candidate_id"], p["reject_reason"]) for p in props if p["status"] == "ineligible"
-            and p["reject_reason"].startswith("start connector")] == [("c00008", "start connector: ý thứ 2"),
-                                                            ("c00015", "start connector: ý thứ 7")]
+    k1 = doc["clips"][0]
+    assert k1["candidate_id"] == "c00008" and k1["head_cut"] == {"words": "thế là còn", "original_start": 28.7}
+    # kept word "ý" starts at 29.0 + 3 * 0.75 = 31.25 -> cut at 31.15 (no silence there)
+    assert (k1["source_start"], k1["source_end"]) == (31.15, cands["c00008"]["source_end"])
+    assert k1["duration"] == round(cands["c00008"]["duration"] - 2.45, 3)
+    assert k1["source_duration"] == round(k1["source_end"] - 31.15, 3)
+    assert doc["stats"]["head_cut"] == 2 and doc["clips"][1]["head_cut"]["words"] == "do đó"
+    props = _load(ws, "selection_log.json")["windows"][0]["proposals"]
+    assert props[0]["head_cut"]["method"] == "word" and props[0]["head_cut"]["dropped_until"] == 31.25
+    assert "head cut c00008: drop 'thế là còn', 28.7 -> 31.15 (word)" in caplog.text
+    entry = manifest_of(ws)["stages"]["selection"]
+    assert [i["path"] for i in entry["inputs"]] == ["candidates.json", "metadata.json", "transcript.json"]
+
+    # empty head_cut_words turns it off (and reruns: the list is in the hash)
+    assert run_selection("rbjfCfFq3Dk", _sel(scfg, head_cut_words=()), client=FakeClient(GOOD)).ran
+    assert _load(ws, "clips.json")["clips"][0]["source_start"] == 28.7
 
 
 def test_max_clips_limit(scfg):
@@ -296,8 +311,8 @@ def test_rerun_skip_and_rerun_conditions(scfg, caplog):
     assert len(fake.calls) == n_calls
 
     # any hashed [selection] key reruns
-    for kw in ({"prompt_version": "v1"}, {"model": "qwen3:14b"}, {"think": False}, {"start_blocklist": ()},
-               {"start_blocklist": ("cho nên",)}, {"min_score": 8}, {"max_clips": 3}, {"seed": 1},
+    for kw in ({"prompt_version": "v1"}, {"prompt_version": "v2"}, {"model": "qwen3:14b"}, {"think": False},
+               {"head_cut_words": ()}, {"head_cut_words": ("cho nên",)}, {"head_cut_pad": 0.2}, {"min_score": 8}, {"max_clips": 3}, {"seed": 1},
                {"num_ctx": 8192}, {"temperature": 0.1}, {"max_window_words": 3000}, {"retries": 1}):
         assert run_selection("rbjfCfFq3Dk", _sel(scfg, **kw), client=fake).ran, kw
     assert run_selection("rbjfCfFq3Dk", scfg, client=fake).ran
@@ -323,6 +338,16 @@ def test_analysis_rerun_makes_selection_stale_then_rerun(scfg):
     ws.save_manifest(manifest)
     assert run_selection("rbjfCfFq3Dk", scfg, force=True, client=FakeClient(GOOD)).ran
     assert manifest_of(ws)["stages"]["titling"]["status"] == "stale"
+
+
+def test_transcript_mismatch_fails(scfg):
+    ws = make_selection_episode(scfg.workspace.dir)
+    tr = _load(ws, "transcript.json")
+    tr["transcript_sha256"] = "0" * 64
+    (ws.dir / "transcript.json").write_text(json.dumps(tr), encoding="utf-8")
+    with pytest.raises(SelectionError, match="transcript.json does not match"):
+        run_selection("rbjfCfFq3Dk", scfg, client=FakeClient(GOOD))
+    _assert_failed(ws, "transcript.json does not match")
 
 
 def test_silences_mismatch_fails(scfg):

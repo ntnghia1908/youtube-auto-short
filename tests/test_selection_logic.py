@@ -9,12 +9,15 @@ from auto_short.selection.logic import (
     _split,
     ResponseError,
     build_windows,
+    apply_head_cuts,
+    cut_candidate,
     dedupe,
-    filter_start,
+    head_cut,
+    leading_connectors,
     map_proposals,
     parse_response,
     select_clips,
-    start_connector,
+    trimmed_duration,
     unit_durations,
     validate_clips,
 )
@@ -22,6 +25,7 @@ from auto_short.selection.prompt import (
     PROMPT_VERSION,
     RESPONSE_SCHEMA,
     cumulative_marks,
+    system_prompt,
     prompt_sha256,
     prompt_texts,
     render_user_prompt,
@@ -147,8 +151,8 @@ def test_v2_prompt_cumulative_marks_match_candidate_durations(syn, real):
 
 
 def test_system_prompt_and_schema():
-    assert PROMPT_VERSION == "v2"
-    for version in ("v1", "v2"):
+    assert PROMPT_VERSION == "v3"
+    for version in ("v1", "v2", "v3"):
         system, _ = prompt_texts(version)
         for needle in ("TRỌN MỘT Ý", "30–180 giây", "60–90 giây", "không có dấu câu", "Thà không đề xuất"):
             assert needle in system
@@ -157,7 +161,13 @@ def test_system_prompt_and_schema():
     assert '"thế là", "do đó", "còn"' in v2
     # v1 is kept verbatim for comparison
     assert prompt_sha256("v1") == "0ff963d1f415c0a74c7b320d772ab8400d282ecc848f4903bfd05141e4bf4d7c"
-    assert prompt_sha256("v2") != prompt_sha256("v1")
+    assert prompt_sha256("v2") == "95c13065a5eb6820aebf7f335005fdee8bdc5d08b59eb1510f4a923be8b5c15a"
+    assert len({prompt_sha256(v) for v in ("v1", "v2", "v3")}) == 3
+    v3 = system_prompt("v3", ("cho nên", "thế là"))
+    assert 'TỰ ĐỘNG CẮT TỪ NỐI Ở ĐẦU: nếu lời nói của first_unit mở đầu bằng từ nối thuần — "cho nên", "thế là" —' in v3
+    assert "PHẢI là false" not in v3 and "<<" not in v3
+    assert system_prompt("v3", ()).count("(không có)") == 1
+    assert system_prompt("v2", ("cho nên",)) == prompt_texts("v2")[0]  # v1/v2 unchanged
     item = RESPONSE_SCHEMA["properties"]["clips"]["items"]
     assert set(item["required"]) == {"first_unit", "last_unit", "score", "start_complete", "end_complete",
                                      "topic", "reason"}
@@ -243,7 +253,7 @@ def test_select_priority_overlap_limit_and_ids(syn):
     assert recs[3]["reject_reason"] == "end not complete" and recs[4]["reject_reason"] == "score < 7"
     clip = clips[0]
     assert list(clip) == ["id", "candidate_id", "source_start", "source_end", "source_duration", "duration",
-                          "in_target", "unit_ids", "segment_ids", "score", "start_complete", "end_complete",
+                          "in_target", "unit_ids", "segment_ids", "head_cut", "score", "start_complete", "end_complete",
                           "topic", "reason", "window"]
     for k in ("source_start", "source_end", "source_duration", "duration", "in_target", "unit_ids", "segment_ids"):
         assert clip[k] == by_id["c00008"][k]
@@ -297,36 +307,110 @@ def test_validate_clips_rejects_violations(syn):
     bad(lambda c: c.__setitem__(1, dict(c[0], id="k02")), "overlaps k01")
 
 
-# --- B11: opening-connector filter ------------------------------------------------------------------
+# --- B11: head cut ---------------------------------------------------------------------------------
 
-def test_start_connector_whole_word_normalized():
-    from auto_short.config import DEFAULT_START_BLOCKLIST as B
+PARAMS = {"min_duration": 30.0, "max_duration": 180.0, "target_min": 60.0, "target_max": 90.0}
+CUT = ("cho nên", "vì vậy", "thế nên", "thế là", "do đó", "và", "nhưng", "mà", "rồi", "còn", "thì")
+
+
+def _words(text, start, step=0.5):
+    return [{"start": round(start + k * step, 3), "end": round(start + (k + 1) * step, 3), "text": w}
+            for k, w in enumerate(text.split())]
+
+
+def _cand(start=9.7, end=80.3, trims=()):
+    dur = round(end - start - sum(b - a for a, b in trims), 3)
+    return {"id": "c00001", "source_start": start, "source_end": end, "source_duration": round(end - start, 3),
+            "duration": dur, "in_target": 60 <= dur <= 90, "unit_ids": ["u0001", "u0002"],
+            "segment_ids": ["s00001", "s00009"], "trims": [list(t) for t in trims]}
+
+
+def test_leading_connectors_whole_words_phrases_and_repeats():
     import unicodedata
-    assert start_connector("còn nữa chúng ta", B) == "còn"
-    assert start_connector("cồn cát", B) is None and start_connector("conn", B) is None
-    assert start_connector("màu xanh", B) is None and start_connector("Mà thôi", B) == "mà"
-    assert start_connector("  Cho   Nên điều thứ nhất", B) == "cho nên"
-    assert start_connector(unicodedata.normalize("NFD", "Thế là ở trong"), B) == "thế là"
-    assert start_connector("Ở ĐÂY là", B) == "ở đây" and start_connector("ở đâyy", B) is None
-    assert start_connector("thìa khóa", B) is None and start_connector("và", B) == "và"
-    assert start_connector("chúng ta cho nên", B) is None  # only at the start
-    assert start_connector("Tại vì sao có hiện tượng này", B) == "tại vì sao"
-    assert start_connector("tại vì chúng ta", B) == "tại vì" and start_connector("vì sao vậy", B) == "vì sao"
-    assert start_connector("tại vìa", B) is None
-    assert start_connector("cho nên", ()) is None
-    assert start_connector("cho nên điều", ("cho", "cho nên")) == "cho nên"  # longest match named
+    w = lambda t: _words(t, 0)  # noqa: E731
+    assert leading_connectors(w("cho nên ở trong đây"), CUT) == 2
+    assert leading_connectors(w("Thế là còn chúng ta"), CUT) == 3  # repeated: "thế là" + "còn"
+    assert leading_connectors(w("và rồi thì mới"), CUT) == 3
+    assert leading_connectors(w("màu xanh"), CUT) == 0 and leading_connectors(w("mà thôi"), CUT) == 1
+    assert leading_connectors(w("cồn cát"), CUT) == 0 and leading_connectors(w("cho biết"), CUT) == 0
+    assert leading_connectors(w(unicodedata.normalize("NFD", "CHO NÊN ý")), CUT) == 2
+    assert leading_connectors(w("chúng ta cho nên"), CUT) == 0  # only at the start
+    assert leading_connectors(w("cho nên"), ()) == 0
 
 
-def test_filter_start_marks_valid_proposals_ineligible(syn):
+def test_head_cut_at_word_start_without_silence():
+    seg = {"words": _words("cho nên ở trong đây", 10.0)}  # "ở" starts at 11.0
+    cut, note = head_cut(_cand(), seg, [], CUT, 0.1)
+    assert note is None
+    assert cut == {"words": "cho nên", "original_start": 9.7, "source_start": 10.9, "method": "word",
+                   "dropped_until": 11.0}
+
+
+def test_head_cut_prefers_silence_before_kept_word():
+    seg = {"words": _words("thế là còn chúng ta", 10.0)}  # "còn" 11.0, "chúng" 11.5
+    cut, _ = head_cut(_cand(), seg, [(11.2, 11.45)], CUT, 0.1)
+    assert (cut["words"], cut["source_start"], cut["method"]) == ("thế là còn", 11.35, "silence")
+    cut, _ = head_cut(_cand(), seg, [(11.2, 11.25)], CUT, 0.1)  # never earlier than silence.start
+    assert cut["source_start"] == 11.2
+    cut, _ = head_cut(_cand(), seg, [(5.0, 9.9)], CUT, 0.1)  # silence before the last dropped word: ignored
+    assert cut["method"] == "word" and cut["source_start"] == 11.4
+
+
+def test_head_cut_skipped_without_timing_or_when_all_words_dropped():
+    assert head_cut(_cand(), {"words": []}, [], CUT, 0.1) == (None, "no word timing")
+    assert head_cut(_cand(), None, [], CUT, 0.1) == (None, "no word timing")
+    cut, note = head_cut(_cand(), {"words": _words("do đó", 10.0)}, [], CUT, 0.1)
+    assert cut is None and note == "'do đó' is the whole first segment"
+    assert head_cut(_cand(), {"words": _words("chúng ta", 10.0)}, [], CUT, 0.1) == (None, None)
+    assert head_cut(_cand(), {"words": _words("cho nên ở", 10.0)}, [], (), 0.1) == (None, None)
+    cut, note = head_cut(_cand(start=10.95), {"words": _words("cho nên ở", 10.0)}, [], CUT, 0.1)
+    assert cut is None and "not after source_start" in note
+
+
+def test_cut_candidate_recomputes_durations_with_partial_trim():
+    cand = _cand(start=9.7, end=80.3, trims=[(10.5, 12.0), (40.0, 45.0)])
+    assert cand["duration"] == 64.1
+    eff = cut_candidate(cand, {"source_start": 11.0, "words": "cho nên", "original_start": 9.7}, PARAMS)
+    # trim [10.5, 12.0] is cut across: only [11.0, 12.0] still counts
+    assert (eff["source_start"], eff["source_duration"], eff["duration"]) == (11.0, 69.3, 63.3)
+    assert eff["in_target"] and eff["head_cut"] == {"words": "cho nên", "original_start": 9.7}
+    assert trimmed_duration(11.0, 80.3, [[10.5, 12.0]]) == 68.3 and trimmed_duration(0, 10, []) == 10
+    assert cand["source_start"] == 9.7  # original untouched
+
+
+def test_apply_head_cuts_too_short_and_effective_candidates():
+    long_c = _cand(start=9.7, end=80.3)
+    short_c = dict(_cand(start=9.7, end=40.0), id="c00002", segment_ids=["s00002", "s00009"])
+    segs = {"s00001": {"words": _words("cho nên ở trong", 10.0)}, "s00002": {"words": _words("và ta", 10.0, 1.0)}}
+    recs = [dict(proposal("u0001", "u0002"), window="w01", status="valid", candidate_id=c["id"], reject_reason=None)
+            for c in (long_c, short_c)]
+    eff = apply_head_cuts(recs, {"c00001": long_c, "c00002": short_c}, segs, [], PARAMS, CUT, 0.1)
+    assert eff["c00001"]["source_start"] == 10.9 and eff["c00001"]["head_cut"]["words"] == "cho nên"
+    assert recs[0]["status"] == "valid" and recs[0]["head_cut"]["method"] == "word"
+    assert recs[1]["status"] == "ineligible" and recs[1]["reject_reason"].startswith("too short after head cut")
+    assert eff["c00002"] is short_c  # not replaced
+    clips = select_clips(recs, eff, max_clips=25, min_score=7)
+    assert len(clips) == 1 and clips[0]["source_start"] == 10.9 and clips[0]["head_cut"]["original_start"] == 9.7
+
+
+def test_validate_clips_with_head_cut(syn):
     cand_doc, _, _ = syn
     by_id = {c["id"]: c for c in cand_doc["candidates"]}
-    units = {u["id"]: u for u in cand_doc["units"]}
-    recs = _records(cand_doc, ("c00008", 9, True, True), ("c00001", 8, True, True))
-    recs.append(dict(proposal("u0002", "u0002"), window="w01", status="rejected", candidate_id=None,
-                     reject_reason="no candidate"))
-    assert filter_start(recs, by_id, units, ()) == 0
-    assert filter_start(recs, by_id, units, ("ý thứ 2",)) == 1  # c00008 starts at u0002 "ý thứ 2 …"
-    assert (recs[0]["status"], recs[0]["reject_reason"]) == ("ineligible", "start connector: ý thứ 2")
-    assert recs[1]["status"] == "valid" and recs[2]["reject_reason"] == "no candidate"
-    clips = select_clips(recs, by_id, max_clips=25, min_score=7)
-    assert [c["candidate_id"] for c in clips] == ["c00001"] and recs[0]["status"] == "ineligible"
+    c = by_id["c00008"]
+    cut = {"source_start": round(c["source_start"] + 1.0, 3), "words": "cho nên", "original_start": c["source_start"]}
+    eff = dict(by_id, c00008=cut_candidate(c, cut, cand_doc["params"]))
+    recs = _records(cand_doc, ("c00008", 9, True, True))
+    clips = select_clips(recs, eff, max_clips=25, min_score=7)
+    assert clips[0]["head_cut"] == {"words": "cho nên", "original_start": c["source_start"]}
+    validate_clips(clips, cand_doc, max_clips=25, min_score=7)
+    for mutate, needle in ((lambda k: k.update(duration=k["duration"] + 1), "duration does not match"),
+                           (lambda k: k["head_cut"].update(original_start=1.0), "head_cut does not fit"),
+                           (lambda k: k.update(source_start=c["source_end"]), "head_cut does not fit"),
+                           (lambda k: k.update(head_cut=None), "source_start does not match")):
+        bad = json.loads(json.dumps(clips))
+        mutate(bad[0])
+        with pytest.raises(SelectionError, match=needle):
+            validate_clips(bad, cand_doc, max_clips=25, min_score=7)
+    # a clip without head cut keeps "head_cut": null
+    plain = select_clips(_records(cand_doc, ("c00013", 8, True, True)), by_id, max_clips=25, min_score=7)
+    assert plain[0]["head_cut"] is None

@@ -62,11 +62,12 @@ def test_selection_config_parsing():
     assert (s.model, s.think, s.temperature, s.max_clips, s.timeout) == ("qwen3:30b", True, 0.2, 10, 30.0)
     d = config_mod.Config().selection
     assert (d.model, d.think, d.temperature, d.seed, d.num_ctx) == ("qwen3:30b", True, 0.0, 42, 32768)
-    assert (d.prompt_version, d.max_clips, d.min_score, d.max_window_words, d.retries) == ("v2", 25, 7, 2500, 2)
+    assert (d.prompt_version, d.max_clips, d.min_score, d.max_window_words, d.retries) == ("v3", 25, 7, 2500, 2)
     assert d.ollama_host == "http://127.0.0.1:11437" and d.retry_backoff == (5.0, 15.0)
-    assert d.start_blocklist[:2] == ("cho nên", "vì vậy") and len(d.start_blocklist) == 19 and d.start_blocklist[-3:] == ("tại vì", "tại vì sao", "vì sao")
-    assert config_mod.from_dict({"selection": {"start_blocklist": []}}).selection.start_blocklist == ()
-    assert config_mod.from_dict({"selection": {"start_blocklist": ["à"]}}).selection.start_blocklist == ("à",)
+    assert d.head_cut_words[:2] == ("cho nên", "vì vậy") and len(d.head_cut_words) == 11 and d.head_cut_pad == 0.1
+    assert d.prompt_version == "v3"
+    assert config_mod.from_dict({"selection": {"head_cut_words": []}}).selection.head_cut_words == ()
+    assert config_mod.from_dict({"selection": {"head_cut_pad": 0.2}}).selection.head_cut_pad == 0.2
 
 
 @pytest.mark.parametrize("data", [
@@ -79,10 +80,12 @@ def test_selection_config_parsing():
     {"selection": {"num_ctx": True}},
     {"selection": {"timeout": 0}},
     {"selection": []},
-    {"selection": {"start_blocklist": "cho nên"}},
-    {"selection": {"start_blocklist": ["cho nên", ""]}},
-    {"selection": {"start_blocklist": ["  "]}},
-    {"selection": {"start_blocklist": [1]}},
+    {"selection": {"head_cut_words": "cho nên"}},
+    {"selection": {"head_cut_words": ["cho nên", ""]}},
+    {"selection": {"head_cut_words": ["  "]}},
+    {"selection": {"head_cut_words": [1]}},
+    {"selection": {"head_cut_pad": -0.1}},
+    {"selection": {"head_cut_pad": 2}},
     {"selection": {"retry_backoff": 5}},
     {"selection": {"retry_backoff": [-1]}},
     {"selection": {"retry_backoff": ["5"]}},
