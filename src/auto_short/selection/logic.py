@@ -7,6 +7,8 @@ Canonical contract: docs/decisions/CP5-selection-contract.md.
 from __future__ import annotations
 
 import json
+import re
+import unicodedata
 from dataclasses import dataclass, field
 
 from ..analysis.candidates import plan_trims
@@ -189,6 +191,39 @@ def dedupe(records: list[dict]) -> None:
             best[rec["candidate_id"]] = rec
         else:
             rec.update(status=REJECTED, reject_reason=f"duplicate of proposal in {cur['window']}")
+
+
+# --- B11 opening-connector filter ----------------------------------------------------------
+
+def normalize_text(text: str) -> str:
+    """NFC, lowercase, collapse whitespace."""
+    return " ".join(unicodedata.normalize("NFC", text).lower().split())
+
+
+def start_connector(text: str, blocklist: tuple[str, ...] | list[str]) -> str | None:
+    """The (normalized) blocklist phrase that ``text`` starts with as whole words, else None.
+    Longest phrase wins so the reason names the most specific match."""
+    t = normalize_text(text)
+    for phrase in sorted((normalize_text(p) for p in blocklist), key=len, reverse=True):
+        if phrase and re.match(re.escape(phrase) + r"(?!\w)", t):
+            return phrase
+    return None
+
+
+def filter_start(records: list[dict], cand_by_id: dict[str, dict], units_by_id: dict[str, dict],
+                 blocklist: tuple[str, ...] | list[str]) -> int:
+    """Mark valid proposals whose first unit opens with a blocked connector ``ineligible``
+    (B11); runs after mapping/dedupe and before the final choice. Returns how many."""
+    n = 0
+    for rec in records:
+        if rec["status"] != VALID or not blocklist:
+            continue
+        first = cand_by_id[rec["candidate_id"]]["unit_ids"][0]
+        phrase = start_connector(units_by_id[first]["text"], blocklist)
+        if phrase is not None:
+            rec.update(status=INELIGIBLE, reject_reason=f"start connector: {phrase}")
+            n += 1
+    return n
 
 
 # --- B6 final choice ------------------------------------------------------------------------

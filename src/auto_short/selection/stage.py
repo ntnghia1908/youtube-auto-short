@@ -33,6 +33,7 @@ from .logic import (
     Window,
     build_windows,
     dedupe,
+    filter_start,
     map_proposals,
     parse_response,
     select_clips,
@@ -54,8 +55,8 @@ ARTIFACTS = [CLIPS_NAME, LOG_NAME]
 
 # [selection] keys in the config hash (B9); ollama_host / timeout are execution-only.
 HASH_KEYS = ("model", "think", "temperature", "seed", "num_ctx", "prompt_version", "max_clips", "min_score",
-             "max_window_words", "retries")
-PARAM_KEYS = ("max_clips", "min_score", "max_window_words", "retries")
+             "max_window_words", "retries", "start_blocklist")
+PARAM_KEYS = ("max_clips", "min_score", "max_window_words", "retries", "start_blocklist")
 
 
 @dataclass(frozen=True)
@@ -69,6 +70,7 @@ class SelectionResult:
 def used_config(config: Config) -> dict:
     cfg = config.selection
     used = {f"selection.{k}": getattr(cfg, k) for k in HASH_KEYS}
+    used["selection.start_blocklist"] = list(cfg.start_blocklist)
     try:
         used["selection.prompt_sha256"] = prompt_sha256(cfg.prompt_version)
     except ValueError:
@@ -177,6 +179,11 @@ def select(episode_id: str, cand_doc: dict, metadata: dict, silences_doc: dict, 
 
     dedupe(records)
     valid = sum(r["status"] == VALID for r in records)
+    filtered = filter_start(records, cand_by_id, {u["id"]: u for u in units}, cfg.start_blocklist)
+    for r in records:
+        if (r["reject_reason"] or "").startswith("start connector:"):
+            log.info("%s: filtered %s (%s-%s): %s", STAGE, r["candidate_id"], r["first_unit"], r["last_unit"],
+                     r["reject_reason"])
     clips = select_clips(records, cand_by_id, max_clips=cfg.max_clips, min_score=cfg.min_score)
     validate_clips(clips, cand_doc, max_clips=cfg.max_clips, min_score=cfg.min_score)
     eligible = sum(r["status"] not in ("rejected", "ineligible") for r in records)
@@ -185,6 +192,7 @@ def select(episode_id: str, cand_doc: dict, metadata: dict, silences_doc: dict, 
         "ai_calls": sum(len(w["ai_calls"]) for w in wlogs),
         "proposals": len(records),
         "valid": valid,
+        "filtered_start": filtered,
         "eligible": eligible,
         "selected": sum(r["status"] == SELECTED for r in records),
         "selected_seconds": sum(round(c["duration"] * 1000) for c in clips) / 1000,
@@ -197,7 +205,9 @@ def select(episode_id: str, cand_doc: dict, metadata: dict, silences_doc: dict, 
         "prompt_version": cfg.prompt_version,
         "prompt_sha256": p_sha,
     }
-    clips_doc = dict(head, params={k: getattr(cfg, k) for k in PARAM_KEYS}, stats=stats, clips=clips)
+    params_doc = {k: getattr(cfg, k) for k in PARAM_KEYS}
+    params_doc["start_blocklist"] = list(cfg.start_blocklist)
+    clips_doc = dict(head, params=params_doc, stats=stats, clips=clips)
     log_doc = dict(head, system_prompt=system, response_format=RESPONSE_SCHEMA, stats=stats,
                    unit_seconds=durations, windows=wlogs)
     return clips_doc, log_doc
@@ -250,9 +260,9 @@ def run_selection(episode_id: str, config: Config, *, force: bool = False,
             _remove_outputs(ws)
             raise
         st = clips_doc["stats"]
-        log.info("%s: windows=%d ai_calls=%d proposals=%d valid=%d eligible=%d selected=%d selected_seconds=%s",
-                 STAGE, st["windows"], st["ai_calls"], st["proposals"], st["valid"], st["eligible"],
-                 st["selected"], st["selected_seconds"])
+        log.info("%s: windows=%d ai_calls=%d proposals=%d valid=%d filtered_start=%d eligible=%d selected=%d "
+                 "selected_seconds=%s", STAGE, st["windows"], st["ai_calls"], st["proposals"], st["valid"],
+                 st["filtered_start"], st["eligible"], st["selected"], st["selected_seconds"])
         if not clips_doc["clips"]:
             log.warning("%s: WARNING: no clip met the criteria (complete start/end, score >= %d); "
                         "clips.json has no clips", STAGE, cfg.min_score)

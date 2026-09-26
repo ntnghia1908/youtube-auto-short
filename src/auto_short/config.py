@@ -85,20 +85,26 @@ class AnalysisConfig:
     outro_window: float = 180.0
 
 
+# B11: opening connectors that make a clip start depend on what came before (same list as prompt v2).
+DEFAULT_START_BLOCKLIST = ("cho nên", "vì vậy", "thế nên", "thế là", "do đó", "còn", "và", "nhưng", "mà", "rồi",
+                           "thì", "cái này", "điều đó", "việc này", "như vậy", "ở đây")
+
+
 @dataclass(frozen=True)
 class SelectionConfig:
     """AI clip selection via Ollama (docs/decisions/CP5-selection-contract.md)."""
 
-    model: str = "qwen3:14b"
-    think: bool = False
+    model: str = "qwen3:30b"
+    think: bool = True
     temperature: float = 0.0
     seed: int = 42
-    num_ctx: int = 16384
+    num_ctx: int = 32768
     prompt_version: str = "v2"
     max_clips: int = 25
     min_score: int = 7
     max_window_words: int = 2500
     retries: int = 2
+    start_blocklist: tuple[str, ...] = DEFAULT_START_BLOCKLIST  # empty = filter off
     # Execution-only settings (not part of the config hash); env OLLAMA_HOST overrides ollama_host.
     ollama_host: str = "http://127.0.0.1:11435"
     timeout: float = 600.0
@@ -225,6 +231,9 @@ def _int(section: dict, key: str, default: int, where: str, *, lo: int, hi: int 
 def _selection(data: dict) -> SelectionConfig:
     se = _section(data, "selection")
     d, w = SelectionConfig(), "selection"
+    blocklist = se.get("start_blocklist", list(d.start_blocklist))
+    if not isinstance(blocklist, list) or not all(isinstance(x, str) and x.strip() for x in blocklist):
+        raise ConfigError(f"{w}.start_blocklist must be a list of non-empty strings")
     return SelectionConfig(
         model=_str(se, "model", d.model, w),
         think=_bool(se, "think", d.think, w),
@@ -236,6 +245,7 @@ def _selection(data: dict) -> SelectionConfig:
         min_score=_int(se, "min_score", d.min_score, w, lo=1, hi=10),
         max_window_words=_int(se, "max_window_words", d.max_window_words, w, lo=1),
         retries=_int(se, "retries", d.retries, w, lo=0),
+        start_blocklist=tuple(blocklist),
         ollama_host=_str(se, "ollama_host", d.ollama_host, w),
         timeout=_number(se, "timeout", d.timeout, w, lo=1),
     )
