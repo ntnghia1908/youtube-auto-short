@@ -30,35 +30,33 @@ Only the first step (ingest) is implemented; the rest of the pipeline is planned
 
 ## Setup
 
-Requirements: Python >= 3.11 (system Python, not conda base) and `ffmpeg`/`ffprobe` on `PATH`.
+Requirements: conda (Miniconda) for a dedicated Python 3.12 env (never the `base` env) and `ffmpeg`/`ffprobe` on `PATH`.
 YouTube downloads may also need a JavaScript runtime on `PATH` (default config uses `node`).
 
 ```bash
-/usr/bin/python3 -m venv .venv
-.venv/bin/pip install -e ".[dev]"
+conda create -n auto-short python=3.12
+conda activate auto-short
+pip install -e ".[dev]"
 cp config.example.toml config.toml   # local, gitignored; edit as needed
 ```
-
-If `venv` fails because `ensurepip` is missing (Ubuntu without `python3.12-venv`), install that
-package, or create the venv with `--without-pip` and bootstrap pip from a local pip wheel.
 
 Run tests (no network needed):
 
 ```bash
-.venv/bin/pytest -q
+pytest -q
 ```
 
 ## Usage
 
 ```bash
 # Local file: referenced in place (not copied); episode id = <slug>-<sha256[:12]>
-.venv/bin/auto-short ingest input/rbjfCfFq3Dk/rbjfCfFq3Dk.mp4
+auto-short ingest input/rbjfCfFq3Dk/rbjfCfFq3Dk.mp4
 
-# YouTube URL: downloaded to work/<video_id>/source.mp4 (<= 1080p); episode id = video id
-.venv/bin/auto-short ingest https://youtu.be/rbjfCfFq3Dk
+# YouTube URL: downloaded to work/<video_id>/source.mp4 (best quality); episode id = video id
+auto-short ingest https://youtu.be/rbjfCfFq3Dk
 
 # Options: --episode-id ID, --force (re-run even if up to date), --config PATH
-.venv/bin/auto-short status <episode_id>
+auto-short status <episode_id>
 ```
 
 `python -m auto_short ...` works the same. Re-running `ingest` skips when the source and the

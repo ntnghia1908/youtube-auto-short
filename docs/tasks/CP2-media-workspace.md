@@ -22,7 +22,7 @@ Một video (YouTube URL hoặc file local) đi vào workspace `work/<episode_id
 ## Scope
 
 - In scope:
-  - Python package skeleton `src/auto_short/`, `pyproject.toml`, `.venv` workflow, `config.example.toml`.
+  - Python package skeleton `src/auto_short/`, `pyproject.toml`, conda env workflow, `config.example.toml`.
   - Typed config (TOML/`tomllib`) cho workspace path.
   - Ingest stage: YouTube URL (tải bằng `yt-dlp` vào workspace) và file local (tham chiếu, không copy).
   - `metadata.json` (probe bằng `ffprobe` + metadata YouTube nếu có).
@@ -40,14 +40,15 @@ Một video (YouTube URL hoặc file local) đi vào workspace `work/<episode_id
 - `AUTO_SHORT_CHECKPOINT_PLAN.md` §3, §4 CP2; `docs/decisions/CP1-product-contract.md` §1, §8, §10, §11.
 - Quyết định đề xuất (DECIDE cùng APPROVE TASK):
   - **D1 Package / layout:** package `auto_short` theo src-layout `src/auto_short/<stage>/`; module map trong project profile đổi `src/<stage>/` → `src/auto_short/<stage>/`.
-  - **D2 Runtime:** `.venv` tạo từ system Python 3.12 (`/usr/bin/python3`), không dùng conda base; `pip install -e ".[dev]"`. `pyproject.toml` khai báo `requires-python >=3.11`, runtime deps CP2 chỉ `yt-dlp`; dev `pytest`. `faster-whisper` thêm ở CP3 khi dùng.
+  - **D2 Runtime:** conda env riêng `auto-short` (Python 3.12), không dùng conda base; `pip install -e ".[dev]"`. `pyproject.toml` khai báo `requires-python >=3.11`, runtime deps CP2 chỉ `yt-dlp` (pin `yt-dlp==2026.8.19`); dev `pytest`. `faster-whisper` thêm ở CP3 khi dùng.
   - **D3 Episode ID:** YouTube → video id (vd `rbjfCfFq3Dk`); file local → `<slug tên file>-<12 ký tự đầu sha256>`; ghi đè bằng `--episode-id`.
-  - **D4 Source handling:** YouTube tải vào `work/<id>/source.<ext>` (≤1080p, mp4). File local **không copy** (video 700 MB): manifest ghi absolute path + sha256 + size + mtime.
+  - **D4 Source handling:** YouTube tải vào `work/<id>/source.<ext>` (chất lượng tốt nhất `bv*+ba/b`, mp4). File local **không copy** (video 700 MB): manifest ghi absolute path + sha256 + size + mtime.
   - **D5 Manifest schema** (`work/<id>/manifest.json`, `schema_version: 1`): `episode_id`, `source` {kind, uri, path, sha256, size}, `stages` {`<name>`: {status `pending|running|done|failed`, `artifacts` [paths], `inputs` [{path, sha256}], `config_hash`, `started_at`, `finished_at`, `error`}}. Ghi file atomically (write tmp + rename).
   - **D6 Resume / stale rule:** stage `done` được skip khi mọi input sha256 và `config_hash` khớp và artifacts tồn tại; ngược lại chạy lại và đánh dấu stale mọi stage downstream. `--force` chạy lại. Sha256 file lớn được cache theo (path, size, mtime) trong manifest để không hash lại 700 MB mỗi lần.
   - **D7 Config hash:** sha256 của JSON canonical (sort keys) chỉ gồm các key config mà stage đó dùng.
   - **D8 CLI:** `python -m auto_short` và entry point `auto-short`; lệnh `auto-short ingest <url|path> [--episode-id ID] [--force] [--config PATH]`, `auto-short status <episode_id>`. Exit code ≠ 0 khi lỗi, message rõ ràng.
   - `config.toml` gitignored; `config.example.toml` commit.
+  - Amended by HUMAN LEAD 2026-09-26 after review: D2 (conda env riêng thay `.venv`, pin `yt-dlp==2026.8.19`), D4 (YouTube chất lượng tốt nhất, bỏ ≤1080p).
 
 ## Implementation approach
 

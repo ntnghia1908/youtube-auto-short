@@ -20,8 +20,11 @@ Implementation tham chiếu: `src/auto_short/workspace.py`, `src/auto_short/hash
 
 ## D2. Runtime
 
-- `.venv/` trong repo, tạo từ system Python (`/usr/bin/python3`, 3.12), không dùng conda base.
-- `pyproject.toml` (hatchling), `requires-python >=3.11`; runtime deps: chỉ `yt-dlp`; optional `dev`: chỉ `pytest`. Cài bằng `pip install -e ".[dev]"`.
+> Sửa đổi HUMAN LEAD 2026-09-26 sau review: conda env riêng thay cho `.venv` từ system Python; pin `yt-dlp==2026.8.19`.
+
+- Conda env riêng `auto-short` (Python 3.12): `conda create -n auto-short python=3.12`; không cài gì vào conda `base`.
+- `pyproject.toml` (hatchling), `requires-python >=3.11`; runtime deps: chỉ `yt-dlp`, pin `yt-dlp==2026.8.19` (bản stable đã chạy thật thành công); optional `dev`: chỉ `pytest`. Cài bằng `pip install -e ".[dev]"` trong env đó.
+- Khi YouTube thay đổi làm bản pin hỏng, nâng pin qua task mới.
 - `faster-whisper` chỉ thêm ở CP3 khi dùng (vẫn trong danh sách CP1 §10).
 - Config: TOML qua `tomllib`; `config.example.toml` commit, `config.toml` gitignored. Không có `config.toml` thì dùng default (bằng `config.example.toml`).
 
@@ -34,7 +37,9 @@ Implementation tham chiếu: `src/auto_short/workspace.py`, `src/auto_short/hash
 
 ## D4. Source handling
 
-- YouTube: tải bằng `yt-dlp` (Python library) vào `work/<id>/source.<ext>`; format mặc định `bv*[height<=1080]+ba/b`, merge `mp4`. Tải vào `work/<id>/.ingest-tmp/`, chỉ chuyển thành `source.<ext>` sau khi probe OK. Không tải caption (CP3).
+> Sửa đổi HUMAN LEAD 2026-09-26 sau review: chất lượng video YouTube tốt nhất, bỏ giới hạn ≤1080p.
+
+- YouTube: tải bằng `yt-dlp` (Python library) vào `work/<id>/source.<ext>`; format mặc định `bv*+ba/b` (best video + best audio), merge `mp4`. Tải vào `work/<id>/.ingest-tmp/`, chỉ chuyển thành `source.<ext>` sau khi probe OK. Không tải caption (CP3).
 - File local: **không copy**. Manifest ghi absolute path + sha256 + size + mtime.
 
 ## D5. Manifest schema v1

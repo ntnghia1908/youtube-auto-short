@@ -20,7 +20,7 @@ class WorkspaceConfig:
 
 @dataclass(frozen=True)
 class IngestConfig:
-    youtube_format: str = "bv*[height<=1080]+ba/b"
+    youtube_format: str = "bv*+ba/b"
     js_runtimes: tuple[str, ...] = ("node",)
 
 

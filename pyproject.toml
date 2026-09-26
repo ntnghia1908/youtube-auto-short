@@ -9,7 +9,8 @@ description = "Turn Vietnamese long-form lecture videos into YouTube Shorts."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "yt-dlp",
+    # Pinned: last version verified against YouTube. Bump via a new task when YouTube changes.
+    "yt-dlp==2026.8.19",
 ]
 
 [project.optional-dependencies]

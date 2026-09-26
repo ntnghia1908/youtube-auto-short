@@ -6,7 +6,7 @@
 dir = "work"
 
 [ingest]
-# yt-dlp format selector for YouTube sources (<= 1080p, merged to mp4).
-youtube_format = "bv*[height<=1080]+ba/b"
+# yt-dlp format selector for YouTube sources (best video + best audio, merged to mp4).
+youtube_format = "bv*+ba/b"
 # JavaScript runtimes yt-dlp may use for YouTube challenges; must be on PATH.
 js_runtimes = ["node"]

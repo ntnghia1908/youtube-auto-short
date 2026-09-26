@@ -73,6 +73,6 @@ HUMAN LEAD giữ scope, architecture, dependency, project-wide conventions, inte
 
 Runtime, packaging, dependency được duyệt và giả định GPU/Ollama: xem `docs/decisions/CP1-product-contract.md` §10 (canonical owner của danh sách dependency) và §11. Không thêm dependency ngoài danh sách đó khi chưa qua dependency proposal.
 
-Cài đặt môi trường (`.venv`, `pip install -e ".[dev]"`, `config.toml`, `ffmpeg`) và cách chạy CLI: xem `README.md` (Setup / Usage).
+Cài đặt môi trường (conda env `auto-short`, `pip install -e ".[dev]"`, `config.toml`, `ffmpeg`) và cách chạy CLI: xem `README.md` (Setup / Usage).
 
 Framework checker: `node scripts/framework-check.mjs`.
