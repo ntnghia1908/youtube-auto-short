@@ -177,4 +177,18 @@ Chạy lại B4 → B11 → B6 bằng code hiện hành trên response thô tron
 
 Còn lọt (ngoài danh sách / không có từ nối): C2 `c01308` "Tại vì sao có hiện tượng này…"; `14b` v2 `c01212` "là lấy Hiếu thân Tôn Sư…".
 
-Đo thật C2 + B11 (`num_ctx 32768`) **chưa chạy được**: 2026-09-26 ~14:00Z Ollama `127.0.0.1:11435` nhận kết nối rồi reset (`Connection reset by peer`, cả `curl /api/version`), kéo dài > 10 phút; stage ghi `failed` đúng B5 (3 lần thử, không artifact).
+Lần đầu chạy C2 + B11 (2026-09-26 ~14:00Z) Ollama `127.0.0.1:11435` reset mọi kết nối (> 10 phút); stage ghi `failed` đúng B5 (3 lần thử, không artifact). Chạy lại sau khi Ollama lên lại:
+
+### C2 + B11 — đo thật (mặc định hiện hành: `qwen3:30b`, think on, v2, `num_ctx 32768`, `start_blocklist` mặc định)
+
+| Lần | Wall | Token sinh | Đề xuất | Valid | Lọc B11 | Eligible | Selected | Tổng thời lượng | `in_target` | Median |
+|---|---|---|---|---|---|---|---|---|---|---|
+| C2 v2 không lọc (`num_ctx 16384`, bảng trên) | 450 s | 72.0k | 20 | 20 | — | 20 | 19 | 1111.0 s | 10 | 61.4 s (31.3–83.6) |
+| C2 + B11, lần 1 | 447 s (7 m 27 s) | 72.0k | 20 | 20 | 1 | 19 | 18 | 1069.9 s | 10 | 61.7 s (31.3–83.6) |
+| C2 + B11, `--force` ngay sau | 460 s (7 m 40 s) | 68.0k | 17 | 17 | 0 | 17 | 16 | 1090.7 s | 9 | 66.5 s |
+
+- Lần 1: response **trùng từng token** với lần đo C2 không lọc (cùng `eval_count` mọi window, cùng đề xuất/score) dù `num_ctx` đổi 16384 → 32768; B11 lọc đúng `c00445` (u0059–u0061, "cho nên ở trong đây nói là…") như dự đoán offline, không clip nào khác đổi. `prompt_eval_count` lớn nhất 3806; tổng token lớn nhất một lần gọi 14732 (45 % của 32768); thời gian từng lần gọi (w01…w11, bỏ w06): 38, 21, 50, 46, 19, 56, 45, 33, 78, 61 s.
+- Script kiểm độc lập: PASS cả hai lần. Kiểm câu mở đầu (danh sách từ nối mở rộng của script, rộng hơn `start_blocklist`): lần 1 còn 1/18 (`c01308` "Tại vì sao có hiện tượng này…" — "tại vì" không có trong `start_blocklist`); `--force` còn 2/16 (`c01308`, `c00279` "Tại vì sao phải tu thiện nghiệp…"). Không clip nào mở bằng cụm trong `start_blocklist`.
+- Chạy lại không đổi → skip 0.14 s, sha256 `clips.json` không đổi, không gọi AI.
+- **Tất định:** `--force` ngay sau (model đã nạp) cho response khác ở 7/10 window (request giống hệt): chỉ 9/18 clip chung (6 cùng score/topic); 17 đề xuất, 16 clip. Với 30b-think mức khác biệt giữa các lần chạy lớn hơn nhiều so với `14b` think off (22/25 chung) — chuỗi suy luận dài khuếch đại khác biệt số học. Hai lần chạy có trạng thái server tương tự (model vừa nạp lại) cho kết quả trùng (C2 không lọc và C2 + B11 lần 1). Ghi nhận, không che: `clips.json` của C2 **không tái lập được** giữa các lần `--force`; review (CP9) nên xem `clips.json` hiện có là một mẫu, không phải kết quả duy nhất.
+- Workspace cuối là kết quả lần `--force` (mặc định hiện hành, `selection done`).
