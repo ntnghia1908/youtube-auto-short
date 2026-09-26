@@ -30,3 +30,6 @@ config.yaml
 Thumbs.db
 .idea/
 .vscode/
+
+# Local runtime config (copy from config.example.toml)
+config.toml

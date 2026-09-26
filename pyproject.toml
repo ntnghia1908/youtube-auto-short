@@ -1,0 +1,27 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "auto-short"
+version = "0.1.0"
+description = "Turn Vietnamese long-form lecture videos into YouTube Shorts."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "yt-dlp",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]
+
+[project.scripts]
+auto-short = "auto_short.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/auto_short"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
