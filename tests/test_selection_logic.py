@@ -10,9 +10,11 @@ from auto_short.selection.logic import (
     ResponseError,
     build_windows,
     dedupe,
+    filter_start,
     map_proposals,
     parse_response,
     select_clips,
+    start_connector,
     unit_durations,
     validate_clips,
 )
@@ -293,3 +295,35 @@ def test_validate_clips_rejects_violations(syn):
     bad(lambda c: c[0].update(score=5), "not eligible")
     bad(lambda c: None, "max_clips", max_clips=1)
     bad(lambda c: c.__setitem__(1, dict(c[0], id="k02")), "overlaps k01")
+
+
+# --- B11: opening-connector filter ------------------------------------------------------------------
+
+def test_start_connector_whole_word_normalized():
+    from auto_short.config import DEFAULT_START_BLOCKLIST as B
+    import unicodedata
+    assert start_connector("còn nữa chúng ta", B) == "còn"
+    assert start_connector("cồn cát", B) is None and start_connector("conn", B) is None
+    assert start_connector("màu xanh", B) is None and start_connector("Mà thôi", B) == "mà"
+    assert start_connector("  Cho   Nên điều thứ nhất", B) == "cho nên"
+    assert start_connector(unicodedata.normalize("NFD", "Thế là ở trong"), B) == "thế là"
+    assert start_connector("Ở ĐÂY là", B) == "ở đây" and start_connector("ở đâyy", B) is None
+    assert start_connector("thìa khóa", B) is None and start_connector("và", B) == "và"
+    assert start_connector("chúng ta cho nên", B) is None  # only at the start
+    assert start_connector("cho nên", ()) is None
+    assert start_connector("cho nên điều", ("cho", "cho nên")) == "cho nên"  # longest match named
+
+
+def test_filter_start_marks_valid_proposals_ineligible(syn):
+    cand_doc, _, _ = syn
+    by_id = {c["id"]: c for c in cand_doc["candidates"]}
+    units = {u["id"]: u for u in cand_doc["units"]}
+    recs = _records(cand_doc, ("c00008", 9, True, True), ("c00001", 8, True, True))
+    recs.append(dict(proposal("u0002", "u0002"), window="w01", status="rejected", candidate_id=None,
+                     reject_reason="no candidate"))
+    assert filter_start(recs, by_id, units, ()) == 0
+    assert filter_start(recs, by_id, units, ("ý thứ 2",)) == 1  # c00008 starts at u0002 "ý thứ 2 …"
+    assert (recs[0]["status"], recs[0]["reject_reason"]) == ("ineligible", "start connector: ý thứ 2")
+    assert recs[1]["status"] == "valid" and recs[2]["reject_reason"] == "no candidate"
+    clips = select_clips(recs, by_id, max_clips=25, min_score=7)
+    assert [c["candidate_id"] for c in clips] == ["c00001"] and recs[0]["status"] == "ineligible"

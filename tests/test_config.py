@@ -61,9 +61,12 @@ def test_selection_config_parsing():
                                             "max_clips": 10, "timeout": 30}}).selection
     assert (s.model, s.think, s.temperature, s.max_clips, s.timeout) == ("qwen3:30b", True, 0.2, 10, 30.0)
     d = config_mod.Config().selection
-    assert (d.model, d.think, d.temperature, d.seed, d.num_ctx) == ("qwen3:14b", False, 0.0, 42, 16384)
+    assert (d.model, d.think, d.temperature, d.seed, d.num_ctx) == ("qwen3:30b", True, 0.0, 42, 32768)
     assert (d.prompt_version, d.max_clips, d.min_score, d.max_window_words, d.retries) == ("v2", 25, 7, 2500, 2)
     assert d.ollama_host == "http://127.0.0.1:11435"
+    assert d.start_blocklist[:2] == ("cho nên", "vì vậy") and len(d.start_blocklist) == 16
+    assert config_mod.from_dict({"selection": {"start_blocklist": []}}).selection.start_blocklist == ()
+    assert config_mod.from_dict({"selection": {"start_blocklist": ["à"]}}).selection.start_blocklist == ("à",)
 
 
 @pytest.mark.parametrize("data", [
@@ -76,6 +79,10 @@ def test_selection_config_parsing():
     {"selection": {"num_ctx": True}},
     {"selection": {"timeout": 0}},
     {"selection": []},
+    {"selection": {"start_blocklist": "cho nên"}},
+    {"selection": {"start_blocklist": ["cho nên", ""]}},
+    {"selection": {"start_blocklist": ["  "]}},
+    {"selection": {"start_blocklist": [1]}},
 ])
 def test_selection_config_invalid(data):
     with pytest.raises(ConfigError):

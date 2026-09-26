@@ -12,7 +12,7 @@ import pytest
 from auto_short import config as config_mod
 from auto_short.analysis import run_analysis
 from auto_short.cli import main
-from auto_short.config import Config, WorkspaceConfig
+from auto_short.config import DEFAULT_START_BLOCKLIST, Config, WorkspaceConfig
 from auto_short.hashing import canonical_json, config_hash, sha256_file
 from auto_short.selection import SelectionError, run_selection
 from auto_short.selection.client import ChatError, OllamaClient, resolve_host
@@ -64,8 +64,8 @@ def test_request_follows_b3(scfg):
     run_selection("rbjfCfFq3Dk", scfg, client=fake)
     assert [c["window"] for c in fake.calls] == ["w01", "w02"]
     call = fake.calls[0]
-    assert call["model"] == "qwen3:14b" and call["think"] is False
-    assert call["options"] == {"temperature": 0, "seed": 42, "num_ctx": 16384}
+    assert call["model"] == "qwen3:30b" and call["think"] is True
+    assert call["options"] == {"temperature": 0, "seed": 42, "num_ctx": 32768}
     assert call["format"] == RESPONSE_SCHEMA
     system, user = call["messages"]
     assert system["role"] == "system" and "TRỌN MỘT Ý" in system["content"]
@@ -78,11 +78,11 @@ def test_request_follows_b3(scfg):
     assert "u0001 | 19.0 | đầu nội dung | ý thứ 1" in fake_v1.calls[0]["messages"][1]["content"]
     assert fake_v1.calls[0]["messages"][0]["content"] == prompt_texts("v1")[0]
 
-    cfg2 = _sel(scfg, model="qwen3:30b", think=True, seed=7, num_ctx=8192, temperature=0.2)
+    cfg2 = _sel(scfg, model="qwen3:14b", think=False, seed=7, num_ctx=8192, temperature=0.2)
     fake2 = FakeClient(GOOD)
     run_selection("rbjfCfFq3Dk", cfg2, client=fake2)
     call = fake2.calls[0]
-    assert (call["model"], call["think"]) == ("qwen3:30b", True)
+    assert (call["model"], call["think"]) == ("qwen3:14b", False)
     assert call["options"] == {"temperature": 0.2, "seed": 7, "num_ctx": 8192}
 
 
@@ -99,11 +99,13 @@ def test_clips_and_log_documents(scfg):
     assert list(doc) == ["schema_version", "episode_id", "candidates_sha256", "model", "prompt_version",
                          "prompt_sha256", "params", "stats", "clips"]
     assert doc["candidates_sha256"] == hashlib.sha256(canonical_json(cands).encode()).hexdigest()
-    assert doc["model"] == {"provider": "ollama", "name": "qwen3:14b", "think": False,
-                            "options": {"temperature": 0, "seed": 42, "num_ctx": 16384}}
+    assert doc["model"] == {"provider": "ollama", "name": "qwen3:30b", "think": True,
+                            "options": {"temperature": 0, "seed": 42, "num_ctx": 32768}}
     assert doc["prompt_version"] == "v2" and doc["prompt_sha256"] == prompt_sha256("v2")
-    assert doc["params"] == {"max_clips": 25, "min_score": 7, "max_window_words": 2500, "retries": 2}
-    assert doc["stats"] == {"windows": 2, "ai_calls": 2, "proposals": 6, "valid": 5, "eligible": 3, "selected": 2,
+    assert doc["params"] == {"max_clips": 25, "min_score": 7, "max_window_words": 2500, "retries": 2,
+                             "start_blocklist": list(DEFAULT_START_BLOCKLIST)}
+    assert doc["stats"] == {"windows": 2, "ai_calls": 2, "proposals": 6, "valid": 5, "filtered_start": 0,
+                            "eligible": 3, "selected": 2,
                             "selected_seconds": round(by_id["c00008"]["duration"] + by_id["c00015"]["duration"], 3)}
     assert [(c["id"], c["candidate_id"], c["window"]) for c in doc["clips"]] == [("k01", "c00008", "w01"),
                                                                                ("k02", "c00015", "w02")]
@@ -143,7 +145,7 @@ def test_used_config_excludes_execution_keys(scfg):
     used = used_config(scfg)
     assert set(used) == {f"selection.{k}" for k in ("model", "think", "temperature", "seed", "num_ctx",
                                                      "prompt_version", "max_clips", "min_score", "max_window_words",
-                                                     "retries", "prompt_sha256")}
+                                                     "retries", "start_blocklist", "prompt_sha256")}
     assert used_config(_sel(scfg, ollama_host="http://x:1", timeout=5)) == used
 
 
@@ -155,6 +157,20 @@ def test_no_clip_is_done_with_empty_list_and_warning(scfg, caplog):
     assert _load(ws, "clips.json")["clips"] == []
     assert manifest_of(ws)["stages"]["selection"]["status"] == "done"
     assert "no clip met the criteria" in caplog.text
+
+
+def test_start_blocklist_filter_in_stage(scfg):
+    ws = make_selection_episode(scfg.workspace.dir)
+    run_selection("rbjfCfFq3Dk", _sel(scfg, start_blocklist=("ý thứ 2", "ý thứ 7")), client=FakeClient(GOOD))
+    doc = _load(ws, "clips.json")
+    # c00008 (u0002..) and c00015 (u0007..) filtered; c00002 (u0001..u0003) no longer overlapped
+    assert [c["candidate_id"] for c in doc["clips"]] == ["c00002"]
+    assert doc["params"]["start_blocklist"] == ["ý thứ 2", "ý thứ 7"]
+    assert doc["stats"]["filtered_start"] == 2 and doc["stats"]["valid"] == 5 and doc["stats"]["eligible"] == 1
+    props = [p for w in _load(ws, "selection_log.json")["windows"] for p in w["proposals"]]
+    assert [(p["candidate_id"], p["reject_reason"]) for p in props if p["status"] == "ineligible"
+            and p["reject_reason"].startswith("start connector")] == [("c00008", "start connector: ý thứ 2"),
+                                                            ("c00015", "start connector: ý thứ 7")]
 
 
 def test_max_clips_limit(scfg):
@@ -254,7 +270,8 @@ def test_rerun_skip_and_rerun_conditions(scfg, caplog):
     assert len(fake.calls) == n_calls
 
     # any hashed [selection] key reruns
-    for kw in ({"prompt_version": "v1"}, {"model": "qwen3:30b"}, {"think": True}, {"min_score": 8}, {"max_clips": 3}, {"seed": 1},
+    for kw in ({"prompt_version": "v1"}, {"model": "qwen3:14b"}, {"think": False}, {"start_blocklist": ()},
+               {"start_blocklist": ("cho nên",)}, {"min_score": 8}, {"max_clips": 3}, {"seed": 1},
                {"num_ctx": 8192}, {"temperature": 0.1}, {"max_window_words": 3000}, {"retries": 1}):
         assert run_selection("rbjfCfFq3Dk", _sel(scfg, **kw), client=fake).ran, kw
     assert run_selection("rbjfCfFq3Dk", scfg, client=fake).ran
