@@ -93,6 +93,16 @@ Từ một episode đã có `candidates.json` (CP4), stage `selection` gọi Oll
   - `start_blocklist` mặc định thêm "tại vì", "tại vì sao", "vì sao".
   - Sửa B5: chờ tăng dần giữa các lần retry — 5 s trước lần thử 2, 15 s trước lần thử 3 (lần sau nữa, nếu `retries` > 2, giữ 15 s); thời gian chờ là tham số thực thi (không vào `config_hash`).
   - Ollama chuyển sang `http://127.0.0.1:11437` (HUMAN LEAD cài cơ chế giữ kết nối): mặc định `ollama_host` đổi theo; sửa CP1 §0/§11.
+- **Thay B11 (HUMAN LEAD 2026-09-26, làm rõ ý):** B11 không loại đề xuất/candidate mà **cắt từ nối ở đầu Short**. Bỏ `start_blocklist` và bộ lọc loại đề xuất; mục "tại vì / tại vì sao / vì sao" ở trên không còn áp dụng. Thiết kế duyệt:
+  - **B11 Head cut (deterministic, code):** sau B4/dedupe, với mỗi đề xuất valid: token đầu của segment đầu unit đầu (theo `words` của `transcript.json`, chuẩn hóa NFC + lowercase, khớp trọn từ) khớp một cụm trong `head_cut_words` → bỏ cụm đó (lặp lại nếu cụm kế cũng là từ nối, vd "thế là còn"). Mặc định `head_cut_words` = "cho nên", "vì vậy", "thế nên", "thế là", "do đó", "và", "nhưng", "mà", "rồi", "còn", "thì" (config, vào `config_hash`; rỗng → tắt).
+  - Điểm cắt: nếu có khoảng lặng (`silences.json`) giao đoạn từ đầu từ nối cuối cùng bị bỏ tới đầu từ giữ lại đầu tiên → cắt tại `silence.end − head_cut_pad` (không sớm hơn `silence.start`); không có → cắt tại `start` của từ giữ lại đầu tiên − `head_cut_pad` (mặc định 0.1 s, config, vào hash). Không có word timing hoặc bỏ hết từ của unit → không cắt (ghi log).
+  - Clip giữ `candidate_id`; `source_start` = điểm cắt; `source_duration`, `duration` (trừ `trims` của candidate giao `[source_start, source_end]`, trim bị cắt ngang thì tính phần còn lại), `in_target` tính lại; thêm `head_cut` = `null` hoặc `{"words": "cho nên", "original_start": <candidate source_start>}`. Sau cắt `duration` < `min_duration` → `ineligible` (lý do "too short after head cut"). B6 (chồng lấn, sắp xếp) dùng giá trị sau cắt; B8 kiểm khớp candidate trừ các trường thời gian khi có `head_cut` (tính lại để kiểm).
+  - CP7 render theo `source_start`/`source_end` của clip và `trims` của candidate giao khoảng đó (ghi ở decision record cho CP7).
+  - `inputs` stage thêm `transcript.json` (word timing); `silences.json` kiểm như trước.
+  - **Prompt v3** (mặc định): như v2, nhưng báo AI rằng từ nối thuần ở đầu `first_unit` (liệt kê `head_cut_words`) sẽ được hệ thống tự cắt; đánh giá `start_complete` trên câu sau khi bỏ từ nối. Bỏ quy tắc ép `start_complete = false` theo danh sách từ; giữ hướng dẫn chung "câu đầu tự đứng được". v1, v2 giữ nguyên để so sánh.
+  - Cụm chỉ ngược / từ để hỏi ("cái này", "điều đó", "việc này", "như vậy", "ở đây", "tại vì sao", "vì sao"): **không xử lý riêng** (HUMAN LEAD chọn (iii)); chỉ còn đánh giá chung của AI.
+  - Giới hạn đã biết: word timing caption tự động là gần đúng; chất lượng điểm cắt do HUMAN LEAD nghe mẫu quyết (có thể chỉnh `head_cut_pad`).
+  - Backoff retry 5/15 s và port 11437 giữ nguyên như trên.
 - Tham số HUMAN LEAD cần chốt (đề xuất mặc định, có thể chốt lại sau đo như P1 của CP4):
   - **P1 `think`:** đề xuất quyết sau đo (mặc định `false` cho tới khi chốt).
   - **P2 `min_score`:** 7 / 10.
