@@ -6,7 +6,7 @@
 - Type: CHANGE
 - Change class: S2
 - Owner: HUMAN LEAD
-- Execution profile: single-agent
+- Execution profile: dual-agent
 - Base commit / branch: `0798a67` / `feature/cp1-product-contract`
 - Human Lead approval: pending
 - Implementation authorized: NO
@@ -20,7 +20,7 @@ Chốt và ghi lại product contract + architecture baseline của Auto Short (
 ## Scope
 
 - In scope:
-  - `docs/decisions/CP1-product-contract.md`: chuyển từ PROPOSED sang ACCEPTED theo quyết định HUMAN LEAD.
+  - `docs/decisions/CP1-product-contract.md`: chuyển từ PROPOSED sang ACCEPTED theo quyết định HUMAN LEAD; ảnh mẫu layout `docs/decisions/assets/cp1-layout-reference.jpg`.
   - `docs/ai/project-profile.md`: cập nhật authority order (trỏ tới decision record), module map theo artifact model, setup/tools theo dependency đã duyệt.
   - `docs/workflow/current-state.md`: focus/open decisions/blockers.
   - `scripts/framework-check.mjs`: kiểm decision record tồn tại và có Status hợp lệ.

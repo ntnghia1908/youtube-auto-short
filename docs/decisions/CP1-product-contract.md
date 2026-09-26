@@ -29,6 +29,11 @@
 - Nguồn là tiếng Việt; không nhận/không tạo translation, TTS, dubbing.
 - Playlist/batch: ngoài CP1–CP8, để CP9.
 - Metadata tùy chọn cho header: `series`, `episode`, `speaker` qua config/CLI (xem §6).
+- **Quyết định HUMAN LEAD (2026-09-26):** video test chuẩn là `https://youtu.be/rbjfCfFq3Dk` ("Phật Thuyết Thập Thiện Nghiệp Đạo Kinh tập 9 - Lão Pháp Sư Tịnh Không", kênh PhapHanh), đã tải về local để test lặp lại:
+  - `input/rbjfCfFq3Dk/rbjfCfFq3Dk.mp4` — H.264 1440×1080 (4:3), 29.97 fps, Opus audio, 3622 s, sha256 `7271326d…c3b77b`;
+  - `rbjfCfFq3Dk.vi.json3` (= `vi-orig`) — caption YouTube tiếng Việt **auto-generated** (827 event, không dấu câu, có nhãn `[âm nhạc]`), không có phụ đề thủ công;
+  - `rbjfCfFq3Dk.info.json` — metadata.
+  - `input/` đã gitignore; file không commit. Tải lại: `yt-dlp -f "bv*[height<=1080]+ba/b" --merge-output-format mp4 --write-info-json --write-auto-subs --sub-langs vi --sub-format json3 -o "input/%(id)s/%(id)s.%(ext)s" <url>`.
 
 ## 2. Output contract
 
@@ -45,28 +50,46 @@
 
 ## 4. Composition 9:16
 
-- **Đề xuất (bố cục 3 dải dọc):**
+**Quyết định HUMAN LEAD (2026-09-26):** theo mẫu HUMAN LEAD cung cấp (ảnh chụp Short "HT.Tịnh Không / Thập Thiện Nghiệp Đạo Kinh (tập 14)" — "Các bậc thang tu học Phật pháp").
 
 ```text
-┌──────────────────────┐
-│ Header (upper panel) │  series/episode — deterministic, không AI
-├──────────────────────┤
-│   Video nguồn        │  scale giữ tỉ lệ, crop giữa (16:9 → vùng giữa)
-├──────────────────────┤
-│ Yellow title panel   │  title/hook AI (CP6)
-├──────────────────────┤
-│ Lower panel          │  subtitle (nếu bật) + tên kênh/ghi chú
-└──────────────────────┘
+┌──────────────────────────┐  nền đen
+│  ┌────────────────────┐  │
+│  │ HEADER (vàng)      │  │  deterministic: speaker / series / tập — không AI
+│  └────────────────────┘  │
+│ ┌──────────────────────┐ │
+│ │                      │ │
+│ │  VIDEO NGUỒN         │ │  full width, crop giữa
+│ │                      │ │
+│ └──────────────────────┘ │
+│  ┌────────────────────┐  │
+│  │ TITLE (vàng)       │  │  title/hook AI (CP6)
+│  └────────────────────┘  │
+└──────────────────────────┘
 ```
 
-- **Cần HUMAN LEAD:** ảnh/mẫu tham chiếu cho yellow panel (thứ tự dải, tỉ lệ chiều cao, màu nền chính xác, font, logo). CP1 chỉ chốt cấu trúc + tham số; pixel-level design lấy từ mẫu HUMAN LEAD cung cấp và không được redesign ở CP7.
+Tham số đo từ ảnh mẫu (576×1280), biểu diễn theo chiều rộng khung W để độc lập độ phân giải:
+
+| Thành phần | Thông số |
+|---|---|
+| Nền | đen `#000000` |
+| Header panel | rộng ≈ 0.79 W, căn giữa; cao ≈ 0.27 W; bo góc; nền vàng `#FEDB00`; chữ đen, sans-serif, căn giữa, tối đa 3 dòng |
+| Video | full width W; cao ≈ 1.12 W (tỉ lệ ≈ 8:9); scale + crop giữa theo chiều ngang (nguồn 4:3 giữ ≈ 67 % bề ngang, nguồn 16:9 giữ ≈ 50 %); giữ nguyên chữ burn-in sẵn có của nguồn |
+| Title panel | ngay dưới video (khe ≈ 0.01 W); rộng ≈ 0.81 W, căn giữa; cao ≈ 0.27 W; bo góc; nền `#FEDB00`; chữ đen, cỡ ≈ 1.5× chữ header, tối đa 2 dòng |
+| Khoảng cách header→video | ≈ 0.005 W |
+| Khối nội dung | căn giữa theo chiều dọc trong khung 1080×1920, phần còn lại là nền đen |
+| Lower panel / subtitle | không có (subtitle tắt, §7) |
+
+- Font: sans-serif hỗ trợ đầy đủ dấu tiếng Việt, license mở (OFL), đóng gói trong repo ở CP7; tên font cụ thể chốt ở CP7 bằng so sánh trực quan với ảnh mẫu.
+- CP7 phải render khớp mẫu này (so sánh trực quan với ảnh mẫu là acceptance); không redesign.
+- Ảnh mẫu lưu tại `docs/decisions/assets/cp1-layout-reference.jpg`.
 
 ## 5. Clip selection boundaries
 
 - Clip phải bắt đầu/kết thúc tại ranh giới segment transcript (không cắt giữa câu); có thể nới ±0.3 s để tránh cắt âm.
 - Một clip = một ý trọn vẹn; không ghép đoạn không liên tục (không "jump cut") trong MVP.
 - Không chồng lấn giữa các clip được chọn của cùng episode.
-- Số clip mỗi episode: **đề xuất** tối đa N = 10 (config).
+- **Quyết định HUMAN LEAD (2026-09-26):** tối đa **20** Short mỗi episode (config). Mỗi Short **ưu tiên trình bày trọn vẹn một ý**: tiêu chí hoàn chỉnh ý đứng trên số lượng và trên độ dài mục tiêu — thà ít clip hơn còn hơn clip cụt ý.
 - AI (CP5) chỉ chọn trong danh sách candidate do code deterministic sinh ra (CP4), không tự tạo timestamp mới.
 
 ## 6. Title / header structure
@@ -101,7 +124,7 @@ Workspace: `work/<episode_id>/` (đã gitignore). Mỗi stage một artifact, c�
 
 ## 9. Execution profile
 
-- **Đề xuất:** `single-agent` mặc định cho CP1–CP12; HUMAN LEAD có thể chọn `dual-agent` cho từng checkpoint trong task contract.
+- **Quyết định HUMAN LEAD (2026-09-26):** `dual-agent` mặc định cho các checkpoint (main session = ORCHESTRATOR, `.claude/agents/implementer` = IMPLEMENTER theo `.claude/rules/execution.md`); đổi profile cho một task vẫn cần HUMAN LEAD approve.
 
 ## 10. Dependency policy & proposals
 
@@ -123,13 +146,14 @@ Nguyên tắc: stdlib trước; mỗi dependency qua dependency proposal; không
 - Ollama chạy trên **máy GPU riêng**, truy cập qua `OLLAMA_HOST` (mặc định đề xuất `http://127.0.0.1:11435` theo HUMAN LEAD); code không hard-code host/model.
 - **Quyết định HUMAN LEAD (2026-09-26):** host mặc định `http://127.0.0.1:11435`, model khởi đầu `gemma3:12b`; chốt lại bằng đo đạc ở CP5/CP10.
 - Whisper chỉ là fallback; trên VM không GPU chạy CPU (`int8`, 48 core). Đo thực tế ở CP11.
-- **Blocker môi trường cần HUMAN LEAD xử lý trước CP5:** Ollama trên port 11435 hiện không phản hồi. **Trước CP2:** cài `ffmpeg` (cần `sudo apt install ffmpeg`).
+- Môi trường (kiểm 2026-09-26): `ffmpeg` 6.1.1 đã cài (`/usr/bin/ffmpeg`). Ollama `127.0.0.1:11435` phản hồi, version 0.34.4; model có sẵn: `qwen3:30b`, `qwen3:14b`, `qwen3-embedding:8b`, `qwen3-embedding:4b` — **chưa có `gemma3:12b`** (xem §12).
+- `yt-dlp` 2026.08.19 cài dạng binary ở `~/.local/bin` (tool máy dùng chung để tải video test); việc dùng `yt-dlp` làm dependency Python của project vẫn theo §10.
 
 ## 12. Open questions cho HUMAN LEAD
 
-Đã chốt 2026-09-26: duration (§3), subtitle (§7), config format (§10), Ollama host/model (§11).
+Đã chốt 2026-09-26: duration (§3), layout (§4), số clip + ưu tiên ý trọn vẹn (§5), subtitle (§7), execution profile (§9), config format (§10), Ollama host (§11), video test (§1).
 
 Còn mở:
 
-1. Mẫu layout / yellow panel: file ảnh hoặc thông số (§4).
-2. Chấp nhận hoặc sửa các đề xuất còn lại: §1, §2, §5, §6, §8, §9 và danh sách dependency §10.
+1. Model khởi đầu: máy GPU chưa có `gemma3:12b`. Pull `gemma3:12b` như đã chốt, hay đổi sang `qwen3:14b` / `qwen3:30b` đang có sẵn?
+2. Chấp nhận hoặc sửa các đề xuất còn lại: §1 (input), §2 (output), §5 (các boundary khác), §6 (title/header), §8 (artifact model), §10 (danh sách dependency).
