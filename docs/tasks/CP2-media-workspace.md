@@ -2,14 +2,14 @@
 
 ## Status / Approval
 
-- Status: DRAFT
+- Status: APPROVED
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
 - Execution profile: dual-agent
-- Base commit / branch: `287752e` / `feature/cp2-media-workspace`
-- Human Lead approval: pending
-- Implementation authorized: NO
+- Base commit / branch: `dcf388e` / `feature/cp2-media-workspace`
+- Human Lead approval: accepted (APPROVE TASK, 2026-09-26; D1–D8 as proposed, D4 = reference local file, no copy)
+- Implementation authorized: YES
 
 Lifecycle: `DRAFT → APPROVED → IN_PROGRESS → READY`. DONE suy ra từ Git sau khi merge.
 
