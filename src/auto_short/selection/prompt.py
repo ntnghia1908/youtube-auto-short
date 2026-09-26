@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import hashlib
 
-PROMPT_VERSION = "v2"
+PROMPT_VERSION = "v3"
 
 SYSTEM_PROMPT_V1 = """\
 Bạn là biên tập viên video. Nhiệm vụ: đọc bản ghi lời (caption) của một đoạn bài giảng tiếng Việt và \
@@ -97,7 +97,57 @@ Video: {title}
 Danh sách unit (id | từ X | đến Y | ranh giới trước | lời nói); thời lượng đoạn = đến(last_unit) − từ(first_unit):
 {lines}"""
 
-PROMPTS = {"v1": (SYSTEM_PROMPT_V1, USER_TEMPLATE_V1), "v2": (SYSTEM_PROMPT_V2, USER_TEMPLATE_V2)}
+# v3 (HUMAN LEAD 2026-09-26, B11 head cut): leading pure connectors are cut by code; the model
+# judges the first sentence without them. <<HEAD_CUT_WORDS>> is filled from [selection] head_cut_words
+# (part of the config hash), so the template hash plus that list identify the rendered text.
+HEAD_CUT_PLACEHOLDER = "<<HEAD_CUT_WORDS>>"
+
+SYSTEM_PROMPT_V3 = """\
+Bạn là biên tập viên video. Nhiệm vụ: đọc bản ghi lời (caption) của một đoạn bài giảng tiếng Việt và \
+đề xuất các đoạn trích có thể đăng thành YouTube Shorts ĐỘC LẬP.
+
+Dữ liệu vào là danh sách "unit" liên tiếp theo thời gian. Mỗi dòng:
+id | từ X | đến Y | ranh giới trước unit | lời nói
+X, Y là mốc thời gian (giây) trên đồng hồ Short tính từ đầu danh sách, đã rút khoảng lặng. Một đề xuất là dãy unit \
+liên tiếp từ first_unit đến last_unit (tính cả hai đầu).
+
+CÁCH TÍNH THỜI LƯỢNG: thời lượng đoạn = "đến" của last_unit − "từ" của first_unit.
+Ví dụ: first_unit có "từ 40.2", last_unit có "đến 118.9" → thời lượng 78.7 giây.
+Luôn tính thời lượng như vậy TRƯỚC khi đề xuất.
+
+TỰ ĐỘNG CẮT TỪ NỐI Ở ĐẦU: nếu lời nói của first_unit mở đầu bằng từ nối thuần — <<HEAD_CUT_WORDS>> — (kể cả \
+nhiều từ nối liên tiếp như "thế là còn"), hệ thống sẽ tự cắt bỏ các từ đó khỏi đầu Short. Vì vậy hãy đánh giá \
+câu đầu như thể các từ nối đó đã bị bỏ; KHÔNG cần tránh first_unit chỉ vì nó mở đầu bằng các từ nối này.
+
+Ràng buộc:
+- Chỉ dùng id unit có trong danh sách; first_unit đứng trước hoặc trùng last_unit.
+- Thời lượng bắt buộc 30–180 giây; lý tưởng 60–90 giây. Đoạn dưới 30 giây hoặc trên 180 giây bị loại bỏ. \
+Một unit thường quá ngắn: hãy nối nhiều unit liên tiếp cho tới khi trọn ý và đủ thời lượng.
+- QUAN TRỌNG NHẤT: mỗi đoạn phải trình bày TRỌN MỘT Ý.
+  - Câu đầu (sau khi bỏ từ nối thuần ở trên) phải tự đứng được: người xem chưa nghe gì trước đó vẫn hiểu. \
+Nếu câu đầu bắt đầu giữa câu, hoặc phụ thuộc vào điều vừa nói trước đó (ví dụ chỉ ngược bằng "cái này", \
+"điều đó", "như vậy"… mà không rõ chỉ cái gì), thì start_complete là false; khi đó hãy chọn first_unit khác \
+(sớm hơn, nơi ý bắt đầu thật sự).
+  - Câu cuối kết thúc ý: không dừng giữa câu, không bỏ dở lập luận hay ví dụ; nếu last_unit dừng giữa câu \
+thì end_complete là false.
+  - Thà không đề xuất còn hơn đề xuất đoạn cụt ý.
+- Caption tạo tự động: không có dấu câu, có thể sai chính tả; tự suy ra ranh giới câu theo nghĩa. \
+Đầu và cuối danh sách có thể rơi giữa một ý.
+- Các đề xuất được phép chồng lấn nhau; hệ thống sẽ tự chọn. Tối đa 12 đề xuất, ưu tiên đoạn tốt nhất.
+
+Mỗi đề xuất gồm:
+- first_unit, last_unit: id unit đầu và cuối.
+- topic: chủ đề ngắn bằng tiếng Việt (tối đa 10 từ).
+- reason: 1–2 câu ngắn tiếng Việt: thời lượng đã tính, vì sao đoạn này hay và trọn ý (hoặc thiếu gì).
+- start_complete: true khi câu đầu (sau khi bỏ từ nối thuần) tự đứng được; end_complete: true khi câu cuối kết \
+thúc ý. Đánh giá trung thực, nghiêm khắc.
+- score: số nguyên 1–10, giá trị làm một Short độc lập (ý rõ ràng, có ích hoặc hấp dẫn, người xem không cần \
+ngữ cảnh trước đó).
+
+Trả lời đúng JSON {"clips": [...]}. Không có đoạn phù hợp thì trả {"clips": []}."""
+
+PROMPTS = {"v1": (SYSTEM_PROMPT_V1, USER_TEMPLATE_V1), "v2": (SYSTEM_PROMPT_V2, USER_TEMPLATE_V2),
+           "v3": (SYSTEM_PROMPT_V3, USER_TEMPLATE_V2)}
 
 # Property order is the generation order: judge (topic/reason/flags) before the score.
 RESPONSE_SCHEMA = {
@@ -129,6 +179,15 @@ def prompt_texts(version: str) -> tuple[str, str]:
         return PROMPTS[version]
     except KeyError:
         raise ValueError(f"unknown prompt_version {version!r} (known: {', '.join(sorted(PROMPTS))})") from None
+
+
+def system_prompt(version: str, head_cut_words: tuple[str, ...] | list[str] = ()) -> str:
+    """System prompt text as sent; v3 lists the head-cut connectors (B11)."""
+    system, _ = prompt_texts(version)
+    if HEAD_CUT_PLACEHOLDER in system:
+        listed = ", ".join(f'"{w}"' for w in head_cut_words) if head_cut_words else "(không có)"
+        system = system.replace(HEAD_CUT_PLACEHOLDER, listed)
+    return system
 
 
 def prompt_sha256(version: str) -> str:

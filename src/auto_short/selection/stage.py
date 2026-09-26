@@ -33,15 +33,15 @@ from .logic import (
     SelectionError,
     Window,
     build_windows,
+    apply_head_cuts,
     dedupe,
-    filter_start,
     map_proposals,
     parse_response,
     select_clips,
     unit_durations,
     validate_clips,
 )
-from .prompt import RESPONSE_SCHEMA, prompt_sha256, prompt_texts, render_user_prompt
+from .prompt import RESPONSE_SCHEMA, prompt_sha256, prompt_texts, render_user_prompt, system_prompt
 
 log = logging.getLogger("auto_short")
 
@@ -50,14 +50,15 @@ SCHEMA_VERSION = 1
 METADATA_NAME = "metadata.json"
 CANDIDATES_NAME = "candidates.json"
 SILENCES_NAME = "silences.json"
+TRANSCRIPT_NAME = "transcript.json"
 CLIPS_NAME = "clips.json"
 LOG_NAME = "selection_log.json"
 ARTIFACTS = [CLIPS_NAME, LOG_NAME]
 
 # [selection] keys in the config hash (B9); ollama_host / timeout are execution-only.
 HASH_KEYS = ("model", "think", "temperature", "seed", "num_ctx", "prompt_version", "max_clips", "min_score",
-             "max_window_words", "retries", "start_blocklist")
-PARAM_KEYS = ("max_clips", "min_score", "max_window_words", "retries", "start_blocklist")
+             "max_window_words", "retries", "head_cut_words", "head_cut_pad")
+PARAM_KEYS = ("max_clips", "min_score", "max_window_words", "retries", "head_cut_words", "head_cut_pad")
 
 
 @dataclass(frozen=True)
@@ -71,7 +72,7 @@ class SelectionResult:
 def used_config(config: Config) -> dict:
     cfg = config.selection
     used = {f"selection.{k}": getattr(cfg, k) for k in HASH_KEYS}
-    used["selection.start_blocklist"] = list(cfg.start_blocklist)
+    used["selection.head_cut_words"] = list(cfg.head_cut_words)
     try:
         used["selection.prompt_sha256"] = prompt_sha256(cfg.prompt_version)
     except ValueError:
@@ -146,15 +147,20 @@ def _call_window(client: ChatClient, cfg: SelectionConfig, messages: list[dict],
     raise SelectionError(f"window {window.id}: {last_error} (after {cfg.retries + 1} attempts)")
 
 
-def select(episode_id: str, cand_doc: dict, metadata: dict, silences_doc: dict, cfg: SelectionConfig,
-           client: ChatClient, sleep: Callable[[float], None] = time.sleep) -> tuple[dict, dict]:
+def select(episode_id: str, cand_doc: dict, metadata: dict, silences_doc: dict, transcript: dict,
+           cfg: SelectionConfig, client: ChatClient,
+           sleep: Callable[[float], None] = time.sleep) -> tuple[dict, dict]:
     """Stage body without I/O: inputs -> (clips document, selection log document)."""
-    system, _ = prompt_texts(cfg.prompt_version)
+    system = system_prompt(cfg.prompt_version, cfg.head_cut_words)
     p_sha = prompt_sha256(cfg.prompt_version)
     cands_sha = _sha(cand_doc)
     if _sha(silences_doc) != cand_doc.get("silences_sha256"):
         raise SelectionError("silences.json does not match candidates.json silences_sha256; "
                              "re-run 'auto-short analysis'")
+    if transcript.get("transcript_sha256") != cand_doc.get("transcript_sha256"):
+        raise SelectionError("transcript.json does not match candidates.json transcript_sha256; "
+                             "re-run 'auto-short analysis'")
+    seg_by_id = {sg["id"]: sg for sg in transcript["segments"]}
     params = cand_doc["params"]
     units, candidates = cand_doc["units"], cand_doc["candidates"]
     silences = [(s["start"], s["end"]) for s in silences_doc["silences"]]
@@ -192,12 +198,17 @@ def select(episode_id: str, cand_doc: dict, metadata: dict, silences_doc: dict, 
 
     dedupe(records)
     valid = sum(r["status"] == VALID for r in records)
-    filtered = filter_start(records, cand_by_id, {u["id"]: u for u in units}, cfg.start_blocklist)
+    effective = apply_head_cuts(records, cand_by_id, seg_by_id, silences, params, cfg.head_cut_words,
+                                cfg.head_cut_pad)
     for r in records:
-        if (r["reject_reason"] or "").startswith("start connector:"):
-            log.info("%s: filtered %s (%s-%s): %s", STAGE, r["candidate_id"], r["first_unit"], r["last_unit"],
-                     r["reject_reason"])
-    clips = select_clips(records, cand_by_id, max_clips=cfg.max_clips, min_score=cfg.min_score)
+        cut = r.get("head_cut")
+        if cut:
+            log.info("%s: head cut %s: drop '%s', %s -> %s (%s)%s", STAGE, r["candidate_id"], cut["words"],
+                     cut["original_start"], cut["source_start"], cut["method"],
+                     f"; {r['reject_reason']}" if r["status"] == "ineligible" else "")
+        elif r.get("head_cut_note"):
+            log.info("%s: head cut %s skipped: %s", STAGE, r["candidate_id"], r["head_cut_note"])
+    clips = select_clips(records, effective, max_clips=cfg.max_clips, min_score=cfg.min_score)
     validate_clips(clips, cand_doc, max_clips=cfg.max_clips, min_score=cfg.min_score)
     eligible = sum(r["status"] not in ("rejected", "ineligible") for r in records)
     stats = {
@@ -205,10 +216,10 @@ def select(episode_id: str, cand_doc: dict, metadata: dict, silences_doc: dict, 
         "ai_calls": sum(len(w["ai_calls"]) for w in wlogs),
         "proposals": len(records),
         "valid": valid,
-        "filtered_start": filtered,
         "eligible": eligible,
         "selected": sum(r["status"] == SELECTED for r in records),
         "selected_seconds": sum(round(c["duration"] * 1000) for c in clips) / 1000,
+        "head_cut": sum(c["head_cut"] is not None for c in clips),
     }
     head = {
         "schema_version": SCHEMA_VERSION,
@@ -219,7 +230,7 @@ def select(episode_id: str, cand_doc: dict, metadata: dict, silences_doc: dict, 
         "prompt_sha256": p_sha,
     }
     params_doc = {k: getattr(cfg, k) for k in PARAM_KEYS}
-    params_doc["start_blocklist"] = list(cfg.start_blocklist)
+    params_doc["head_cut_words"] = list(cfg.head_cut_words)
     clips_doc = dict(head, params=params_doc, stats=stats, clips=clips)
     log_doc = dict(head, system_prompt=system, response_format=RESPONSE_SCHEMA, stats=stats,
                    unit_seconds=durations, windows=wlogs)
@@ -244,7 +255,9 @@ def run_selection(episode_id: str, config: Config, *, force: bool = False,
 
     analysis_entry = manifest["stages"].get("analysis") or {}
     meta_path, cand_path, sil_path = ws.dir / METADATA_NAME, ws.dir / CANDIDATES_NAME, ws.dir / SILENCES_NAME
-    if analysis_entry.get("status") != DONE or not all(p.is_file() for p in (cand_path, sil_path, meta_path)):
+    tr_path = ws.dir / TRANSCRIPT_NAME
+    if analysis_entry.get("status") != DONE or \
+            not all(p.is_file() for p in (cand_path, sil_path, meta_path, tr_path)):
         msg = (f"analysis is not done for {episode_id!r} (status: {analysis_entry.get('status', 'pending')}); "
                "run 'auto-short analysis' first")
         _remove_outputs(ws)
@@ -254,6 +267,7 @@ def run_selection(episode_id: str, config: Config, *, force: bool = False,
     inputs = [
         {"path": ws.relpath(cand_path), "sha256": hashing.sha256_file(cand_path)},
         {"path": ws.relpath(meta_path), "sha256": hashing.sha256_file(meta_path)},
+        {"path": ws.relpath(tr_path), "sha256": hashing.sha256_file(tr_path)},
     ]
     cfg_hash = hashing.config_hash(used_config(config))
     chat = client or OllamaClient(resolve_host(cfg.ollama_host), timeout=cfg.timeout)
@@ -263,9 +277,10 @@ def run_selection(episode_id: str, config: Config, *, force: bool = False,
         cand_doc = _read_json(cand_path, "analysis")
         metadata = _read_json(meta_path, "ingest")
         silences_doc = _read_json(sil_path, "analysis")
+        transcript = _read_json(tr_path, "transcript")
         log.info("%s: model %s (think=%s) via %s", STAGE, cfg.model, cfg.think,
                  getattr(chat, "host", type(chat).__name__))
-        clips_doc, log_doc = select(ws.episode_id, cand_doc, metadata, silences_doc, cfg, chat, sleep)
+        clips_doc, log_doc = select(ws.episode_id, cand_doc, metadata, silences_doc, transcript, cfg, chat, sleep)
         try:
             _remove_outputs(ws)
             atomic_write_json(ws.dir / LOG_NAME, log_doc)
@@ -274,9 +289,9 @@ def run_selection(episode_id: str, config: Config, *, force: bool = False,
             _remove_outputs(ws)
             raise
         st = clips_doc["stats"]
-        log.info("%s: windows=%d ai_calls=%d proposals=%d valid=%d filtered_start=%d eligible=%d selected=%d "
-                 "selected_seconds=%s", STAGE, st["windows"], st["ai_calls"], st["proposals"], st["valid"],
-                 st["filtered_start"], st["eligible"], st["selected"], st["selected_seconds"])
+        log.info("%s: windows=%d ai_calls=%d proposals=%d valid=%d eligible=%d selected=%d selected_seconds=%s "
+                 "head_cut=%d", STAGE, st["windows"], st["ai_calls"], st["proposals"], st["valid"],
+                 st["eligible"], st["selected"], st["selected_seconds"], st["head_cut"])
         if not clips_doc["clips"]:
             log.warning("%s: WARNING: no clip met the criteria (complete start/end, score >= %d); "
                         "clips.json has no clips", STAGE, cfg.min_score)

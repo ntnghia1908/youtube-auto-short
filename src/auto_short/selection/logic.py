@@ -22,6 +22,7 @@ VALID, REJECTED, INELIGIBLE, SELECTED, OVERLAPPED, OVER_LIMIT = (
 PROPOSAL_KEYS = ("first_unit", "last_unit", "topic", "reason", "start_complete", "end_complete", "score")
 CLIP_COPY_KEYS = ("source_start", "source_end", "source_duration", "duration", "in_target", "unit_ids",
                   "segment_ids")
+TIME_KEYS = ("source_start", "source_duration", "duration", "in_target")  # recomputed after a head cut
 
 
 class SelectionError(Exception):
@@ -193,37 +194,101 @@ def dedupe(records: list[dict]) -> None:
             rec.update(status=REJECTED, reject_reason=f"duplicate of proposal in {cur['window']}")
 
 
-# --- B11 opening-connector filter ----------------------------------------------------------
+# --- B11 head cut ----------------------------------------------------------------------------
 
-def normalize_text(text: str) -> str:
-    """NFC, lowercase, collapse whitespace."""
-    return " ".join(unicodedata.normalize("NFC", text).lower().split())
+_EDGE_PUNCT = re.compile(r"^\W+|\W+$")
 
 
-def start_connector(text: str, blocklist: tuple[str, ...] | list[str]) -> str | None:
-    """The (normalized) blocklist phrase that ``text`` starts with as whole words, else None.
-    Longest phrase wins so the reason names the most specific match."""
-    t = normalize_text(text)
-    for phrase in sorted((normalize_text(p) for p in blocklist), key=len, reverse=True):
-        if phrase and re.match(re.escape(phrase) + r"(?!\w)", t):
-            return phrase
-    return None
+def normalize_word(text: str) -> str:
+    """NFC, lowercase, whitespace collapsed, surrounding punctuation removed."""
+    return _EDGE_PUNCT.sub("", " ".join(unicodedata.normalize("NFC", text).lower().split()))
 
 
-def filter_start(records: list[dict], cand_by_id: dict[str, dict], units_by_id: dict[str, dict],
-                 blocklist: tuple[str, ...] | list[str]) -> int:
-    """Mark valid proposals whose first unit opens with a blocked connector ``ineligible``
-    (B11); runs after mapping/dedupe and before the final choice. Returns how many."""
-    n = 0
+def leading_connectors(words: list[dict], phrases: tuple[str, ...] | list[str]) -> int:
+    """Number of leading ``words`` that are connector phrases (whole words; a multi-word phrase
+    matches consecutive tokens; repeated while the next tokens are a phrase too, longest first)."""
+    toks = [normalize_word(w["text"]) for w in words]
+    pats = sorted({tuple(normalize_word(x) for x in p.split()) for p in phrases if p.split()}, key=len,
+                  reverse=True)
+    i = 0
+    while True:
+        hit = next((p for p in pats if tuple(toks[i:i + len(p)]) == p), None)
+        if hit is None:
+            return i
+        i += len(hit)
+
+
+def trimmed_duration(start: float, end: float, trims: list[list[float]]) -> float:
+    """``end - start`` minus the parts of ``trims`` inside ``[start, end]`` (ms exact)."""
+    s, e = _ms(start), _ms(end)
+    cut = sum(max(0, min(_ms(b), e) - max(_ms(a), s)) for a, b in trims)
+    return (e - s - cut) / 1000
+
+
+def head_cut(cand: dict, segment: dict | None, silences: list[tuple[float, float]],
+             phrases: tuple[str, ...] | list[str], pad: float) -> tuple[dict | None, str | None]:
+    """B11: where to start the clip so the leading pure connectors of its first segment are dropped.
+
+    Returns ``(cut, None)`` with ``cut = {"words", "original_start", "source_start", "method",
+    "dropped_until"}`` or ``(None, note)`` when nothing is cut (``note`` explains a skipped cut, else None).
+    """
+    if not phrases:
+        return None, None
+    words = (segment or {}).get("words") or []
+    if not words:
+        return None, "no word timing"
+    n = leading_connectors(words, phrases)
+    if n == 0:
+        return None, None
+    dropped = " ".join(normalize_word(w["text"]) for w in words[:n])
+    if n >= len(words):
+        return None, f"'{dropped}' is the whole first segment"
+    last_drop, keep = words[n - 1], words[n]
+    lo, hi = _ms(last_drop["start"]), _ms(keep["start"])
+    sil = [(a, b) for a, b in silences if _ms(a) < hi and _ms(b) > lo]  # silence meets [last dropped, kept)
+    if sil:
+        a, b = sil[-1]
+        t, method = max(_ms(b) - _ms(pad), _ms(a)), "silence"
+    else:
+        t, method = hi - _ms(pad), "word"
+    orig = _ms(cand["source_start"])
+    if t <= orig:
+        return None, f"cut point {t / 1000} not after source_start {cand['source_start']} ('{dropped}')"
+    if t >= _ms(cand["source_end"]):
+        return None, f"cut point {t / 1000} not before source_end ('{dropped}')"
+    return {"words": dropped, "original_start": cand["source_start"], "source_start": t / 1000,
+            "method": method, "dropped_until": keep["start"]}, None
+
+
+def cut_candidate(cand: dict, cut: dict, params: dict) -> dict:
+    """Copy of ``cand`` starting at ``cut["source_start"]`` with durations recomputed (B11)."""
+    ss, se = cut["source_start"], cand["source_end"]
+    dur = trimmed_duration(ss, se, cand["trims"])
+    return dict(cand, source_start=ss, source_duration=(_ms(se) - _ms(ss)) / 1000, duration=dur,
+                in_target=params["target_min"] <= dur <= params["target_max"],
+                head_cut={"words": cut["words"], "original_start": cut["original_start"]})
+
+
+def apply_head_cuts(records: list[dict], cand_by_id: dict[str, dict], seg_by_id: dict[str, dict],
+                    silences: list[tuple[float, float]], params: dict, phrases, pad: float) -> dict[str, dict]:
+    """Run B11 on every valid proposal (after B4/dedupe, before B6). Returns the effective
+    candidate per ``candidate_id`` (cut or unchanged); too-short cuts become ``ineligible``.
+    Each record gets ``head_cut`` (dict or None) and ``head_cut_note``."""
+    effective = dict(cand_by_id)
     for rec in records:
-        if rec["status"] != VALID or not blocklist:
+        if rec["status"] != VALID:
             continue
-        first = cand_by_id[rec["candidate_id"]]["unit_ids"][0]
-        phrase = start_connector(units_by_id[first]["text"], blocklist)
-        if phrase is not None:
-            rec.update(status=INELIGIBLE, reject_reason=f"start connector: {phrase}")
-            n += 1
-    return n
+        cand = cand_by_id[rec["candidate_id"]]
+        cut, note = head_cut(cand, seg_by_id.get(cand["segment_ids"][0]), silences, phrases, pad)
+        rec["head_cut"], rec["head_cut_note"] = cut, note
+        if cut is None:
+            continue
+        eff = cut_candidate(cand, cut, params)
+        if eff["duration"] < params["min_duration"]:
+            rec.update(status=INELIGIBLE, reject_reason=f"too short after head cut ({eff['duration']} s)")
+            continue
+        effective[cand["id"]] = eff
+    return effective
 
 
 # --- B6 final choice ------------------------------------------------------------------------
@@ -268,6 +333,7 @@ def select_clips(records: list[dict], cand_by_id: dict[str, dict], *, max_clips:
     for n, (c, rec) in enumerate(chosen, 1):
         clip = {"id": f"k{n:02d}", "candidate_id": c["id"]}
         clip.update({k: c[k] for k in CLIP_COPY_KEYS})
+        clip["head_cut"] = c.get("head_cut")
         clip.update(score=rec["score"], start_complete=rec["start_complete"], end_complete=rec["end_complete"],
                     topic=rec["topic"], reason=rec["reason"], window=rec["window"])
         rec["clip_id"] = clip["id"]
@@ -295,9 +361,18 @@ def validate_clips(clips: list[dict], cand_doc: dict, *, max_clips: int, min_sco
         cand = cand_by_id.get(clip["candidate_id"])
         if cand is None:
             fail(clip, "candidate does not exist")
+        hc = clip.get("head_cut")
+        if hc is not None:
+            if hc.get("original_start") != cand["source_start"] or \
+                    not _ms(cand["source_start"]) < _ms(clip["source_start"]) < _ms(cand["source_end"]):
+                fail(clip, "head_cut does not fit the candidate")
+            expect = cut_candidate(cand, {"source_start": clip["source_start"], "words": hc["words"],
+                                          "original_start": hc["original_start"]}, params)
+        else:
+            expect = cand
         for k in CLIP_COPY_KEYS:
-            if clip[k] != cand[k]:
-                fail(clip, f"{k} does not match the candidate")
+            if clip[k] != expect[k]:
+                fail(clip, f"{k} does not match the candidate" + (" after head cut" if hc else ""))
         if not params["min_duration"] <= clip["duration"] <= params["max_duration"]:
             fail(clip, f"duration {clip['duration']} outside {params['min_duration']}-{params['max_duration']} s")
         if not set(clip["unit_ids"]) <= unit_ids:
