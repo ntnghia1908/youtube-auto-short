@@ -169,4 +169,4 @@ Không chạm database, security model hay public API contract mạng (chỉ g�
   - Segment caption không có word timing (5/817 trên video test, gồm `c01293` "cho nên điều thứ nhất…") không được head cut.
   - Word timing caption tự động gần đúng (từ đầu segment thường sớm ~1 s).
   - Mép window do nhãn `[âm nhạc]` nhận nhầm (CP4) vẫn có thể cắt ngang ý.
-- PR:
+- PR: #7 https://github.com/ntnghia1908/youtube-auto-short/pull/7 (HUMAN LEAD approved push + PR 2026-09-26).
