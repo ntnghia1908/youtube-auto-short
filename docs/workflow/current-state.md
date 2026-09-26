@@ -8,19 +8,18 @@ Chỉ ghi operational state không suy ra được từ Git, task contract hoặ
 
 ## Current focus
 
-CP1 — Product Contract & Architecture Baseline (S2), pha EXECUTE theo profile `dual-agent`. Task contract `docs/tasks/CP1-product-contract.md` đã APPROVED; decision record `docs/decisions/CP1-product-contract.md` ACCEPTED. Roadmap canonical: `AUTO_SHORT_CHECKPOINT_PLAN.md`. CP0 DONE (PR #1 merged).
+CP2 — Media Input + Artifact Workspace (S2), pha DISCUSS/CONTRACT. Task contract `docs/tasks/CP2-media-workspace.md` DRAFT. CP1 DONE (PR #2 merged).
 
 ## Next proposed action
 
-1. ORCHESTRATOR review diff + verification evidence → READY.
-2. PR #2 chờ HUMAN LEAD merge.
-3. Sau merge: mở CP2 — Media Input + Artifact Workspace (HUMAN LEAD, 2026-09-26); cần task contract riêng và approval trước khi implement.
+1. HUMAN LEAD duyệt D1–D8 + APPROVE TASK CP2.
+2. Execute (dual-agent) → review → READY → integration.
 
 Đây là PROPOSED, không authorize implementation tiếp theo.
 
 ## Open decisions
 
-- Không còn cho CP1.
+- CP2 D1–D8 trong `docs/tasks/CP2-media-workspace.md`.
 
 ## Blockers
 
