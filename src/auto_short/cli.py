@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from . import config as config_mod
+from .analysis import AnalysisError, run_analysis
 from .ingest import IngestError, run_ingest
 from .transcript import TranscriptError, run_transcript
 from .workspace import PENDING, STAGES, Workspace, WorkspaceError, validate_episode_id
@@ -31,6 +32,11 @@ def _build_parser() -> argparse.ArgumentParser:
     t.add_argument("--force", action="store_true", help="re-run even if up to date")
     t.add_argument("--config", type=Path, help="config TOML (default: ./config.toml if present)")
 
+    a = sub.add_parser("analysis", help="produce shots.json, silences.json and candidates.json")
+    a.add_argument("episode_id")
+    a.add_argument("--force", action="store_true", help="re-run even if up to date")
+    a.add_argument("--config", type=Path, help="config TOML (default: ./config.toml if present)")
+
     s = sub.add_parser("status", help="show stage status of an episode")
     s.add_argument("episode_id")
     s.add_argument("--config", type=Path, help="config TOML (default: ./config.toml if present)")
@@ -46,6 +52,13 @@ def _cmd_ingest(args: argparse.Namespace, cfg: config_mod.Config) -> int:
 def _cmd_transcript(args: argparse.Namespace, cfg: config_mod.Config) -> int:
     result = run_transcript(args.episode_id, cfg, subtitle=args.subtitle, force=args.force)
     state = f"transcribed ({result.source}/{result.method})" if result.ran else "skipped (up to date)"
+    print(f"{result.episode_id}\t{state}\t{result.path}")
+    return 0
+
+
+def _cmd_analysis(args: argparse.Namespace, cfg: config_mod.Config) -> int:
+    result = run_analysis(args.episode_id, cfg, force=args.force)
+    state = f"analyzed ({result.candidates} candidates)" if result.ran else "skipped (up to date)"
     print(f"{result.episode_id}\t{state}\t{result.path}")
     return 0
 
@@ -96,7 +109,9 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_ingest(args, cfg)
         if args.command == "transcript":
             return _cmd_transcript(args, cfg)
+        if args.command == "analysis":
+            return _cmd_analysis(args, cfg)
         return _cmd_status(args, cfg)
-    except (config_mod.ConfigError, IngestError, TranscriptError, WorkspaceError) as exc:
+    except (config_mod.ConfigError, IngestError, TranscriptError, AnalysisError, WorkspaceError) as exc:
         print(f"auto-short: error: {exc}", file=sys.stderr)
         return 1

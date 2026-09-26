@@ -61,10 +61,36 @@ class TranscriptConfig:
 
 
 @dataclass(frozen=True)
+class AnalysisConfig:
+    """Shot/silence detection and candidate parameters (docs/decisions/CP4-analysis-contract.md)."""
+
+    # Detection (A2, A3)
+    scene_threshold: float = 0.3
+    scale_width: int = 320
+    silence_noise_db: float = -45.0
+    silence_min: float = 0.3
+    # Candidate parameters (A4–A8), written to candidates.json ``params``
+    min_boundary_silence: float = 3.0
+    align_tolerance: float = 0.5
+    hard_break_silence: float = 10.0
+    max_pause: float = 1.0
+    boundary_pad: float = 0.3
+    min_duration: float = 30.0
+    max_duration: float = 180.0
+    target_min: float = 60.0
+    target_max: float = 90.0
+    shot_guard: float = 1.0
+    intro_window: float = 60.0
+    intro_min_silence: float = 1.0
+    outro_window: float = 180.0
+
+
+@dataclass(frozen=True)
 class Config:
     workspace: WorkspaceConfig = field(default_factory=WorkspaceConfig)
     ingest: IngestConfig = field(default_factory=IngestConfig)
     transcript: TranscriptConfig = field(default_factory=TranscriptConfig)
+    analysis: AnalysisConfig = field(default_factory=AnalysisConfig)
 
 
 def _section(data: dict, name: str) -> dict:
@@ -129,6 +155,45 @@ def _transcript(data: dict) -> TranscriptConfig:
     )
 
 
+def _analysis(data: dict) -> AnalysisConfig:
+    an = _section(data, "analysis")
+    d, w = AnalysisConfig(), "analysis"
+
+    width = an.get("scale_width", d.scale_width)
+    if isinstance(width, bool) or not isinstance(width, int) or width < 2:
+        raise ConfigError(f"{w}.scale_width must be an integer >= 2")
+
+    def num(key: str, lo: float, hi: float | None = None) -> float:
+        return _number(an, key, getattr(d, key), w, lo=lo, hi=hi)
+
+    cfg = AnalysisConfig(
+        scene_threshold=num("scene_threshold", 0, 1),
+        scale_width=width,
+        silence_noise_db=num("silence_noise_db", -120, 0),
+        silence_min=num("silence_min", 0.01),
+        min_boundary_silence=num("min_boundary_silence", 0),
+        align_tolerance=num("align_tolerance", 0),
+        hard_break_silence=num("hard_break_silence", 0),
+        max_pause=num("max_pause", 0),
+        boundary_pad=num("boundary_pad", 0),
+        min_duration=num("min_duration", 0),
+        max_duration=num("max_duration", 0),
+        target_min=num("target_min", 0),
+        target_max=num("target_max", 0),
+        shot_guard=num("shot_guard", 0),
+        intro_window=num("intro_window", 0),
+        intro_min_silence=num("intro_min_silence", 0),
+        outro_window=num("outro_window", 0),
+    )
+    if not cfg.min_duration <= cfg.max_duration:
+        raise ConfigError(f"{w}.min_duration must be <= {w}.max_duration")
+    if not cfg.target_min <= cfg.target_max:
+        raise ConfigError(f"{w}.target_min must be <= {w}.target_max")
+    if not cfg.min_boundary_silence <= cfg.hard_break_silence:
+        raise ConfigError(f"{w}.min_boundary_silence must be <= {w}.hard_break_silence")
+    return cfg
+
+
 def from_dict(data: dict) -> Config:
     ws = _section(data, "workspace")
     ing = _section(data, "ingest")
@@ -145,6 +210,7 @@ def from_dict(data: dict) -> Config:
             js_runtimes=tuple(runtimes),
         ),
         transcript=_transcript(data),
+        analysis=_analysis(data),
     )
 
 

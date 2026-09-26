@@ -35,3 +35,24 @@ word_timestamps = true
 # Execution-only (not part of the config hash): CPU threads (0 = all CPUs) and model cache dir.
 cpu_threads = 0
 models_dir = "models"
+
+[analysis]
+# Shot / silence detection and deterministic candidates
+# (docs/decisions/CP4-analysis-contract.md). Changing any key re-runs the whole stage.
+scene_threshold = 0.3        # ffmpeg select=gt(scene, threshold)
+scale_width = 320            # frames are downscaled to this width before scene detection
+silence_noise_db = -45       # ffmpeg silencedetect noise level (dB)
+silence_min = 0.3            # minimum silence length (s)
+min_boundary_silence = 3.0   # silence >= this, aligned with a caption segment start, is a cut point
+align_tolerance = 0.5        # caption vs audio timestamp tolerance (s)
+hard_break_silence = 10.0    # silence >= this is a hard break (never inside a candidate)
+max_pause = 1.0              # silences longer than this are shortened to this in the Short (CP7)
+boundary_pad = 0.3           # keep this much of the boundary silence at each clip edge (s)
+min_duration = 30            # Short duration after silence trimming (s)
+max_duration = 180
+target_min = 60              # in_target range (informational)
+target_max = 90
+shot_guard = 1.0             # no shot change within this many seconds of a clip edge
+intro_window = 60            # intro music label must start before this (s)
+intro_min_silence = 1.0      # silence after the intro that marks the content start (s)
+outro_window = 180           # outro music label must end within this many seconds of the end
