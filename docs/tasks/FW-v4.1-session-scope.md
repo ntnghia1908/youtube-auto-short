@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: CHANGE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -75,9 +75,9 @@ Không chạm database, security model hoặc public API contract; manual test l
 
 ## Result
 
-- Main changes:
-- Tests:
-- Review:
-- Important findings / decisions:
-- Known limitations:
-- PR:
+- Main changes: `docs/ai/workflow.md` §9 "Session scope và handoff" (Version 4.1); `.claude/rules/execution.md` mục "Kết thúc session" (`/clear` + handoff prompt); `docs/ai/framework-history.md` (v4, v4 CP1 tooling, v4.1); pointer ở `AGENTS.md`, `FRAMEWORK_ADOPTION.md`; checker yêu cầu history (Status CURRENT) và heading `## v<Version>` khớp workflow. IMPLEMENTER commit `0575ccd`.
+- Tests (ORCHESTRATOR chạy lại): `node scripts/framework-check.mjs` → exit 0; bản copy tạm: xóa history → exit 1 `missing required file`; Version `9` → exit 1 `missing entry for workflow Version 9`; `grep -niE "claude|copilot|/clear" docs/ai/workflow.md` → rỗng.
+- Review: ACCEPTED (dual-agent). Micro-fix ORCHESTRATOR: metadata `Accepted by` của workflow ghi v4.1.
+- Important findings / decisions: `.github/copilot-instructions.md` không cần mapping riêng (đã trỏ workflow). `docs/workflow/current-state.md` đồng bộ sau khi CP2 và branch này cùng merge.
+- Known limitations: rule là hành vi của agent, không kiểm tự động được; checker chỉ kiểm cấu trúc.
+- PR: chưa; chờ HUMAN LEAD approve integration.
