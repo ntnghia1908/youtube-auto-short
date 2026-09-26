@@ -85,12 +85,40 @@ class AnalysisConfig:
     outro_window: float = 180.0
 
 
+# B11: pure connectors cut from the start of a clip (docs/decisions/CP5-selection-contract.md).
+DEFAULT_HEAD_CUT_WORDS = ("cho nên", "vì vậy", "thế nên", "thế là", "do đó", "và", "nhưng", "mà", "rồi", "còn",
+                          "thì")
+
+
+@dataclass(frozen=True)
+class SelectionConfig:
+    """AI clip selection via Ollama (docs/decisions/CP5-selection-contract.md)."""
+
+    model: str = "qwen3:30b"
+    think: bool = True
+    temperature: float = 0.0
+    seed: int = 42
+    num_ctx: int = 32768
+    prompt_version: str = "v3"
+    max_clips: int = 25
+    min_score: int = 7
+    max_window_words: int = 2500
+    retries: int = 2
+    head_cut_words: tuple[str, ...] = DEFAULT_HEAD_CUT_WORDS  # empty = no head cut
+    head_cut_pad: float = 0.1
+    # Execution-only settings (not part of the config hash); env OLLAMA_HOST overrides ollama_host.
+    ollama_host: str = "http://127.0.0.1:11437"
+    timeout: float = 600.0
+    retry_backoff: tuple[float, ...] = (5.0, 15.0)  # wait before attempt 2, 3 (last value repeats)
+
+
 @dataclass(frozen=True)
 class Config:
     workspace: WorkspaceConfig = field(default_factory=WorkspaceConfig)
     ingest: IngestConfig = field(default_factory=IngestConfig)
     transcript: TranscriptConfig = field(default_factory=TranscriptConfig)
     analysis: AnalysisConfig = field(default_factory=AnalysisConfig)
+    selection: SelectionConfig = field(default_factory=SelectionConfig)
 
 
 def _section(data: dict, name: str) -> dict:
@@ -194,6 +222,43 @@ def _analysis(data: dict) -> AnalysisConfig:
     return cfg
 
 
+def _int(section: dict, key: str, default: int, where: str, *, lo: int, hi: int | None = None) -> int:
+    value = section.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, int) or value < lo or (hi is not None and value > hi):
+        bound = f"between {lo} and {hi}" if hi is not None else f">= {lo}"
+        raise ConfigError(f"{where}.{key} must be an integer {bound}")
+    return value
+
+
+def _selection(data: dict) -> SelectionConfig:
+    se = _section(data, "selection")
+    d, w = SelectionConfig(), "selection"
+    cut_words = se.get("head_cut_words", list(d.head_cut_words))
+    if not isinstance(cut_words, list) or not all(isinstance(x, str) and x.strip() for x in cut_words):
+        raise ConfigError(f"{w}.head_cut_words must be a list of non-empty strings")
+    backoff = se.get("retry_backoff", list(d.retry_backoff))
+    if not isinstance(backoff, list) or not all(
+            isinstance(x, (int, float)) and not isinstance(x, bool) and 0 <= x <= 3600 for x in backoff):
+        raise ConfigError(f"{w}.retry_backoff must be a list of numbers between 0 and 3600 (seconds)")
+    return SelectionConfig(
+        model=_str(se, "model", d.model, w),
+        think=_bool(se, "think", d.think, w),
+        temperature=_number(se, "temperature", d.temperature, w, lo=0, hi=2),
+        seed=_int(se, "seed", d.seed, w, lo=0),
+        num_ctx=_int(se, "num_ctx", d.num_ctx, w, lo=512),
+        prompt_version=_str(se, "prompt_version", d.prompt_version, w),
+        max_clips=_int(se, "max_clips", d.max_clips, w, lo=1, hi=99),
+        min_score=_int(se, "min_score", d.min_score, w, lo=1, hi=10),
+        max_window_words=_int(se, "max_window_words", d.max_window_words, w, lo=1),
+        retries=_int(se, "retries", d.retries, w, lo=0),
+        head_cut_words=tuple(cut_words),
+        head_cut_pad=_number(se, "head_cut_pad", d.head_cut_pad, w, lo=0, hi=1),
+        ollama_host=_str(se, "ollama_host", d.ollama_host, w),
+        timeout=_number(se, "timeout", d.timeout, w, lo=1),
+        retry_backoff=tuple(float(x) for x in backoff),
+    )
+
+
 def from_dict(data: dict) -> Config:
     ws = _section(data, "workspace")
     ing = _section(data, "ingest")
@@ -211,6 +276,7 @@ def from_dict(data: dict) -> Config:
         ),
         transcript=_transcript(data),
         analysis=_analysis(data),
+        selection=_selection(data),
     )
 
 

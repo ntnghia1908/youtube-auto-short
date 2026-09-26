@@ -54,3 +54,43 @@ def test_analysis_config_parsing():
 def test_analysis_config_invalid(data):
     with pytest.raises(ConfigError):
         config_mod.from_dict(data)
+
+
+def test_selection_config_parsing():
+    s = config_mod.from_dict({"selection": {"model": "qwen3:30b", "think": True, "temperature": 0.2,
+                                            "max_clips": 10, "timeout": 30}}).selection
+    assert (s.model, s.think, s.temperature, s.max_clips, s.timeout) == ("qwen3:30b", True, 0.2, 10, 30.0)
+    d = config_mod.Config().selection
+    assert (d.model, d.think, d.temperature, d.seed, d.num_ctx) == ("qwen3:30b", True, 0.0, 42, 32768)
+    assert (d.prompt_version, d.max_clips, d.min_score, d.max_window_words, d.retries) == ("v3", 25, 7, 2500, 2)
+    assert d.ollama_host == "http://127.0.0.1:11437" and d.retry_backoff == (5.0, 15.0)
+    assert d.head_cut_words[:2] == ("cho nên", "vì vậy") and len(d.head_cut_words) == 11 and d.head_cut_pad == 0.1
+    assert d.prompt_version == "v3"
+    assert config_mod.from_dict({"selection": {"head_cut_words": []}}).selection.head_cut_words == ()
+    assert config_mod.from_dict({"selection": {"head_cut_pad": 0.2}}).selection.head_cut_pad == 0.2
+
+
+@pytest.mark.parametrize("data", [
+    {"selection": {"model": ""}},
+    {"selection": {"think": "no"}},
+    {"selection": {"seed": 1.5}},
+    {"selection": {"max_clips": 0}},
+    {"selection": {"min_score": 11}},
+    {"selection": {"retries": -1}},
+    {"selection": {"num_ctx": True}},
+    {"selection": {"timeout": 0}},
+    {"selection": []},
+    {"selection": {"head_cut_words": "cho nên"}},
+    {"selection": {"head_cut_words": ["cho nên", ""]}},
+    {"selection": {"head_cut_words": ["  "]}},
+    {"selection": {"head_cut_words": [1]}},
+    {"selection": {"head_cut_pad": -0.1}},
+    {"selection": {"head_cut_pad": 2}},
+    {"selection": {"retry_backoff": 5}},
+    {"selection": {"retry_backoff": [-1]}},
+    {"selection": {"retry_backoff": ["5"]}},
+    {"selection": {"retry_backoff": [True]}},
+])
+def test_selection_config_invalid(data):
+    with pytest.raises(ConfigError):
+        config_mod.from_dict(data)
