@@ -26,13 +26,17 @@ Implementation tham chiếu: `src/auto_short/selection/` (`client.py`, `prompt.p
 - Window có tổng `words` > `max_window_words` (mặc định 2500) → chia thành window con `wNN.1`, `wNN.2`… chồng lấn: window con bắt đầu từ unit `s`, kéo dài tối đa sao cho ≤ `max_window_words`; window con kế tiếp bắt đầu tại unit đầu nhỏ nhất của các candidate chưa nằm trọn trong window con trước (không còn thì unit kế tiếp) → mọi candidate nằm trọn trong ít nhất một window con. Candidate nhiều từ hơn `max_window_words` → stage `failed`.
 - Candidate của một window (con) = candidate nằm trọn trong nó; đề xuất trùng `candidate_id` gộp theo B4.
 
-## B3. Prompt (version `prompt_version`, mặc định `"v1"`)
+## B3. Prompt (version `prompt_version`, mặc định `"v2"`)
 
 - Prompt là hằng trong `selection/prompt.py` (`PROMPTS[version] = (system, user template)`); nội dung đầy đủ ghi ở `selection_log.json`. **Đổi bất kỳ chữ nào của prompt phải thêm version mới**; `prompt_sha256` = sha256(`system + "\n\0\n" + template`) nằm trong `config_hash` (B9) nên prompt sửa không bị skip nhầm. `prompt_version` không có trong code → lỗi (exit 1, manifest không đổi).
-- System prompt (tiếng Việt): nhiệm vụ đề xuất Short độc lập; mỗi đề xuất là dãy unit `first_unit`–`last_unit`; thời lượng = tổng thời lượng unit + ~1 s mỗi ranh giới giữa hai unit, bắt buộc 30–180 s, mục tiêu 60–90 s; **trọn một ý** (câu đầu tự đứng được, không mở bằng từ nối/từ chỉ ngược; câu cuối kết thúc ý; thà không đề xuất còn hơn cụt ý); caption không dấu câu, có thể sai chính tả, mép danh sách có thể rơi giữa ý; được phép chồng lấn; tối đa 12 đề xuất; trường output và cách chấm.
+- Version trong code: `v1` (bản đầu, giữ nguyên văn để so sánh; `prompt_sha256` `0ff963d1…4bf4d7c`) và `v2` (mặc định; Sửa B3 HUMAN LEAD 2026-09-26 sau đo v1). Mô tả dưới là v1; khác biệt của v2 ở mục **B3 v2**.
+- System prompt v1 (tiếng Việt): nhiệm vụ đề xuất Short độc lập; mỗi đề xuất là dãy unit `first_unit`–`last_unit`; thời lượng = tổng thời lượng unit + ~1 s mỗi ranh giới giữa hai unit, bắt buộc 30–180 s, mục tiêu 60–90 s; **trọn một ý** (câu đầu tự đứng được, không mở bằng từ nối/từ chỉ ngược; câu cuối kết thúc ý; thà không đề xuất còn hơn cụt ý); caption không dấu câu, có thể sai chính tả, mép danh sách có thể rơi giữa ý; được phép chồng lấn; tối đa 12 đề xuất; trường output và cách chấm.
 - User message mỗi window: `Video: <metadata.title | (không rõ)>`; dòng tóm tắt window (số unit, khoảng thời gian gốc, ranh giới trước/sau); mỗi unit một dòng `id | thời lượng s | ranh giới trước | text`:
   - thời lượng = thời lượng unit sau rút khoảng lặng, tính **đúng như CP4 A8**: `end − start − Σ trims` với `trims = plan_trims(start, end, silences, max_pause)` (cùng hàm, `silences.json`, `params.max_pause`), 1 chữ số thập phân. Vì unit bắt đầu/kết thúc đúng mép khoảng lặng ranh giới nên con số này cộng với ranh giới rút còn `max_pause` và 2 × `boundary_pad` cho `duration` candidate sai lệch ≤ 0.35 s (đo trên 1484 candidate video test);
   - ranh giới trước: `lặng x.x s` | `ngắt cứng (nhạc/nhãn hoặc lặng dài[ x.x s])` | `đầu nội dung`; unit đầu window con có thêm `(đầu danh sách)`.
+- **B3 v2** (chỉ đổi text prompt + format dòng unit; map/chọn/schema không đổi):
+  - Dòng unit: `id | từ X | đến Y | ranh giới trước | text`. `X`, `Y` là mốc trên "đồng hồ Short" tính từ unit đầu window (window con: từ unit đầu của nó): với unit thứ `i`, `X_i = Σ_{k<i} (d_k + min(gap_k, max_pause))`, `Y_i = X_i + d_i + 2·boundary_pad` (`d` = thời lượng unit sau trim như v1, `gap_k` = `break_after.seconds` của unit `k`; `max_pause`, `boundary_pad` từ `candidates.json` `params`). Khi đó `Y_b − X_a` = ước lượng `estimate_seconds` của đoạn `[a..b]` (B4), lệch `duration` candidate ≤ 0.35 s. Chọn dạng "từ/đến" thay cho một cột cộng dồn để model chỉ cần một phép trừ, không phải tra unit `a−1`.
+  - System prompt v2: giải thích cách tính "thời lượng = đến(last_unit) − từ(first_unit)" kèm ví dụ, yêu cầu tính trước khi đề xuất, nhắc nối nhiều unit cho đủ 30 s; quy tắc câu đầu nghiêm hơn: first_unit mở bằng từ nối/từ chỉ ngược (danh sách mở rộng: "cho nên", "vì vậy", "thế nên", "thế là", "do đó", "còn", "và", "nhưng", "mà", "rồi", "thì", "cái này", "điều đó", "việc này", "như vậy", "ở đây") hoặc giữa câu thì `start_complete` **phải** false và nên chọn unit sớm hơn; tương tự cho câu cuối; `topic` bằng tiếng Việt; `reason` ghi thời lượng đã tính.
 - Output: JSON theo `RESPONSE_SCHEMA` qua `format` của `/api/chat`: `{"clips": [{first_unit, last_unit, topic, reason, start_complete, end_complete, score}]}` (thứ tự property = thứ tự sinh: nhận xét trước điểm), `score` integer 1–10.
 - Request: `POST <host>/api/chat`, `stream: false`, `think` theo config, `options = {temperature, seed, num_ctx}`.
 - Client: Protocol `ChatClient.chat(model, messages, format, options, think) -> ChatResult`; implementation `OllamaClient` dùng `urllib.request` (CP1 §10). Host: env `OLLAMA_HOST` > config `[selection] ollama_host`; thiếu scheme thì thêm `http://`.
@@ -118,27 +122,34 @@ Dùng `run_stage` của CP2 nguyên trạng:
 
 ## B10. Model / reproducibility
 
-- Mặc định `qwen3:14b`, `think = false` (P1, tạm cho tới khi HUMAN LEAD chốt), `temperature 0`, `seed 42`, `num_ctx 16384`, `timeout 600` s/request.
+- Mặc định `qwen3:14b`, `think = false` (P1, tạm cho tới khi HUMAN LEAD chốt), `prompt_version = "v2"`, `temperature 0`, `seed 42`, `num_ctx 16384`, `timeout 600` s/request.
 - Chạy lại cùng config với `--force` → so sánh `clips.json` (kết quả đo bên dưới). Model/`think` chốt ghi ở CP1 §11.
 
 ## Config `[selection]`
 
-Xem `config.example.toml`: `model`, `think`, `temperature` (0–2), `seed` (≥ 0), `num_ctx` (≥ 512), `prompt_version`, `max_clips` (1–99), `min_score` (1–10), `max_window_words` (≥ 1), `retries` (≥ 0) — trong hash; `ollama_host`, `timeout` (> 0) — thực thi.
+Xem `config.example.toml`: `model`, `think`, `prompt_version` (`v1` | `v2`, mặc định `v2`), `temperature` (0–2), `seed` (≥ 0), `num_ctx` (≥ 512), `max_clips` (1–99), `min_score` (1–10), `max_window_words` (≥ 1), `retries` (≥ 0) — trong hash; `ollama_host`, `timeout` (> 0) — thực thi.
 
 ## Đo thực tế (2026-09-26, video test `rbjfCfFq3Dk`, Ollama 0.34.4 máy GPU)
 
-Cùng `candidates.json` (195 unit, 1484 candidate, 11 window — đúng số unit `2, 4, 19, 40, 4, 2, 13, 27, 9, 26, 49`; w06 không có candidate → 10 lần gọi; không window nào bị chia ở `max_window_words = 2500`). Prompt `v1`, `temperature 0`, `seed 42`, `num_ctx 16384`; prompt lớn nhất ~3.1k token. Không lần gọi nào lỗi/retry.
+Cùng `candidates.json` (195 unit, 1484 candidate, 11 window — đúng số unit `2, 4, 19, 40, 4, 2, 13, 27, 9, 26, 49`; w06 không có candidate → 10 lần gọi; không window nào bị chia ở `max_window_words = 2500`). `temperature 0`, `seed 42`, `num_ctx 16384`; prompt lớn nhất ~3.1k token. Không lần gọi nào lỗi/retry.
 
-| Cấu hình | Wall | Token sinh | Đề xuất | Valid | Eligible | Selected | Tổng thời lượng | `in_target` | Median clip |
-|---|---|---|---|---|---|---|---|---|---|
-| `qwen3:14b` think off (mặc định) | 120 s | 8.4k | 82 | 39 | 27 | **25** (chạm `max_clips`) | 1058.5 s | 1 | 39.2 s (30.2–61.4) |
-| `qwen3:14b` think on | 305 s | 22.2k | 31 | 26 | 26 | 24 | 1206.2 s | 6 | 43.5 s (30.2–102.1) |
-| `qwen3:30b` think off | 18 s | 70 | 0 | 0 | 0 | 0 | 0 | — | — |
-| `qwen3:30b` think on (đo thêm) | 564 s | 91.1k | 14 | 14 | 14 | 13 | 779.7 s | 6 | 57.9 s (34.2–85.0) |
+Wall = tổng thời gian các lần gọi AI. "Không có candidate" = đề xuất bị loại vì không map được (đều do ước lượng < 30 s). Median kèm (min–max).
 
-- Lý do loại chính của `14b` think off: 43/82 đề xuất không có candidate vì quá ngắn (ước lượng < 30 s — model hay đề xuất 1–2 unit); 12 `ineligible` (tự đánh giá cụt đầu/cuối hoặc score < 7). Think on: 5 quá ngắn, 2 chồng lấn. `30b` think on: mọi đề xuất hợp lệ, 1 chồng lấn.
+| Cấu hình | Prompt | Wall | Token sinh | Đề xuất | Không có candidate | Valid | Eligible | Selected | Tổng thời lượng | `in_target` | Median clip |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `qwen3:14b` think off | v1 | 120 s | 8.4k | 82 | 43 | 39 | 27 | **25** (chạm max) | 1058.5 s | 1 | 39.2 s (30.2–61.4) |
+| `qwen3:14b` think off (mặc định) | **v2** | 113 s | 7.7k | 72 | 25 | 47 | 42 | **25** (chạm max) | 1407.4 s | 9 | 50.4 s (30.3–111.5) |
+| `qwen3:14b` think on | v1 | 305 s | 22.2k | 31 | 5 | 26 | 26 | 24 | 1206.2 s | 6 | 41.3 s (30.2–102.1) |
+| `qwen3:14b` think on | v2 | 405 s | 29.3k | 33 | 0 | 33 | 24 | 17 | 918.8 s | 2 | 54.0 s (30.4–111.6) |
+| `qwen3:30b` think off | v1 | 18 s | 0.07k | 0 | 0 | 0 | 0 | 0 | 0 | — | — |
+| `qwen3:30b` think on | v1 | 564 s | 91.1k | 14 | 0 | 14 | 14 | 13 | 779.7 s | 6 | 57.9 s (34.2–85.0) |
+| `qwen3:30b` think on | v2 | 450 s | 72.0k | 20 | 0 | 20 | 20 | 19 | 1111.0 s | 10 | 61.4 s (31.3–83.6) |
+
+- v2 so với v1: `14b` think off giảm đề xuất quá ngắn 43 → 25, clip dài hơn (median 39 → 50 s, `in_target` 1 → 9), vẫn chạm 25 clip; `14b` think on hết đề xuất quá ngắn nhưng tự đánh giá khắt khe hơn (6 `start not complete`) → 17 clip; `30b` think on nhiều đề xuất hơn (14 → 20), 19 clip, median 61 s. `qwen3:30b` think off không đo lại ở v2 (không dùng được, xem dưới).
+- Câu mở đầu (kiểm từ vựng: unit đầu của clip được chọn bắt đầu bằng từ nối/từ chỉ ngược; không bắt được trường hợp mở giữa câu không có từ nối): v1 — `14b` off 3/25, `14b` on 3/24, `30b` on 1/13; v2 — `14b` off 2/25, `14b` on 3/17, `30b` on 2/19. v2 **không** giảm rõ lỗi này; ví dụ `c01293`/`c01292` ("cho nên điều thứ nhất…") được chọn ở 5/6 lần đo. Ngoài ra có clip mở giữa câu không có từ nối (vd v2 `14b` off `c01212` "là lấy Hiếu thân Tôn Sư…").
+- Lý do loại chính (v1) của `14b` think off: 43/82 đề xuất không có candidate vì quá ngắn (ước lượng < 30 s — model hay đề xuất 1–2 unit); 12 `ineligible` (tự đánh giá cụt đầu/cuối hoặc score < 7). Think on: 5 quá ngắn, 2 chồng lấn. `30b` think on: mọi đề xuất hợp lệ, 1 chồng lấn.
 - `qwen3:30b` trên máy GPU là bản chỉ-suy-luận: với `think: false` model vẫn viết suy luận vào `content` (thử không `format`: ~10k token suy luận); khi có `format` JSON schema, grammar ép trả ngay `{"clips": []}` cho mọi window → cấu hình này không dùng được.
-- Script kiểm độc lập (map candidate, 7 trường chép khớp, không chồng lấn, ≤ 25, 30–180 s, không vượt hard break, log khớp `clips.json`): PASS cả bốn cấu hình.
-- Reproducibility (`14b` think off): lần chạy đầu và lần chạy lại sau khi đổi config (model được nạp lại) cho `clips.json` **byte-identical**; chạy lại không đổi → skip 0.14 s, sha256 không đổi, không gọi AI. Hai lần `--force` liền sau (model đã nạp, cache prompt còn) giống nhau byte-identical nhưng **khác** hai lần đầu: 22/25 clip chung (16 cùng score/topic), 6 window có response khác, request giống hệt. Suy đoán: Ollama tái dùng KV cache của tiền tố prompt làm đổi số học → cùng seed/temperature 0 chưa đảm bảo tất định tuyệt đối giữa các trạng thái server. Ghi nhận, không che.
+- Script kiểm độc lập (map candidate, 7 trường chép khớp, không chồng lấn, ≤ 25, 30–180 s, không vượt hard break, log khớp `clips.json`): PASS cả bảy lần đo.
+- Reproducibility (`14b` think off): lần chạy đầu và lần chạy lại sau khi đổi config (model được nạp lại) cho `clips.json` **byte-identical**; chạy lại không đổi → skip 0.14 s, sha256 không đổi, không gọi AI. Hai lần `--force` liền sau (model đã nạp, cache prompt còn) giống nhau byte-identical nhưng **khác** hai lần đầu: 22/25 clip chung (16 cùng score/topic), 6 window có response khác, request giống hệt. Suy đoán: Ollama tái dùng KV cache của tiền tố prompt làm đổi số học → cùng seed/temperature 0 chưa đảm bảo tất định tuyệt đối giữa các trạng thái server. Ghi nhận, không che. v2 `14b` think off: lần đo và lần chạy mặc định sau đổi config (model nạp lại) byte-identical; chạy lại → skip.
 - Render thô (không phải CP7) mẫu mỗi cấu hình có áp `trims`: thời lượng file lệch `duration` +0.00–0.15 s.
 - Chất lượng trọn ý: HUMAN LEAD nghe mẫu để chốt model + `think` (P1). Quan sát máy: `14b` think off đánh `start_complete = true` cho cả đoạn mở bằng "luôn luôn … cho nên" (`c00087`); `14b` think on có một `topic` tiếng Anh.

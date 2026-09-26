@@ -155,7 +155,7 @@ Nguyên tắc: stdlib trước; không thêm dependency ngoài danh sách dướ
 
 - Ollama chạy trên **máy GPU riêng**, truy cập qua `OLLAMA_HOST`, mặc định `http://127.0.0.1:11435`; code không hard-code host/model.
 - Model khởi đầu: **`qwen3:14b`** (có sẵn trên máy GPU; thay cho `gemma3:12b` ghi trước đó). CP5/CP10 đo so sánh với `gemma3:12b` và `qwen3:30b` rồi chốt lại.
-- Đo CP5 (2026-09-26, video test, chi tiết `docs/decisions/CP5-selection-contract.md` § Đo thực tế): `qwen3:14b` think off 120 s → 25 clip / 1058 s; `qwen3:14b` think on 305 s → 24 clip / 1206 s; `qwen3:30b` think off → 0 clip (bản chỉ-suy-luận, không dùng được với think off); `qwen3:30b` think on 564 s → 13 clip / 780 s. Model + `think` chưa chốt (HUMAN LEAD nghe mẫu); mặc định tạm `qwen3:14b`, think off.
+- Đo CP5 (2026-09-26, video test, chi tiết `docs/decisions/CP5-selection-contract.md` § Đo thực tế): `qwen3:14b` think off 120 s → 25 clip / 1058 s; `qwen3:14b` think on 305 s → 24 clip / 1206 s; `qwen3:30b` think off → 0 clip (bản chỉ-suy-luận, không dùng được với think off); `qwen3:30b` think on 564 s → 13 clip / 780 s (prompt v1). Prompt v2 (thời gian cộng dồn): `qwen3:14b` think off 113 s → 25 clip / 1407 s; think on 405 s → 17 clip / 919 s; `qwen3:30b` think on 450 s → 19 clip / 1111 s. Model + `think` chưa chốt (HUMAN LEAD nghe mẫu v1/v2); mặc định tạm `qwen3:14b`, think off, prompt v2.
 - Whisper chỉ là fallback; trên VM không GPU chạy CPU (`int8`, 48 core). Đo thực tế ở CP11.
 
 ## 12. Open questions
