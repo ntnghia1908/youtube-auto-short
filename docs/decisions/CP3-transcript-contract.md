@@ -34,7 +34,7 @@ Implementation tham chiếu: `src/auto_short/transcript/` (`parsers.py`, `normal
 
 ## T4. Whisper fallback
 
-- `faster-whisper==1.2.1` (runtime dep, import lazy chỉ khi provider whisper chạy). Transitive deps (đo khi cài 2026-09-26): `ctranslate2`, `huggingface-hub`, `tokenizers`, `onnxruntime`, `av`, `tqdm`, và kéo theo `numpy`, `pyyaml` (bởi `ctranslate2`/`huggingface-hub`; project không dùng trực tiếp), `protobuf`, `flatbuffers`, `httpx`/`httpcore`/`h11`/`anyio`, `hf-xet`, `fsspec`, `filelock`, `click`, `certifi`, `idna`, `typing-extensions`.
+- `faster-whisper==1.2.1` (runtime dep, import lazy chỉ khi provider whisper chạy). Transitive deps (đo khi cài 2026-09-26): `ctranslate2`, `huggingface-hub`, `tokenizers`, `onnxruntime`, `av`, `tqdm`, và kéo theo `numpy`, `pyyaml` (bởi `ctranslate2`/`huggingface-hub`; project không dùng trực tiếp), `protobuf`, `flatbuffers`, `httpx`/`httpcore`/`h11`/`anyio`, `hf-xet`, `fsspec`, `filelock`, `click`, `certifi`, `idna`, `typing-extensions`. HUMAN LEAD 2026-09-26 chấp nhận các transitive deps này; `pyyaml` được phép dùng khi cần (`docs/decisions/CP1-product-contract.md` §10).
 - Mặc định `model = "large-v3-turbo"`, `device = "cpu"`, `compute_type = "int8"`, `language` = `transcript.language` (ép, không auto-detect), `word_timestamps = true`, `vad_filter = true`.
 - Model tải về `transcript.whisper.models_dir` (mặc định `models/`, gitignored) lần đầu, cần mạng tới Hugging Face (~1.6 GB cho `large-v3-turbo`).
 - `whisper.cpu_threads` (mặc định `0` = `os.cpu_count()`) và `whisper.models_dir` là thiết lập thực thi, không vào config hash.

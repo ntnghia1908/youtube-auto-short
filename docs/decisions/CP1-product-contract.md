@@ -91,6 +91,7 @@ Tham số đo từ ảnh mẫu (576×1280), biểu diễn theo chiều rộng kh
 - Không chồng lấn giữa các clip được chọn của cùng episode.
 - Tối đa **20** Short mỗi episode (config). Mỗi Short **ưu tiên trình bày trọn vẹn một ý**: tiêu chí hoàn chỉnh ý đứng trên số lượng và trên độ dài mục tiêu — thà ít clip hơn còn hơn clip cụt ý.
 - AI (CP5) chỉ chọn trong danh sách candidate do code deterministic sinh ra (CP4), không tự tạo timestamp mới.
+- Sửa đổi HUMAN LEAD 2026-09-26 (sau review CP3): video giảng pháp chỉ có nhạc ở phần giới thiệu đầu và phần kết; hai phần này không dùng cho Short và có thể loại bỏ khi sinh candidate (CP4).
 
 ## 6. Title / header structure
 
@@ -138,10 +139,12 @@ Nguyên tắc: stdlib trước; không thêm dependency ngoài danh sách dướ
 | `ffmpeg`/`ffprobe` (system binary) | probe, cắt, compose, render; scene detect bằng filter `select=gt(scene,…)` | cài hệ thống |
 | Ollama HTTP API qua `urllib` (stdlib) | clip selection + title | không thêm dep |
 | `tomllib` (stdlib) | đọc config TOML | không thêm dep |
+| `pyyaml` | dùng khi cần (hiện có mặt dạng transitive qua `faster-whisper`) | runtime khi dùng |
 
-- Config dùng **TOML / `tomllib`**; **không** thêm `pyyaml`.
-- Đã cân nhắc, không chọn: `uv`, `.venv` system Python, `youtube-transcript-api`, `openai-whisper`, PySceneDetect, `ollama` python client, `pyyaml`.
+- Config dùng **TOML / `tomllib`**.
+- Đã cân nhắc, không chọn: `uv`, `.venv` system Python, `youtube-transcript-api`, `openai-whisper`, PySceneDetect, `ollama` python client.
 - Sửa đổi HUMAN LEAD 2026-09-26 (sau review CP2): runtime đổi từ `.venv` system Python sang conda env riêng (không dùng base); `yt-dlp` pin phiên bản theo `docs/decisions/CP2-workspace-contract.md` D2.
+- Sửa đổi HUMAN LEAD 2026-09-26 (sau review CP3): `pyyaml` được phép dùng khi cần (bỏ loại trừ trước đó); config vẫn là TOML.
 
 ## 11. Local GPU / Ollama assumptions
 

@@ -126,9 +126,9 @@ Không chạm database, security model hay public API contract mạng. CLI mở 
   - `node scripts/framework-check.mjs` → PASS. `pyproject.toml` chỉ thêm `faster-whisper==1.2.1`.
 - Review: ACCEPTED (dual-agent, ORCHESTRATOR review diff-first); không có blocking finding.
 - Important findings / decisions:
-  - Cần HUMAN LEAD xác nhận: `faster-whisper` kéo `pyyaml` (transitive qua `ctranslate2`/`huggingface-hub`) cùng numpy, protobuf, httpx… (danh sách đủ ở decision record T4). Project không import `pyyaml`; CP1 §10 “không thêm pyyaml” hiểu là không dùng làm config/dep trực tiếp.
+  - `faster-whisper` kéo `pyyaml` (transitive qua `ctranslate2`/`huggingface-hub`) cùng numpy, protobuf, httpx… (danh sách ở decision record T4). HUMAN LEAD 2026-09-26: chấp nhận; `pyyaml` được phép dùng khi cần (CP1 §10 đã sửa).
   - Non-blocking: nếu hai segment liền nhau có cùng `start`, cắt chồng lấn làm segment trước có `start = end` → validation reject cả transcript (chưa gặp ở dữ liệu thật; có thể gặp ở SRT nhiều người nói).
-  - Non-blocking: chất lượng Whisper trên clip test có lỗi tên riêng (“Tịnh Khâu” thay “Tịnh Không”); coverage 0.663 với nhạc intro — ngưỡng 0.5 có thể sát với video nhiều nhạc/im lặng (chỉnh qua config).
+  - Non-blocking: chất lượng Whisper trên clip test có lỗi tên riêng (“Tịnh Khâu” thay “Tịnh Không”); coverage 0.663 với nhạc intro — ngưỡng 0.5 có thể sát với video nhiều nhạc/im lặng (chỉnh qua config). HUMAN LEAD: nhạc chỉ ở intro/outro, không dùng cho Short (CP1 §5 đã ghi, xử lý ở CP4).
   - Quyết định nhỏ của IMPLEMENTER trong phạm vi T1–T9 ghi ở decision record (bảng `[transcript.providers]`, `cpu_threads = 0` = số CPU, `models_dir` không vào config hash, word timing json3 chỉ khi mỗi seg là một token).
 - Known limitations: caption auto không dấu câu — ranh giới câu/ý thuộc CP4. Chưa đo Whisper cả video 1 giờ (CP11).
-- PR: pending (chờ HUMAN LEAD approve push + PR).
+- PR: pending (HUMAN LEAD approved push + PR 2026-09-26).

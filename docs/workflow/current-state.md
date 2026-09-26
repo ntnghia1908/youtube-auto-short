@@ -8,19 +8,17 @@ Chỉ ghi operational state không suy ra được từ Git, task contract hoặ
 
 ## Current focus
 
-CP3 — Transcript Acquisition & Normalization (`docs/tasks/CP3-transcript.md`): READY trên branch local `feature/cp3-transcript` (chưa push), chờ HUMAN LEAD approve push/PR. FW-v4.1: PR #4 chờ HUMAN LEAD merge.
+CP3 — Transcript Acquisition & Normalization (`docs/tasks/CP3-transcript.md`): READY, PR chờ HUMAN LEAD merge. Framework v4.1 đã merge (PR #4).
 
 ## Next proposed action
 
-1. HUMAN LEAD merge PR #4 (FW-v4.1); sau đó đồng bộ file này với framework v4.1.
-2. HUMAN LEAD xác nhận transitive deps của `faster-whisper` (có `pyyaml`) và approve push/PR cho `feature/cp3-transcript`.
-3. HUMAN LEAD quyết mở CP4 — Shot / Segment Analysis (roadmap §4 CP4).
+1. HUMAN LEAD merge PR CP3.
+2. HUMAN LEAD quyết mở CP4 — Shot / Segment Analysis (roadmap §4 CP4); CP4 cần loại phần nhạc intro/outro (CP1 §5).
 
 Đây là PROPOSED, không authorize implementation tiếp theo.
 
 ## Open decisions
 
-- Chấp nhận transitive deps của `faster-whisper` (gồm `pyyaml`) hay không.
 - Mở CP4 hay chưa.
 
 ## Blockers
