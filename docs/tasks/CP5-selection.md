@@ -89,6 +89,10 @@ Từ một episode đã có `candidates.json` (CP4), stage `selection` gọi Oll
 - **Sửa B3 (HUMAN LEAD 2026-09-26, sau đo v1):** thêm prompt **v2** — mỗi dòng unit có thêm thời gian cộng dồn (thời lượng Short thực tế tính từ đầu window, theo cách tính của đề xuất) để model tự kiểm 30–180 s; `prompt_version` mặc định `"v2"`, giữ v1 trong code để so sánh. Đo lại v2 với các cấu hình B10 (bỏ `qwen3:30b` think off — không dùng được, xem Result) và render mẫu; HUMAN LEAD nghe một lượt cả v1/v2 rồi chốt P1 + model.
 - **Chốt P1 + model (HUMAN LEAD 2026-09-26, sau nghe mẫu v1/v2):** cấu hình **C2** — `qwen3:30b`, `think = true`, prompt `v2` là mặc định (CP1 §11 ghi chốt model).
 - **B11 Lọc từ nối câu đầu (HUMAN LEAD 2026-09-26, thêm trong CP5):** bộ lọc deterministic trong code, chạy sau B4, trước B6: đề xuất valid có `text` của unit đầu (chuẩn hóa NFC, lowercase, gộp khoảng trắng) bắt đầu bằng một cụm trong `start_blocklist` (khớp trọn từ) → `ineligible`, `reject_reason = "start connector: <cụm>"`. `start_blocklist` là config `[selection]` (vào `config_hash`), mặc định là danh sách từ nối của prompt v2: "cho nên", "vì vậy", "thế nên", "thế là", "do đó", "còn", "và", "nhưng", "mà", "rồi", "thì", "cái này", "điều đó", "việc này", "như vậy", "ở đây". Danh sách rỗng → tắt lọc. Không sửa/nới đề xuất, không đổi prompt. Giới hạn đã biết: không bắt được câu mở giữa câu không có từ nối.
+- **Sửa sau đo C2 + B11 (HUMAN LEAD 2026-09-26):**
+  - `start_blocklist` mặc định thêm "tại vì", "tại vì sao", "vì sao".
+  - Sửa B5: chờ tăng dần giữa các lần retry — 5 s trước lần thử 2, 15 s trước lần thử 3 (lần sau nữa, nếu `retries` > 2, giữ 15 s); thời gian chờ là tham số thực thi (không vào `config_hash`).
+  - Ollama chuyển sang `http://127.0.0.1:11437` (HUMAN LEAD cài cơ chế giữ kết nối): mặc định `ollama_host` đổi theo; sửa CP1 §0/§11.
 - Tham số HUMAN LEAD cần chốt (đề xuất mặc định, có thể chốt lại sau đo như P1 của CP4):
   - **P1 `think`:** đề xuất quyết sau đo (mặc định `false` cho tới khi chốt).
   - **P2 `min_score`:** 7 / 10.
