@@ -8,18 +8,17 @@ Chỉ ghi operational state không suy ra được từ Git, task contract hoặ
 
 ## Current focus
 
-CP4 — Shot / Segment Analysis (`docs/tasks/CP4-analysis.md`): READY, PR #6 chờ HUMAN LEAD merge.
+CP5 — AI Clip Selection (`docs/tasks/CP5-selection.md`): IN_PROGRESS (APPROVED 2026-09-26), branch `feature/cp5-selection`. CP4 đã merge (PR #6, `f0c21d4`).
 
 ## Next proposed action
 
-1. HUMAN LEAD merge PR #6 (CP4).
-2. Sau merge: HUMAN LEAD quyết mở CP5 — AI Clip Selection (roadmap §4 CP5).
+1. IMPLEMENTER thực thi CP5 tới READY; HUMAN LEAD chốt P1 (`think`) và model sau khi nghe mẫu.
 
 Đây là PROPOSED, không authorize implementation tiếp theo.
 
 ## Open decisions
 
-- Không.
+- CP5 P1 (`think`) và model — chốt sau đo.
 
 ## Blockers
 
