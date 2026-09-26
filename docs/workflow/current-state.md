@@ -8,7 +8,7 @@ Chỉ ghi operational state không suy ra được từ Git, task contract hoặ
 
 ## Current focus
 
-CP0 — Framework v4 adoption + greenfield project bootstrap.
+CP0 — Framework v4 adoption + greenfield project bootstrap. Roadmap canonical: `AUTO_SHORT_CHECKPOINT_PLAN.md`.
 
 ## Next proposed action
 
@@ -25,9 +25,7 @@ CP0 — Framework v4 adoption + greenfield project bootstrap.
 - Runtime stack/model versions: chưa khóa.
 - Exact short-selection policy: chưa khóa.
 - Exact yellow-panel template dimensions/typography: chưa khóa.
-- Canonical roadmap: `main` có `AUTO_SHORT_CHECKPOINT_PLAN.md` (CP0–CP12), branch CP0 có `docs/roadmap/checkpoint-plan.md` (CP0–CP10); CP0/CP1 khớp, CP2+ khác nhau. Cần HUMAN LEAD chọn một canonical owner trước khi integrate CP0.
 
 ## Blockers
 
-- CP0 S1 pilot `docs/tasks/CP0-S1-pilot-task-contract-check.md` ở DRAFT, chờ HUMAN LEAD `APPROVE TASK`.
-- Branch `feat/cp0-framework-bootstrap` (base `39d3cf3`) đã diverge khỏi `main` (`46e8d55`); cách integrate chờ HUMAN LEAD.
+None. CP0 READY, chờ HUMAN LEAD quyết integration (push/PR/merge).

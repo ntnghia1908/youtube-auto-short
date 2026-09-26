@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: CHANGE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -40,6 +40,7 @@ Bootstrap `youtube-auto-short` as a clean greenfield project using the universal
 - Adoption basis: Framework v4 Quick Start + Tech Lead Handbook + current Framework v4 files in reference repository.
 - Greenfield adoption follows Core → Project Layer → module rules as needed → execution profile → adapter → integration mechanism → checker → pilot.
 - `youtube-vietnamese-dubber` is reference-only and is not runtime/source authority.
+- Canonical roadmap: `AUTO_SHORT_CHECKPOINT_PLAN.md` from `main` (HUMAN LEAD decision, 2026-09-26: YouTube transcript first). `docs/roadmap/checkpoint-plan.md` is removed so the roadmap has one canonical owner.
 
 ## Implementation approach
 
@@ -79,9 +80,10 @@ Manual verification is post-automation review and is not a database/security/API
 
 ## Result
 
-- Main changes: pending READY review
-- Tests: pending
-- Review: pending
-- Important findings / decisions: framework adoption is a greenfield adaptation, not a fork of `dang-vu-spring`.
-- Known limitations: Copilot surface is not behaviorally validated in CP0; that belongs to a later pilot.
+- Main changes: Framework v4 Core, Project Layer, Claude/Copilot adapters, checker, adoption record; `CLAUDE.md` reduced to a minimal `@AGENTS.md` bridge; canonical roadmap set to `AUTO_SHORT_CHECKPOINT_PLAN.md`.
+- Tests: `node scripts/framework-check.mjs` → exit 0. Initial run on fresh clone FAILED (`CLAUDE.md must be a minimal AGENTS.md bridge`), fixed once. Negative tests on a scratch copy (missing `AGENTS.md`, extra rule in `CLAUDE.md`, non-CURRENT `workflow.md`) → exit 1 with the expected message. Tree inspection: no `src/`, no Whisper/Ollama/FFmpeg or media code.
+- Review: ACCEPTED (single-agent separate review: contract → diff → AC → evidence). AC1–AC9 met.
+- Pilots: S0 = current-state CP1 pointer sync (`f1072b7`); S1 = `docs/tasks/CP0-S1-pilot-task-contract-check.md`, approved by HUMAN LEAD and READY.
+- Important findings / decisions: framework adoption is a greenfield adaptation, not a fork of `dang-vu-spring`. Non-blocking: branch is named `feat/…` while project profile says `feature/<scope>`; this contract's original approval was recorded as "in conversation".
+- Known limitations: Copilot surface and Claude Code auto-loading of `CLAUDE.md`/`.claude/rules` are structurally checked only, not behaviorally validated.
 - PR: pending HUMAN LEAD integration approval
