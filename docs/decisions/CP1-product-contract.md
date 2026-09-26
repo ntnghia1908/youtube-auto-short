@@ -18,7 +18,7 @@ Mỗi mục §1–§11 dưới đây là quyết định cuối. Thay đổi b�
 | Python | Miniconda 3, Python 3.14.7 (base env) |
 | `ffmpeg` / `ffprobe` | `ffmpeg` 6.1.1 đã cài (`/usr/bin/ffmpeg`) |
 | `yt-dlp` | 2026.08.19 cài dạng binary ở `~/.local/bin` (tool máy dùng chung để tải video test); việc dùng `yt-dlp` làm dependency Python của project theo §10 |
-| Ollama | máy GPU riêng, truy cập qua `127.0.0.1:11435`; version 0.34.4; model có sẵn: `qwen3:30b`, `qwen3:14b`, `qwen3-embedding:8b`, `qwen3-embedding:4b` |
+| Ollama | máy GPU riêng, truy cập qua `127.0.0.1:11435`; version 0.34.4; model có sẵn: `qwen3:30b`, `qwen3:14b`, `qwen3-embedding:8b`, `qwen3-embedding:4b`. Sửa đổi HUMAN LEAD 2026-09-26 (CP5): port **11437** (`127.0.0.1:11437`, có cơ chế giữ kết nối; 11435 hay reset kết nối) |
 | Reference `youtube-vietnamese-dubber` | Python ≥3.11, `pyproject.toml` + hatchling, `yt-dlp`, `faster-whisper`, `pyyaml`; Ollama gọi bằng `urllib` stdlib; model đã kiểm chứng `gemma3:12b` cho tiếng Việt |
 
 ## 1. Input contract
@@ -97,6 +97,7 @@ Tham số đo từ ảnh mẫu (576×1280), biểu diễn theo chiều rộng kh
   - "Không jump cut" nghĩa là không ghép các ý/đoạn không liên tục. **Rút khoảng lặng** bên trong một đoạn liên tục được phép: mọi khoảng lặng audio trong clip dài hơn `max_pause` = **1.0 s** được rút còn `max_pause` khi render (CP7). Lý do: video giảng pháp nhịp chậm, khoảng lặng chiếm ~45 % thời lượng (đo video test). Giá trị 1.0 s chọn sau khi nghe thử so sánh với 0.5 s, 0.7 s và phương án 2 tầng (`docs/tasks/CP4-analysis.md`).
   - Phần giới thiệu tên kinh/tập/người giảng ngay sau nhạc mở đầu thuộc intro, bị loại cùng nhạc intro.
 - Sửa đổi HUMAN LEAD 2026-09-26 (mở CP5): tối đa **25** Short mỗi episode (config `[selection] max_clips`), thay cho 20 ở trên. Ưu tiên trọn ý vẫn đứng trên số lượng. Rule chọn clip: `docs/decisions/CP5-selection-contract.md`.
+- Sửa đổi HUMAN LEAD 2026-09-26 (CP5): đầu clip có thể lùi vào trong segment đầu để bỏ từ nối thuần (cắt deterministic theo word timing, không do AI) — `docs/decisions/CP5-selection-contract.md` B11.
 
 ## 6. Title / header structure
 
@@ -154,6 +155,7 @@ Nguyên tắc: stdlib trước; không thêm dependency ngoài danh sách dướ
 ## 11. Local GPU / Ollama assumptions
 
 - Ollama chạy trên **máy GPU riêng**, truy cập qua `OLLAMA_HOST`, mặc định `http://127.0.0.1:11435`; code không hard-code host/model.
+- Sửa đổi HUMAN LEAD 2026-09-26 (CP5): port 11437 — mặc định `ollama_host` là `http://127.0.0.1:11437` (`OLLAMA_HOST` vẫn ghi đè).
 - Model khởi đầu: **`qwen3:14b`** (có sẵn trên máy GPU; thay cho `gemma3:12b` ghi trước đó). CP5/CP10 đo so sánh với `gemma3:12b` và `qwen3:30b` rồi chốt lại.
 - Đo CP5 (2026-09-26, video test, chi tiết `docs/decisions/CP5-selection-contract.md` § Đo thực tế): `qwen3:14b` think off 120 s → 25 clip / 1058 s; `qwen3:14b` think on 305 s → 24 clip / 1206 s; `qwen3:30b` think off → 0 clip (bản chỉ-suy-luận, không dùng được với think off); `qwen3:30b` think on 564 s → 13 clip / 780 s (prompt v1). Prompt v2 (thời gian cộng dồn): `qwen3:14b` think off 113 s → 25 clip / 1407 s; think on 405 s → 17 clip / 919 s; `qwen3:30b` think on 450 s → 19 clip / 1111 s. Số đo C2 + lọc B11: `docs/decisions/CP5-selection-contract.md`.
 - Sửa đổi HUMAN LEAD 2026-09-26 (chốt CP5): model selection **`qwen3:30b`**, `think = true`, prompt `v2` (cấu hình C2, chọn sau khi nghe mẫu v1/v2), thay cho model khởi đầu `qwen3:14b` ở trên. Titling (CP6) chốt model riêng.

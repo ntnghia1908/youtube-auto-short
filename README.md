@@ -97,13 +97,14 @@ AI clip selection (after analysis; needs Ollama, default `http://127.0.0.1:11437
 ```bash
 # One Ollama call per continuous content window (between hard breaks); the model proposes unit
 # ranges that each present one complete idea; code keeps only existing candidates, then picks
-# up to 25 non-overlapping clips (score >= 7, complete start and end, first sentence not opening
-# with a connector such as "cho nên"). Default model: qwen3:30b with thinking (~8 min for a 1-hour video).
+# up to 25 non-overlapping clips (score >= 7, complete start and end). Pure connectors at the very
+# start of a clip ("cho nên", "thế là", ...) are cut using word timing (head cut).
+# Default model: qwen3:30b with thinking (~8 min for a 1-hour video).
 auto-short selection <episode_id>   # options: --force, --config PATH
 ```
 
 Output: `work/<episode_id>/clips.json` (selected clips, referencing `candidates.json` by `candidate_id`) and
-`selection_log.json` (every prompt, raw response and the status of each proposal). Rules and schemas:
+`selection_log.json` (every prompt, raw response, the status of each proposal and each head cut). Rules and schemas:
 `docs/decisions/CP5-selection-contract.md`; parameters in `[selection]` of `config.example.toml`. Changing
 `ollama_host`/`timeout` does not re-run the stage; changing the model, `think`, options or limits does.
 
