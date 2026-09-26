@@ -28,4 +28,4 @@ CP0 — Framework v4 adoption + greenfield project bootstrap. Roadmap canonical:
 
 ## Blockers
 
-None. CP0 READY, chờ HUMAN LEAD quyết integration (push/PR/merge).
+None. CP0 READY; PR vào `main` chờ HUMAN LEAD merge. CP1 mở sau merge (HUMAN LEAD, 2026-09-26).

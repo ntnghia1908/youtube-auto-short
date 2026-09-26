@@ -7,7 +7,7 @@
 - Change class: S2
 - Owner: HUMAN LEAD
 - Execution profile: single-agent
-- Base commit / branch: `39d3cf30e2c12b64592ed6538b293546468421f9` / `feat/cp0-framework-bootstrap`
+- Base commit / branch: `39d3cf30e2c12b64592ed6538b293546468421f9` / `feature/cp0-framework-bootstrap`
 - Human Lead approval: explicitly approved in conversation
 - Implementation authorized: YES
 
@@ -84,6 +84,6 @@ Manual verification is post-automation review and is not a database/security/API
 - Tests: `node scripts/framework-check.mjs` → exit 0. Initial run on fresh clone FAILED (`CLAUDE.md must be a minimal AGENTS.md bridge`), fixed once. Negative tests on a scratch copy (missing `AGENTS.md`, extra rule in `CLAUDE.md`, non-CURRENT `workflow.md`) → exit 1 with the expected message. Tree inspection: no `src/`, no Whisper/Ollama/FFmpeg or media code.
 - Review: ACCEPTED (single-agent separate review: contract → diff → AC → evidence). AC1–AC9 met.
 - Pilots: S0 = current-state CP1 pointer sync (`f1072b7`); S1 = `docs/tasks/CP0-S1-pilot-task-contract-check.md`, approved by HUMAN LEAD and READY.
-- Important findings / decisions: framework adoption is a greenfield adaptation, not a fork of `dang-vu-spring`. Non-blocking: branch is named `feat/…` while project profile says `feature/<scope>`; this contract's original approval was recorded as "in conversation".
+- Important findings / decisions: framework adoption is a greenfield adaptation, not a fork of `dang-vu-spring`. Branch renamed to `feature/cp0-framework-bootstrap` per project profile (HUMAN LEAD, 2026-09-26). Non-blocking: this contract's original approval was recorded as "in conversation".
 - Known limitations: Copilot surface and Claude Code auto-loading of `CLAUDE.md`/`.claude/rules` are structurally checked only, not behaviorally validated.
 - PR: pending HUMAN LEAD integration approval

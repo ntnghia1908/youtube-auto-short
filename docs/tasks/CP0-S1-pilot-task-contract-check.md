@@ -7,7 +7,7 @@
 - Change class: S1
 - Owner: HUMAN LEAD
 - Execution profile: single-agent
-- Base commit / branch: `d04bb13` / `feat/cp0-framework-bootstrap`
+- Base commit / branch: `d04bb13` / `feature/cp0-framework-bootstrap`
 - Human Lead approval: accepted (APPROVE TASK, 2026-09-26)
 - Implementation authorized: YES
 
