@@ -86,11 +86,31 @@ class AnalysisConfig:
 
 
 @dataclass(frozen=True)
+class SelectionConfig:
+    """AI clip selection via Ollama (docs/decisions/CP5-selection-contract.md)."""
+
+    model: str = "qwen3:14b"
+    think: bool = False
+    temperature: float = 0.0
+    seed: int = 42
+    num_ctx: int = 16384
+    prompt_version: str = "v1"
+    max_clips: int = 25
+    min_score: int = 7
+    max_window_words: int = 2500
+    retries: int = 2
+    # Execution-only settings (not part of the config hash); env OLLAMA_HOST overrides ollama_host.
+    ollama_host: str = "http://127.0.0.1:11435"
+    timeout: float = 600.0
+
+
+@dataclass(frozen=True)
 class Config:
     workspace: WorkspaceConfig = field(default_factory=WorkspaceConfig)
     ingest: IngestConfig = field(default_factory=IngestConfig)
     transcript: TranscriptConfig = field(default_factory=TranscriptConfig)
     analysis: AnalysisConfig = field(default_factory=AnalysisConfig)
+    selection: SelectionConfig = field(default_factory=SelectionConfig)
 
 
 def _section(data: dict, name: str) -> dict:
@@ -194,6 +214,33 @@ def _analysis(data: dict) -> AnalysisConfig:
     return cfg
 
 
+def _int(section: dict, key: str, default: int, where: str, *, lo: int, hi: int | None = None) -> int:
+    value = section.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, int) or value < lo or (hi is not None and value > hi):
+        bound = f"between {lo} and {hi}" if hi is not None else f">= {lo}"
+        raise ConfigError(f"{where}.{key} must be an integer {bound}")
+    return value
+
+
+def _selection(data: dict) -> SelectionConfig:
+    se = _section(data, "selection")
+    d, w = SelectionConfig(), "selection"
+    return SelectionConfig(
+        model=_str(se, "model", d.model, w),
+        think=_bool(se, "think", d.think, w),
+        temperature=_number(se, "temperature", d.temperature, w, lo=0, hi=2),
+        seed=_int(se, "seed", d.seed, w, lo=0),
+        num_ctx=_int(se, "num_ctx", d.num_ctx, w, lo=512),
+        prompt_version=_str(se, "prompt_version", d.prompt_version, w),
+        max_clips=_int(se, "max_clips", d.max_clips, w, lo=1, hi=99),
+        min_score=_int(se, "min_score", d.min_score, w, lo=1, hi=10),
+        max_window_words=_int(se, "max_window_words", d.max_window_words, w, lo=1),
+        retries=_int(se, "retries", d.retries, w, lo=0),
+        ollama_host=_str(se, "ollama_host", d.ollama_host, w),
+        timeout=_number(se, "timeout", d.timeout, w, lo=1),
+    )
+
+
 def from_dict(data: dict) -> Config:
     ws = _section(data, "workspace")
     ing = _section(data, "ingest")
@@ -211,6 +258,7 @@ def from_dict(data: dict) -> Config:
         ),
         transcript=_transcript(data),
         analysis=_analysis(data),
+        selection=_selection(data),
     )
 
 

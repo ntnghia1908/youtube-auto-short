@@ -56,3 +56,20 @@ shot_guard = 1.0             # no shot change within this many seconds of a clip
 intro_window = 60            # intro music label must start before this (s)
 intro_min_silence = 1.0      # silence after the intro that marks the content start (s)
 outro_window = 180           # outro music label must end within this many seconds of the end
+
+[selection]
+# AI clip selection via Ollama (docs/decisions/CP5-selection-contract.md).
+# Changing any key below except ollama_host/timeout re-runs the stage.
+model = "qwen3:14b"
+think = false                # model "thinking" mode (qwen3)
+temperature = 0
+seed = 42
+num_ctx = 16384              # Ollama context window (tokens)
+prompt_version = "v1"        # prompt text lives in code (selection/prompt.py)
+max_clips = 25               # at most this many Shorts per episode (CP1 §5)
+min_score = 7                # keep AI proposals with score >= this (1-10)
+max_window_words = 2500      # longer windows are split into overlapping sub-windows
+retries = 2                  # extra attempts per window on HTTP/timeout/JSON/schema errors
+# Execution-only (not part of the config hash). Env OLLAMA_HOST overrides ollama_host.
+ollama_host = "http://127.0.0.1:11435"
+timeout = 600                # seconds per Ollama request
