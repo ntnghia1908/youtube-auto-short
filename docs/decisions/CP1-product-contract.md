@@ -47,6 +47,7 @@ Mỗi mục §1–§11 dưới đây là quyết định cuối. Thay đổi b�
 
 - Tối thiểu 30 s / mục tiêu 60–90 s / tối đa 180 s.
 - Không cắt giữa câu.
+- Sửa đổi HUMAN LEAD 2026-09-26 (chốt CP4): các mức 30 / 60–90 / 180 s tính trên **thời lượng Short thực tế** sau khi rút khoảng lặng (§5), không phải thời lượng đoạn nguồn.
 
 ## 4. Composition 9:16
 
@@ -92,6 +93,9 @@ Tham số đo từ ảnh mẫu (576×1280), biểu diễn theo chiều rộng kh
 - Tối đa **20** Short mỗi episode (config). Mỗi Short **ưu tiên trình bày trọn vẹn một ý**: tiêu chí hoàn chỉnh ý đứng trên số lượng và trên độ dài mục tiêu — thà ít clip hơn còn hơn clip cụt ý.
 - AI (CP5) chỉ chọn trong danh sách candidate do code deterministic sinh ra (CP4), không tự tạo timestamp mới.
 - Sửa đổi HUMAN LEAD 2026-09-26 (sau review CP3): video giảng pháp chỉ có nhạc ở phần giới thiệu đầu và phần kết; hai phần này không dùng cho Short và có thể loại bỏ khi sinh candidate (CP4).
+- Sửa đổi HUMAN LEAD 2026-09-26 (chốt CP4):
+  - "Không jump cut" nghĩa là không ghép các ý/đoạn không liên tục. **Rút khoảng lặng** bên trong một đoạn liên tục được phép: mọi khoảng lặng audio trong clip dài hơn `max_pause` = **1.0 s** được rút còn `max_pause` khi render (CP7). Lý do: video giảng pháp nhịp chậm, khoảng lặng chiếm ~45 % thời lượng (đo video test). Giá trị 1.0 s chọn sau khi nghe thử so sánh với 0.5 s, 0.7 s và phương án 2 tầng (`docs/tasks/CP4-analysis.md`).
+  - Phần giới thiệu tên kinh/tập/người giảng ngay sau nhạc mở đầu thuộc intro, bị loại cùng nhạc intro.
 
 ## 6. Title / header structure
 
@@ -112,7 +116,7 @@ Workspace: `work/<episode_id>/` (đã gitignore). Mỗi stage một artifact, c�
 |---|---|---|---|
 | ingest | `source.*`, `metadata.json` | có | CP2 |
 | transcript | `transcript.json` (YouTube → local subtitle → Whisper) | có (provider ngoài) | CP3 |
-| analysis | `shots.json`, `candidates.json` | có | CP4 |
+| analysis | `shots.json`, `silences.json`, `candidates.json` | có | CP4 |
 | selection | `clips.json` | **AI** + validate | CP5 |
 | titling | `titles.json` | **AI** + validate | CP6 |
 | review | `review.json` (approve/reject/edit) | người | CP9 |

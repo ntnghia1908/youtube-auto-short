@@ -1,0 +1,21 @@
+Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'work/rbjfCfFq3Dk/source.mp4':
+  Duration: 01:00:22.00, start: 0.000000, bitrate: 1534 kb/s
+Stream mapping:
+  Stream #0:1 -> #0:0 (opus (native) -> pcm_s16le (native))
+[silencedetect @ 0x55e4c1f3a880] silence_start: -0.00133333
+[silencedetect @ 0x55e4c1f3a880] silence_end: 0.5 | silence_duration: 0.501333
+[silencedetect @ 0x55e4c1f3a880] silence_start: 19.6674
+[silencedetect @ 0x55e4c1f3a880] silence_end: 22.8746 | silence_duration: 3.20717
+[silencedetect @ 0x55e4c1f3a880] silence_start: 25.8001
+[silencedetect @ 0x55e4c1f3a880] silence_end: 28.1862 | silence_duration: 2.38612
+[silencedetect @ 0x55e4c1f3a880] silence_start: 28.1864
+[silencedetect @ 0x55e4c1f3a880] silence_end: 30.9253 | silence_duration: 2.73892
+[silencedetect @ 0x55e4c1f3a880] silence_start: 65.1484
+[silencedetect @ 0x55e4c1f3a880] silence_end: 74.1671 | silence_duration: 9.01873
+[silencedetect @ 0x55e4c1f3a880] silence_start: 74.1671
+[silencedetect @ 0x55e4c1f3a880] silence_end: 77.6719 | silence_duration: 3.50481
+[silencedetect @ 0x55e4c1f3a880] silence_start: 79.7008
+[silencedetect @ 0x55e4c1f3a880] silence_end: 80.5646 | silence_duration: 0.863833
+size=N/A time=01:00:21.99 bitrate=N/A speed= 172x
+[silencedetect @ 0x55e4c1f3a880] silence_start: 3620.55
+[out#0/null @ 0x55e4c1f39f00] video:0KiB audio:339469KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: unknown

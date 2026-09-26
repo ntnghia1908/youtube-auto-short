@@ -33,3 +33,24 @@ def test_transcript_config_parsing():
 def test_transcript_config_invalid(data):
     with pytest.raises(ConfigError):
         config_mod.from_dict(data)
+
+
+def test_analysis_config_parsing():
+    a = config_mod.from_dict({"analysis": {"max_pause": 0.7, "scale_width": 480, "min_duration": 20}}).analysis
+    assert a.max_pause == 0.7 and a.scale_width == 480 and a.min_duration == 20.0
+    assert a.min_boundary_silence == 3.0 and a.hard_break_silence == 10.0 and a.silence_noise_db == -45.0
+
+
+@pytest.mark.parametrize("data", [
+    {"analysis": {"scene_threshold": 1.5}},
+    {"analysis": {"scale_width": 320.5}},
+    {"analysis": {"silence_noise_db": 5}},
+    {"analysis": {"max_pause": "1"}},
+    {"analysis": {"min_duration": 200}},  # > max_duration
+    {"analysis": {"target_min": 100}},  # > target_max
+    {"analysis": {"min_boundary_silence": 12}},  # > hard_break_silence
+    {"analysis": []},
+])
+def test_analysis_config_invalid(data):
+    with pytest.raises(ConfigError):
+        config_mod.from_dict(data)

@@ -1,0 +1,1519 @@
+{
+ "_comment": "Trimmed from work/rbjfCfFq3Dk (YouTube auto caption vi-orig + ffmpeg silencedetect -45dB d=0.3, raw 4-decimal values, not merged): 0-420 s (intro music + announcement, 12.5 s hard break at 65-77, music labels 135/160), 1230-1360 s (short music labels, 10.8 s hard break), 3530-end (outro music + dedication). Shot changes: ffmpeg scene>0.3 scale 320 on the full video. Words dropped.",
+ "episode_id": "rbjfCfFq3Dk",
+ "duration": 3622.001,
+ "shot_changes": [
+  21.321,
+  47.948,
+  67.301,
+  718.051,
+  1867.6,
+  1889.69,
+  1920.08,
+  3065.7,
+  3074.77,
+  3211.01,
+  3216.05,
+  3289.55,
+  3302.37,
+  3619.78
+ ],
+ "segments": [
+  {
+   "id": "s00001",
+   "start": 0.57,
+   "end": 2.97,
+   "kind": "non_speech",
+   "text": "[âm nhạc]"
+  },
+  {
+   "id": "s00002",
+   "start": 3.08,
+   "end": 7.639,
+   "kind": "speech",
+   "text": "Phật thuyết thập thiện nghiệp đạo Kinh"
+  },
+  {
+   "id": "s00003",
+   "start": 7.639,
+   "end": 10.28,
+   "kind": "speech",
+   "text": "tập 9"
+  },
+  {
+   "id": "s00004",
+   "start": 10.28,
+   "end": 14.04,
+   "kind": "speech",
+   "text": "người giảng lão pháp sư Tịnh Không giảng"
+  },
+  {
+   "id": "s00005",
+   "start": 14.04,
+   "end": 17.039,
+   "kind": "speech",
+   "text": "tại Tịnh Tông Học Hội Singapore thời"
+  },
+  {
+   "id": "s00006",
+   "start": 17.039,
+   "end": 20.42,
+   "kind": "speech",
+   "text": "gian năm 2001"
+  },
+  {
+   "id": "s00007",
+   "start": 22.22,
+   "end": 27.56,
+   "kind": "speech",
+   "text": "các vị đồng tu Xin chào mọi người"
+  },
+  {
+   "id": "s00008",
+   "start": 30.8,
+   "end": 33.8,
+   "kind": "speech",
+   "text": "Xin mời Xem"
+  },
+  {
+   "id": "s00009",
+   "start": 33.8,
+   "end": 36.86,
+   "kind": "speech",
+   "text": "thập thiện nghiệp đạo kinh"
+  },
+  {
+   "id": "s00010",
+   "start": 36.86,
+   "end": 41.66,
+   "kind": "speech",
+   "text": "trang thứ tư hàng thứ nhất"
+  },
+  {
+   "id": "s00011",
+   "start": 43.28,
+   "end": 47.42,
+   "kind": "speech",
+   "text": "bắt đầu xem từ đây"
+  },
+  {
+   "id": "s00012",
+   "start": 47.78,
+   "end": 50.899,
+   "kind": "speech",
+   "text": "tự tánh như Huyễn"
+  },
+  {
+   "id": "s00013",
+   "start": 50.899,
+   "end": 56.48,
+   "kind": "speech",
+   "text": "trí giả tri dĩ Hưng tu Thiện Nghiệp"
+  },
+  {
+   "id": "s00014",
+   "start": 56.48,
+   "end": 61.86,
+   "kind": "speech",
+   "text": "chỉ thị sở sanh uổng xứ với đảnh Giải"
+  },
+  {
+   "id": "s00015",
+   "start": 61.86,
+   "end": 66.979,
+   "kind": "speech",
+   "text": "tất đoan chính kiến giả vô nhiễm"
+  },
+  {
+   "id": "s00016",
+   "start": 77.06,
+   "end": 80.18,
+   "kind": "speech",
+   "text": "tự tính như Huyễn"
+  },
+  {
+   "id": "s00017",
+   "start": 80.18,
+   "end": 85.1,
+   "kind": "speech",
+   "text": "là nói nó khởi dụng"
+  },
+  {
+   "id": "s00018",
+   "start": 86.54,
+   "end": 89.06,
+   "kind": "speech",
+   "text": "khi khởi tác dụng"
+  },
+  {
+   "id": "s00019",
+   "start": 89.06,
+   "end": 93.24,
+   "kind": "speech",
+   "text": "ở trong kinh Kim Cang Phật gọi là mộng"
+  },
+  {
+   "id": "s00020",
+   "start": 93.24,
+   "end": 96.92,
+   "kind": "speech",
+   "text": "Nguyễn bèo bọt"
+  },
+  {
+   "id": "s00021",
+   "start": 99.2,
+   "end": 102.38,
+   "kind": "speech",
+   "text": "sự việc này"
+  },
+  {
+   "id": "s00022",
+   "start": 102.38,
+   "end": 108.979,
+   "kind": "speech",
+   "text": "Thế Tôn thường dùng câu bất khả tư nghị"
+  },
+  {
+   "id": "s00023",
+   "start": 108.979,
+   "end": 115.1,
+   "kind": "speech",
+   "text": "để giải thích cho chân tướng sự thật này"
+  },
+  {
+   "id": "s00024",
+   "start": 119.399,
+   "end": 122.78,
+   "kind": "speech",
+   "text": "chúng ta sau khi nghe xong"
+  },
+  {
+   "id": "s00025",
+   "start": 122.78,
+   "end": 125.479,
+   "kind": "speech",
+   "text": "đối với cách nói này"
+  },
+  {
+   "id": "s00026",
+   "start": 125.479,
+   "end": 131.599,
+   "kind": "speech",
+   "text": "quả thật là rất khó khiến ta vừa lòng"
+  },
+  {
+   "id": "s00027",
+   "start": 135.43,
+   "end": 138.55,
+   "kind": "non_speech",
+   "text": "[âm nhạc]"
+  },
+  {
+   "id": "s00028",
+   "start": 160.91,
+   "end": 164.0,
+   "kind": "non_speech",
+   "text": "[âm nhạc]"
+  },
+  {
+   "id": "s00029",
+   "start": 173.3,
+   "end": 177.92,
+   "kind": "speech",
+   "text": "bạn mới hoàn toàn hiểu rõ"
+  },
+  {
+   "id": "s00030",
+   "start": 178.58,
+   "end": 181.22,
+   "kind": "speech",
+   "text": "từ"
+  },
+  {
+   "id": "s00031",
+   "start": 181.22,
+   "end": 184.819,
+   "kind": "speech",
+   "text": "là ý thức"
+  },
+  {
+   "id": "s00032",
+   "start": 185.12,
+   "end": 189.56,
+   "kind": "speech",
+   "text": "nghĩ là ngôn ngữ"
+  },
+  {
+   "id": "s00033",
+   "start": 190.62,
+   "end": 194.58,
+   "kind": "speech",
+   "text": "chân tướng sự thật này tuyệt đối không"
+  },
+  {
+   "id": "s00034",
+   "start": 194.58,
+   "end": 197.9,
+   "kind": "speech",
+   "text": "phải ngôn ngữ có thể nói ra được"
+  },
+  {
+   "id": "s00035",
+   "start": 197.9,
+   "end": 201.54,
+   "kind": "speech",
+   "text": "cũng không phải tư duy tưởng tượng có"
+  },
+  {
+   "id": "s00036",
+   "start": 201.54,
+   "end": 203.36,
+   "kind": "speech",
+   "text": "thể đạt đến được"
+  },
+  {
+   "id": "s00037",
+   "start": 203.36,
+   "end": 208.5,
+   "kind": "speech",
+   "text": "do đó Bất Khả tư nghị là câu nói chân"
+  },
+  {
+   "id": "s00038",
+   "start": 208.5,
+   "end": 209.42,
+   "kind": "speech",
+   "text": "thật"
+  },
+  {
+   "id": "s00039",
+   "start": 209.42,
+   "end": 212.36,
+   "kind": "speech",
+   "text": "hoàn toàn không mơ hồ"
+  },
+  {
+   "id": "s00040",
+   "start": 212.36,
+   "end": 216.42,
+   "kind": "speech",
+   "text": "hoàn toàn không phải để lẩn tránh Mà là"
+  },
+  {
+   "id": "s00041",
+   "start": 216.42,
+   "end": 219.9,
+   "kind": "speech",
+   "text": "lời chân thật với bạn chỉ cần bạn không"
+  },
+  {
+   "id": "s00042",
+   "start": 219.9,
+   "end": 223.7,
+   "kind": "speech",
+   "text": "nghĩ không bạn thì chân tướng sự thật"
+  },
+  {
+   "id": "s00043",
+   "start": 223.7,
+   "end": 227.659,
+   "kind": "speech",
+   "text": "liền hiện tiền ngay"
+  },
+  {
+   "id": "s00044",
+   "start": 229.28,
+   "end": 231.92,
+   "kind": "speech",
+   "text": "Vì sao chị"
+  },
+  {
+   "id": "s00045",
+   "start": 231.92,
+   "end": 235.7,
+   "kind": "speech",
+   "text": "phần trước đã nói"
+  },
+  {
+   "id": "s00046",
+   "start": 235.7,
+   "end": 241.22,
+   "kind": "speech",
+   "text": "tất cả pháp Là do tâm tưởng Sanh"
+  },
+  {
+   "id": "s00047",
+   "start": 241.22,
+   "end": 245.299,
+   "kind": "speech",
+   "text": "bằng dùng tâm tưởng lại rồi"
+  },
+  {
+   "id": "s00048",
+   "start": 245.299,
+   "end": 248.76,
+   "kind": "speech",
+   "text": "sau đó bạn thấy được chân tướng của tất"
+  },
+  {
+   "id": "s00049",
+   "start": 248.76,
+   "end": 250.5,
+   "kind": "speech",
+   "text": "cả Pháp"
+  },
+  {
+   "id": "s00050",
+   "start": 250.5,
+   "end": 254.54,
+   "kind": "speech",
+   "text": "là pháp Vốn Dĩ bất sanh bất diệt"
+  },
+  {
+   "id": "s00051",
+   "start": 254.54,
+   "end": 258.62,
+   "kind": "speech",
+   "text": "không đến không đi"
+  },
+  {
+   "id": "s00052",
+   "start": 259.88,
+   "end": 263.22,
+   "kind": "speech",
+   "text": "không một không hai không thường không"
+  },
+  {
+   "id": "s00053",
+   "start": 263.22,
+   "end": 264.139,
+   "kind": "speech",
+   "text": "đoạn"
+  },
+  {
+   "id": "s00054",
+   "start": 264.139,
+   "end": 269.6,
+   "kind": "speech",
+   "text": "trong trung quán luận gọi là bác mất"
+  },
+  {
+   "id": "s00055",
+   "start": 270.199,
+   "end": 272.06,
+   "kind": "speech",
+   "text": "vào lúc này"
+  },
+  {
+   "id": "s00056",
+   "start": 272.06,
+   "end": 276.86,
+   "kind": "speech",
+   "text": "bạn mới thật sự thể hội được"
+  },
+  {
+   "id": "s00057",
+   "start": 279.38,
+   "end": 283.4,
+   "kind": "speech",
+   "text": "chúng ta là Phàm phu"
+  },
+  {
+   "id": "s00058",
+   "start": 284.18,
+   "end": 290.24,
+   "kind": "speech",
+   "text": "luôn luôn không tách rời tư nghị"
+  },
+  {
+   "id": "s00059",
+   "start": 290.54,
+   "end": 295.1,
+   "kind": "speech",
+   "text": "cho nên vĩnh viễn không thể thấy đạo"
+  },
+  {
+   "id": "s00060",
+   "start": 295.1,
+   "end": 299.6,
+   "kind": "speech",
+   "text": "đạo ở đây chính là tự tánh"
+  },
+  {
+   "id": "s00061",
+   "start": 299.84,
+   "end": 304.16,
+   "kind": "speech",
+   "text": "tông môn gọi là Minh Tâm Kiến Tánh"
+  },
+  {
+   "id": "s00062",
+   "start": 304.16,
+   "end": 306.66,
+   "kind": "speech",
+   "text": "Phàm phu chúng ta vĩnh viễn không có"
+  },
+  {
+   "id": "s00063",
+   "start": 306.66,
+   "end": 309.6,
+   "kind": "speech",
+   "text": "cách gì kiến tính người nào có thể Kiến"
+  },
+  {
+   "id": "s00064",
+   "start": 309.6,
+   "end": 314.18,
+   "kind": "speech",
+   "text": "Tánh gì tất cả pháp thấy xuất thế gian"
+  },
+  {
+   "id": "s00065",
+   "start": 314.18,
+   "end": 319.94,
+   "kind": "speech",
+   "text": "không từ không nghỉ họ liệt Kiến Tánh"
+  },
+  {
+   "id": "s00066",
+   "start": 323.78,
+   "end": 327.539,
+   "kind": "speech",
+   "text": "Tại vì sao phải dùng phương pháp này ở"
+  },
+  {
+   "id": "s00067",
+   "start": 327.539,
+   "end": 331.039,
+   "kind": "speech",
+   "text": "trong kinh luận Phật thường nói"
+  },
+  {
+   "id": "s00068",
+   "start": 332.18,
+   "end": 334.52,
+   "kind": "speech",
+   "text": "dứt đường ngôn ngữ"
+  },
+  {
+   "id": "s00069",
+   "start": 334.52,
+   "end": 337.1,
+   "kind": "speech",
+   "text": "là không nên Tư"
+  },
+  {
+   "id": "s00070",
+   "start": 337.1,
+   "end": 342.259,
+   "kind": "speech",
+   "text": "mặc dấu tâm hình là không nên nghỉ"
+  },
+  {
+   "id": "s00071",
+   "start": 343.58,
+   "end": 348.06,
+   "kind": "speech",
+   "text": "cho nên bất khả tư nghị chính là nói dứt"
+  },
+  {
+   "id": "s00072",
+   "start": 348.06,
+   "end": 351.74,
+   "kind": "speech",
+   "text": "đường ngôn ngữ bậc giống tâm Hạnh"
+  },
+  {
+   "id": "s00073",
+   "start": 351.74,
+   "end": 356.24,
+   "kind": "speech",
+   "text": "chân tướng này liền hiện tiền ngay"
+  },
+  {
+   "id": "s00074",
+   "start": 359.0,
+   "end": 363.5,
+   "kind": "speech",
+   "text": "thế nhưng Thế Tôn dạy chúng ta"
+  },
+  {
+   "id": "s00075",
+   "start": 365.06,
+   "end": 368.759,
+   "kind": "speech",
+   "text": "ở trong không nghĩ mà người dạy cho"
+  },
+  {
+   "id": "s00076",
+   "start": 368.759,
+   "end": 371.72,
+   "kind": "speech",
+   "text": "chúng ta nghĩ bà"
+  },
+  {
+   "id": "s00077",
+   "start": 373.82,
+   "end": 376.639,
+   "kind": "speech",
+   "text": "ở trong không thể nói"
+  },
+  {
+   "id": "s00078",
+   "start": 376.639,
+   "end": 381.02,
+   "kind": "speech",
+   "text": "ngày thường nói với chúng ta"
+  },
+  {
+   "id": "s00079",
+   "start": 383.84,
+   "end": 387.78,
+   "kind": "speech",
+   "text": "trong đây có điều huyền bí chúng ta phải"
+  },
+  {
+   "id": "s00080",
+   "start": 387.78,
+   "end": 391.56,
+   "kind": "speech",
+   "text": "hiểu rõ cách nói của Phật là nói mà"
+  },
+  {
+   "id": "s00081",
+   "start": 391.56,
+   "end": 395.1,
+   "kind": "speech",
+   "text": "không nói không nói mà nói vậy thì ai"
+  },
+  {
+   "id": "s00082",
+   "start": 395.1,
+   "end": 397.16,
+   "kind": "speech",
+   "text": "hiểu được"
+  },
+  {
+   "id": "s00083",
+   "start": 397.16,
+   "end": 401.34,
+   "kind": "speech",
+   "text": "người biết nghe nghe mà không nghe không"
+  },
+  {
+   "id": "s00084",
+   "start": 401.34,
+   "end": 405.12,
+   "kind": "speech",
+   "text": "nghe mà nghe họ liền khế nhập rồi Đây"
+  },
+  {
+   "id": "s00085",
+   "start": 405.12,
+   "end": 408.12,
+   "kind": "speech",
+   "text": "gọi là chúng sanh căn chính người chúng"
+  },
+  {
+   "id": "s00086",
+   "start": 408.12,
+   "end": 411.38,
+   "kind": "speech",
+   "text": "sanh thượng thượng cao"
+  },
+  {
+   "id": "s00087",
+   "start": 413.06,
+   "end": 418.4,
+   "kind": "speech",
+   "text": "vẫn nói không sai chúng ta nghe sai rồi"
+  },
+  {
+   "id": "s00272",
+   "start": 1231.52,
+   "end": 1236.86,
+   "kind": "speech",
+   "text": "họ là cảm thọ của bạn"
+  },
+  {
+   "id": "s00273",
+   "start": 1239.62,
+   "end": 1245.44,
+   "kind": "speech",
+   "text": "tưởng là tư duy của bạn"
+  },
+  {
+   "id": "s00274",
+   "start": 1247.059,
+   "end": 1248.15,
+   "kind": "speech",
+   "text": "hình"
+  },
+  {
+   "id": "s00275",
+   "start": 1248.15,
+   "end": 1249.76,
+   "kind": "non_speech",
+   "text": "[âm nhạc]"
+  },
+  {
+   "id": "s00276",
+   "start": 1249.76,
+   "end": 1253.12,
+   "kind": "speech",
+   "text": "thì tương đối khó hiểu"
+  },
+  {
+   "id": "s00277",
+   "start": 1253.12,
+   "end": 1258.1,
+   "kind": "speech",
+   "text": "hành là sát na không dùng trụ"
+  },
+  {
+   "id": "s00278",
+   "start": 1262.84,
+   "end": 1266.2,
+   "kind": "speech",
+   "text": "ý nghĩa sinh diệt này"
+  },
+  {
+   "id": "s00279",
+   "start": 1266.2,
+   "end": 1269.5,
+   "kind": "speech",
+   "text": "vĩnh viễn không ngừng nghỉ"
+  },
+  {
+   "id": "s00280",
+   "start": 1269.5,
+   "end": 1273.08,
+   "kind": "speech",
+   "text": "niệm trước diệt niệm sau liền xanh để"
+  },
+  {
+   "id": "s00281",
+   "start": 1273.08,
+   "end": 1274.84,
+   "kind": "speech",
+   "text": "gọi là hành"
+  },
+  {
+   "id": "s00282",
+   "start": 1274.84,
+   "end": 1277.539,
+   "kind": "speech",
+   "text": "niệm niệm không dừng"
+  },
+  {
+   "id": "s00283",
+   "start": 1277.539,
+   "end": 1281.559,
+   "kind": "speech",
+   "text": "thức là hàm chứa"
+  },
+  {
+   "id": "s00284",
+   "start": 1282.34,
+   "end": 1286.6,
+   "kind": "speech",
+   "text": "những cái mà bạn tạo tác"
+  },
+  {
+   "id": "s00285",
+   "start": 1287.919,
+   "end": 1293.62,
+   "kind": "speech",
+   "text": "luận là Thiện Pháp ác pháp dù ký pháp"
+  },
+  {
+   "id": "s00286",
+   "start": 1293.62,
+   "end": 1296.679,
+   "kind": "speech",
+   "text": "hình bóng của nó"
+  },
+  {
+   "id": "s00287",
+   "start": 1296.679,
+   "end": 1299.55,
+   "kind": "speech",
+   "text": "hàm chứa trong a lại da thức"
+  },
+  {
+   "id": "s00288",
+   "start": 1299.55,
+   "end": 1301.48,
+   "kind": "non_speech",
+   "text": "[âm nhạc]"
+  },
+  {
+   "id": "s00289",
+   "start": 1301.48,
+   "end": 1306.159,
+   "kind": "speech",
+   "text": "trên kinh Phật của nó là chủng tử"
+  },
+  {
+   "id": "s00290",
+   "start": 1310.1,
+   "end": 1313.96,
+   "kind": "speech",
+   "text": "thứ này thì việc phức tạp"
+  },
+  {
+   "id": "s00291",
+   "start": 1314.919,
+   "end": 1318.94,
+   "kind": "speech",
+   "text": "chứ vĩnh viễn không bị mất đi"
+  },
+  {
+   "id": "s00292",
+   "start": 1318.94,
+   "end": 1323.08,
+   "kind": "speech",
+   "text": "vĩnh viễn không bị tiêu diệt"
+  },
+  {
+   "id": "s00293",
+   "start": 1323.08,
+   "end": 1326.38,
+   "kind": "speech",
+   "text": "gặp được duyên thì nó liền Khởi tác dụng"
+  },
+  {
+   "id": "s00294",
+   "start": 1326.38,
+   "end": 1330.1,
+   "kind": "speech",
+   "text": "liền Khởi hiện hành"
+  },
+  {
+   "id": "s00295",
+   "start": 1331.12,
+   "end": 1333.76,
+   "kind": "speech",
+   "text": "gặp Duyên liền xanh Khởi hiện tướng"
+  },
+  {
+   "id": "s00296",
+   "start": 1333.76,
+   "end": 1338.02,
+   "kind": "speech",
+   "text": "chúng ta gọi là Thọ báo"
+  },
+  {
+   "id": "s00297",
+   "start": 1347.02,
+   "end": 1350.419,
+   "kind": "speech",
+   "text": "trên kinh Phật nói giả sử Bách Thiên"
+  },
+  {
+   "id": "s00298",
+   "start": 1350.419,
+   "end": 1352.059,
+   "kind": "speech",
+   "text": "Kiếp"
+  },
+  {
+   "id": "s00299",
+   "start": 1352.059,
+   "end": 1356.36,
+   "kind": "speech",
+   "text": "sở tạo nghiệp bất công trong anh là giờ"
+  },
+  {
+   "id": "s00809",
+   "start": 3537.5,
+   "end": 3540.38,
+   "kind": "speech",
+   "text": "ý nghĩa của đoạn văn này"
+  },
+  {
+   "id": "s00810",
+   "start": 3540.38,
+   "end": 3542.42,
+   "kind": "speech",
+   "text": "thật là"
+  },
+  {
+   "id": "s00811",
+   "start": 3542.42,
+   "end": 3547.5,
+   "kind": "speech",
+   "text": "sâu rộng vô cùng chúng ta phải rất tỉ mỉ"
+  },
+  {
+   "id": "s00812",
+   "start": 3547.5,
+   "end": 3550.44,
+   "kind": "speech",
+   "text": "mà thể hội phải biết tu học như thế nào"
+  },
+  {
+   "id": "s00813",
+   "start": 3550.44,
+   "end": 3552.66,
+   "kind": "speech",
+   "text": "hôm nay thời gian đã hết chúng ta chỉ"
+  },
+  {
+   "id": "s00814",
+   "start": 3552.66,
+   "end": 3554.6,
+   "kind": "speech",
+   "text": "học đến nay thôi A Di Đà Phật"
+  },
+  {
+   "id": "s00815",
+   "start": 3554.6,
+   "end": 3574.75,
+   "kind": "non_speech",
+   "text": "[âm nhạc]"
+  },
+  {
+   "id": "s00816",
+   "start": 3575.599,
+   "end": 3577.22,
+   "kind": "speech",
+   "text": "gmail.com"
+  },
+  {
+   "id": "s00817",
+   "start": 3577.22,
+   "end": 3580.099,
+   "kind": "speech",
+   "text": "người đọc Hạnh quang"
+  },
+  {
+   "id": "s00818",
+   "start": 3580.099,
+   "end": 3583.2,
+   "kind": "speech",
+   "text": "phát âm cúng dường do gia đình Phật tử"
+  },
+  {
+   "id": "s00819",
+   "start": 3583.2,
+   "end": 3586.68,
+   "kind": "speech",
+   "text": "Thiện Đức Thành kính cúng dường nguyện"
+  },
+  {
+   "id": "s00820",
+   "start": 3586.68,
+   "end": 3590.099,
+   "kind": "speech",
+   "text": "cả thảy chúng sanh đều tính niệm Di Đà"
+  },
+  {
+   "id": "s00821",
+   "start": 3590.099,
+   "end": 3594.359,
+   "kind": "speech",
+   "text": "Đồng cầu xanh về nước cực lạc miệng đem"
+  },
+  {
+   "id": "s00822",
+   "start": 3594.359,
+   "end": 3597.119,
+   "kind": "speech",
+   "text": "công đức này Trang Nghiêm cõi nước Phật"
+  },
+  {
+   "id": "s00823",
+   "start": 3597.119,
+   "end": 3601.44,
+   "kind": "speech",
+   "text": "trên nền 4 hên nặng dưới Cứu Khổ ba"
+  },
+  {
+   "id": "s00824",
+   "start": 3601.44,
+   "end": 3605.579,
+   "kind": "speech",
+   "text": "đường Nếu có ai thấy nghe đều Phát Tâm"
+  },
+  {
+   "id": "s00825",
+   "start": 3605.579,
+   "end": 3610.079,
+   "kind": "speech",
+   "text": "Bồ Đề hết Một báo thân này Đồng Xanh về"
+  },
+  {
+   "id": "s00826",
+   "start": 3610.079,
+   "end": 3612.859,
+   "kind": "speech",
+   "text": "nước cực lạc"
+  },
+  {
+   "id": "s00827",
+   "start": 3612.859,
+   "end": 3617.839,
+   "kind": "speech",
+   "text": "Nam mô A Di Đà Phật"
+  }
+ ],
+ "silences": [
+  [
+   19.6674,
+   22.8746
+  ],
+  [
+   25.8001,
+   28.1862
+  ],
+  [
+   28.1864,
+   30.9253
+  ],
+  [
+   32.7952,
+   33.4454
+  ],
+  [
+   33.4575,
+   34.2927
+  ],
+  [
+   39.7394,
+   40.752
+  ],
+  [
+   40.7833,
+   41.2525
+  ],
+  [
+   41.3483,
+   43.7371
+  ],
+  [
+   45.5427,
+   46.9475
+  ],
+  [
+   46.9477,
+   48.1367
+  ],
+  [
+   50.1863,
+   51.3192
+  ],
+  [
+   53.5121,
+   53.9223
+  ],
+  [
+   55.6948,
+   56.8045
+  ],
+  [
+   62.9259,
+   63.3347
+  ],
+  [
+   65.1484,
+   74.1671
+  ],
+  [
+   74.1671,
+   77.6719
+  ],
+  [
+   79.7008,
+   80.5646
+  ],
+  [
+   83.5205,
+   86.5512
+  ],
+  [
+   86.5516,
+   87.184
+  ],
+  [
+   88.8221,
+   89.8666
+  ],
+  [
+   94.9407,
+   95.5164
+  ],
+  [
+   95.5501,
+   99.4951
+  ],
+  [
+   100.838,
+   102.834
+  ],
+  [
+   103.894,
+   104.245
+  ],
+  [
+   107.456,
+   109.628
+  ],
+  [
+   113.818,
+   119.688
+  ],
+  [
+   121.69,
+   123.431
+  ],
+  [
+   124.91,
+   125.895
+  ],
+  [
+   129.493,
+   133.224
+  ],
+  [
+   133.29,
+   133.833
+  ],
+  [
+   138.172,
+   140.784
+  ],
+  [
+   146.72,
+   148.122
+  ],
+  [
+   151.263,
+   156.588
+  ],
+  [
+   157.915,
+   159.54
+  ],
+  [
+   161.365,
+   161.763
+  ],
+  [
+   163.607,
+   164.956
+  ],
+  [
+   169.464,
+   170.551
+  ],
+  [
+   170.846,
+   173.7
+  ],
+  [
+   176.311,
+   176.789
+  ],
+  [
+   176.804,
+   179.206
+  ],
+  [
+   179.742,
+   181.822
+  ],
+  [
+   182.811,
+   185.754
+  ],
+  [
+   187.891,
+   191.089
+  ],
+  [
+   193.051,
+   193.5
+  ],
+  [
+   197.449,
+   198.719
+  ],
+  [
+   202.7,
+   204.093
+  ],
+  [
+   204.916,
+   205.407
+  ],
+  [
+   208.859,
+   209.973
+  ],
+  [
+   211.998,
+   212.827
+  ],
+  [
+   215.082,
+   215.756
+  ],
+  [
+   218.114,
+   218.614
+  ],
+  [
+   222.752,
+   224.35
+  ],
+  [
+   225.882,
+   229.681
+  ],
+  [
+   230.923,
+   232.611
+  ],
+  [
+   233.967,
+   235.759
+  ],
+  [
+   235.759,
+   236.375
+  ],
+  [
+   239.822,
+   241.628
+  ],
+  [
+   243.843,
+   245.821
+  ],
+  [
+   249.338,
+   249.995
+  ],
+  [
+   253.161,
+   254.997
+  ],
+  [
+   256.959,
+   260.658
+  ],
+  [
+   263.797,
+   264.785
+  ],
+  [
+   267.533,
+   270.588
+  ],
+  [
+   271.846,
+   272.807
+  ],
+  [
+   275.119,
+   278.476
+  ],
+  [
+   278.476,
+   279.974
+  ],
+  [
+   281.463,
+   284.504
+  ],
+  [
+   286.006,
+   286.434
+  ],
+  [
+   288.375,
+   291.051
+  ],
+  [
+   294.316,
+   295.843
+  ],
+  [
+   297.783,
+   300.174
+  ],
+  [
+   303.211,
+   304.291
+  ],
+  [
+   313.178,
+   314.61
+  ],
+  [
+   316.262,
+   316.913
+  ],
+  [
+   318.204,
+   324.45
+  ],
+  [
+   326.761,
+   327.258
+  ],
+  [
+   329.335,
+   332.603
+  ],
+  [
+   334.2,
+   334.779
+  ],
+  [
+   334.779,
+   335.26
+  ],
+  [
+   336.611,
+   337.533
+  ],
+  [
+   340.406,
+   343.879
+  ],
+  [
+   346.969,
+   347.571
+  ],
+  [
+   350.545,
+   352.326
+  ],
+  [
+   354.164,
+   359.587
+  ],
+  [
+   361.813,
+   365.372
+  ],
+  [
+   369.895,
+   374.449
+  ],
+  [
+   376.377,
+   377.458
+  ],
+  [
+   379.362,
+   384.383
+  ],
+  [
+   386.619,
+   387.194
+  ],
+  [
+   388.681,
+   389.41
+  ],
+  [
+   393.796,
+   394.52
+  ],
+  [
+   395.826,
+   397.793
+  ],
+  [
+   400.653,
+   401.119
+  ],
+  [
+   404.06,
+   404.851
+  ],
+  [
+   409.667,
+   413.245
+  ],
+  [
+   414.334,
+   415.389
+  ],
+  [
+   417.646,
+   419.156
+  ],
+  [
+   1231.1,
+   1232.08
+  ],
+  [
+   1232.75,
+   1233.27
+  ],
+  [
+   1235.18,
+   1240.04
+  ],
+  [
+   1240.86,
+   1241.65
+  ],
+  [
+   1243.77,
+   1247.29
+  ],
+  [
+   1248.63,
+   1249.52
+  ],
+  [
+   1249.53,
+   1250.29
+  ],
+  [
+   1253.21,
+   1253.82
+  ],
+  [
+   1256.34,
+   1263.47
+  ],
+  [
+   1265.44,
+   1266.46
+  ],
+  [
+   1268.42,
+   1270.0
+  ],
+  [
+   1274.06,
+   1274.9
+  ],
+  [
+   1276.94,
+   1278.16
+  ],
+  [
+   1279.69,
+   1282.84
+  ],
+  [
+   1284.79,
+   1288.01
+  ],
+  [
+   1290.37,
+   1290.67
+  ],
+  [
+   1292.05,
+   1294.21
+  ],
+  [
+   1295.78,
+   1297.26
+  ],
+  [
+   1299.96,
+   1300.36
+  ],
+  [
+   1300.37,
+   1302.07
+  ],
+  [
+   1304.46,
+   1310.41
+  ],
+  [
+   1312.08,
+   1314.0
+  ],
+  [
+   1318.24,
+   1319.42
+  ],
+  [
+   1321.46,
+   1323.54
+  ],
+  [
+   1326.6,
+   1327.01
+  ],
+  [
+   1328.32,
+   1331.26
+  ],
+  [
+   1333.83,
+   1334.61
+  ],
+  [
+   1336.14,
+   1340.45
+  ],
+  [
+   1340.45,
+   1346.92
+  ],
+  [
+   1350.7,
+   1352.55
+  ],
+  [
+   1354.95,
+   1355.53
+  ],
+  [
+   1356.57,
+   1357.05
+  ],
+  [
+   1358.42,
+   1358.97
+  ],
+  [
+   3532.21,
+   3532.51
+  ],
+  [
+   3532.74,
+   3537.66
+  ],
+  [
+   3539.93,
+   3540.4
+  ],
+  [
+   3540.5,
+   3540.85
+  ],
+  [
+   3541.86,
+   3543.06
+  ],
+  [
+   3544.95,
+   3546.05
+  ],
+  [
+   3554.01,
+   3554.33
+  ],
+  [
+   3616.11,
+   3616.44
+  ],
+  [
+   3621.19,
+   3622.0
+  ]
+ ]
+}

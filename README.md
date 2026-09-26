@@ -78,6 +78,18 @@ Output: `work/<episode_id>/transcript.json` (plus `transcript/youtube.<track>.js
 The Whisper fallback (`large-v3-turbo`, CPU `int8` by default, see `[transcript.whisper]` in
 `config.example.toml`) downloads its model (~1.6 GB) from Hugging Face into `models/` on first use.
 
+Analysis (after transcript):
+
+```bash
+# ffmpeg scene + silence detection, then deterministic clip candidates (30-180 s after
+# shortening silences to 1.0 s); intro/outro music and the intro announcement are excluded.
+auto-short analysis <episode_id>   # options: --force, --config PATH
+```
+
+Output: `work/<episode_id>/shots.json`, `silences.json` and `candidates.json` (schemas and rules:
+`docs/decisions/CP4-analysis-contract.md`; parameters in `[analysis]` of `config.example.toml`).
+Detection takes about 90 s for a 1-hour video; changing any `[analysis]` key re-runs the stage.
+
 `python -m auto_short ...` works the same. Re-running `ingest` skips when the source and the
 relevant config are unchanged. Artifacts go to `work/<episode_id>/` (`manifest.json`, `metadata.json`).
 
