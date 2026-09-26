@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: CHANGE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -67,9 +67,9 @@ Không chạm database, security model hoặc public API contract. Task là S2 a
 
 ## Result
 
-- Main changes:
-- Tests:
-- Review:
-- Important findings / decisions:
-- Known limitations:
-- PR:
+- Main changes: `docs/decisions/CP1-product-contract.md` ACCEPTED (§1–§11 quyết định cuối, model khởi đầu `qwen3:14b`, layout theo `docs/decisions/assets/cp1-layout-reference.jpg`); project profile trỏ tới decision record (authority, module map theo stage §8, setup/tools); current-state cập nhật; checker kiểm decision record.
+- Tests: `node scripts/framework-check.mjs` → exit 0. Negative test trên bản copy tạm: xóa decision record → `FAIL: missing required file`; Status `MAYBE` → `FAIL: … invalid Status`; cả hai exit 1; record `PROPOSED — …` hợp lệ vẫn PASS. `grep "Cần HUMAN LEAD"` → rỗng. `git diff --stat main...HEAD` → chỉ docs, ảnh mẫu, checker; không có `pyproject.toml`/`requirements*`/`src/`/config.
+- Review: ACCEPTED (dual-agent: IMPLEMENTER commit `5bf66cf`; ORCHESTRATOR review diff-first, chạy lại toàn bộ verification). Một micro-fix ORCHESTRATOR: §6 header thêm `speaker` cho khớp §1/§4.
+- Important findings / decisions: toàn bộ quyết định HUMAN LEAD 2026-09-26 ở decision record. `gemma3:12b` chưa có trên máy GPU → model khởi đầu `qwen3:14b`.
+- Known limitations: thông số layout đo từ ảnh chụp 576×1280 (xấp xỉ); CP7 dùng so sánh trực quan với ảnh mẫu làm acceptance. Session ORCHESTRATOR không nạp được `.claude/agents/implementer` (session bắt đầu trước khi file tồn tại), nên IMPLEMENTER chạy bằng general-purpose agent với nguyên văn định nghĩa implementer.
+- PR: chưa; chờ HUMAN LEAD approve integration.

@@ -93,7 +93,7 @@ Tham số đo từ ảnh mẫu (576×1280), biểu diễn theo chiều rộng kh
 
 ## 6. Title / header structure
 
-- **Header:** deterministic — lấy từ config/CLI (`series`, `episode`) hoặc metadata YouTube; không dùng AI.
+- **Header:** deterministic — lấy từ config/CLI (`speaker`, `series`, `episode`) hoặc metadata YouTube; không dùng AI.
 - **Title/hook (yellow panel):** AI sinh từ transcript của clip; tiếng Việt; ≤ 60 ký tự, tối đa 2 dòng; không thêm thông tin không có trong clip; không emoji/clickbait.
 - Lưu `titles.json` với clip ID, model, prompt version, source hash.
 
