@@ -86,4 +86,4 @@ Manual verification is post-automation review and is not a database/security/API
 - Pilots: S0 = current-state CP1 pointer sync (`f1072b7`); S1 = `docs/tasks/CP0-S1-pilot-task-contract-check.md`, approved by HUMAN LEAD and READY.
 - Important findings / decisions: framework adoption is a greenfield adaptation, not a fork of `dang-vu-spring`. Branch renamed to `feature/cp0-framework-bootstrap` per project profile (HUMAN LEAD, 2026-09-26). Non-blocking: this contract's original approval was recorded as "in conversation".
 - Known limitations: Copilot surface and Claude Code auto-loading of `CLAUDE.md`/`.claude/rules` are structurally checked only, not behaviorally validated.
-- PR: pending HUMAN LEAD integration approval
+- PR: https://github.com/ntnghia1908/youtube-auto-short/pull/1 (awaiting HUMAN LEAD merge)

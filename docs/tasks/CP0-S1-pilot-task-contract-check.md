@@ -62,4 +62,4 @@ Không chạm database, security model hoặc public API contract; manual test l
 - Review: ACCEPTED (single-agent review riêng: contract → diff → AC → evidence); không có blocking finding.
 - Important findings / decisions: checker chỉ enforce rule đã có ở workflow §4, không tạo rule mới.
 - Known limitations: giá trị field phải khớp chính xác (không cho ghi chú sau `Status`); section so khớp theo dòng LF, file CRLF sẽ báo thiếu section.
-- PR: chưa; chờ HUMAN LEAD quyết integration.
+- PR: https://github.com/ntnghia1908/youtube-auto-short/pull/1 (cùng PR với CP0)
