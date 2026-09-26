@@ -315,3 +315,23 @@ def test_ingest_not_done_is_refused(cfg):
 
     with pytest.raises(TranscriptError, match="no manifest"):
         run_transcript("nope", cfg, backend=whisper)
+
+
+def test_local_subtitle_rejected_falls_back_to_whisper(cfg):
+    ws, media = make_episode(cfg.workspace.dir)
+    media.with_name("lecture.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:09,000\nhello everyone today we continue the lesson on the sutra\n",
+        encoding="utf-8")
+    whisper = FakeWhisper()
+    assert run_transcript("ep", cfg, backend=whisper).source == "whisper"
+    assert len(whisper.calls) == 1
+    local = _doc(ws)["attempts"][1]
+    assert local["provider"] == "local_subtitle" and local["status"] == "rejected"
+    assert "not Vietnamese" in local["reason"]
+
+
+def test_corrupt_metadata_is_a_clear_error(cfg):
+    ws, _ = make_episode(cfg.workspace.dir)
+    (ws.dir / "metadata.json").write_text("{broken")
+    with pytest.raises(TranscriptError, match="cannot read .*metadata.json"):
+        run_transcript("ep", cfg, backend=FakeWhisper())

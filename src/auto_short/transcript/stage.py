@@ -174,7 +174,12 @@ def run_transcript(
         raise TranscriptError(msg)
 
     explicit = _check_subtitle(subtitle) if subtitle is not None else None
-    metadata = json.loads(meta_path.read_text(encoding="utf-8"))
+    try:
+        metadata = json.loads(meta_path.read_text(encoding="utf-8"))
+        duration = float(metadata["duration"])
+        media_sha256 = metadata["source"]["sha256"]
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise TranscriptError(f"cannot read {meta_path}: {exc}; re-run 'auto-short ingest'") from exc
     src = manifest["source"]
     media = ws.resolve(src["path"]).absolute()
     sub = explicit or (find_sidecar(media) if src.get("kind") == "local" else None)
@@ -189,7 +194,7 @@ def run_transcript(
         source_kind=src.get("kind"),
         source_uri=src.get("uri"),
         media_path=media,
-        duration=float(metadata["duration"]),
+        duration=duration,
         subtitle=sub,
         config=config,
     )
@@ -228,7 +233,7 @@ def run_transcript(
                 rel, data = cand.raw_file
                 atomic_write_bytes(ws.dir / rel, data)
                 artifacts.append(rel)
-            doc = _document(ctx, metadata["source"]["sha256"], cand, attempts, segments)
+            doc = _document(ctx, media_sha256, cand, attempts, segments)
             atomic_write_json(ws.dir / TRANSCRIPT_NAME, doc)
         except BaseException:
             _remove_outputs(ws)
