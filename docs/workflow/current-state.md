@@ -8,11 +8,12 @@ Chỉ ghi operational state không suy ra được từ Git, task contract hoặ
 
 ## Current focus
 
-CP5 — AI Clip Selection (`docs/tasks/CP5-selection.md`): IN_PROGRESS (APPROVED 2026-09-26), branch `feature/cp5-selection`. CP4 đã merge (PR #6, `f0c21d4`).
+CP5 — AI Clip Selection (`docs/tasks/CP5-selection.md`): READY trên `feature/cp5-selection`, chờ HUMAN LEAD duyệt push + PR.
 
 ## Next proposed action
 
-1. IMPLEMENTER: mặc định C2 (`qwen3:30b`, think, v2) + B11 lọc từ nối, đo lại; ORCHESTRATOR review → READY.
+1. HUMAN LEAD duyệt push + PR CP5.
+2. Sau merge: HUMAN LEAD quyết mở CP6 — AI Title / Hook Generation (roadmap §4 CP6).
 
 Đây là PROPOSED, không authorize implementation tiếp theo.
 

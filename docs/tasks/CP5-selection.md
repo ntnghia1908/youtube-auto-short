@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -142,16 +142,31 @@ Tất cả required verification phải chạy và PASS trước READY.
 
 Không chạm database, security model hay public API contract mạng (chỉ gọi Ollama nội bộ đã duyệt CP1 §10–11). CLI thêm lệnh; manual test là điểm danh sau automated verification, nhưng **chất lượng trọn ý do HUMAN LEAD nghe quyết** (P1, model).
 
-- [ ] Mở `clips.json`: đọc `topic`/`reason` và text unit đầu/cuối của vài clip.
-- [ ] Nghe 4–6 clip mẫu (render thô có áp `trims`, gửi file) của mỗi cấu hình B10: câu đầu tự đứng được, câu cuối kết ý, không cụt chữ.
-- [ ] Xem `selection_log.json`: các đề xuất bị loại có lý do hợp lý.
-- [ ] `auto-short status rbjfCfFq3Dk` → `selection done`.
+- [x] Mở `clips.json`: đọc `topic`/`reason` và text unit đầu/cuối của vài clip.
+- [x] Nghe 4–6 clip mẫu (render thô có áp `trims`, gửi file) của mỗi cấu hình B10: câu đầu tự đứng được, câu cuối kết ý, không cụt chữ.
+- [x] Xem `selection_log.json`: các đề xuất bị loại có lý do hợp lý.
+- [x] `auto-short status rbjfCfFq3Dk` → `selection done`.
 
 ## Result
 
-- Main changes:
-- Tests:
-- Review:
-- Important findings / decisions:
+- Main changes: subpackage `src/auto_short/selection/` (`client.py` Ollama `/api/chat` qua `urllib` + retry backoff; `prompt.py` v1/v2/v3; `logic.py` window, parse, map candidate, head cut B11, chọn cuối, validate; `stage.py`); config `[selection]` typed; CLI `auto-short selection`; artifact `clips.json` + `selection_log.json`; decision record `docs/decisions/CP5-selection-contract.md` ACCEPTED; CP1 §0/§5/§11 (25 clip, head cut, chốt `qwen3:30b` + think, port 11437); project profile, README. Mặc định: `qwen3:30b`, `think = true`, prompt `v3`, `num_ctx 32768`, `min_score 7`, `max_clips 25`, `head_cut_pad 0.1`, backoff `[5, 15]`, `http://127.0.0.1:11437`.
+- Tests (ORCHESTRATOR chạy lại độc lập):
+  - `~/miniconda3/envs/auto-short/bin/pytest -q` → `198 passed`.
+  - Chạy thật `rbjfCfFq3Dk` (C2, v3, head cut; IMPLEMENTER): 441 s wall, 10 AI call, 0 lỗi/retry → 14 đề xuất, 13 clip, 826.2 s, 7 `in_target`, median 65.9 s; 2 head cut (`k04`/`c00457` bỏ "thì", `k10`/`c00868` bỏ "thế là").
+  - Script kiểm độc lập của ORCHESTRATOR trên `clips.json` thật (mỗi vòng v1, v2, C2+lọc, v3): clip map đúng candidate, trường chép khớp, không chồng lấn, không chứa hard break, 30–180 s, id `k..` đúng thứ tự → 0 vi phạm. Script kiểm của IMPLEMENTER (`check_clips.py`, tính lại thời lượng khi có `head_cut`) → PASS.
+  - Chạy lại → `selection: skip (up to date)`, không gọi AI, sha256 `clips.json` không đổi; `auto-short status` → `selection done`.
+  - `pyproject.toml` không đổi (không dependency mới). `node scripts/framework-check.mjs` → PASS.
+- Review: ACCEPTED (dual-agent, ORCHESTRATOR review diff-first sau mỗi vòng); không có blocking finding.
+- Important findings / decisions (HUMAN LEAD 2026-09-26, chi tiết ở decision record):
+  - Tối đa 25 clip (CP1 §5).
+  - Prompt v2 (thời gian cộng dồn) giảm đề xuất quá ngắn (14b: 43/82 → 25/72 bị loại); v3 báo AI về head cut.
+  - Đo model: `qwen3:14b` think off/on, `qwen3:30b` think on (30b think off trả 0 clip — model chỉ-suy-luận); HUMAN LEAD nghe mẫu, chọn C2 = `qwen3:30b` + think.
+  - B11: ban đầu hiểu là loại đề xuất mở bằng từ nối; HUMAN LEAD làm rõ → cắt từ nối thuần ở đầu Short theo word timing (deterministic). Cụm chỉ ngược / từ để hỏi không xử lý riêng. HUMAN LEAD nghe điểm cắt: ổn.
+  - Retry backoff 5/15 s; Ollama chuyển port 11437 (hai lần connection reset trên 11435 trong lúc đo).
 - Known limitations:
+  - AI không tất định giữa các lần `--force` dù `temperature 0` + `seed` cố định (30b think: chỉ ~9/18 clip chung); stage skip giữ nguyên kết quả đã chọn. `clips.json` là một kết quả hợp lệ, không phải duy nhất — CP9 (review) quyết cách xử lý nếu cần.
+  - AI vẫn có thể tự chấm trọn ý lỏng (câu mở giữa câu không có từ nối, câu kết dở); trọn ý cuối cùng do CP9 duyệt.
+  - Segment caption không có word timing (5/817 trên video test, gồm `c01293` "cho nên điều thứ nhất…") không được head cut.
+  - Word timing caption tự động gần đúng (từ đầu segment thường sớm ~1 s).
+  - Mép window do nhãn `[âm nhạc]` nhận nhầm (CP4) vẫn có thể cắt ngang ý.
 - PR:

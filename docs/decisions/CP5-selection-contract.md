@@ -2,8 +2,8 @@
 
 | Metadata | Value |
 |---|---|
-| Status | PROPOSED |
-| Accepted by | — (B1–B10 duyệt cùng APPROVE TASK 2026-09-26; Sửa B3 (v2), chốt C2, Sửa B5 (backoff), port 11437, Thay B11 (head cut) + prompt v3 HUMAN LEAD 2026-09-26; chờ review) |
+| Status | ACCEPTED |
+| Accepted by | — (B1–B10 duyệt cùng APPROVE TASK 2026-09-26; Sửa B3 (v2), chốt C2, Sửa B5 (backoff), port 11437, Thay B11 (head cut) + prompt v3 HUMAN LEAD 2026-09-26; review ACCEPTED; HUMAN LEAD nghe điểm cắt: ổn, `head_cut_pad` 0.1 giữ nguyên; segment không có word timing: để nguyên, không nội suy) |
 | Checkpoint | CP5 (S2) |
 | Roadmap | `AUTO_SHORT_CHECKPOINT_PLAN.md` §4 CP5 |
 | Task contract | `docs/tasks/CP5-selection.md` |
@@ -124,7 +124,7 @@ Thay bộ lọc loại đề xuất theo `start_blocklist` (bản trước, đã
 - `duration` sau cắt < `min_duration` → đề xuất `ineligible` (`too short after head cut (<x> s)`).
 - **Cho CP7:** render đoạn `[clip.source_start, clip.source_end]` và các `trims` của candidate giao đoạn đó (cắt trim ở `source_start` nếu nó cắt ngang) — không dùng `source_start` của candidate khi `head_cut` khác `null`.
 - Config `[selection]`: `head_cut_words` (list chuỗi không rỗng; rỗng → tắt), `head_cut_pad` (0–1 s) — cả hai vào `config_hash`, ghi ở `clips.json` `params`. `stats.head_cut` đếm clip có cắt. Log stderr mỗi head cut (`head cut <cand>: drop '<words>', <original> -> <cut> (<method>)`) và mỗi lần bỏ qua.
-- Giới hạn đã biết: word timing của caption tự động là gần đúng (từ đầu segment thường dài ~1 s, bắt đầu sớm); segment không có word timing không được cắt (video test: `c01293`/`c01292` "cho nên điều thứ nhất…"); không bắt câu mở giữa câu không có từ nối. Chất lượng điểm cắt do HUMAN LEAD nghe mẫu quyết (có thể chỉnh `head_cut_pad`).
+- Giới hạn đã biết: word timing của caption tự động là gần đúng (từ đầu segment thường dài ~1 s, bắt đầu sớm); segment không có word timing không được cắt (video test: `c01293`/`c01292` "cho nên điều thứ nhất…"); không bắt câu mở giữa câu không có từ nối. HUMAN LEAD nghe mẫu (2026-09-26): điểm cắt ổn, giữ `head_cut_pad` 0.1; segment không có word timing để nguyên (không nội suy timing theo ký tự).
 
 ## B8. Validation trước khi ghi (vi phạm → `failed`, lỗi code)
 
