@@ -8,18 +8,18 @@ Chỉ ghi operational state không suy ra được từ Git, task contract hoặ
 
 ## Current focus
 
-CP6 — AI Title / Hook Generation (`docs/tasks/CP6-titling.md`): APPROVED (2026-09-26), IN_PROGRESS trên `feature/cp6-titling` (dual-agent). CP5 đã merge (PR #7).
+CP6 — AI Title / Hook Generation (`docs/tasks/CP6-titling.md`): READY trên `feature/cp6-titling`, chờ HUMAN LEAD approve push + PR. CP5 đã merge (PR #7).
 
 ## Next proposed action
 
-1. IMPLEMENTER thực hiện CP6 + required verification; đo hai cấu hình model.
-2. HUMAN LEAD đọc title, chốt model titling (CP1 §11).
+1. HUMAN LEAD approve push + PR CP6, rồi merge.
+2. Sau merge: HUMAN LEAD quyết mở CP7 — Short Composition / Renderer (roadmap §4 CP7; title có thể 3 dòng/thu nhỏ chữ theo CP1 §4).
 
 Đây là PROPOSED, không authorize implementation tiếp theo.
 
 ## Open decisions
 
-- Model titling (sau đo CP6).
+- Không.
 
 ## Blockers
 

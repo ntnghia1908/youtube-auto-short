@@ -2,8 +2,8 @@
 
 | Metadata | Value |
 |---|---|
-| Status | PROPOSED |
-| Accepted by | — (G1–G10, P1–P4 duyệt cùng APPROVE TASK 2026-09-26; chờ review) |
+| Status | ACCEPTED |
+| Accepted by | — (G1–G10, P1–P4 duyệt cùng APPROVE TASK 2026-09-26; Sửa G4 (prompt v2), sửa title bằng tay → CP9, chốt model `qwen3:14b` think off + v2 HUMAN LEAD 2026-09-26; review ACCEPTED) |
 | Checkpoint | CP6 (S2) |
 | Roadmap | `AUTO_SHORT_CHECKPOINT_PLAN.md` §4 CP6 |
 | Task contract | `docs/tasks/CP6-titling.md` |

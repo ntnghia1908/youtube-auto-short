@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -151,9 +151,23 @@ Không chạm database, security model hay public API contract mạng (chỉ g�
 
 ## Result
 
-- Main changes:
-- Tests:
-- Review:
-- Important findings / decisions:
+- Main changes: subpackage `src/auto_short/titling/` (`prompt.py` v1/v2; `logic.py` header, text clip, parse, validate option, chọn title, validate artifact; `stage.py`), client Ollama import từ `selection.client` (CP5 không đổi); config `[titling]` + `[titling.header]` typed; CLI `auto-short titling`; artifact `titles.json` + `titling_log.json`; decision record `docs/decisions/CP6-titling-contract.md` ACCEPTED; CP1 §4/§6 (P1: title ≤ 60 ký tự, được 3 dòng hoặc thu nhỏ chữ), §11 (số đo + chốt model titling); project profile, README. Mặc định: `qwen3:14b`, `think = false`, prompt `v2`, `n_options 3`, `min_chars 10`, `max_chars 60`, `num_ctx 16384`, header `["{speaker}", "{series} (tập {episode})"]`, `speaker = "HT.Tịnh Không"`.
+- Tests (ORCHESTRATOR chạy lại độc lập):
+  - `~/miniconda3/envs/auto-short/bin/pytest -q` → `290 passed`.
+  - Chạy thật `rbjfCfFq3Dk` (mặc định cuối, 14b think off, v2): 32 s, 13 call, 0 retry, 38/39 option valid (1 evidence), 13/13 titled; header `["HT.Tịnh Không", "Thập Thiện Nghiệp Đạo Kinh (tập 9)"]`.
+  - Script kiểm độc lập của ORCHESTRATOR trên `titles.json` thật (v1 30b, v2 30b): sha256 input, thứ tự clip, luật độ dài/ký tự, evidence nằm nguyên văn trong text clip (đã bỏ head cut) → 0 vi phạm. Script kiểm của IMPLEMENTER → PASS mọi lần chạy.
+  - Chạy lại → `titling: skip (up to date)`, không gọi AI, sha256 không đổi; `auto-short status` → `titling done`.
+  - `pyproject.toml` và `src/auto_short/selection/` không đổi. `node scripts/framework-check.mjs` → PASS.
+- Review: ACCEPTED (dual-agent, ORCHESTRATOR review diff-first sau mỗi vòng: v1, v2, chốt model); không có blocking finding.
+- Important findings / decisions (HUMAN LEAD 2026-09-26, chi tiết ở decision record):
+  - P1 `max_chars` 60, title được 3 dòng hoặc thu nhỏ chữ (CP7 quyết).
+  - Title v1 quá cao siêu → prompt v2: hook đời thường cho người học Phật tại gia/người bình dân, gợi tò mò, không giật tít.
+  - Sửa title bằng tay thuộc CP9 (`review.json`, chọn `alternatives` hoặc gõ tay).
+  - Đo: v1 14b 34 s (Viết Hoa Mỗi Chữ 10/13), v1 30b think 543 s; v2 14b 36 s (viết hoa kiểu câu 13/13, câu hỏi 9/13), v2 30b think 537 s (câu hỏi 13/13, có câu gượng/lệch). Chốt `qwen3:14b` think off + v2.
+  - Sự cố Ollama 11437 im ~5 phút lúc đo: stage `failed` đúng G6 (3 lần, backoff 5/15 s, không artifact).
 - Known limitations:
-- PR:
+  - Lệch ý chính / chi tiết từ caption nhận sai (vd k11 "trẻ 6 tuổi", k12) không kiểm được bằng code vì evidence có thật trong caption → CP9.
+  - Còn thuật ngữ ở vài title (k01, k05); đa số title > 36 ký tự nên CP7 cần 3 dòng hoặc chữ nhỏ hơn.
+  - AI không hoàn toàn tất định giữa các lần `--force` (30b: 1/13 clip khác; 14b v2 hai lần chạy trùng 13/13).
+  - CLI flag header không được lưu; chạy lại không flag có thể chạy lại/`failed`.
+- PR: chưa (chờ HUMAN LEAD approve push + PR).
