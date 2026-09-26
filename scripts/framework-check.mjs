@@ -19,6 +19,7 @@ const required = [
   '.claude/agents/implementer.md',
   '.github/copilot-instructions.md',
   'FRAMEWORK_ADOPTION.md',
+  'docs/decisions/CP1-product-contract.md',
 ];
 
 function exists(rel) { return fs.existsSync(path.join(ROOT, rel)); }
@@ -82,6 +83,18 @@ for (const file of tasks) {
   for (const section of taskSections) if (!lines.includes(`## ${section}`)) fail(`${rel}: missing section: ${section}`);
 }
 
+// Decision records: metadata Status must start with a known lifecycle value.
+const decisionStatuses = ['PROPOSED', 'ACCEPTED', 'SUPERSEDED'];
+const decisions = exists('docs/decisions')
+  ? fs.readdirSync(path.join(ROOT, 'docs/decisions')).filter((f) => f.endsWith('.md')).sort()
+  : [];
+for (const file of decisions) {
+  const rel = `docs/decisions/${file}`;
+  const value = status(rel);
+  if (!value) fail(`${rel}: missing metadata row: | Status | ... |`);
+  else if (!decisionStatuses.some((s) => value.startsWith(s))) fail(`${rel}: invalid Status: ${value} (must start with ${decisionStatuses.join(', ')})`);
+}
+
 if (errors.length) {
   for (const e of errors) console.log(`FAIL: ${e}`);
   process.exit(1);
@@ -89,4 +102,5 @@ if (errors.length) {
 
 for (const rel of required) console.log(`PASS: ${rel}`);
 for (const file of tasks) console.log(`PASS: task contract docs/tasks/${file}`);
+for (const file of decisions) console.log(`PASS: decision record docs/decisions/${file}`);
 console.log('PASS: framework structure');
