@@ -130,9 +130,9 @@ Tất cả required verification phải chạy và PASS trước READY.
 
 Không chạm database, security model hay public API contract mạng. CLI thêm lệnh; manual test là điểm danh sau automated verification.
 
-- [ ] `auto-short analysis rbjfCfFq3Dk` → mở `candidates.json`, xem content window, vài unit đầu/cuối.
-- [ ] Cắt thô 3 candidate ngẫu nhiên (`ffmpeg -ss <source_start> -to <source_end>`, chưa áp trims) ra scratchpad, nghe mép đầu/cuối: không cụt chữ, không nhạc intro/outro, không lời giới thiệu.
-- [ ] `auto-short status rbjfCfFq3Dk` → `analysis done`.
+- [x] `auto-short analysis rbjfCfFq3Dk` → mở `candidates.json`, xem content window, vài unit đầu/cuối.
+- [x] Cắt thô 3 candidate ngẫu nhiên (`ffmpeg -ss <source_start> -to <source_end>`, chưa áp trims) ra scratchpad, nghe mép đầu/cuối: không cụt chữ, không nhạc intro/outro, không lời giới thiệu.
+- [x] `auto-short status rbjfCfFq3Dk` → `analysis done`.
 
 ## Result
 
@@ -150,4 +150,4 @@ Không chạm database, security model hay public API contract mạng. CLI thêm
   - Quyết định cục bộ của IMPLEMENTER trong A1–A11 ghi ở decision record: mép cạnh nhãn/content lấy theo khoảng lặng gần nhất và không vượt ranh giới; clip không bắt đầu trước `content.start`; segment gán unit theo trung điểm vùng cắt; đoạn không có lời giữa hai điểm cắt thì bỏ điểm cắt `silence` ngắn hơn (giữa hai hard break → không có unit, vd nhạc chen 131–173 s); silence chồng nhãn `non_speech` gộp thành một hard break; outro phải bắt đầu sau `content.start`; trims tính phần khoảng lặng trong clip; params ghi dạng float; mọi phép tính theo ms nguyên.
   - Non-blocking: một số nhãn `[âm nhạc]` ngắn giữa bài có vẻ là caption nhận nhầm khoảng lặng (vd `s00275` 1248.15, `s00539` 2380.59) → cắt bớt candidate. Có thể xem lại ở CP5/CP9.
 - Known limitations: điểm cắt chỉ là điều kiện cần cho "không cắt giữa câu" (vd `c00182` bắt đầu "trong Bồ Tát đặc biệt …" — trọn ý do CP5/CP9 đánh giá). Đổi bất kỳ key `[analysis]` chạy lại cả stage (~90 s). Transcript không có nhãn `[…]` (Whisper) → không phát hiện intro/outro. Manual checklist: nghe thử chờ Tech Lead.
-- PR:
+- PR: #6 https://github.com/ntnghia1908/youtube-auto-short/pull/6 (HUMAN LEAD approved push + PR 2026-09-26).
