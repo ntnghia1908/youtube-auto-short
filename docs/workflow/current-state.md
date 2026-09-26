@@ -15,7 +15,7 @@ CP0 — Framework v4 adoption + greenfield project bootstrap.
 1. Verify CP0 structure and checker.
 2. Human Lead review CP0 diff/commit.
 3. Integrate CP0 into `main`.
-4. Sau CP0, tạo task/decision cho CP1 video input + transcription.
+4. Sau CP0, tạo task/decision cho CP1 — Product Contract & Architecture Baseline (S2).
 
 Đây là PROPOSED, không authorize implementation tiếp theo.
 
