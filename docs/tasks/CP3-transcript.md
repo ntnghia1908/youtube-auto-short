@@ -131,4 +131,4 @@ Không chạm database, security model hay public API contract mạng. CLI mở 
   - Non-blocking: chất lượng Whisper trên clip test có lỗi tên riêng (“Tịnh Khâu” thay “Tịnh Không”); coverage 0.663 với nhạc intro — ngưỡng 0.5 có thể sát với video nhiều nhạc/im lặng (chỉnh qua config). HUMAN LEAD: nhạc chỉ ở intro/outro, không dùng cho Short (CP1 §5 đã ghi, xử lý ở CP4).
   - Quyết định nhỏ của IMPLEMENTER trong phạm vi T1–T9 ghi ở decision record (bảng `[transcript.providers]`, `cpu_threads = 0` = số CPU, `models_dir` không vào config hash, word timing json3 chỉ khi mỗi seg là một token).
 - Known limitations: caption auto không dấu câu — ranh giới câu/ý thuộc CP4. Chưa đo Whisper cả video 1 giờ (CP11).
-- PR: pending (HUMAN LEAD approved push + PR 2026-09-26).
+- PR: #5 https://github.com/ntnghia1908/youtube-auto-short/pull/5 (HUMAN LEAD approved push + PR 2026-09-26).
