@@ -3,8 +3,8 @@
 | Metadata | Value |
 |---|---|
 | Status | CURRENT |
-| Version | 4 |
-| Accepted by | CP0 framework adoption |
+| Version | 4.1 |
+| Accepted by | CP0 framework adoption; v4.1: HUMAN LEAD 2026-09-26 (FW-v4.1) |
 
 > HUMAN LEAD quyết boundary. Agent tự thực thi bên trong boundary đã duyệt.
 
@@ -95,3 +95,11 @@ Single-agent vẫn bắt buộc có pha review riêng trước READY.
 Mọi thay đổi đi qua integration mechanism của project. Tại READY, dừng chờ HUMAN LEAD approve. Sau approval, agent có thể push/tạo PR theo mechanism; merge do HUMAN LEAD quyết.
 
 Definition of Done: AC đạt, required verification PASS, blocking finding giải quyết, documentation impact xử lý, review ACCEPTED, thay đổi đã integrate và integration không làm hỏng target branch.
+
+## 9. Session scope và handoff
+
+Mỗi session có một **session scope**: một checkpoint/task hoặc một phần rõ ràng của nó, xác định từ repository và yêu cầu HUMAN LEAD. Agent nêu scope trong phản hồi đầu tiên.
+
+Session kết thúc khi scope đạt READY/DONE, dừng ở gate chờ HUMAN LEAD, hoặc context đã dài tới mức ảnh hưởng chất lượng. Khi scope đã xong, không mở scope mới trong session cũ; đề xuất session mới thay vì kéo dài.
+
+Trước khi đề xuất đóng session, state phải nằm trong repository. Agent đề xuất đóng session và đưa **handoff prompt** ngắn (≤ ~10 dòng) gồm: mục tiêu session sau; bootstrap từ repository, không dựa transcript; trạng thái/gate hiện tại; việc đầu tiên cần làm. Handoff prompt không thay repository làm source of truth.
