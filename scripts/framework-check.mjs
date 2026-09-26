@@ -19,6 +19,7 @@ const required = [
   '.claude/agents/implementer.md',
   '.github/copilot-instructions.md',
   'FRAMEWORK_ADOPTION.md',
+  'docs/ai/framework-history.md',
   'docs/decisions/CP1-product-contract.md',
 ];
 
@@ -36,6 +37,7 @@ for (const rel of required) if (!exists(rel)) fail(`missing required file: ${rel
 if (exists('docs/ai/workflow.md') && status('docs/ai/workflow.md') !== 'CURRENT') fail('workflow.md must be CURRENT');
 if (exists('docs/ai/execution-profiles.md') && status('docs/ai/execution-profiles.md') !== 'CURRENT') fail('execution-profiles.md must be CURRENT');
 if (exists('docs/ai/project-profile.md') && status('docs/ai/project-profile.md') !== 'CURRENT') fail('project-profile.md must be CURRENT');
+if (exists('docs/ai/framework-history.md') && status('docs/ai/framework-history.md') !== 'CURRENT') fail('framework-history.md must be CURRENT');
 if (exists('docs/workflow/current-state.md') && status('docs/workflow/current-state.md') !== 'OPERATIONAL STATE — NOT AUTHORITY') fail('current-state.md has wrong operational status');
 
 if (exists('CLAUDE.md')) {
@@ -56,6 +58,21 @@ if (exists('docs/ai/project-profile.md')) {
 if (exists('FRAMEWORK_ADOPTION.md')) {
   const a = read('FRAMEWORK_ADOPTION.md');
   for (const token of ['Adopted', 'Adapted', 'Not adopted']) if (!a.includes(token)) fail(`FRAMEWORK_ADOPTION.md missing section: ${token}`);
+}
+
+// Framework history: workflow Version must have a matching "## v<Version>" heading.
+function metadata(rel, key) {
+  const line = read(rel).split('\n').find((x) => new RegExp(`^\\|\\s*${key}\\s*\\|`).test(x.trim()));
+  return line ? line.split('|')[2].trim() : null;
+}
+if (exists('docs/ai/workflow.md') && exists('docs/ai/framework-history.md')) {
+  const version = metadata('docs/ai/workflow.md', 'Version');
+  if (!version) fail('workflow.md missing metadata row: | Version | ... |');
+  else {
+    const heading = `## v${version}`;
+    const found = read('docs/ai/framework-history.md').split('\n').some((x) => x === heading || x.startsWith(`${heading} `));
+    if (!found) fail(`framework-history.md missing entry for workflow Version ${version} (expected heading: ${heading})`);
+  }
 }
 
 // Task contracts: required metadata and sections from docs/ai/workflow.md §4.

@@ -6,6 +6,8 @@
 - Reviewed snapshot: `main` at commit `c5092ce` (V4-06, rollback window closed)
 - Adoption basis: Framework v4 Quick Start and Tech Lead Handbook, cross-checked against the current Framework v4 files in the reference repository.
 
+Framework changes after adoption are recorded in `docs/ai/framework-history.md`.
+
 ## Adopted
 
 - Repository-as-source-of-truth principle.

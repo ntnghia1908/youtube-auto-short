@@ -9,6 +9,7 @@ Entry point cho mọi agent làm việc trong repository này.
 | Project này là gì, authority, module, policy, integration | `docs/ai/project-profile.md` |
 | Focus, blocker, open decision, next action | `docs/workflow/current-state.md` |
 | Task contract S1/S2 | `docs/tasks/_template.md` |
+| Lịch sử thay đổi framework sau adoption | `docs/ai/framework-history.md` |
 
 ## Bootstrap
 

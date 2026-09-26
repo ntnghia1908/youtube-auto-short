@@ -18,3 +18,7 @@ Cùng task thì resume đúng context; task mới dùng context mới.
 ## Session
 
 Bootstrap từ repository. Session mới không dùng transcript chat làm authority.
+
+## Kết thúc session
+
+Rule session scope và handoff: `docs/ai/workflow.md` §9. Trong Claude Code, khi đủ scope thì đề xuất `/clear` và đưa handoff prompt trong một code block để dán vào session mới.
