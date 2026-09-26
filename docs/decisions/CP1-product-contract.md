@@ -116,7 +116,7 @@ Workspace: `work/<episode_id>/` (đã gitignore). Mỗi stage một artifact, c�
 |---|---|---|---|
 | ingest | `source.*`, `metadata.json` | có | CP2 |
 | transcript | `transcript.json` (YouTube → local subtitle → Whisper) | có (provider ngoài) | CP3 |
-| analysis | `shots.json`, `candidates.json` | có | CP4 |
+| analysis | `shots.json`, `silences.json`, `candidates.json` | có | CP4 |
 | selection | `clips.json` | **AI** + validate | CP5 |
 | titling | `titles.json` | **AI** + validate | CP6 |
 | review | `review.json` (approve/reject/edit) | người | CP9 |
