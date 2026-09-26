@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import re
+import string
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -112,6 +114,43 @@ class SelectionConfig:
     retry_backoff: tuple[float, ...] = (5.0, 15.0)  # wait before attempt 2, 3 (last value repeats)
 
 
+# G2: header fields and template (docs/decisions/CP6-titling-contract.md).
+HEADER_FIELDS = ("speaker", "series", "episode")
+DEFAULT_TITLE_PATTERN = r"^(?:Phật Thuyết\s+)?(?P<series>.+?)\s+tập\s+(?P<episode>\d+)\b"
+
+
+@dataclass(frozen=True)
+class TitlingHeaderConfig:
+    """Deterministic header (G2): CLI flag > these values (non-empty) > ``title_pattern`` groups."""
+
+    speaker: str = "HT.Tịnh Không"
+    series: str = ""
+    episode: str = ""
+    title_pattern: str = DEFAULT_TITLE_PATTERN  # regex on metadata.title; empty = off
+    lines: tuple[str, ...] = ("{speaker}", "{series} (tập {episode})")
+
+
+@dataclass(frozen=True)
+class TitlingConfig:
+    """AI title / hook generation via Ollama (docs/decisions/CP6-titling-contract.md)."""
+
+    model: str = "qwen3:14b"  # chosen by HUMAN LEAD 2026-09-26 (CP1 §11)
+    think: bool = False
+    temperature: float = 0.0
+    seed: int = 42
+    num_ctx: int = 16384
+    prompt_version: str = "v2"
+    n_options: int = 3
+    min_chars: int = 10
+    max_chars: int = 60
+    retries: int = 2
+    header: TitlingHeaderConfig = field(default_factory=TitlingHeaderConfig)
+    # Execution-only settings (not part of the config hash); env OLLAMA_HOST overrides ollama_host.
+    ollama_host: str = "http://127.0.0.1:11437"
+    timeout: float = 600.0
+    retry_backoff: tuple[float, ...] = (5.0, 15.0)
+
+
 @dataclass(frozen=True)
 class Config:
     workspace: WorkspaceConfig = field(default_factory=WorkspaceConfig)
@@ -119,6 +158,7 @@ class Config:
     transcript: TranscriptConfig = field(default_factory=TranscriptConfig)
     analysis: AnalysisConfig = field(default_factory=AnalysisConfig)
     selection: SelectionConfig = field(default_factory=SelectionConfig)
+    titling: TitlingConfig = field(default_factory=TitlingConfig)
 
 
 def _section(data: dict, name: str) -> dict:
@@ -259,6 +299,71 @@ def _selection(data: dict) -> SelectionConfig:
     )
 
 
+def _template_fields(line: str) -> list[str]:
+    try:
+        return [name for _, name, _, _ in string.Formatter().parse(line) if name is not None]
+    except ValueError as exc:
+        raise ConfigError(f"titling.header.lines: invalid template {line!r}: {exc}") from exc
+
+
+def _titling_header(ti: dict) -> TitlingHeaderConfig:
+    he = _section(ti, "header") if "header" in ti else {}
+    d, w = TitlingHeaderConfig(), "titling.header"
+    values = {}
+    for key in HEADER_FIELDS:
+        value = he.get(key, getattr(d, key))
+        if isinstance(value, int) and not isinstance(value, bool) and key == "episode":
+            value = str(value)
+        if not isinstance(value, str):
+            raise ConfigError(f"{w}.{key} must be a string (empty = not set)")
+        values[key] = value.strip()
+    pattern = he.get("title_pattern", d.title_pattern)
+    if not isinstance(pattern, str):
+        raise ConfigError(f"{w}.title_pattern must be a string (empty = off)")
+    try:
+        re.compile(pattern)
+    except re.error as exc:
+        raise ConfigError(f"{w}.title_pattern is not a valid regex: {exc}") from exc
+    lines = he.get("lines", list(d.lines))
+    if not isinstance(lines, list) or not 1 <= len(lines) <= 3 or \
+            not all(isinstance(x, str) and x.strip() for x in lines):
+        raise ConfigError(f"{w}.lines must be a list of 1-3 non-empty strings")
+    for line in lines:
+        for name in _template_fields(line):
+            if name not in HEADER_FIELDS:
+                raise ConfigError(f"{w}.lines: unknown field {{{name}}} in {line!r} "
+                                  f"(allowed: {', '.join('{' + f + '}' for f in HEADER_FIELDS)})")
+    return TitlingHeaderConfig(title_pattern=pattern, lines=tuple(lines), **values)
+
+
+def _titling(data: dict) -> TitlingConfig:
+    ti = _section(data, "titling")
+    d, w = TitlingConfig(), "titling"
+    backoff = ti.get("retry_backoff", list(d.retry_backoff))
+    if not isinstance(backoff, list) or not all(
+            isinstance(x, (int, float)) and not isinstance(x, bool) and 0 <= x <= 3600 for x in backoff):
+        raise ConfigError(f"{w}.retry_backoff must be a list of numbers between 0 and 3600 (seconds)")
+    cfg = TitlingConfig(
+        model=_str(ti, "model", d.model, w),
+        think=_bool(ti, "think", d.think, w),
+        temperature=_number(ti, "temperature", d.temperature, w, lo=0, hi=2),
+        seed=_int(ti, "seed", d.seed, w, lo=0),
+        num_ctx=_int(ti, "num_ctx", d.num_ctx, w, lo=512),
+        prompt_version=_str(ti, "prompt_version", d.prompt_version, w),
+        n_options=_int(ti, "n_options", d.n_options, w, lo=1, hi=10),
+        min_chars=_int(ti, "min_chars", d.min_chars, w, lo=1),
+        max_chars=_int(ti, "max_chars", d.max_chars, w, lo=1),
+        retries=_int(ti, "retries", d.retries, w, lo=0),
+        header=_titling_header(ti),
+        ollama_host=_str(ti, "ollama_host", d.ollama_host, w),
+        timeout=_number(ti, "timeout", d.timeout, w, lo=1),
+        retry_backoff=tuple(float(x) for x in backoff),
+    )
+    if cfg.min_chars > cfg.max_chars:
+        raise ConfigError(f"{w}.min_chars must be <= {w}.max_chars")
+    return cfg
+
+
 def from_dict(data: dict) -> Config:
     ws = _section(data, "workspace")
     ing = _section(data, "ingest")
@@ -277,6 +382,7 @@ def from_dict(data: dict) -> Config:
         transcript=_transcript(data),
         analysis=_analysis(data),
         selection=_selection(data),
+        titling=_titling(data),
     )
 
 

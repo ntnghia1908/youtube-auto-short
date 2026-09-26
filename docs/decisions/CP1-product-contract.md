@@ -83,6 +83,7 @@ Tham số đo từ ảnh mẫu (576×1280), biểu diễn theo chiều rộng kh
 
 - Font: sans-serif hỗ trợ đầy đủ dấu tiếng Việt, license mở (OFL), đóng gói trong repo ở CP7; tên font cụ thể chốt ở CP7 bằng so sánh trực quan với ảnh mẫu.
 - CP7 phải render khớp mẫu này (so sánh trực quan với ảnh mẫu là acceptance); không redesign.
+- Sửa đổi HUMAN LEAD 2026-09-26 (CP6): title panel được phép **3 dòng hoặc thu nhỏ chữ** khi title dài hơn sức chứa 2 dòng ở cỡ chữ mẫu (≈ 34–36 ký tự); "tối đa 2 dòng" ở bảng trên không còn là giới hạn cứng. CP7 quyết cách fit với font đã chốt. Header vẫn tối đa 3 dòng.
 - Ảnh mẫu lưu tại `docs/decisions/assets/cp1-layout-reference.jpg`.
 
 ## 5. Clip selection boundaries
@@ -104,6 +105,7 @@ Tham số đo từ ảnh mẫu (576×1280), biểu diễn theo chiều rộng kh
 - **Header:** deterministic — lấy từ config/CLI (`speaker`, `series`, `episode`) hoặc metadata YouTube; không dùng AI.
 - **Title/hook (yellow panel):** AI sinh từ transcript của clip; tiếng Việt; ≤ 60 ký tự, tối đa 2 dòng; không thêm thông tin không có trong clip; không emoji/clickbait.
 - Lưu `titles.json` với clip ID, model, prompt version, source hash.
+- Sửa đổi HUMAN LEAD 2026-09-26 (CP6, P1): title **≤ 60 ký tự** (`[titling] max_chars`); được phép hiển thị 3 dòng hoặc thu nhỏ chữ (§4), thay cho "tối đa 2 dòng" ở trên. Rule header/title/validation và schema `titles.json`: `docs/decisions/CP6-titling-contract.md`.
 
 ## 7. Subtitle policy
 
@@ -159,6 +161,8 @@ Nguyên tắc: stdlib trước; không thêm dependency ngoài danh sách dướ
 - Model khởi đầu: **`qwen3:14b`** (có sẵn trên máy GPU; thay cho `gemma3:12b` ghi trước đó). CP5/CP10 đo so sánh với `gemma3:12b` và `qwen3:30b` rồi chốt lại.
 - Đo CP5 (2026-09-26, video test, chi tiết `docs/decisions/CP5-selection-contract.md` § Đo thực tế): `qwen3:14b` think off 120 s → 25 clip / 1058 s; `qwen3:14b` think on 305 s → 24 clip / 1206 s; `qwen3:30b` think off → 0 clip (bản chỉ-suy-luận, không dùng được với think off); `qwen3:30b` think on 564 s → 13 clip / 780 s (prompt v1). Prompt v2 (thời gian cộng dồn): `qwen3:14b` think off 113 s → 25 clip / 1407 s; think on 405 s → 17 clip / 919 s; `qwen3:30b` think on 450 s → 19 clip / 1111 s. Số đo C2 + lọc B11: `docs/decisions/CP5-selection-contract.md`.
 - Sửa đổi HUMAN LEAD 2026-09-26 (chốt CP5): model selection **`qwen3:30b`**, `think = true`, prompt `v2` (cấu hình C2, chọn sau khi nghe mẫu v1/v2), thay cho model khởi đầu `qwen3:14b` ở trên. Titling (CP6) chốt model riêng.
+- Đo CP6 titling (2026-09-26, video test 13 clip, prompt v1; chi tiết `docs/decisions/CP6-titling-contract.md` § Đo thực tế): `qwen3:14b` think off 34 s, 13/13 titled, 1 option invalid (quá dài), viết Hoa Mỗi Chữ ở 10/13 title; `qwen3:30b` think on 543 s (≈ 42 s/clip), 13/13 titled, 3 option invalid (evidence không nguyên văn), đúng kiểu viết hoa câu. Sửa G4 (HUMAN LEAD 2026-09-26): prompt v2 (hook đời thường cho người học Phật tại gia), mặc định. Đo v2: `qwen3:14b` think off 36 s, 13/13 titled, 1 option invalid (evidence), viết hoa câu đúng, 9/13 title dạng câu hỏi; `qwen3:30b` think on 537 s, 13/13 titled, 5 option invalid (3 evidence, 2 quá dài), 13/13 title dạng câu hỏi.
+- Sửa đổi HUMAN LEAD 2026-09-26 (chốt CP6): model titling **`qwen3:14b`, `think = false`, prompt `v2`** (mặc định `[titling]`). Lý do và số đo: `docs/decisions/CP6-titling-contract.md` G10.
 - Whisper chỉ là fallback; trên VM không GPU chạy CPU (`int8`, 48 core). Đo thực tế ở CP11.
 
 ## 12. Open questions

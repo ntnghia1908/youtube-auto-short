@@ -108,6 +108,21 @@ Output: `work/<episode_id>/clips.json` (selected clips, referencing `candidates.
 `docs/decisions/CP5-selection-contract.md`; parameters in `[selection]` of `config.example.toml`. Changing
 `ollama_host`/`timeout` does not re-run the stage; changing the model, `think`, options or limits does.
 
+AI title / hook (after selection; same Ollama host rules, section `[titling]`):
+
+```bash
+# Header (no AI): speaker / series / episode from --speaker/--series/--episode > [titling.header]
+# > regex title_pattern on the video title; default lines "HT.Tịnh Không" / "<series> (tập <n>)".
+# Then one Ollama call per clip: 3 title options (<= 60 chars) each quoting evidence from the clip
+# text; code keeps the first valid one. Default: qwen3:14b, thinking off, prompt v2 (~35 s for 13 clips).
+auto-short titling <episode_id>   # options: --force, --config PATH, --speaker S, --series S, --episode N
+```
+
+Output: `work/<episode_id>/titles.json` (header + one title per clip, `untitled` when no option passed
+validation) and `titling_log.json` (prompts, raw responses, every option with its reject reason). Rules and
+schemas: `docs/decisions/CP6-titling-contract.md`; parameters in `[titling]` of `config.example.toml`. A local
+video without a matching title needs `--series`/`--episode` (or `[titling.header]` values).
+
 `python -m auto_short ...` works the same. Re-running `ingest` skips when the source and the
 relevant config are unchanged. Artifacts go to `work/<episode_id>/` (`manifest.json`, `metadata.json`).
 

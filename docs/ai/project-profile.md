@@ -3,7 +3,7 @@
 | Metadata | Value |
 |---|---|
 | Status | CURRENT |
-| Project stage | CP5 — AI clip selection |
+| Project stage | CP6 — AI title / hook generation |
 
 ## 1. Project
 
@@ -14,7 +14,7 @@
 
 ## 2. Authority order
 
-1. HUMAN LEAD decisions / approved task contracts và accepted decision records trong `docs/decisions/` (hiện có `docs/decisions/CP1-product-contract.md` — product contract & architecture baseline; `docs/decisions/CP2-workspace-contract.md` — workspace/manifest/stage convention; `docs/decisions/CP3-transcript-contract.md` — transcript provider/validation/normalization và schema `transcript.json`; `docs/decisions/CP4-analysis-contract.md` — shot/silence detection, content window, điểm cắt, candidate và schema `shots.json`/`silences.json`/`candidates.json`; `docs/decisions/CP5-selection-contract.md` — AI clip selection: window, prompt/versioning, map về candidate, chọn cuối và schema `clips.json`/`selection_log.json`);
+1. HUMAN LEAD decisions / approved task contracts và accepted decision records trong `docs/decisions/` (hiện có `docs/decisions/CP1-product-contract.md` — product contract & architecture baseline; `docs/decisions/CP2-workspace-contract.md` — workspace/manifest/stage convention; `docs/decisions/CP3-transcript-contract.md` — transcript provider/validation/normalization và schema `transcript.json`; `docs/decisions/CP4-analysis-contract.md` — shot/silence detection, content window, điểm cắt, candidate và schema `shots.json`/`silences.json`/`candidates.json`; `docs/decisions/CP5-selection-contract.md` — AI clip selection: window, prompt/versioning, map về candidate, chọn cuối và schema `clips.json`/`selection_log.json`; `docs/decisions/CP6-titling-contract.md` — header deterministic, prompt/versioning titling, validation title và schema `titles.json`/`titling_log.json`);
 2. `docs/ai/workflow.md`, `docs/ai/execution-profiles.md` và file này cho workflow/policy;
 3. source code và tests hiện hành cho implementation state;
 4. `docs/workflow/current-state.md` chỉ là operational state, không phải authority;
@@ -33,7 +33,7 @@ Các boundary dưới đây là **planned module boundaries**, chưa phải impl
 | `src/auto_short/transcript/` | transcript: caption YouTube / subtitle local / Whisper + timestamps — *implemented* (CP3) | `docs/decisions/CP3-transcript-contract.md` |
 | `src/auto_short/analysis/` | analysis: shot/silence detection + candidate generation (deterministic) — *implemented* (CP4) | `docs/decisions/CP4-analysis-contract.md` |
 | `src/auto_short/selection/` | selection: AI (Ollama) chọn clip trong candidates + validate — *implemented* (CP5) | `docs/decisions/CP5-selection-contract.md` |
-| `src/auto_short/titling/` | titling: AI sinh title/hook + validate | chưa có module rule |
+| `src/auto_short/titling/` | titling: header deterministic + AI (Ollama) sinh title/hook + validate — *implemented* (CP6) | `docs/decisions/CP6-titling-contract.md` |
 | `src/auto_short/review/` | review: human approve/reject/edit | chưa có module rule |
 | `src/auto_short/render/` | render: composition 9:16 theo template + export | chưa có module rule |
 | `tests/` | automated verification | project workflow applies |
