@@ -87,7 +87,7 @@ Thứ tự key cố định:
  "header": {"lines": ["HT.Tịnh Không", "Thập Thiện Nghiệp Đạo Kinh (tập 9)"],
             "fields": {"speaker": "HT.Tịnh Không", "series": "Thập Thiện Nghiệp Đạo Kinh", "episode": "9"},
             "sources": {"speaker": "config", "series": "metadata", "episode": "metadata"}},
- "model": {"provider": "ollama", "name": "qwen3:30b", "think": true,
+ "model": {"provider": "ollama", "name": "qwen3:14b", "think": false,
            "options": {"temperature": 0, "seed": 42, "num_ctx": 16384}},
  "prompt_version": "v2", "prompt_sha256": "<G4>",
  "params": {"n_options": 3, "min_chars": 10, "max_chars": 60, "retries": 2},
@@ -135,7 +135,7 @@ Dùng `run_stage` của CP2 nguyên trạng:
 
 ## G10. Model / client
 
-- `[titling]` là section riêng (CP1 §11). Mặc định `qwen3:30b`, `think = true`, `temperature 0`, `seed 42`, `num_ctx 16384`, `timeout 600` s. **Model chưa chốt** — HUMAN LEAD chốt sau khi đọc bảng đo (ghi CP1 §11).
+- `[titling]` là section riêng (CP1 §11). **Mặc định chốt (HUMAN LEAD 2026-09-26, sau đọc title v1/v2 hai model):** `qwen3:14b`, `think = false`, prompt `v2`; `temperature 0`, `seed 42`, `num_ctx 16384`, `timeout 600` s. Lý do: title v2 của `14b` tự nhiên, đúng kiểu viết hoa câu và đa dạng (9/13 câu hỏi), trong khi `30b` think on ép 13/13 thành câu hỏi, có câu gượng/lệch ý; `14b` think off nhanh ≈ 15× (≈ 35 s so với ≈ 540 s cho 13 clip). Title lệch ý hoặc bám lỗi nhận dạng caption (vd `k11` "trẻ 6 tuổi") xử lý ở CP9 (review/sửa title). Lúc soạn contract mặc định là `qwen3:30b` think on (số đo hai cấu hình ở dưới).
 - `ChatClient`, `OllamaClient`, `ChatError`, `resolve_host` import từ `auto_short.selection.client`; `backoff_before` import từ `auto_short.selection.stage`; không sửa code CP5.
 
 ## Config `[titling]`
@@ -221,5 +221,6 @@ Title chọn (số ký tự), đặt cạnh v1 `qwen3:30b` (lần đo v1 đầu)
 - `30b` v2 đặt **mọi** title (13/13, cả alternatives) thành câu hỏi, vài câu gượng hoặc lệch ý: `k06` "Bình thường thành Phật…" (đoạn nói "phàm phu"), `k12` "Người khiêm tốn chắc chắn thi đỗ, người kiêu căng rớt?" (sát ví dụ trong đoạn nhưng dễ đọc thành hứa hẹn), `k04` còn "niệm niệm", `k08` 59 ký tự.
 - `14b` v2 có title bám lỗi nhận dạng caption: `k11` "Tại sao trẻ 6 tuổi lại có phước đức lớn đến vậy?" (caption "chúng sanh 6 tuổi…", nhiều khả năng nhận dạng sai) — code không bắt được (evidence nguyên văn vẫn đúng).
 - Evidence bị loại vẫn do model ghép/cắt chữ (`30b` `k01` "mộng bèo bọt", `k10`, `k12`; `14b` `k07`); 2 option `30b` quá dài 61 ký tự. `k12` `30b` chỉ còn 1/3 option valid.
-- Script kiểm độc lập (như v1): PASS cả hai lần. Chạy lại không đổi → skip, không gọi AI, sha256 `titles.json` không đổi (`b97cb33b…927c4247`). `status` → `titling done`. Workspace cuối: v2 + `qwen3:30b` think on (mặc định).
-- Model + prompt titling **chưa chốt**: HUMAN LEAD đọc bảng trên (và `alternatives` trong `titling_log.json` / `titles.json`) rồi chốt, ghi CP1 §11.
+- Script kiểm độc lập (như v1): PASS cả hai lần. Chạy lại không đổi → skip, không gọi AI, sha256 `titles.json` không đổi (`b97cb33b…927c4247`). `status` → `titling done`. (Khi đó) workspace: v2 + `qwen3:30b` think on.
+- Model + prompt titling **đã chốt** (HUMAN LEAD 2026-09-26): `qwen3:14b` think off + v2 (G10, CP1 §11).
+- (Khi đó) workspace là v2 + `qwen3:30b`. Sau khi chốt, chạy mặc định mới (`qwen3:14b` think off, v2): `run (config changed)`, 32.2 s, 13/13 titled, 38/39 option valid (1 `evidence not in clip text`, `k07`), không retry. Mảng `titles` **giống hệt** lần đo v2 `14b` ở trên (0/13 clip khác, cả title lẫn alternatives). Chạy lại → skip, sha256 `titles.json` không đổi (`de157694…08a85600`); script kiểm độc lập PASS; `status` → `titling done`. Workspace cuối: cấu hình mặc định đã chốt.
