@@ -12,13 +12,15 @@ CP5 — AI Clip Selection (`docs/tasks/CP5-selection.md`): IN_PROGRESS (APPROVED
 
 ## Next proposed action
 
-1. IMPLEMENTER thực thi CP5 tới READY; HUMAN LEAD chốt P1 (`think`) và model sau khi nghe mẫu.
+1. HUMAN LEAD nghe mẫu v1/v2 (scratchpad session, đã gửi), chốt model + `think` (P1) và quyết lọc từ nối câu đầu (CP5 hay CP9).
+2. ORCHESTRATOR cập nhật config mặc định, decision record CP5 → ACCEPTED, task → READY.
 
 Đây là PROPOSED, không authorize implementation tiếp theo.
 
 ## Open decisions
 
-- CP5 P1 (`think`) và model — chốt sau đo.
+- CP5 P1 (`think`) và model — chốt sau khi nghe mẫu.
+- CP5: bộ lọc deterministic loại candidate mở đầu bằng từ nối (đề xuất sau đo v2) — decision gate.
 
 ## Blockers
 
