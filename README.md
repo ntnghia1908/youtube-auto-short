@@ -97,7 +97,8 @@ AI clip selection (after analysis; needs Ollama, default `http://127.0.0.1:11435
 ```bash
 # One Ollama call per continuous content window (between hard breaks); the model proposes unit
 # ranges that each present one complete idea; code keeps only existing candidates, then picks
-# up to 25 non-overlapping clips (score >= 7, complete start and end).
+# up to 25 non-overlapping clips (score >= 7, complete start and end, first sentence not opening
+# with a connector such as "cho nên"). Default model: qwen3:30b with thinking (~8 min for a 1-hour video).
 auto-short selection <episode_id>   # options: --force, --config PATH
 ```
 

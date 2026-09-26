@@ -3,13 +3,13 @@
 | Metadata | Value |
 |---|---|
 | Status | PROPOSED |
-| Accepted by | — (B1–B10 duyệt cùng APPROVE TASK 2026-09-26; chờ review) |
+| Accepted by | — (B1–B10 duyệt cùng APPROVE TASK 2026-09-26; Sửa B3 (v2), chốt C2 và B11 HUMAN LEAD 2026-09-26; chờ review) |
 | Checkpoint | CP5 (S2) |
 | Roadmap | `AUTO_SHORT_CHECKPOINT_PLAN.md` §4 CP5 |
 | Task contract | `docs/tasks/CP5-selection.md` |
 | Builds on | `docs/decisions/CP1-product-contract.md` §3, §5, §8, §10, §11; `docs/decisions/CP2-workspace-contract.md` D1–D8; `docs/decisions/CP4-analysis-contract.md` A7–A10 |
 
-File này là **canonical owner** của window, prompt + versioning, map đề xuất AI về candidate, chọn cuối, validation và schema `clips.json` / `selection_log.json` mà CP6 (title), CP7 (render), CP9 (review) dùng lại. Nơi khác chỉ trỏ tới đây. Stage framework (manifest v1, skip/stale, config hash, CLI exit code) giữ nguyên theo `docs/decisions/CP2-workspace-contract.md`; `candidates.json` theo `docs/decisions/CP4-analysis-contract.md`. Thay đổi cần decision gate mới với HUMAN LEAD.
+File này là **canonical owner** của window, prompt + versioning, map đề xuất AI về candidate, lọc từ nối câu đầu, chọn cuối, validation và schema `clips.json` / `selection_log.json` mà CP6 (title), CP7 (render), CP9 (review) dùng lại. Nơi khác chỉ trỏ tới đây. Stage framework (manifest v1, skip/stale, config hash, CLI exit code) giữ nguyên theo `docs/decisions/CP2-workspace-contract.md`; `candidates.json` theo `docs/decisions/CP4-analysis-contract.md`. Thay đổi cần decision gate mới với HUMAN LEAD.
 
 Implementation tham chiếu: `src/auto_short/selection/` (`client.py`, `prompt.py`, `logic.py`, `stage.py`). Dữ kiện đo lúc soạn và tham số P1–P3: `docs/tasks/CP5-selection.md`.
 
@@ -54,6 +54,7 @@ Implementation tham chiếu: `src/auto_short/selection/` (`client.py`, `prompt.p
 
 ## B6. Chọn cuối (deterministic)
 
+- Trước bước này chạy B11 (đề xuất bị lọc đã là `ineligible`).
 - `eligible` = `valid` ∧ `start_complete` ∧ `end_complete` ∧ `score ≥ min_score` (mặc định 7); còn lại `ineligible` (lý do: `start not complete`, `end not complete`, `score < N`).
 - Sắp: `score` giảm, `in_target` true trước, `source_start` tăng (rồi `source_end`, `candidate_id`); greedy nhận nếu không chồng lấn clip đã nhận (giao `[source_start, source_end]` > 0; chạm mép không tính); đủ `max_clips` (mặc định **25**) thì phần còn lại `over_limit`; chồng lấn → `overlapped` (`overlaps selected <candidate_id>`); nhận → `selected` (+ `clip_id` trong log).
 - Clip sắp theo `source_start`, id `k01`… theo thứ tự đó (tên render CP7 `shorts/<clip_id>.mp4`, CP1 §2).
@@ -70,8 +71,9 @@ Thứ tự key cố định:
  "model": {"provider": "ollama", "name": "qwen3:14b", "think": false,
            "options": {"temperature": 0, "seed": 42, "num_ctx": 16384}},
  "prompt_version": "v1", "prompt_sha256": "<B3>",
- "params": {"max_clips": 25, "min_score": 7, "max_window_words": 2500, "retries": 2},
- "stats": {"windows": 11, "ai_calls": 10, "proposals": 82, "valid": 39, "eligible": 27, "selected": 25,
+ "params": {"max_clips": 25, "min_score": 7, "max_window_words": 2500, "retries": 2,
+            "start_blocklist": ["cho nên", "vì vậy", …]},
+ "stats": {"windows": 11, "ai_calls": 10, "proposals": 82, "valid": 39, "filtered_start": 3, "eligible": 27, "selected": 25,
            "selected_seconds": 1058.53},
  "clips": [{"id": "k01", "candidate_id": "c00003", "source_start": 77.372, "source_end": 129.793,
             "source_duration": 52.421, "duration": 38.379, "in_target": false,
@@ -80,7 +82,7 @@ Thứ tự key cố định:
             "topic": "…", "reason": "…", "window": "w02"}]}
 ```
 
-- `stats`: `windows` = số window gốc (không đếm window con); `ai_calls` = tổng số lần gọi kể cả retry; `proposals` = số đề xuất parse được; `valid` = map được candidate (sau gộp trùng); `eligible` = qua B6 (`selected` + `overlapped` + `over_limit`); `selected_seconds` = Σ `duration` clip.
+- `stats`: `windows` = số window gốc (không đếm window con); `ai_calls` = tổng số lần gọi kể cả retry; `proposals` = số đề xuất parse được; `valid` = map được candidate (sau gộp trùng); `filtered_start` = số đề xuất valid bị B11 lọc; `eligible` = qua B6 (`selected` + `overlapped` + `over_limit`); `selected_seconds` = Σ `duration` clip.
 - Clip chép `source_start`, `source_end`, `source_duration`, `duration`, `in_target`, `unit_ids`, `segment_ids` của candidate; `trims`/`text` không chép (CP7/CP9 tra `candidates.json` theo `candidate_id`/`unit_ids`). `window` = window (con) của đề xuất được giữ.
 
 ```json
@@ -105,6 +107,14 @@ Thứ tự key cố định:
 
 `response` là `null` khi lỗi xảy ra trước khi có response (HTTP/timeout). Status `valid` chỉ là trạng thái trung gian; trong file đã ghi mọi đề xuất valid đều thành `ineligible` / `selected` / `overlapped` / `over_limit`.
 
+## B11. Lọc từ nối câu đầu (HUMAN LEAD 2026-09-26, thêm trong CP5)
+
+- Deterministic, trong code (`logic.filter_start`), chạy **sau** B4 (map + gộp trùng), **trước** B6.
+- Với mỗi đề xuất `valid`: lấy `text` của unit đầu candidate (`unit_ids[0]`), chuẩn hóa NFC + lowercase + gộp khoảng trắng; nếu bắt đầu bằng một cụm trong `start_blocklist` (cụm cũng chuẩn hóa như vậy) **khớp trọn từ** — sau cụm là hết chuỗi hoặc ký tự không phải chữ/số (`(?!\w)` Unicode; vd "còn" không khớp "cồn", "conn"; "mà" không khớp "màu") — thì `ineligible`, `reject_reason = "start connector: <cụm>"` (nhiều cụm khớp → ghi cụm dài nhất). Không sửa/nới đề xuất, không đổi prompt.
+- `start_blocklist` là config `[selection]` (list chuỗi không rỗng, vào `config_hash`, ghi ở `clips.json` `params`); mặc định = danh sách từ nối của prompt v2: "cho nên", "vì vậy", "thế nên", "thế là", "do đó", "còn", "và", "nhưng", "mà", "rồi", "thì", "cái này", "điều đó", "việc này", "như vậy", "ở đây". Danh sách rỗng → tắt lọc.
+- Log stderr mỗi đề xuất bị lọc; `stats.filtered_start` đếm số bị lọc.
+- Giới hạn đã biết: không bắt được câu mở giữa câu không có từ nối (vd "là lấy Hiếu thân…"), và cụm không có trong danh sách (vd "tại vì sao…").
+
 ## B8. Validation trước khi ghi (vi phạm → `failed`, lỗi code)
 
 Số clip ≤ `max_clips`; id `k01`… liên tục theo thứ tự; `candidate_id` tồn tại và 7 trường chép khớp candidate; `duration` trong `[params.min_duration, params.max_duration]` của `candidates.json`; `unit_ids` tồn tại; `start_complete` ∧ `end_complete` ∧ `min_score ≤ score ≤ 10`; sắp theo `source_start`, không chồng lấn. `silences.json` phải khớp `candidates.json.silences_sha256` (nếu không → `failed`, chạy lại analysis). `candidates_sha256` tính từ chính input đã đọc.
@@ -122,12 +132,12 @@ Dùng `run_stage` của CP2 nguyên trạng:
 
 ## B10. Model / reproducibility
 
-- Mặc định `qwen3:14b`, `think = false` (P1, tạm cho tới khi HUMAN LEAD chốt), `prompt_version = "v2"`, `temperature 0`, `seed 42`, `num_ctx 16384`, `timeout 600` s/request.
+- **Mặc định C2** (HUMAN LEAD 2026-09-26, sau nghe mẫu v1/v2; CP1 §11): `qwen3:30b`, `think = true`, `prompt_version = "v2"`, `temperature 0`, `seed 42`, `num_ctx 32768`, `timeout 600` s/request. `num_ctx` nâng từ 16384 vì 30b-think dùng tới 14.9k token/lần gọi (prompt ~3k + suy luận ~9–12k) — 91 % của 16384; 32768 cho dư. Lần gọi lâu nhất đo được 81 s ≪ `timeout`.
 - Chạy lại cùng config với `--force` → so sánh `clips.json` (kết quả đo bên dưới). Model/`think` chốt ghi ở CP1 §11.
 
 ## Config `[selection]`
 
-Xem `config.example.toml`: `model`, `think`, `prompt_version` (`v1` | `v2`, mặc định `v2`), `temperature` (0–2), `seed` (≥ 0), `num_ctx` (≥ 512), `max_clips` (1–99), `min_score` (1–10), `max_window_words` (≥ 1), `retries` (≥ 0) — trong hash; `ollama_host`, `timeout` (> 0) — thực thi.
+Xem `config.example.toml`: `model`, `think`, `prompt_version` (`v1` | `v2`, mặc định `v2`), `temperature` (0–2), `seed` (≥ 0), `num_ctx` (≥ 512), `max_clips` (1–99), `min_score` (1–10), `max_window_words` (≥ 1), `retries` (≥ 0), `start_blocklist` (list chuỗi không rỗng; rỗng = tắt B11) — trong hash; `ollama_host`, `timeout` (> 0) — thực thi.
 
 ## Đo thực tế (2026-09-26, video test `rbjfCfFq3Dk`, Ollama 0.34.4 máy GPU)
 
@@ -153,3 +163,18 @@ Wall = tổng thời gian các lần gọi AI. "Không có candidate" = đề xu
 - Reproducibility (`14b` think off): lần chạy đầu và lần chạy lại sau khi đổi config (model được nạp lại) cho `clips.json` **byte-identical**; chạy lại không đổi → skip 0.14 s, sha256 không đổi, không gọi AI. Hai lần `--force` liền sau (model đã nạp, cache prompt còn) giống nhau byte-identical nhưng **khác** hai lần đầu: 22/25 clip chung (16 cùng score/topic), 6 window có response khác, request giống hệt. Suy đoán: Ollama tái dùng KV cache của tiền tố prompt làm đổi số học → cùng seed/temperature 0 chưa đảm bảo tất định tuyệt đối giữa các trạng thái server. Ghi nhận, không che. v2 `14b` think off: lần đo và lần chạy mặc định sau đổi config (model nạp lại) byte-identical; chạy lại → skip.
 - Render thô (không phải CP7) mẫu mỗi cấu hình có áp `trims`: thời lượng file lệch `duration` +0.00–0.15 s.
 - Chất lượng trọn ý: HUMAN LEAD nghe mẫu để chốt model + `think` (P1). Quan sát máy: `14b` think off đánh `start_complete = true` cho cả đoạn mở bằng "luôn luôn … cho nên" (`c00087`); `14b` think on có một `topic` tiếng Anh.
+
+### B11 — áp lại offline trên response đã lưu (không gọi AI)
+
+Chạy lại B4 → B11 → B6 bằng code hiện hành trên response thô trong `selection_log.json` của các lần đo trên (cùng đề xuất AI, chỉ thêm bộ lọc). Mọi clip được chọn trước đây mở bằng cụm trong danh sách đều bị loại; không có kết quả lọc sai (kiểm tay các cụm khớp).
+
+| Lần đo | Bị lọc (valid) | Selected trước → sau | Tổng thời lượng sau | Bị bỏ khỏi kết quả | Thêm vào |
+|---|---|---|---|---|---|
+| `30b` think on v2 (C2) | 1: `c00445` "cho nên" | 19 → 18 | 1069.9 s (median 61.7, `in_target` 10) | `c00445` | — |
+| `14b` think off v2 | 5 ("cho nên" ×5) | 25 → 25 | 1385.5 s | `c00445`, `c01293` | `c00454`, `c00877` |
+| `14b` think on v2 | 6 ("cho nên" ×4, "thế là" ×2) | 17 → 15 | 797.6 s | `c00497`, `c00936`, `c01293` | `c00504` |
+| `30b` think on v1 | 1: `c01293` "cho nên" | 13 → 12 | 713.8 s | `c01293` | — |
+
+Còn lọt (ngoài danh sách / không có từ nối): C2 `c01308` "Tại vì sao có hiện tượng này…"; `14b` v2 `c01212` "là lấy Hiếu thân Tôn Sư…".
+
+Đo thật C2 + B11 (`num_ctx 32768`) **chưa chạy được**: 2026-09-26 ~14:00Z Ollama `127.0.0.1:11435` nhận kết nối rồi reset (`Connection reset by peer`, cả `curl /api/version`), kéo dài > 10 phút; stage ghi `failed` đúng B5 (3 lần thử, không artifact).
