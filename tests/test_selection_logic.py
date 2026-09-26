@@ -19,6 +19,7 @@ from auto_short.selection.logic import (
 from auto_short.selection.prompt import (
     PROMPT_VERSION,
     RESPONSE_SCHEMA,
+    cumulative_marks,
     prompt_sha256,
     prompt_texts,
     render_user_prompt,
@@ -125,11 +126,36 @@ def test_user_prompt_lists_units_with_trimmed_duration_and_boundary(syn):
     assert any(line.startswith("u0002 | 19.0 | lặng 4.0 s | ý thứ 2") for line in lines)
 
 
+def test_v2_prompt_cumulative_marks_match_candidate_durations(syn, real):
+    cand_doc, sil_doc, meta = syn
+    windows = build_windows(cand_doc["units"], cand_doc["candidates"], 2500)
+    text = render_user_prompt("v2", title=meta["title"], window_id="w02", units=windows[1].units,
+                              durations=_durations(cand_doc, sil_doc), max_pause=1.0, pad=0.3)
+    assert "thời lượng đoạn = đến(last_unit) − từ(first_unit)" in text
+    assert "u0007 | từ 0.0 | đến 19.6 | ngắt cứng (nhạc/nhãn hoặc lặng dài) | ý thứ 7" in text
+    assert "u0011 | từ 80.0 | đến 99.6 | lặng 4.0 s | ý thứ 11" in text  # c00016 u0007-u0011 = 99.6 s
+    # on the real extract: to(b) - from(a) == estimate, within 0.4 s of every candidate duration
+    for doc, sil in (syn[:2], real[:2]):
+        durs = _durations(doc, sil)
+        for w in build_windows(doc["units"], doc["candidates"], 2500):
+            marks = dict(zip([u["id"] for u in w.units], cumulative_marks(w.units, durs, 1.0, 0.3)))
+            for c in w.candidates:
+                a, b = c["unit_ids"]
+                assert abs(marks[b][1] - marks[a][0] - c["duration"]) <= 0.4, c["id"]
+
+
 def test_system_prompt_and_schema():
-    system, _ = prompt_texts(PROMPT_VERSION)
-    assert PROMPT_VERSION == "v1"
-    for needle in ("TRỌN MỘT Ý", "30–180 giây", "60–90 giây", "không có dấu câu", "Thà không đề xuất"):
-        assert needle in system
+    assert PROMPT_VERSION == "v2"
+    for version in ("v1", "v2"):
+        system, _ = prompt_texts(version)
+        for needle in ("TRỌN MỘT Ý", "30–180 giây", "60–90 giây", "không có dấu câu", "Thà không đề xuất"):
+            assert needle in system
+    v2 = prompt_texts("v2")[0]
+    assert '"đến" của last_unit − "từ" của first_unit' in v2 and "start_complete PHẢI là false" in v2
+    assert '"thế là", "do đó", "còn"' in v2
+    # v1 is kept verbatim for comparison
+    assert prompt_sha256("v1") == "0ff963d1f415c0a74c7b320d772ab8400d282ecc848f4903bfd05141e4bf4d7c"
+    assert prompt_sha256("v2") != prompt_sha256("v1")
     item = RESPONSE_SCHEMA["properties"]["clips"]["items"]
     assert set(item["required"]) == {"first_unit", "last_unit", "score", "start_complete", "end_complete",
                                      "topic", "reason"}

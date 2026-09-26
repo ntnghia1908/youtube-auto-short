@@ -16,7 +16,7 @@ from auto_short.config import Config, WorkspaceConfig
 from auto_short.hashing import canonical_json, config_hash, sha256_file
 from auto_short.selection import SelectionError, run_selection
 from auto_short.selection.client import ChatError, OllamaClient, resolve_host
-from auto_short.selection.prompt import RESPONSE_SCHEMA, prompt_sha256
+from auto_short.selection.prompt import RESPONSE_SCHEMA, prompt_sha256, prompt_texts
 from auto_short.selection.stage import used_config
 from analysis_helpers import FakeAnalyzer
 from selection_helpers import (
@@ -70,7 +70,13 @@ def test_request_follows_b3(scfg):
     system, user = call["messages"]
     assert system["role"] == "system" and "TRỌN MỘT Ý" in system["content"]
     assert user["role"] == "user" and user["content"].startswith("Video: (không rõ)\n")  # no title in metadata
-    assert "u0001 | 19.0 | đầu nội dung | ý thứ 1" in user["content"]
+    assert "u0001 | từ 0.0 | đến 19.6 | đầu nội dung | ý thứ 1" in user["content"]
+    assert "u0002 | từ 20.0 | đến 39.6 | lặng 4.0 s | ý thứ 2" in user["content"]
+
+    fake_v1 = FakeClient(GOOD)
+    run_selection("rbjfCfFq3Dk", _sel(scfg, prompt_version="v1"), client=fake_v1)
+    assert "u0001 | 19.0 | đầu nội dung | ý thứ 1" in fake_v1.calls[0]["messages"][1]["content"]
+    assert fake_v1.calls[0]["messages"][0]["content"] == prompt_texts("v1")[0]
 
     cfg2 = _sel(scfg, model="qwen3:30b", think=True, seed=7, num_ctx=8192, temperature=0.2)
     fake2 = FakeClient(GOOD)
@@ -95,7 +101,7 @@ def test_clips_and_log_documents(scfg):
     assert doc["candidates_sha256"] == hashlib.sha256(canonical_json(cands).encode()).hexdigest()
     assert doc["model"] == {"provider": "ollama", "name": "qwen3:14b", "think": False,
                             "options": {"temperature": 0, "seed": 42, "num_ctx": 16384}}
-    assert doc["prompt_version"] == "v1" and doc["prompt_sha256"] == prompt_sha256("v1")
+    assert doc["prompt_version"] == "v2" and doc["prompt_sha256"] == prompt_sha256("v2")
     assert doc["params"] == {"max_clips": 25, "min_score": 7, "max_window_words": 2500, "retries": 2}
     assert doc["stats"] == {"windows": 2, "ai_calls": 2, "proposals": 6, "valid": 5, "eligible": 3, "selected": 2,
                             "selected_seconds": round(by_id["c00008"]["duration"] + by_id["c00015"]["duration"], 3)}
@@ -248,7 +254,7 @@ def test_rerun_skip_and_rerun_conditions(scfg, caplog):
     assert len(fake.calls) == n_calls
 
     # any hashed [selection] key reruns
-    for kw in ({"model": "qwen3:30b"}, {"think": True}, {"min_score": 8}, {"max_clips": 3}, {"seed": 1},
+    for kw in ({"prompt_version": "v1"}, {"model": "qwen3:30b"}, {"think": True}, {"min_score": 8}, {"max_clips": 3}, {"seed": 1},
                {"num_ctx": 8192}, {"temperature": 0.1}, {"max_window_words": 3000}, {"retries": 1}):
         assert run_selection("rbjfCfFq3Dk", _sel(scfg, **kw), client=fake).ran, kw
     assert run_selection("rbjfCfFq3Dk", scfg, client=fake).ran

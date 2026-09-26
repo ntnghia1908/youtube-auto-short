@@ -62,7 +62,7 @@ def test_selection_config_parsing():
     assert (s.model, s.think, s.temperature, s.max_clips, s.timeout) == ("qwen3:30b", True, 0.2, 10, 30.0)
     d = config_mod.Config().selection
     assert (d.model, d.think, d.temperature, d.seed, d.num_ctx) == ("qwen3:14b", False, 0.0, 42, 16384)
-    assert (d.prompt_version, d.max_clips, d.min_score, d.max_window_words, d.retries) == ("v1", 25, 7, 2500, 2)
+    assert (d.prompt_version, d.max_clips, d.min_score, d.max_window_words, d.retries) == ("v2", 25, 7, 2500, 2)
     assert d.ollama_host == "http://127.0.0.1:11435"
 
 
