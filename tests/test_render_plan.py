@@ -100,12 +100,12 @@ def test_escape_option():
     assert plan.escape_option("C:/x'y,z") == "C\\\\:/x\\\\\\'y\\,z"
 
 
-def _graph(segments):
+def _graph(segments, **kw):
     g = plan.geometry(RenderConfig())
     lay = plan.layout(g, 353, 1440, 1080)
     lines = [plan.TextLine(Path("/t/h0.txt"), 100)]
     return plan.filter_graph(segments=segments, fps=NTSC, lay=lay, font_file=Path("/f/font.ttf"),
-                             header_lines=lines, header_size=67, title_lines=lines, title_size=88)
+                             header_lines=lines, header_size=67, title_lines=lines, title_size=88, **kw)
 
 
 def test_filter_graph_structure():
@@ -135,3 +135,83 @@ def test_ffmpeg_command():
     assert "-c:v libx264 -preset medium -crf 18 -pix_fmt yuv420p -r 30000/1001" in joined
     assert "-c:a aac -b:a 192k -ar 48000 -ac 2" in joined
     assert "-fflags +bitexact" in joined and "-movflags +faststart" in joined and cmd[-1] == "/o/k01.mp4"
+
+
+# --- CP8.1: video dissolve at junctions -------------------------------------------------------------------------
+
+def test_dissolve_half_frames():
+    assert plan.dissolve_half(0.15, NTSC) == 2  # 0.15 x 29.97 / 2 = 2.25 -> D = 4 frames
+    assert plan.dissolve_half(0, NTSC) == 0
+    assert plan.dissolve_half(0.25, NTSC) == 4 and plan.dissolve_half(0.5, Fraction(25)) == 6
+
+
+def test_dissolve_plan_clamps_to_trimmed_gap():
+    # segments of 100 frames; gaps between them: 50, 4, 3, 2, 1, 0
+    frames, pos = [], 0
+    for gap in (50, 4, 3, 2, 1, 0, None):
+        frames.append((pos, 100))
+        pos += 100 + (gap or 0)
+    dp = plan.dissolve_plan(frames, NTSC, 0.15)
+    assert dp.frames == [4, 4, 2, 2, 0, 0]  # D_j = 2 * min(e, gap // 2)
+    assert dp.active
+    assert dp.extend == [(0, 2), (2, 2), (2, 1), (1, 1), (1, 0), (0, 0), (0, 0)]
+    # never outside the clip: the first segment is not extended backwards nor the last one forwards
+    assert dp.extend[0][0] == 0 and dp.extend[-1][1] == 0
+    # extensions stay inside the trimmed gap: extended neighbours never share a source frame
+    for (f0, n0), (f1, _), (_, e_out), (e_in, _) in zip(frames, frames[1:], dp.extend, dp.extend[1:]):
+        assert f0 + n0 + e_out - 1 < f1 - e_in
+    assert plan.dissolve_plan(frames, NTSC, 0).frames == [0] * 6 and not plan.dissolve_plan(frames, NTSC, 0).active
+
+
+def test_dissolve_plan_one_segment_negative_gap_and_short_segments():
+    one = plan.dissolve_plan([(10, 50)], NTSC, 0.15)
+    assert one.frames == [] and one.extend == [(0, 0)] and not one.active
+    # rounding can make neighbouring segments touch or overlap by a frame: hard cut, never negative
+    assert plan.dissolve_plan([(0, 30), (29, 30)], NTSC, 0.15).frames == [0]
+    # guard: a segment gives at most half its frames to each side (no overlapping windows, xfade inputs long enough)
+    dp = plan.dissolve_plan([(0, 30), (40, 3), (53, 0), (60, 30)], NTSC, 0.15)
+    assert dp.frames == [2, 0, 0] and dp.extend == [(0, 1), (1, 0), (0, 0), (0, 0)]
+
+
+def test_dissolves_manifest_entries():
+    segs = [(1100, 2000), (2500, 4000), (4050, 5000)]
+    frames = plan.frame_plan(segs, NTSC)
+    assert frames == [(33, 27), (75, 45), (121, 28)]
+    # junction at output frames 27 and 72; gaps 15 and 1 frame(s)
+    assert plan.dissolves(segs, NTSC, 0.15) == [{"at": 0.901, "frames": 4}, {"at": 2.402, "frames": 0}]
+    assert plan.dissolves(segs, NTSC, 0) == [{"at": 0.901, "frames": 0}, {"at": 2.402, "frames": 0}]
+    assert plan.dissolves([(0, 1000)], NTSC, 0.15) == []
+
+
+CP7_VIDEO = ("[0:v]fps=30000/1001,select='between(round(t*30000/1001),33,59)+between(round(t*30000/1001),75,119)',"
+             "setpts=N/(30000/1001)/TB,crop=964:1080:238:0,scale=1080:1210:flags=lanczos,setsar=1,"
+             "scale=out_color_matrix=bt709:out_range=tv,format=yuv444p,pad=1080:1920:0:321:color=0x000000[vid];")
+
+
+def test_filter_graph_dissolve_zero_is_the_cp7_graph():
+    graph = _graph([(1100, 2000), (2500, 4000)])  # default dissolve = 0
+    assert graph.startswith(CP7_VIDEO)
+    assert _graph([(1100, 2000), (2500, 4000)], dissolve=0) == graph
+    # a dissolve with no junction to blend (one segment, or gaps of 1 frame) keeps the CP7 graph too
+    assert _graph([(0, 1000)], dissolve=0.15) == _graph([(0, 1000)])
+    assert _graph([(1100, 2000), (2020, 3000)], dissolve=0.15) == _graph([(1100, 2000), (2020, 3000)])
+
+
+def test_filter_graph_dissolve_structure():
+    segs = [(1100, 2000), (2500, 4000), (4050, 5000), (5500, 6000)]  # D = 4, 0, 4
+    graph = _graph(segs, dissolve=0.15)
+    f = "30000/1001"
+    per_frame = ("crop=964:1080:238:0,scale=1080:1210:flags=lanczos,setsar=1,"
+                 "scale=out_color_matrix=bt709:out_range=tv,format=yuv444p")
+    assert graph.startswith(f"[0:v]fps={f},split=4[s0][s1][s2][s3];"
+                            f"[s0]select='between(round(t*{f}),33,61)',setpts=PTS-STARTPTS,{per_frame}[v0];"
+                            f"[s1]select='between(round(t*{f}),73,119)',setpts=PTS-STARTPTS,{per_frame}[v1];"
+                            f"[s2]select='between(round(t*{f}),121,150)',setpts=PTS-STARTPTS,{per_frame}[v2];"
+                            f"[s3]select='between(round(t*{f}),163,179)',setpts=PTS-STARTPTS,{per_frame}[v3];")
+    # offsets: (accumulated length - D) / fps; D = 0 -> concat
+    assert f"[v0][v1]xfade=transition=fade:duration=0.133467:offset=0.834167[x1]" in graph  # 29 - 4 = 25 frames
+    assert f"[x1][v2]concat=n=2:v=1:a=0,settb=1/({f}),setpts=N[x2]" in graph  # 29 + 47 - 4 = 72 frames, + 30
+    assert f"[x2][v3]xfade=transition=fade:duration=0.133467:offset=3.269933[x3]" in graph  # 72 + 30 - 4 = 98
+    assert f"[x3]setpts=N/({f})/TB,pad=1080:1920:0:321:color=0x000000[vid];" in graph
+    # audio unchanged: hard cuts
+    assert "[a0][a1][a2][a3]concat=n=4:v=0:a=1" in graph and "afade" not in graph and "acrossfade" not in graph

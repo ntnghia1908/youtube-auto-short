@@ -130,8 +130,10 @@ def _rate(stream: dict) -> Fraction:
     raise RenderError("cannot determine the source frame rate")
 
 
-def verify_output(path: Path, fps: Fraction, planned: float, run: Runner) -> None:
-    """R9: 1080x1920 h264 yuv420p at ``fps``, aac 48 kHz stereo, video and audio within 0.1 s of ``planned``."""
+def verify_output(path: Path, fps: Fraction, planned_frames: int, run: Runner) -> None:
+    """R9: 1080x1920 h264 yuv420p at ``fps``, aac 48 kHz stereo, video and audio within 0.1 s of the planned
+    length; CP8.1 V5: exactly ``planned_frames`` video frames."""
+    planned = planned_frames / float(fps)
     info = probe_media(path, run)
     v, a = info["video"], info["audio"]
     problems = []
@@ -147,6 +149,8 @@ def verify_output(path: Path, fps: Fraction, planned: float, run: Runner) -> Non
         vd = float(v.get("duration") or 0)
         if abs(vd - planned) > DURATION_TOLERANCE:
             problems.append(f"video duration {vd:.3f} s != {planned:.3f} s")
+        if str(v.get("nb_frames")) != str(planned_frames):
+            problems.append(f"video frames {v.get('nb_frames')} != {planned_frames}")
     if a is None:
         problems.append("no audio stream")
     else:
@@ -228,6 +232,7 @@ def _write_lines(tmp: Path, tag: str, lines: list[str], bases: list[int]) -> lis
 
 def validate_render(doc: dict, clips_doc: dict, cand_doc: dict, out_dir: Path) -> None:
     clips = clips_doc["clips"]
+    fps = Fraction(doc["encode"]["fps"])
     shorts = doc["shorts"]
     if [(s["clip_id"], s["candidate_id"]) for s in shorts] != [(c["id"], c["candidate_id"]) for c in clips]:
         raise RenderError("render_manifest shorts do not match clips.json (ids/order)")
@@ -239,13 +244,18 @@ def validate_render(doc: dict, clips_doc: dict, cand_doc: dict, out_dir: Path) -
         if s["segments"] != segs or s["duration"] != c["duration"]:
             raise RenderError(f"clip {s['clip_id']}: segments do not match R3")
         if s["status"] == RENDERED:
+            planned = plan.dissolves(plan.kept_segments(c["source_start"], c["source_end"], trims[c["candidate_id"]]),
+                                     fps, doc["encode"]["dissolve"])
+            if s["dissolves"] != planned:
+                raise RenderError(f"clip {s['clip_id']}: dissolves do not match the plan")
             path = out_dir / s["file"]
             if not path.is_file() or hashing.sha256_file(path) != s["sha256"]:
                 raise RenderError(f"clip {s['clip_id']}: {s['file']} missing or sha256 mismatch")
             if not 1 <= len(s["title_display_lines"]) <= MAX_LINES:
                 raise RenderError(f"clip {s['clip_id']}: title has {len(s['title_display_lines'])} display lines")
         elif s["status"] == SKIPPED:
-            if s["file"] is not None or (out_dir / SHORTS_DIR / f"{s['clip_id']}.mp4").exists():
+            if s["file"] is not None or s["dissolves"] is not None \
+                    or (out_dir / SHORTS_DIR / f"{s['clip_id']}.mp4").exists():
                 raise RenderError(f"clip {s['clip_id']}: skipped clip has a file")
         else:
             raise RenderError(f"clip {s['clip_id']}: invalid status {s['status']!r}")
@@ -379,8 +389,8 @@ def _render_all(ws: Workspace, cfg: RenderConfig, fpath: Path, font_sha: str, me
     plans = plan_clips(clips_doc, titles_doc, cand_doc, font=font, cfg=cfg, geo=geo, src_w=src_w, src_h=src_h)
     base_layout = plan.layout(geo, geo.title_h, src_w, src_h)
 
-    log.info("%s: font %s (%s), fps %s, source %dx%d", STAGE, font.family, cfg.font_file, plan.fps_text(fps),
-             src_w, src_h)
+    log.info("%s: font %s (%s), fps %s, source %dx%d, dissolve %g s (%d frames)", STAGE, font.family,
+             cfg.font_file, plan.fps_text(fps), src_w, src_h, cfg.dissolve, 2 * plan.dissolve_half(cfg.dissolve, fps))
     log.info("%s: layout header %s, video %s crop %s, title %s (max h %d)", STAGE, base_layout.header,
              base_layout.video, base_layout.crop, base_layout.title, geo.title_max_h)
     log.info("%s: header %s (%d px)", STAGE, " / ".join(header.lines), header.font_size)
@@ -400,7 +410,8 @@ def _render_all(ws: Workspace, cfg: RenderConfig, fpath: Path, font_sha: str, me
                       "skip_reason": None, "file": None, "sha256": None, "title": entry.get("title"),
                       "title_display_lines": None, "title_font_size": None, "layout": None,
                       "source_start": clip["source_start"], "source_end": clip["source_end"],
-                      "segments": plan.segments_seconds(cp.segments), "duration": clip["duration"]}
+                      "segments": plan.segments_seconds(cp.segments), "duration": clip["duration"],
+                      "dissolves": None}
             if cp.title is None:
                 record["skip_reason"] = "untitled"
                 log.warning("%s: WARNING: clip %s skipped: untitled (no approved title)", STAGE, clip["id"])
@@ -413,7 +424,8 @@ def _render_all(ws: Workspace, cfg: RenderConfig, fpath: Path, font_sha: str, me
             script = tmp / f"{clip['id']}.filter"
             script.write_text(plan.filter_graph(segments=cp.segments, fps=fps, lay=lay, font_file=fpath,
                                                 header_lines=h_lines, header_size=header.font_size,
-                                                title_lines=t_lines, title_size=fit.font_size), encoding="utf-8")
+                                                title_lines=t_lines, title_size=fit.font_size,
+                                                dissolve=cfg.dissolve), encoding="utf-8")
             shorts_dir.mkdir(exist_ok=True)
             final = shorts_dir / f"{clip['id']}.mp4"
             part = shorts_dir / f".{clip['id']}.mp4.part"
@@ -426,14 +438,15 @@ def _render_all(ws: Workspace, cfg: RenderConfig, fpath: Path, font_sha: str, me
             if proc.returncode != 0 or not part.is_file():
                 raise RenderError(f"clip {clip['id']}: ffmpeg failed: "
                                   f"{_last_line(proc.stderr) or f'exit {proc.returncode}'}")
-            planned = plan.planned_video_seconds(cp.segments, fps)
-            verify_output(part, fps, planned, run)
+            verify_output(part, fps, plan.planned_frames(cp.segments, fps), run)
             os.replace(part, final)
             record.update(status=RENDERED, file=f"{SHORTS_DIR}/{final.name}", sha256=hashing.sha256_file(final),
-                          title_display_lines=fit.lines, title_font_size=fit.font_size, layout=lay.as_dict())
+                          title_display_lines=fit.lines, title_font_size=fit.font_size, layout=lay.as_dict(),
+                          dissolves=plan.dissolves(cp.segments, fps, cfg.dissolve))
             shorts.append(record)
-            log.info("%s: clip %s: %s (%d px, panel %d px), %d segment(s), %.3f s, rendered in %.1f s", STAGE,
-                     clip["id"], " / ".join(fit.lines), fit.font_size, fit.panel_height, len(cp.segments),
+            log.info("%s: clip %s: %s (%d px, panel %d px), %d segment(s), %d dissolve(s), %.3f s, "
+                     "rendered in %.1f s", STAGE, clip["id"], " / ".join(fit.lines), fit.font_size,
+                     fit.panel_height, len(cp.segments), sum(1 for d in record["dissolves"] if d["frames"]),
                      clip["duration"], time.monotonic() - t0)
 
     rendered = [s for s in shorts if s["status"] == RENDERED]
@@ -448,7 +461,7 @@ def _render_all(ws: Workspace, cfg: RenderConfig, fpath: Path, font_sha: str, me
                    "panel_color": plan.PANEL_COLOR, **base},
         "encode": {"vcodec": plan.VCODEC, "crf": cfg.crf, "preset": cfg.preset, "pix_fmt": plan.PIX_FMT,
                    "fps": plan.fps_text(fps), "acodec": plan.ACODEC, "sample_rate": plan.SAMPLE_RATE,
-                   "channels": plan.CHANNELS, "audio_bitrate": cfg.audio_bitrate},
+                   "channels": plan.CHANNELS, "audio_bitrate": cfg.audio_bitrate, "dissolve": cfg.dissolve},
         "header": {"lines": header_lines, "display_lines": header.lines, "font_size": header.font_size},
         "stats": {"clips": len(shorts), "rendered": len(rendered), "skipped": len(shorts) - len(rendered),
                   "seconds": round(sum(s["duration"] for s in rendered), 3)},

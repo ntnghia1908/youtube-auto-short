@@ -77,6 +77,60 @@ def frame_plan(segments: list[tuple[int, int]], fps: Fraction) -> list[tuple[int
     return out
 
 
+# --- Video dissolve at junctions (CP8.1 V2) -------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class DissolvePlan:
+    """Per junction j (between segments j and j+1): ``frames[j]`` = D_j blended frames (0 = hard cut).
+    Per segment i: ``extend[i]`` = (e_in, e_out) frames borrowed from the trimmed gap before / after it."""
+
+    frames: list[int]
+    extend: list[tuple[int, int]]
+
+    @property
+    def active(self) -> bool:
+        return any(self.frames)
+
+
+def dissolve_half(seconds: float, fps: Fraction) -> int:
+    """Target frames on each side of a junction: ``e = round(seconds x fps / 2)`` (0.15 s @ 29.97 -> 2)."""
+    return round(Fraction(seconds) * fps / 2)
+
+
+def dissolve_plan(frames: list[tuple[int, int]], fps: Fraction, seconds: float) -> DissolvePlan:
+    """Dissolve length per junction from the frame plan (V2): ``e_j = min(e, gap // 2)`` where ``gap`` is the
+    number of grid frames trimmed between the segments, so the extension never leaves the trimmed silence (and
+    never the clip: the first/last segment are not extended outwards). Guard beyond V2: a segment gives at
+    most half its own frames to each side (``n // 2``), so consecutive dissolve windows never overlap and every
+    ``xfade`` input is long enough; it only bites for segments shorter than 2e frames."""
+    e = dissolve_half(seconds, fps)
+    d = []
+    for (f0, n0), (f1, n1) in zip(frames, frames[1:]):
+        gap = f1 - (f0 + n0)
+        d.append(2 * max(0, min(e, gap // 2, n0 // 2, n1 // 2)))
+    k = len(frames)
+    extend = [(d[i - 1] // 2 if i > 0 else 0, d[i] // 2 if i < k - 1 else 0) for i in range(k)]
+    return DissolvePlan(d, extend)
+
+
+def junction_frames(frames: list[tuple[int, int]]) -> list[int]:
+    """Output frame index of each junction (first frame of segment j+1 on the Short's timeline)."""
+    out, cum = [], 0
+    for _, n in frames[:-1]:
+        cum += n
+        out.append(cum)
+    return out
+
+
+def dissolves(segments: list[tuple[int, int]], fps: Fraction, seconds: float) -> list[dict]:
+    """``render_manifest.json`` ``shorts[].dissolves`` (V4): one entry per junction, ``at`` = junction time on
+    the Short's video timeline (s, 3 decimals; centre of the blend), ``frames`` = D_j."""
+    frames = frame_plan(segments, fps)
+    dp = dissolve_plan(frames, fps, seconds)
+    return [{"at": float(round(Fraction(c) / fps, 3)), "frames": dj}
+            for c, dj in zip(junction_frames(frames), dp.frames)]
+
+
 def output_fps(source_fps: Fraction) -> Fraction:
     return source_fps if source_fps <= MAX_FPS else MAX_FPS
 
@@ -231,19 +285,54 @@ def _panel_chain(box: Box, lines: list[TextLine], font_file: Path, size: int, la
     return ",".join(parts) + f"[{label}]"
 
 
-def filter_graph(*, segments: list[tuple[int, int]], fps: Fraction, lay: Layout, font_file: Path,
-                 header_lines: list[TextLine], header_size: int, title_lines: list[TextLine],
-                 title_size: int) -> str:
-    frames = frame_plan(segments, fps)
-    f = fps_text(fps)
+def _video_cut(frames: list[tuple[int, int]], f: str, per_frame: str, pad: str) -> str:
+    """CP7 video chain: one ``select`` of all kept frames on the absolute grid (hard cuts)."""
     sel = "+".join(f"between(n_grid,{first},{first + n - 1})" for first, n in frames if n > 0)
     # n_grid = index of the frame on the absolute output grid (t * fps); fps= puts frames on that grid.
     sel = sel.replace("n_grid", f"round(t*{f})")
+    return f"[0:v]fps={f},select='{sel}',setpts=N/({f})/TB,{per_frame},{pad}"
+
+
+def _video_dissolve(frames: list[tuple[int, int]], fps: Fraction, dp: DissolvePlan, per_frame: str,
+                    pad: str) -> list[str]:
+    """V3: one branch per segment (``split`` + ``select`` of the extended range + per-frame conversions), joined
+    left to right with ``xfade=transition=fade`` over D_j frames (``concat`` when D_j = 0); ``pad`` after."""
+    f = fps_text(fps)
+    idx = [i for i, (_, n) in enumerate(frames) if n > 0]  # segments shorter than half a frame have no video
+    m = len(idx)
+    chain = [f"[0:v]fps={f},split={m}" + "".join(f"[s{i}]" for i in idx)]
+    for i in idx:
+        (first, n), (e_in, e_out) = frames[i], dp.extend[i]
+        chain.append(f"[s{i}]select='between(round(t*{f}),{first - e_in},{first + n + e_out - 1})',"
+                     f"setpts=PTS-STARTPTS,{per_frame}[v{i}]")
+    cur, length = f"v{idx[0]}", sum(dp.extend[idx[0]]) + frames[idx[0]][1]
+    for prev, i in zip(idx, idx[1:]):
+        d = dp.frames[i - 1] if i == prev + 1 else 0  # a skipped empty segment in between: its junctions are 0
+        out = f"x{i}"
+        if d == 0:
+            chain.append(f"[{cur}][v{i}]concat=n=2:v=1:a=0,settb=1/({f}),setpts=N[{out}]")
+        else:
+            chain.append(f"[{cur}][v{i}]xfade=transition=fade:duration={_num(float(Fraction(d) / fps))}"
+                         f":offset={_num(float(Fraction(length - d) / fps))}[{out}]")
+        length += frames[i][1] + sum(dp.extend[i]) - d
+        cur = out
+    chain.append(f"[{cur}]setpts=N/({f})/TB,{pad}")
+    return chain
+
+
+def filter_graph(*, segments: list[tuple[int, int]], fps: Fraction, lay: Layout, font_file: Path,
+                 header_lines: list[TextLine], header_size: int, title_lines: list[TextLine],
+                 title_size: int, dissolve: float = 0.0) -> str:
+    """R6 filter graph. ``dissolve`` (s, CP8.1): video dissolve at junctions; when no junction gets a dissolve
+    (``dissolve = 0``, one segment, or every gap too short) the graph is exactly the CP7 one."""
+    frames = frame_plan(segments, fps)
+    f = fps_text(fps)
     c, v = lay.crop, lay.video
-    video = (f"[0:v]fps={f},select='{sel}',setpts=N/({f})/TB,"
-             f"crop={c.w}:{c.h}:{c.x}:{c.y},scale={v.w}:{v.h}:flags={SCALE_FLAGS},setsar=1,"
-             f"scale=out_color_matrix=bt709:out_range=tv,format=yuv444p,"
-             f"pad={WIDTH}:{HEIGHT}:{v.x}:{v.y}:color={_hex(BACKGROUND)}[vid]")
+    per_frame = (f"crop={c.w}:{c.h}:{c.x}:{c.y},scale={v.w}:{v.h}:flags={SCALE_FLAGS},setsar=1,"
+                 f"scale=out_color_matrix=bt709:out_range=tv,format=yuv444p")
+    pad = f"pad={WIDTH}:{HEIGHT}:{v.x}:{v.y}:color={_hex(BACKGROUND)}[vid]"
+    dp = dissolve_plan(frames, fps, dissolve)
+    video = _video_dissolve(frames, fps, dp, per_frame, pad) if dp.active else [_video_cut(frames, f, per_frame, pad)]
     k = len(segments)
     audio = [f"[0:a]asplit={k}" + "".join(f"[as{i}]" for i in range(k)) if k > 1 else "[0:a]anull[as0]"]
     for i, (a, b) in enumerate(segments):
@@ -251,7 +340,7 @@ def filter_graph(*, segments: list[tuple[int, int]], fps: Fraction, lay: Layout,
     audio.append("".join(f"[a{i}]" for i in range(k)) + f"concat=n={k}:v=0:a=1,"
                  f"aresample={SAMPLE_RATE},aformat=sample_fmts=fltp:channel_layouts=stereo,asetpts=N/SR/TB[aout]")
     return ";".join([
-        video,
+        *video,
         _panel_chain(lay.header, header_lines, font_file, header_size, "hp"),
         _panel_chain(lay.title, title_lines, font_file, title_size, "tp"),
         f"[vid][hp]overlay={lay.header.x}:{lay.header.y}:format=yuv444[v1]",
@@ -286,5 +375,9 @@ def ffmpeg_command(*, ffmpeg: str, source: Path, output: Path, graph_script: Pat
     ]
 
 
+def planned_frames(segments: list[tuple[int, int]], fps: Fraction) -> int:
+    return sum(n for _, n in frame_plan(segments, fps))
+
+
 def planned_video_seconds(segments: list[tuple[int, int]], fps: Fraction) -> float:
-    return sum(n for _, n in frame_plan(segments, fps)) / float(fps)
+    return planned_frames(segments, fps) / float(fps)
