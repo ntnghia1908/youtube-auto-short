@@ -3,10 +3,10 @@
 | Metadata | Value |
 |---|---|
 | Status | ACCEPTED |
-| Accepted by | — (R1–R11, P1–P5 duyệt cùng APPROVE TASK 2026-09-27, P3 sửa; font, ngắt dòng header, lề khung HUMAN LEAD 2026-09-27 sau phase 1; sửa P4 `crf` 22; AC4 chấp nhận (cắt thẳng); chuyển cảnh video → CP10; review ACCEPTED). Sửa đổi HUMAN LEAD 2026-09-27 (CP8.1, APPROVE TASK V1–V6, P1, P2): dissolve video 0.15 s ở điểm nối (R6, R11, § Chuyển cảnh). Sửa đổi HUMAN LEAD 2026-09-27 (CP8.2, APPROVE TASK T1–T6): title override `review.json`, tái dùng từng Short (R2, R6, R8, R10, R11) |
+| Accepted by | — (R1–R11, P1–P5 duyệt cùng APPROVE TASK 2026-09-27, P3 sửa; font, ngắt dòng header, lề khung HUMAN LEAD 2026-09-27 sau phase 1; sửa P4 `crf` 22; AC4 chấp nhận (cắt thẳng); chuyển cảnh video → CP10; review ACCEPTED). Sửa đổi HUMAN LEAD 2026-09-27 (CP8.1, APPROVE TASK V1–V6, P1, P2): dissolve video 0.15 s ở điểm nối (R6, R11, § Chuyển cảnh). Sửa đổi HUMAN LEAD 2026-09-27 (CP8.2, APPROVE TASK T1–T6): title override `review.json`, tái dùng từng Short (R2, R6, R8, R10, R11). Sửa đổi HUMAN LEAD 2026-09-27 (CP8.5, APPROVE TASK X2): Short bị xóa `skip_reason: "rejected"` (R2, R11) |
 | Checkpoint | CP7 (S2) |
 | Roadmap | `AUTO_SHORT_CHECKPOINT_PLAN.md` §4 CP7 |
-| Task contract | `docs/tasks/CP7-render.md`; sửa đổi CP8.1: `docs/tasks/CP8.1-dissolve.md`; sửa đổi CP8.2: `docs/tasks/CP8.2-title-override.md` |
+| Task contract | `docs/tasks/CP7-render.md`; sửa đổi CP8.1: `docs/tasks/CP8.1-dissolve.md`; sửa đổi CP8.2: `docs/tasks/CP8.2-title-override.md`; sửa đổi CP8.5: `docs/tasks/CP8.5-web-review.md` |
 | Builds on | `docs/decisions/CP1-product-contract.md` §2, §4, §5, §7, §8, §10; `docs/decisions/CP2-workspace-contract.md` D1–D8; `docs/decisions/CP4-analysis-contract.md` A8; `docs/decisions/CP5-selection-contract.md` B11; `docs/decisions/CP6-titling-contract.md` G2, G5, G6, G7 |
 
 File này là **canonical owner** của layout pixel, font đóng gói, đo chữ / ngắt dòng / fit, cách dựng lệnh `ffmpeg`, vị trí output và schema `render_manifest.json` mà CP8 (end-to-end) và CP9 (review) dùng lại. Nơi khác chỉ trỏ tới đây. Layout mẫu và tỉ lệ gốc: `docs/decisions/CP1-product-contract.md` §4; stage framework (manifest v1, skip/stale, config hash, CLI exit code): `docs/decisions/CP2-workspace-contract.md`. Thay đổi cần decision gate mới với HUMAN LEAD.
@@ -23,6 +23,7 @@ Implementation tham chiếu: `src/auto_short/render/` (`text.py`, `plan.py`, `st
 - Mọi clip của `clips.json` có title — entry `titles.json` `status = titled` **hoặc** override hợp lệ trong `review.json` (CP8.2) — theo thứ tự `clips.json`. Clip `untitled` không override → `status: "skipped"`, `skip_reason: "untitled"`, không file, cảnh báo stderr (CP6 G6). `clips: []` hoặc không clip nào có title → stage `done`, không mp4, cảnh báo.
 - Nguồn title/header (P1): `[render] title_source = "titles"` — giá trị duy nhất, nghĩa là auto-approve title AI (CP1 §8); header + title đọc từ `titles.json`, `title_source` ghi ở `render_manifest.json`. CP9 thêm `"review"`.
 - **Sửa đổi CP8.2:** title của clip = override `review.json` hợp lệ > `titles.json` `title`; khóa override, cảnh báo override bị bỏ qua, `title_origin`: canonical ở `docs/decisions/CP8.2-title-override-contract.md` T3–T4.
+- **Sửa đổi CP8.5** (HUMAN LEAD 2026-09-27): clip bị xóa trong `review.json` (`rejected`) → `status: "skipped"`, `skip_reason: "rejected"`, không file (mp4 cũ bị xóa ở bước commit), ưu tiên hơn `untitled`; log INFO, không cảnh báo. `skip_reason` ∈ `untitled` | `rejected` (R9 kiểm). Canonical: `docs/decisions/CP8.2-title-override-contract.md` T7.
 
 ## R3. Đoạn giữ lại
 
@@ -136,7 +137,7 @@ Thứ tự key cố định:
 ```
 
 - `layout` gốc = layout mẫu (title panel 0.27 W); `shorts[].layout` = layout thật của clip. `fps` là phân số chuỗi.
-- Entry `skipped`: `file`, `sha256`, `title_display_lines`, `title_font_size`, `layout` = `null`; `title` = title của `titles.json` (`null` khi `untitled`); `segments`/`duration` vẫn ghi.
+- Entry `skipped`: `file`, `sha256`, `title_display_lines`, `title_font_size`, `layout` = `null`; `title` = title của `titles.json` (`null` khi `untitled`); `segments`/`duration` vẫn ghi. CP8.5: entry `skip_reason: "rejected"` ghi `title` / `title_origin` = title sẽ dùng khi khôi phục (override nếu có).
 - `file` relative theo `<output_dir>/<episode_id>/`; `stats.seconds` = Σ `duration` clip `rendered` (3 chữ số).
 - CP8.1 (additive, giữ `schema_version: 1`, P1): `encode.dissolve` = giây cấu hình (key cuối của `encode`); `shorts[].dissolves` (sau `duration`) = mỗi điểm nối một phần tử theo thứ tự, `at` = giây trên timeline video của Short tại điểm nối (frame đầu của segment j+1 / fps, 3 chữ số — tâm cửa sổ dissolve), `frames` = `D_j` (0 = cắt thẳng); clip 1 segment → `[]`; entry `skipped` → `null`.
 - CP8.2 (additive, giữ `schema_version: 1`): sau `dissolves`, `shorts[].title_origin` = `"ai" | "manual" | "alternative"` (`null` cho clip `untitled` không override) và `shorts[].render_key` = sha256 hex (key cuối của entry; `null` khi `skipped`). `title` = title thật được render (override nếu có). Định nghĩa: `docs/decisions/CP8.2-title-override-contract.md` T4, T5.

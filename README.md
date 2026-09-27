@@ -34,7 +34,7 @@ AI generates title/panel text
 multiple Short outputs
 ```
 
-Ingest, transcription, analysis, AI clip selection, title generation and composition/render are implemented (subtitles are off, CP1 §7) and chained by `auto-short run` (CP8); Shorts can be reviewed in a LAN web UI (CP8.3) and a Short's title can be set by hand with only that Short re-rendered (CP8.2); full human review and batch processing (CP9) are planned.
+Ingest, transcription, analysis, AI clip selection, title generation and composition/render are implemented (subtitles are off, CP1 §7) and chained by `auto-short run` (CP8); Shorts can be reviewed in a LAN web UI (CP8.3; delete / restore a Short, mark Shorts as published, delete an episode: CP8.5) and a Short's title can be set by hand with only that Short re-rendered (CP8.2); full human review and batch processing (CP9) are planned.
 
 ## Setup
 
@@ -94,6 +94,15 @@ resumes it (finished stages are skipped). Title changes use the same rules and `
 `auto-short title` (CP8.2); saving is refused while a job of that episode is queued or running, and the previous
 Shorts stay playable while one is re-rendered. Plain HTTP: use it on a trusted network only. Contract:
 `docs/decisions/CP8.3-web-contract.md`.
+
+Review workflow (CP8.5): downloads are named `Tập<episode>_S<NN>_<title>.mp4` (e.g.
+`Tập29_S01_Đánh mắng trẻ là có tội không.mp4`; the zip is `Tập29_Shorts.zip`; characters not allowed in file
+names such as `?` and `"` are dropped). "Xóa Short" deletes a Short's mp4 (soft delete, kept in `review.json`
+`rejected`; "Hiện Short đã xóa" → "Khôi phục" re-renders it). "Xóa tập này" permanently deletes the episode's
+`work/<id>/` (including the downloaded video) and `output/<id>/`; a local source file outside the workspace is
+never deleted. The "Đã đăng" checkbox marks Shorts you have uploaded (`work/<id>/publish.json`, not a pipeline
+input); a Short re-rendered after ticking shows "đã đăng bản cũ". Filters: Tất cả / Chưa đăng / Đã đăng on the
+episode page, Tất cả / Còn Short chưa đăng / Đã đăng hết on the episode list.
 
 Single stages:
 

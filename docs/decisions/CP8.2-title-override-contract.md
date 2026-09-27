@@ -3,13 +3,13 @@
 | Metadata | Value |
 |---|---|
 | Status | PROPOSED |
-| Accepted by | — (T1–T6, P1 `review.json`, P2 luật hình thức + fit duyệt cùng APPROVE TASK 2026-09-27; record chờ review) |
+| Accepted by | — (T1–T6, P1 `review.json`, P2 luật hình thức + fit duyệt cùng APPROVE TASK 2026-09-27; record chờ review). Sửa đổi HUMAN LEAD 2026-09-27 (CP8.5, APPROVE TASK X2, P3): `review.json` `rejected` (T1, T7) |
 | Checkpoint | CP8.2 (S2) |
 | Roadmap | `AUTO_SHORT_CHECKPOINT_PLAN.md` CP8.2 (re-plan HUMAN LEAD 2026-09-27: sửa title tay kéo từ CP9 lên) |
-| Task contract | `docs/tasks/CP8.2-title-override.md` |
+| Task contract | `docs/tasks/CP8.2-title-override.md`; sửa đổi CP8.5: `docs/tasks/CP8.5-web-review.md` |
 | Builds on | `docs/decisions/CP1-product-contract.md` §6, §8; `docs/decisions/CP2-workspace-contract.md` D1–D8; `docs/decisions/CP6-titling-contract.md` G5, G6, G7; `docs/decisions/CP7-render-contract.md` R2, R5, R8, R9, R11 (+ CP8.1) |
 
-File này là **canonical owner** của artifact `review.json` v1 (title override), luật validate title tay, khóa override, thứ tự ưu tiên nguồn title khi render, `render_key` và luật tái dùng từng Short, cùng lệnh CLI `auto-short title`. Nơi khác chỉ trỏ tới đây. Layout, fit chữ, cách dựng lệnh `ffmpeg` và schema `render_manifest.json`: `docs/decisions/CP7-render-contract.md`. CP9 (review đầy đủ: approve/reject, sửa header, sửa điểm cắt) sẽ mở rộng `review.json` qua decision gate mới.
+File này là **canonical owner** của artifact `review.json` v1 (title override; Short bị xóa `rejected` — sửa đổi CP8.5, T7), luật validate title tay, khóa override, thứ tự ưu tiên nguồn title khi render, `render_key` và luật tái dùng từng Short, cùng lệnh CLI `auto-short title`. Nơi khác chỉ trỏ tới đây. Layout, fit chữ, cách dựng lệnh `ffmpeg` và schema `render_manifest.json`: `docs/decisions/CP7-render-contract.md`. CP9 (review đầy đủ: approve/reject, sửa header, sửa điểm cắt) sẽ mở rộng `review.json` qua decision gate mới.
 
 Implementation tham chiếu: `src/auto_short/review/` (`logic.py` thuần; `titles.py` hàm theo episode dùng chung CLI + web), `src/auto_short/render/stage.py` (áp override, `render_key`, tái dùng, commit/dọn output), `src/auto_short/cli.py` (`title`).
 
@@ -26,7 +26,8 @@ Implementation tham chiếu: `src/auto_short/review/` (`logic.py` thuần; `titl
 
 - `titles` chỉ chứa clip có override, mỗi `clip_id` tối đa một entry, sắp theo thứ tự `clips.json` (entry có `clip_id` không còn trong `clips.json` ở cuối, theo `clip_id`). `origin` = `manual` (gõ tay) | `alternative` (chọn từ `titles.json` `alternatives`). `title` đã chuẩn hóa (NFC, bỏ khoảng trắng hai đầu, gộp khoảng trắng).
 - Reset override cuối cùng để lại file với `titles: []` (không xóa file).
-- Kiểm khi đọc (vi phạm → lỗi, render `failed`): object đúng 3 key trên, `schema_version` 1, `episode_id` khớp, mỗi entry đúng 4 key, mọi giá trị chuỗi không rỗng, `origin` hợp lệ, `title` đã chuẩn hóa, `clip_id` không trùng. Luật hình thức T2 **không** kiểm lại khi render (chỉ kiểm lúc ghi); glyph + fit luôn được render kiểm lại (CP7 R5).
+- **Sửa đổi CP8.5** (additive, giữ `schema_version: 1`; HUMAN LEAD 2026-09-27, `docs/tasks/CP8.5-web-review.md` X2): key thứ tư tùy chọn `"rejected": [{"clip_id", "candidate_id"}]` — Short bị xóa (T7). Chỉ ghi khi không rỗng (khôi phục Short cuối cùng bỏ key, file trở lại đúng dạng 3 key); cùng luật sắp xếp như `titles`.
+- Kiểm khi đọc (vi phạm → lỗi, render `failed`): object đúng 3 key trên (hoặc 3 key + `rejected` cuối), `schema_version` 1, `episode_id` khớp, mỗi entry đúng 4 key, mọi giá trị chuỗi không rỗng, `origin` hợp lệ, `title` đã chuẩn hóa, `clip_id` không trùng; `rejected` (nếu có) là mảng không rỗng, mỗi entry đúng 2 key chuỗi không rỗng, `clip_id` không trùng. Luật hình thức T2 **không** kiểm lại khi render (chỉ kiểm lúc ghi); glyph + fit luôn được render kiểm lại (CP7 R5).
 
 ## T2. Validate title tay (lỗi → từ chối, không ghi)
 
@@ -72,6 +73,13 @@ auto-short title <episode_id> --list [--config PATH]
 - `--list`: mỗi clip `<clip_id>\t<candidate_id>\t<origin|untitled>\t<title render dùng|->`, rồi `  AI: …`, `  <n>: <alternative>` (đánh số cho `--alternative`), `  override (<origin>): …` nếu có; override bị bỏ qua (T3) cảnh báo ở stderr.
 - Exit code CP2 D8: title không hợp lệ, clip / alternative không tồn tại, titling chưa `done`, `review.json` hỏng → 1, `review.json` không đổi; sai cú pháp (thiếu hành động, hai hành động) → argparse 2.
 
+## T7. Xóa / khôi phục một Short (sửa đổi CP8.5)
+
+- Khóa `(clip_id, candidate_id)` như T3: entry `rejected` có `clip_id` không còn trong `clips.json` hoặc `candidate_id` khác → **bỏ qua + cảnh báo** (`deleted Short k05 ignored: …`), clip được render lại bình thường.
+- Render: clip bị xóa → `status: "skipped"`, `skip_reason: "rejected"` (CP7 R2), không file, không fit title; `title` / `title_origin` vẫn ghi title sẽ dùng khi khôi phục. Ưu tiên hơn `untitled`. File mp4 cũ bị xóa ở bước commit (T5: file của lần trước không còn thuộc lần này); các Short khác tái dùng. Stderr: `clip k05 skipped: rejected (deleted in review)` + tổng `n clip(s) deleted in review (rejected): …` (INFO, không phải cảnh báo `untitled`).
+- Xóa giữ override title (khôi phục ra đúng title đó); sửa title một Short đã xóa giữ trạng thái xóa. Khôi phục = bỏ entry → render encode lại Short đó (entry `skipped` không có `render_key` nên không tái dùng); cùng title + cùng input → byte-identical bản trước khi xóa.
+- `review.json` đổi → render `run (input changed)` như sửa title (T4).
+
 ## Hàm dùng chung (CLI + web CP8.3)
 
 `from auto_short.review import …` — mỗi hàm đọc lại episode từ workspace (không giữ state), yêu cầu titling `done` và `titles.json` khớp `clips.json` (id, `candidate_id`, thứ tự); lỗi → `ReviewError(message)` (thông báo dùng được trực tiếp cho người dùng). Không gọi AI, không render (gọi `auto_short.render.run_render(episode_id, config)` sau).
@@ -96,9 +104,14 @@ def preview_title(episode_id: str, config: Config, clip_id: str, text: str) -> T
 def set_title(episode_id: str, config: Config, clip_id: str, text: str) -> TitlePreview
 def set_alternative(episode_id: str, config: Config, clip_id: str, n: int) -> TitlePreview    # n 1-based
 def reset_title(episode_id: str, config: Config, clip_id: str) -> TitlePreview | None         # None: untitled
+# CP8.5 (T7): True khi review.json đổi; clip không có → ReviewError
+def reject_clip(episode_id: str, config: Config, clip_id: str) -> bool
+def restore_clip(episode_id: str, config: Config, clip_id: str) -> bool
 ```
 
-Hàm thuần ở `auto_short.review.logic`: `read_review`, `check_review`, `manual_title_error`, `resolve_titles`, `with_override`, `without_override`. Hằng: `REVIEW_NAME`, `AI`, `MANUAL`, `ALTERNATIVE`.
+`list_titles` (CP8.5): mỗi clip thêm `"rejected": bool` (key cuối); `ignored` gồm cả cảnh báo entry `rejected` bị bỏ qua.
+
+Hàm thuần ở `auto_short.review.logic`: `read_review`, `check_review`, `manual_title_error`, `resolve_titles` (`ResolvedTitle.rejected`, CP8.5), `with_override`, `without_override`, `with_rejected`, `without_rejected` (CP8.5). Hằng: `REVIEW_NAME`, `AI`, `MANUAL`, `ALTERNATIVE`.
 
 ## Quyết định khi implement (không có trong task contract)
 
@@ -108,6 +121,7 @@ Hàm thuần ở `auto_short.review.logic`: `read_review`, `check_review`, `manu
 - Title AI cũ không bị kiểm lại luật T2 khi reset; `reset_title` chỉ tính fit để xem trước (fit lỗi → `ReviewError` sau khi đã ghi, render cũng sẽ `failed`).
 - `titling.logic.form_reject_reason` tách từ `reject_reason` (luật 1–8), hành vi CP6 không đổi.
 - Chưa có khóa ghi đồng thời (CLI + web cùng lúc): ghi atomic, lần ghi sau thắng.
+- CP8.5: `rejected` chỉ ghi khi không rỗng → file không có Short bị xóa giữ đúng dạng CP8.2 (server CP8.3 cũ vẫn đọc được; khôi phục đưa `review.json` về byte-identical). `reject_clip` / `restore_clip` không đổi gì (trả `False`, file không ghi lại) khi Short đã ở trạng thái đó; web vẫn tạo job render (render skip nếu up to date). Xóa / khôi phục chỉ qua web ở CP8.5 (không có CLI).
 
 ## Đo thực tế (2026-09-27, `rbjfCfFq3Dk`, 13 Short, worktree CP8.2, máy 48 core có tải khác)
 

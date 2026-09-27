@@ -25,6 +25,7 @@ Trên web: file tải về có tên dễ đọc `Tập29_S3_<title>.mp4`; ngư�
   - Tên file tải về + tên trong zip (X1).
   - Xóa / khôi phục một Short (X2); xóa cả tập (X3).
   - Tick "Đã đăng" (X4) + bộ lọc / đếm trên trang tập và danh sách tập.
+  - Bổ sung HUMAN LEAD 2026-09-27 ("thêm lọc theo đã upload"): danh sách tập có bộ lọc Tất cả / Còn Short chưa đăng / Đã đăng hết (theo `publish.json` so với Short `rendered` chưa xóa), cạnh "đã đăng x/y" (X4).
   - Module: hàm thuần trong `src/auto_short/review/` (reject/restore, publish) — web gọi; render áp `rejected`.
   - Tests + chạy thật qua web (`curl`) + HUMAN LEAD thử trên điện thoại.
   - Docs: CP8.2 record (`review.json` thêm `rejected`), CP7 record (R2 `skip_reason: "rejected"`), CP8.3 record (API/UI/tên file/xóa tập), decision record mới cho `publish.json` hoặc gộp vào CP8.3 record (X4), README, contract Result.
@@ -39,7 +40,7 @@ Trên web: file tải về có tên dễ đọc `Tập29_S3_<title>.mp4`; ngư�
   - **X1 Tên file tải về:** `Tập<episode>_S<n>_<title>.mp4` — `<episode>` = `titles.json.header.fields.episode` (không có → `<episode_id>`); `<n>` = số thứ tự clip trong `clips.json` (hai chữ số: k03 → `S03`, k12 → `S12`; ≥ 100 clip → ba chữ số; **giữ nguyên** khi Short khác bị xóa) (P1); `<title>` = title đang có trong file (theo `render_manifest.json`), NFC, giữ dấu tiếng Việt, bỏ ký tự cấm trên Windows/Android/iOS `/ \ : * ? " < > |` và ký tự điều khiển, gộp khoảng trắng liên tiếp thành một, **giữ khoảng trắng** (P2), cắt ≤ 150 byte UTF-8 ở ranh giới từ. `Content-Disposition` có `filename*=UTF-8''…` (RFC 5987) + `filename=` ASCII bỏ dấu làm dự phòng. Zip: `Tập29_Shorts.zip`, các entry cùng quy tắc, cờ UTF-8. File trên đĩa không đổi tên (`shorts/k03.mp4`, CP7).
   - **X2 Xóa một Short (xóa mềm, khôi phục được — P3; mục đích tiết kiệm bộ nhớ: file mp4 bị xóa khỏi đĩa ngay ở bước commit của job render, chỉ giữ bản ghi):** `review.json` thêm `"rejected": [{"clip_id", "candidate_id"}]` (additive, v1; khóa T3). Render: clip rejected → `status: "skipped"`, `skip_reason: "rejected"`, không file; file cũ bị xóa ở bước commit (T5). Web: nút Xóa (hỏi xác nhận) → ghi `review.json` → job render (các Short khác reuse, vài giây). Short đã xóa ẩn khỏi lưới và zip; nút "Hiện Short đã xóa (n)" → "Khôi phục" → job render encode lại Short đó (≈ 16–40 s, byte-identical bản trước khi xóa nếu title không đổi). Xóa Short có title tay: giữ override (khôi phục ra đúng title đó). Áp 409 như sửa title (W5).
   - **X3 Xóa cả tập (không hoàn tác):** nút trên trang tập, hộp xác nhận ghi rõ tên tập + "không khôi phục được"; từ chối (409) khi có job của tập đang chạy/chờ. Xóa `work/<id>/` (gồm video nguồn đã tải) và `output/<id>/`. Nguồn local nằm ngoài workspace **không bao giờ bị xóa** (CP2 D4). Gửi lại URL sau đó = chạy lại từ đầu (~25 min; AI có thể chọn clip/title khác).
-  - **X4 Đã đăng:** file `work/<id>/publish.json` (state người dùng, **không** là input pipeline — tick không làm render stale): `{"schema_version": 1, "episode_id": "…", "published": [{"clip_id", "candidate_id", "sha256": "<sha256 file lúc tick>", "at": "<UTC ISO-8601>"}]}`, ghi atomic. UI: checkbox "Đã đăng" trên mỗi Short (tick/bỏ tick, không cần job, được phép cả khi job đang chạy); Short đã tick mà file hiện tại khác `sha256` (vd sửa title sau khi đăng) → nhãn "đã đăng bản cũ". Trang tập: bộ lọc Tất cả / Chưa đăng / Đã đăng; danh sách tập: "đã đăng x/y". Short bị xóa vẫn giữ trạng thái tick (hiện khi xem Short đã xóa).
+  - **X4 Đã đăng:** file `work/<id>/publish.json` (state người dùng, **không** là input pipeline — tick không làm render stale): `{"schema_version": 1, "episode_id": "…", "published": [{"clip_id", "candidate_id", "sha256": "<sha256 file lúc tick>", "at": "<UTC ISO-8601>"}]}`, ghi atomic. UI: checkbox "Đã đăng" trên mỗi Short (tick/bỏ tick, không cần job, được phép cả khi job đang chạy); Short đã tick mà file hiện tại khác `sha256` (vd sửa title sau khi đăng) → nhãn "đã đăng bản cũ". Trang tập: bộ lọc Tất cả / Chưa đăng / Đã đăng; danh sách tập: "đã đăng x/y" + bộ lọc Tất cả / Còn Short chưa đăng / Đã đăng hết (bổ sung HUMAN LEAD 2026-09-27; tập 0 Short tính "còn chưa đăng" chỉ khi còn việc đang chờ — rule ở `docs/decisions/CP8.3-web-contract.md` W8). Short bị xóa vẫn giữ trạng thái tick (hiện khi xem Short đã xóa).
 - Đã chốt (HUMAN LEAD 2026-09-27): P1 `S01` (hai chữ số); P2 giữ khoảng trắng; P3 xóa mềm, file xóa ngay, không hẹn giờ; P4 gộp CP8.5 vào cùng PR với CP8–CP8.3.
 - Ghi nhận cho sau (không trong CP8.5): video nguồn ≈ 700 MB/tập là phần tốn bộ nhớ chính; "dọn video nguồn nhưng giữ Short" có thể là task sau (sửa title/khôi phục khi đó cần tải lại nguồn).
 
@@ -77,8 +78,19 @@ Chạm web đã có auth (không đổi security model) nhưng thêm thao tác x
 ## Result
 
 - Main changes:
-- Tests:
-- Review:
+  - `review/logic.py`: `review.json` v1 thêm `rejected` tùy chọn (chỉ ghi khi không rỗng), `resolve_titles` → `ResolvedTitle.rejected` (+ cảnh báo entry cũ), `with_rejected` / `without_rejected`. `review/titles.py`: `reject_clip`, `restore_clip`; `list_titles` thêm `rejected`.
+  - `review/names.py` (X1, thuần): `clean_part`, `truncate_utf8`, `download_name`, `zip_name`, `episode_label`, `ascii_fallback`, `content_disposition`. `review/publish.py` (X4): schema `publish.json`, `set_published`, `load_published`, `publish_status`. `review/delete.py` (X3): `delete_episode` / `episode_dirs` (kiểm path trước `rmtree`).
+  - `render/stage.py`: clip `rejected` → `skipped` / `skip_reason: "rejected"`, không fit, mp4 cũ xóa ở commit; R9 kiểm `skip_reason` ∈ `untitled|rejected`.
+  - `web/`: route `POST …/shorts/{clip}/delete|restore|published`, `DELETE /api/episodes/{id}`; tên file ở route tải + zip (`Content-Disposition` RFC 5987 + ASCII); view thêm `download_name`, `deleted`, `rejected`, `published*`, `zip_name`, `publish_group`; `JobRunner.forget`. UI: checkbox "Đã đăng" (+ "đã đăng bản cũ" / "đánh dấu bản này"), bộ lọc trang tập + danh sách tập, "Xóa Short" / "Hiện Short đã xóa (n)" / "Khôi phục", "Xóa tập này" (confirm ghi rõ không khôi phục được).
+  - Docs: CP8.2 record (T1 `rejected`, T7, hàm dùng chung), CP7 record (R2, R11 `rejected`), CP8.3 record (W6, W7, W8 + số đo), project profile (bảng module), README.
+- Tests: `pytest -q` 544 passed (mới: `tests/test_review_cp85.py` 32, `tests/test_web_cp85.py` 14, `tests/test_render_reuse.py` +2; sửa kỳ vọng cũ theo contract: tên file / zip trong `test_web_app.py`, `rejected` trong `list_titles` ở `test_review.py`; `web_helpers.write_episode` thêm `candidate_id`). `node scripts/framework-check.mjs` PASS. Chạy thật qua curl trên bản sao scratch (hardlink) của tập 29 + `rbjfcffq3dk-7271326dbe93`, server worktree `127.0.0.1:8081`: AC1–AC4 đạt (số đo: `docs/decisions/CP8.3-web-contract.md` § Số đo CP8.5); thư mục `work/` / `output/` / `input/` thật: 28 sha256 (20 mp4 + manifest + review + titles + file tập cũ + video nguồn local) không đổi trước/sau.
+- Review: chờ ORCHESTRATOR.
 - Important findings / decisions:
-- Known limitations:
-- PR:
+  - Khi `titles.json` không có `fields.episode`, tên thành `Tập<episode_id>_S01_…` (vd `TậptHtxw6ykUmM_…`) — đúng X1, hơi khó đọc.
+  - `<NN>` lấy theo vị trí trong `render_manifest.json` (= thứ tự `clips.json`, CP7 R9) nên không dịch khi Short bị xóa.
+  - `<title>` cắt 150 byte áp cho phần title (không cả tên file).
+  - Tập 0 Short trong bộ lọc danh sách: `todo` chỉ khi còn việc chờ (job đang chạy/đợi hoặc pipeline chưa xong / lỗi), đã xong mà 0 Short → chỉ ở "Tất cả".
+  - `value` của route published là JSON boolean chặt (`"yes"` → 422).
+  - Chưa manual test HUMAN LEAD trên điện thoại (gate).
+- Known limitations: xem `docs/decisions/CP8.3-web-contract.md` § Giới hạn đã biết (CP8.5).
+- PR: gộp chung PR với CP8–CP8.3 (P4); chưa push.
