@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -73,8 +73,10 @@ Tất cả required verification phải chạy và PASS trước READY.
 
 ## Manual test checklist (Tech Lead)
 
-- [ ] Dán playlist bộ kinh, xem danh sách tập.
-- [ ] Bấm xử lý một tập mới, theo dõi tới khi có Short; tick "Đã đăng" hết → tập tự "Xong".
+- [x] Dán playlist bộ kinh, xem danh sách tập.
+- [x] Bấm xử lý một tập mới, theo dõi tới khi có Short; tick "Đã đăng" hết → tập tự "Xong".
+
+Manual test HUMAN LEAD 2026-09-27 trên web thật (điện thoại + máy tính trong LAN): đạt ("Tốt lắm rồi").
 
 ## Result
 

@@ -466,6 +466,8 @@ Verify:
 
 ## Backlog (not scheduled)
 
+- HUMAN LEAD 2026-09-27: per-playlist (bộ kinh) hashtag editor on the web (manual list per playlist, overriding `[web] hashtags`). Started, then paused by HUMAN LEAD; unfinished, unreviewed code parked on local branch `wip/playlist-hashtags` (not pushed).
+
 - HUMAN LEAD 2026-09-27: support short clips in other formats, not only 9:16 Shorts (e.g. short horizontal clips). Needs its own product decision (CP1 §2/§4) when opened.
 
 ---

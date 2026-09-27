@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -71,9 +71,11 @@ Tất cả required verification phải chạy và PASS trước READY.
 
 Chạm web đã có auth (không đổi security model) nhưng thêm thao tác xóa không hoàn tác → manual test là gate.
 
-- [ ] Tải Short về điện thoại: tên file đúng mẫu, đọc được.
-- [ ] Xóa một Short, khôi phục lại.
-- [ ] Tick "Đã đăng", lọc "Chưa đăng".
+- [x] Tải Short về điện thoại: tên file đúng mẫu, đọc được.
+- [x] Xóa một Short, khôi phục lại.
+- [x] Tick "Đã đăng", lọc "Chưa đăng".
+
+Manual test HUMAN LEAD 2026-09-27 trên web thật (điện thoại + máy tính trong LAN): đạt ("Tốt lắm rồi").
 
 ## Result
 

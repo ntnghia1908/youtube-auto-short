@@ -2,8 +2,8 @@
 
 | Metadata | Value |
 |---|---|
-| Status | PROPOSED |
-| Accepted by | — (T1–T6, P1 `review.json`, P2 luật hình thức + fit duyệt cùng APPROVE TASK 2026-09-27; record chờ review). Sửa đổi HUMAN LEAD 2026-09-27 (CP8.5, APPROVE TASK X2, P3): `review.json` `rejected` (T1, T7) |
+| Status | ACCEPTED |
+| Accepted by | — (T1–T6, P1 `review.json`, P2 luật hình thức + fit duyệt cùng APPROVE TASK 2026-09-27; review ACCEPTED). Sửa đổi HUMAN LEAD 2026-09-27 (CP8.5, APPROVE TASK X2, P3): `review.json` `rejected` (T1, T7) |
 | Checkpoint | CP8.2 (S2) |
 | Roadmap | `AUTO_SHORT_CHECKPOINT_PLAN.md` CP8.2 (re-plan HUMAN LEAD 2026-09-27: sửa title tay kéo từ CP9 lên) |
 | Task contract | `docs/tasks/CP8.2-title-override.md`; sửa đổi CP8.5: `docs/tasks/CP8.5-web-review.md` |

@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -69,8 +69,10 @@ Tất cả required verification phải chạy và PASS trước READY.
 
 Thêm thao tác xóa dữ liệu → manual test là gate.
 
-- [ ] Xem tab Bộ nhớ, số liệu hợp lý.
-- [ ] Dọn video nguồn một tập đã đăng hết; Short vẫn tải được.
+- [x] Xem tab Bộ nhớ, số liệu hợp lý.
+- [x] Dọn video nguồn một tập đã đăng hết; Short vẫn tải được.
+
+Manual test HUMAN LEAD 2026-09-27 trên web thật (điện thoại + máy tính trong LAN): đạt ("Tốt lắm rồi").
 
 ## Result
 
