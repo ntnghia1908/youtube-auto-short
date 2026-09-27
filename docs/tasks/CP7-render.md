@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -169,9 +169,9 @@ Không chạm database, security model hay public API contract. Manual test ở 
 
 ## Result
 
-- Main changes:
-- Tests:
-- Review:
-- Important findings / decisions:
-- Known limitations:
-- PR:
+- Main changes: subpackage `src/auto_short/render/` (`text.py` đọc TTF + ngắt dòng/fit, `plan.py` segments/layout/filter graph, `stage.py` stage + ffprobe + tự dọn output); font Be Vietnam Pro Regular + `OFL.txt` (package data); `[render]` trong `config.py` / `config.example.toml`; CLI `auto-short render`; decision record `docs/decisions/CP7-render-contract.md` (ACCEPTED); CP1 §4 (font, P3), CP6 G5 (pointer `title_source`), project profile, README.
+- Tests: `pytest` 342 passed (52 test render mới; test stage dùng video lavfi). Chạy thật `rbjfCfFq3Dk`: 13/13 clip, 826.2 s Short, ≈ 260 s render, 177 MiB ở crf 22; ffprobe 1080×1920 h264 yuv420p 30000/1001, AAC 48 kHz stereo, lệch thời lượng ≤ 0.015 s; script kiểm độc lập (segments, sha256, layout, mép panel, nền đen) PASS; chạy lại → skip, manifest byte-identical; `--force` → 13 mp4 + manifest byte-identical; titling `--force` → render stale; `framework-check` PASS.
+- Review: ORCHESTRATOR review diff theo contract → AC (plan/stage/cli/config, docs CP1/CP6), chạy lại pytest, skip, ffprobe, blackdetect 13 clip: ACCEPTED, không có blocking finding.
+- Important findings / decisions: P1 `title_source = "titles"`; P2 Be Vietnam Pro Regular; P3 panel title cao thêm trước (tối đa ≈ 358 px, lề khung 0.02 W) rồi mới thu nhỏ; header ngắt kiểu lấp đầy như ảnh mẫu, title ngắt cân; P4 sửa `crf` 22; P5 `output/<id>/`. AC4 chấp nhận (HUMAN LEAD 2026-09-27). Audio không fade. Chuyển cảnh video: HUMAN LEAD chọn dissolve 0.15 s, làm ở **CP10** (mẫu và cách làm: decision record § Chuyển cảnh). Title chữ Hán nền xanh trong nguồn (k13) chỉ là nội dung video, không phải khung đen.
+- Known limitations: decision record § Giới hạn đã biết (viền chroma 1 px ở cạnh lẻ, SAR ≠ 1 chưa xét, title vừa quá 2 dòng có thể ra 3 dòng ngắn, clip `untitled` không render cho tới CP9).
+- PR: chưa (chờ HUMAN LEAD cho phép push/PR).

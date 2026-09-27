@@ -2,8 +2,8 @@
 
 | Metadata | Value |
 |---|---|
-| Status | PROPOSED |
-| Accepted by | — (R1–R11, P1–P5 duyệt cùng APPROVE TASK 2026-09-27, P3 sửa; font, ngắt dòng header, lề khung HUMAN LEAD 2026-09-27 sau phase 1; chờ review) |
+| Status | ACCEPTED |
+| Accepted by | — (R1–R11, P1–P5 duyệt cùng APPROVE TASK 2026-09-27, P3 sửa; font, ngắt dòng header, lề khung HUMAN LEAD 2026-09-27 sau phase 1; sửa P4 `crf` 22; AC4 chấp nhận (cắt thẳng); chuyển cảnh video → CP10; review ACCEPTED) |
 | Checkpoint | CP7 (S2) |
 | Roadmap | `AUTO_SHORT_CHECKPOINT_PLAN.md` §4 CP7 |
 | Task contract | `docs/tasks/CP7-render.md` |
@@ -155,6 +155,12 @@ Hình học R4 giữ mặc định đã duyệt (sai khác số đo ≤ 6 px @10
 - Lưới frame tuyệt đối + đếm frame theo thời gian cộng dồn (R6) thay vì `trim` theo giây từng segment (sai số ±1 frame/segment cộng dồn với clip 22 segment).
 - Dựng panel một frame rồi `overlay` lặp (không `geq`/`drawtext` mỗi frame); ghép trong YUV 4:4:4 + ma trận BT.709 cho panel (tránh lệch màu BT.601 mặc định của swscale).
 - `-fflags/-flags +bitexact`, bỏ metadata nguồn: render lại cùng input/config/máy → mp4 byte-identical (đo: 13/13 + `render_manifest.json`).
+
+## Chuyển cảnh ở điểm nối (HUMAN LEAD 2026-09-27)
+
+- Audio: cắt thẳng, **không fade** (nghe A/B `k04` với fade 15 ms: không khác; bước nhảy tại điểm nối đo trên PCM −66 … −82 dBFS, ngang nhiễu nền).
+- Video: CP7 giữ **cắt thẳng** (AC4 chấp nhận). Đã thử trên `k04` (scratch, không vào `src/`): dissolve 0.25 / 0.5 / 0.15 s (kéo dài mỗi segment vào phần khoảng lặng bị trim, `xfade=fade`, số frame + audio giữ nguyên; trim ngắn hơn độ dài dissolve thì kẹp, trim 1 frame giữ cắt thẳng) và zoom luân phiên 1.12× ("punch-in"). Nhược điểm quan sát: dissolve dài lộ bóng mặt chồng khi người giảng đổi tư thế, chữ Hán burn-in chồng nhau; zoom làm mềm ảnh và đổi khung ở mọi điểm nối.
+- **HUMAN LEAD chọn dissolve 0.15 s (≈ 4 frame) và để làm ở CP10**, không đưa vào CP7. CP10 dùng lại cách kéo dài vào khoảng lặng bị trim nêu trên.
 
 ## Giới hạn đã biết
 
