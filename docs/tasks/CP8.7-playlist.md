@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: IN_PROGRESS
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -83,7 +83,7 @@ Tất cả required verification phải chạy và PASS trước READY.
   - UI: form nhận playlist + hộp hỏi, mục "Bộ kinh" / "Tập lẻ" trên trang chủ, trang bộ kinh (bộ lọc, "Xử lý" / "Chạy tiếp", cập nhật, xóa), "✔ Xong" trên trang tập, làm mới sau khi bấm tải.
   - Docs: CP8.3 record W3, W7, W8, W9, W10 + số đo + giới hạn; roadmap CP9 (phần batch kéo lên); README.
 - Tests: `pytest -q` 588 passed (mới `tests/test_playlist_cp87.py` 23 với yt-dlp giả: phân loại URL, tài liệu + số tập, nhập không tải video, hỏi / `mode`, 422 Mix/WL/LL, lỗi + quá hạn liệt kê → 502, cập nhật thêm tập giữ thứ tự, xóa bộ kinh giữ tập, xử lý tập → xếp hàng + trạng thái, lỗi job đọc được, predicate Xong, Xong theo tick / restart / bản cũ / gợi ý dọn, tải về tick (một Short, zip, phát không tick, `Range`, bỏ tick, bản cũ → tick lại), tập archived, đường dẫn model; sửa kỳ vọng cũ: gợi ý mục 1 và `publish_group` theo Xong, `caches` thêm `exists`). `node scripts/framework-check.mjs` PASS. Chạy thật với playlist 149 tập trên bản sao scratch: AC1–AC4 đạt (số đo `docs/decisions/CP8.3-web-contract.md` § CP8.7); thư mục chính: 25 sha256 không đổi, không có `publish.json` mới.
-- Review: chờ ORCHESTRATOR.
+- Review: ORCHESTRATOR review ACCEPTED (2026-09-27), không finding chặn; chấp nhận 6 lựa chọn khi implement (Mix kèm video → tập lẻ; thêm playlist đã có không liệt kê lại; Tập lẻ ẩn tập thuộc bộ kinh; tick tải dùng sha256 manifest; tính đã đăng khi server nhận request tải; trạng thái failed của job mất khi restart). Nút Copy (bổ sung HUMAN LEAD) `e4a9b4d`. Chờ manual test HUMAN LEAD.
 - Important findings / decisions:
   - `tHtxw6ykUmM` không nằm trong playlist 149 tập (tập 29 ở đó là `nOvMD6aQSt8`, bản 29 phút khác) → AC2 "tập đã có" chạy thật với một bộ kinh giả trong scratch chứa `tHtxw6ykUmM`; không tải tập mới nào.
   - `watch?v=…&list=RD…` (Mix cạnh video) coi là video, không hỏi; `playlist?list=RD…/WL/LL/LM` → 422.
