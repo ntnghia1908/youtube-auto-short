@@ -32,10 +32,18 @@ Theo từng task contract của từng bước.
 
 ## Status
 
-- Main baseline: `0a61637` (CL1.1 merged, PR #12).
-- CL1.2 local status reported by HUMAN LEAD on 2026-09-27: READY at local HEAD `415ae75`, branch `feature/cl1.2-lesson`, worktree `../youtube-auto-short-cl1`.
-- CL1.2 is not yet present on GitHub because its local branch has not been pushed.
-- G6 is intentionally **NOT APPROVED** yet.
+- Main baseline: `38d828f` (CL1.2 merged, PR #15; roadmap PR #13, framework-check fix PR #14).
+
+| Step | Status |
+|---|---|
+| CL1.1 | MERGED — PR #12 |
+| CL1.2 | MERGED — PR #15, merge commit `38d828f` |
+| G6A | PENDING HUMAN LEAD DECISION |
+| G6B | PENDING HUMAN LEAD DECISION |
+| CL1.3 | PENDING — blocked on G6A/G6B + C10 |
+| CL1.4 | PENDING — after CL1.3 |
+
+- G6 is intentionally **NOT APPROVED** yet; no model has been selected.
 - This roadmap is the execution map after CL1.1 and is not itself an approval to implement every future task.
 
 ## Product objective
@@ -201,7 +209,7 @@ Still out of scope for CL1:
 
 ## Recommended implementation sequence
 
-### Step 1 — integrate CL1.2
+### Step 1 — integrate CL1.2 (DONE — PR #15, `38d828f`)
 - Rebase/push local `feature/cl1.2-lesson` from main `0a61637`.
 - Create PR for CL1.2.
 - HUMAN LEAD reviews 20-line sample before approving G6.
@@ -228,7 +236,7 @@ Still out of scope for CL1:
 
 ## Claude bootstrap
 
-Use this as the next session context:
+Historical (written before CL1.2 was merged; superseded by § Status). Kept for the record:
 
 ```
 Bootstrap repo youtube-auto-short.
@@ -261,3 +269,4 @@ prepare the G6A experiment and recommendation, using the existing 20-line real s
 - [2026-09-27] CL1.1 merged in PR #12.
 - [2026-09-27] CL1.2 reported READY locally at `415ae75`.
 - [2026-09-27] G6 not approved; both tested models show meaningful Pinyin errors.
+- [2026-09-27] CL1.2 merged in PR #15 (merge commit `38d828f`). G6A/G6B remain pending.
