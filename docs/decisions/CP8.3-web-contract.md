@@ -3,13 +3,13 @@
 | Metadata | Value |
 |---|---|
 | Status | ACCEPTED |
-| Accepted by | — (W1–W7, P1–P4 duyệt cùng APPROVE TASK 2026-09-27; phase A review ACCEPTED 2026-09-27; phase B review ACCEPTED; manual test HUMAN LEAD đạt 2026-09-27). Sửa đổi HUMAN LEAD 2026-09-27 (CP8.5, APPROVE TASK X1–X4, P1–P4 + bổ sung lọc danh sách tập): W6, W7, W8. Sửa đổi HUMAN LEAD 2026-09-27 (CP8.6, APPROVE TASK S1–S4, P1 7 ngày, P2 10 GB / 3 GB): W4, W7, W9 |
+| Accepted by | — (W1–W7, P1–P4 duyệt cùng APPROVE TASK 2026-09-27; phase A review ACCEPTED 2026-09-27; phase B review ACCEPTED; manual test HUMAN LEAD đạt 2026-09-27). Sửa đổi HUMAN LEAD 2026-09-27 (CP8.5, APPROVE TASK X1–X4, P1–P4 + bổ sung lọc danh sách tập): W6, W7, W8. Sửa đổi HUMAN LEAD 2026-09-27 (CP8.6, APPROVE TASK S1–S4, P1 7 ngày, P2 10 GB / 3 GB): W4, W7, W9. Sửa đổi HUMAN LEAD 2026-09-27 (CP8.7, APPROVE TASK L1–L5, P2 "Xong" tự động + bổ sung tải về = đã đăng): W3, W7, W8, W9, W10 |
 | Checkpoint | CP8.3 (S2) |
 | Roadmap | `AUTO_SHORT_CHECKPOINT_PLAN.md` §4 CP8.3 |
-| Task contract | `docs/tasks/CP8.3-web.md`; sửa đổi CP8.5: `docs/tasks/CP8.5-web-review.md`; sửa đổi CP8.6: `docs/tasks/CP8.6-storage.md` |
+| Task contract | `docs/tasks/CP8.3-web.md`; sửa đổi CP8.5: `docs/tasks/CP8.5-web-review.md`; sửa đổi CP8.6: `docs/tasks/CP8.6-storage.md`; sửa đổi CP8.7: `docs/tasks/CP8.7-playlist.md` |
 | Builds on | `docs/decisions/CP8-pipeline-contract.md` (run, preflight, resume); `docs/decisions/CP7-render-contract.md` (`render_manifest.json`); `docs/decisions/CP8.2-title-override-contract.md` (hàm dùng chung `auto_short.review`, `render_key` + tái dùng từng Short); `docs/decisions/CP2-workspace-contract.md` (manifest, stage status); CP1 §10 (dependency) |
 
-File này là **canonical owner** của web boundary: lệnh `auto-short web`, config `[web]`, auth (mật khẩu + cookie phiên), input URL từ web, job model, API JSON, route phục vụ file và UI; từ CP8.5 cả tên file tải về, xóa tập và artifact `publish.json` (W8); từ CP8.6 tab Bộ nhớ, dọn video nguồn và luật episode *archived* (`archive.json`, W9). Nơi khác chỉ trỏ tới đây. Web không đổi contract stage CP2–CP8.2: pipeline chạy qua `run_pipeline` / `ollama_preflight` (CP8 E7, E8); sửa title qua hàm dùng chung của `auto_short.review` + `run_render` (CP8.2). Thay đổi cần decision gate mới với HUMAN LEAD.
+File này là **canonical owner** của web boundary: lệnh `auto-short web`, config `[web]`, auth (mật khẩu + cookie phiên), input URL từ web, job model, API JSON, route phục vụ file và UI; từ CP8.5 cả tên file tải về, xóa tập và artifact `publish.json` (W8); từ CP8.6 tab Bộ nhớ, dọn video nguồn và luật episode *archived* (`archive.json`, W9); từ CP8.7 bộ kinh (playlist), trạng thái "Xong" suy ra và tải về = đã đăng (W10). Nơi khác chỉ trỏ tới đây. Web không đổi contract stage CP2–CP8.2: pipeline chạy qua `run_pipeline` / `ollama_preflight` (CP8 E7, E8); sửa title qua hàm dùng chung của `auto_short.review` + `run_render` (CP8.2). Thay đổi cần decision gate mới với HUMAN LEAD.
 
 Implementation tham chiếu: `src/auto_short/web/` (`app.py` app factory + route, `auth.py`, `urls.py`, `jobs.py`, `episodes.py`, `server.py`, `static/`), `src/auto_short/cli.py` (`web`), `src/auto_short/config.py` (`WebConfig`).
 
@@ -37,7 +37,8 @@ Implementation tham chiếu: `src/auto_short/web/` (`app.py` app factory + route
 ## W3. Input
 
 - Chỉ URL một video YouTube: `youtube.com/watch?v=ID`, `youtu.be/ID`, `youtube.com/shorts/ID` (host `youtube.com`, `www.youtube.com`, `m.youtube.com`, `youtu.be`; http/https; thiếu scheme = https; không user/password/port). ID 11 ký tự `[A-Za-z0-9_-]`; `v` phải có đúng một giá trị.
-- Bỏ mọi tham số khác (`si`, `t`, `feature`, `list`, `index`, …) và chuẩn hóa thành `https://youtu.be/<ID>`; episode id = video id (CP2 D3). `watch?v=ID&list=…` = một video (bỏ `list`); `youtube.com/playlist?list=…` → 422 "không nhận playlist". Domain khác / không có id / quá 2000 ký tự → 422 với message tiếng Việt.
+- Bỏ mọi tham số khác (`si`, `t`, `feature`, `list`, `index`, …) và chuẩn hóa thành `https://youtu.be/<ID>`; episode id = video id (CP2 D3). Domain khác / không có id / quá 2000 ký tự → 422 với message tiếng Việt.
+- **Sửa đổi CP8.7 (L2)** (trước đó: `watch?v=ID&list=…` = một video, `playlist?list=…` → 422): `youtube.com/playlist?list=<id>` → bộ kinh (W10); `watch?v=ID&list=<id>` → hỏi (`{kind: "ask"}`), gửi lại với `mode: "video"` (tập lẻ) hoặc `"playlist"` (cả bộ kinh). `list` là Mix (`RD…`), Xem sau (`WL`), Đã thích (`LL`, `LM`) → `playlist?list=` 422; cạnh một video (`watch?v=…&list=RD…`) → coi là video. Playlist id `[A-Za-z0-9_-]{10,64}`, đúng một `list`.
 - Không nhận đường dẫn file local từ web (CLI vẫn nhận).
 - Form có ô tuỳ chọn `series` / `episode` (≤ 100 ký tự, trim, rỗng = không đặt) truyền thẳng vào titling (CP6 G2, như `--series` / `--episode`).
 
@@ -79,7 +80,7 @@ Mọi route cần cookie (W2). JSON UTF-8.
 
 | Route | Kết quả |
 |---|---|
-| `POST /api/episodes` `{url, series?, episode?}` | 202 `{created: true, episode_id, job}`; 200 `{created: false, episode_id, job}` (đã có job đang chạy/đợi); 422 `{detail}` (URL / field sai); 503 `{detail: "ollama preflight: …"}` |
+| `POST /api/episodes` `{url, series?, episode?, mode?}` | video: 202 `{kind: "video", created: true, episode_id, job}`; 200 `{kind: "video", created: false, …}` (đã có job đang chạy/đợi); 422 `{detail}` (URL / field sai); 503 `{detail: "ollama preflight: …"}`. CP8.7: playlist → 201 `{kind: "playlist", created: true, playlist_id, title, count}` / 200 `created: false` (đã lưu, không liệt kê lại); 502 liệt kê lỗi / quá 60 s; `watch?v&list` không `mode` → 200 `{kind: "ask", video_id, playlist_id}`; `mode` ∈ `video`, `playlist` |
 | `GET /api/episodes` | `{episodes: [{id, title, stages_done, stages_total, running, failed, shorts, job}]}` — mọi workspace có manifest (mới nhất trước) + job đang đợi chưa có workspace; `job` không kèm `logs` |
 | `GET /api/episodes/{id}` | `{id, title, channel, duration, source_url, stages: [{stage, status, started_at, finished_at, error}], render_status, header, shorts, rendered, zip_url, max_title_chars, titles_error, titles_ignored, job}`; 404 khi không có manifest và không có job |
 | `POST /api/episodes/{id}/shorts/{clip}/title/preview` `{text}` | 200 `{clip_id, title, origin: "manual", display_lines, font_size, panel_height, chars}`; 422 `{detail}` (`ReviewError`: title sai, clip không có, titling chưa `done`); không ghi |
@@ -93,10 +94,15 @@ Mọi route cần cookie (W2). JSON UTF-8.
 | `GET /api/storage` | CP8.6 S1, S2, S4 (W9): `{computed_at, disks: [{label, path, total, used, free}], free, warn, block, warn_bytes, warn_ratio, block_bytes, episodes: [{id, title, state, source_kind, source, shorts_bytes, other, total, shorts, published, render_finished_at, last_activity, archived_at}], totals: {source, shorts, other, episodes}, caches: [{name, path, bytes}], recommendations: [{episode_id, title, rule, age_days?, actions: [{action: archive\|delete, frees}]}], old_days}`; cache ≤ 30 s |
 | `GET /api/storage/status` | CP8.6 S4: `{disks, free, warn, block, warn_bytes, warn_ratio, block_bytes}` (không cache) |
 | `GET /storage` | CP8.6: trang "Bộ nhớ" |
+| `GET /api/playlists` | CP8.7: `{playlists: [{id, title, count, fetched_at, processed, complete, doing}]}` |
+| `GET /api/playlists/{pid}` | CP8.7: `{id, title, url, fetched_at, count, counts: {all, todo, doing, done}, entries: [{index, video_id, title, duration, episode, available, state, stage, error, shorts, published, archived, group, job}]}`; 404 |
+| `POST /api/playlists/{pid}/refresh` | CP8.7: 200 `{playlist_id, count, added: [video_id]}`; 404; 502 |
+| `DELETE /api/playlists/{pid}` | CP8.7: 200 `{deleted}` (chỉ bản ghi danh sách); 404 |
+| `GET /playlists/{pid}` | CP8.7: trang bộ kinh |
 | `DELETE /api/episodes/{id}` | CP8.5 X3: 200 `{deleted: id}`; 404 id sai / traversal / không có; 409 `{detail, job}` khi có job đang chạy/đợi; 500 khi xóa lỗi |
 
 - `job` = các field W5 + `queue_position` (vị trí trong hàng, `null` khi không đợi).
-- `shorts[]` = `{clip_id, status (rendered | skipped), skip_reason, duration, source_start, source_end, title: {text, origin, display_lines}, sha256, video_url, download_url, download_name, deleted, rejected, published, published_stale, published_at, editable, ai_title, alternatives: [{n, title}], override: {title, origin} | null, pending_title: {text, origin} | null, rendering}` (CP8.5 thêm `download_name` … `published_at`; episode thêm `deleted`, `published` (số Short `rendered` đã tick), `publish_error`, `zip_name`; `GET /api/episodes` mỗi item thêm `published`, `publish_group`; CP8.6: episode thêm `archived: {at, freed} | null`, item danh sách thêm `archived: bool`).
+- `shorts[]` = `{clip_id, status (rendered | skipped), skip_reason, duration, source_start, source_end, title: {text, origin, display_lines}, sha256, video_url, download_url, download_name, deleted, rejected, published, published_stale, published_at, editable, ai_title, alternatives: [{n, title}], override: {title, origin} | null, pending_title: {text, origin} | null, rendering}` (CP8.5 thêm `download_name` … `published_at`; episode thêm `deleted`, `published` (số Short `rendered` đã tick), `publish_error`, `zip_name`; `GET /api/episodes` mỗi item thêm `published`, `publish_group`; CP8.6: episode thêm `archived: {at, freed} | null`, item danh sách thêm `archived: bool`; CP8.7: episode + item danh sách thêm `complete` ("Xong", W10), item thêm `in_playlist`).
   - CP8.5: `deleted` = render cuối bỏ qua Short vì `rejected` (file đã xóa); `rejected` = `review.json` đang xóa (khác `deleted` trong lúc job render chạy); `download_name` = tên W8 (`null` khi không có file).
   - `title` = title **trong file** (`render_manifest.json` `title` / `title_origin` / `title_display_lines`; manifest trước CP8.2 không có `title_origin` → `ai`). `video_url` = `/files/<id>/<clip>.mp4?v=<sha256[:12]>` (đổi khi file đổi), `null` khi Short bị bỏ qua.
   - `ai_title`, `alternatives`, `override` từ `list_titles` (CP8.2); `pending_title` = title lần render tới khi khác title trong file (title hoặc origin), `null` nếu giống; `editable` = `list_titles` đọc được (titling `done`, `review.json` hợp lệ), không thì `titles_error` = message và không sửa được. `titles_ignored` = cảnh báo T3 (override bị bỏ qua).
@@ -139,7 +145,8 @@ Quyết định: `docs/tasks/CP8.5-web-review.md` X1–X4, P1–P4. Hàm thuần
 - Tick (`set_published(…, True)`): lấy `candidate_id` + `sha256` của Short trong `render_manifest.json` đã commit; Short không `rendered` → lỗi. Tick lại một Short đã tick = ghi `sha256` / `at` mới ("đánh dấu bản này"). Bỏ tick luôn được (kể cả Short đã xóa); không có tick → file không ghi lại.
 - Trạng thái (`publish_status`): tick chỉ tính khi cùng `(clip_id, candidate_id)` (selection chạy lại → chưa đăng); `stale` ("đã đăng bản cũ") = file hiện tại có `sha256` khác lúc tick (vd sửa title); Short đã xóa giữ tick, không `stale`.
 - Đếm: `published` = số Short `rendered` đã tick (tính cả bản cũ) / `rendered`. Trang tập: Tất cả / Chưa đăng / Đã đăng (lọc phía client, không dựng lại thẻ).
-- Danh sách tập (**bổ sung HUMAN LEAD 2026-09-27**): `publish_group` — y = số Short `rendered` (không tính đã xóa), x = đã tick trong đó. y > 0: `done` ("Đã đăng hết") khi x = y, không thì `todo` ("Còn Short chưa đăng"). y = 0: `todo` chỉ khi còn việc đang chờ — có job `queued`/`running` hoặc pipeline chưa xong (còn stage không `done`, gồm lỗi / bị ngắt); pipeline đã xong mà không có Short (xóa hết / không title) → `null`, chỉ hiện ở "Tất cả".
+- **Sửa đổi CP8.7 — tải về = đã đăng (bổ sung HUMAN LEAD 2026-09-27):** `GET /files/{id}/{clip}.mp4?download=1` (nút "Tải về") tick Short đó với `sha256` của file trong `render_manifest.json` (file được phục vụ, R9 đã kiểm) **trước khi** gửi file; `shorts.zip` ("Tải tất cả") tick mọi Short trong zip; một lần ghi atomic (`mark_downloaded`). Idempotent: Short đã tick đúng file → không đổi (giữ `at`; tải tiếp bằng `Range` không ảnh hưởng); file khác (render lại) → tick lại với `sha256` mới. Phát video (không `download=1`) không bao giờ tick. Bỏ tick vẫn được, chỉ tải lại mới tick lại. Tập archived vẫn tick. Lỗi ghi `publish.json` chỉ log, không chặn tải. Tick tay cùng file cũng idempotent (không đổi `at`). UI làm mới trang tập 1,5–2 s sau khi bấm tải.
+- Danh sách tập (**bổ sung HUMAN LEAD 2026-09-27**): `publish_group` — **sửa đổi CP8.7:** `done` ("Xong — đã đăng hết") = tập "Xong" (W10 L4) và không có job đang chạy/đợi; còn lại `todo` ("Còn Short chưa đăng") khi có Short `rendered` hoặc còn việc đang chờ (job `queued`/`running`, pipeline chưa xong: còn stage không `done`, gồm lỗi / bị ngắt), không thì `null` (chỉ ở "Tất cả"). (CP8.5 cũ: `done` khi x = y, kể cả bản cũ.)
 
 ## W9. Bộ nhớ + dọn video nguồn (sửa đổi CP8.6, HUMAN LEAD 2026-09-27)
 
@@ -150,13 +157,13 @@ Quyết định: `docs/tasks/CP8.6-storage.md` S1–S4, P1 (7 ngày), P2 (10 GB 
 - `/storage` (link "Bộ nhớ" trên thanh trên mọi trang). Ổ: `shutil.disk_usage` của ổ chứa `workspace.dir`, thêm `output_dir` nếu khác ổ (`st_dev`).
 - Mỗi episode có manifest: `source` = tổng `work/<id>/source.*` (lstat), `other` = phần còn lại của `work/<id>/`, `shorts_bytes` = cả `output/<id>/`, `total`; đã đăng / tổng Short `rendered` (W8); trạng thái `processing` (job đang chạy/đợi hoặc stage `running`) > `archived` > `done` (6 stage `done`) > `failed` > `incomplete`. Thư mục `output/<id>` không có workspace → dòng `orphan`. Sắp theo `total` giảm dần.
 - Kích thước = tổng `st_size` file thường (`os.scandir`, không theo symlink, không tính thư mục; không gọi `du`). Cache: `GET /api/storage` tính lại tối đa 30 s một lần (theo tập job đang chạy), bị xóa sau khi dọn / xóa tập qua web.
-- "Cache khác": thư mục `[transcript.whisper] models_dir` (model Whisper).
+- "Cache khác": thư mục `[transcript.whisper] models_dir` (model Whisper). **Sửa CP8.7:** hiển thị đường dẫn tuyệt đối — đường dẫn tương đối tính theo thư mục làm việc của server, **đúng như stage transcript** dùng (`download_root`), kèm `exists`; thư mục không có → UI ghi "chưa có thư mục" và gợi ý đặt `models_dir` tuyệt đối. (Server chạy từ worktree khác với thư mục chứa `models/` sẽ thấy 0 byte / không có — cấu hình, không phải lỗi đo.)
 
 ### Gợi ý (S2)
 
 Mỗi tập tối đa một gợi ý, luật đầu tiên khớp; bỏ qua tập `processing` / `orphan`; mỗi hành động ghi số byte giải phóng; nút "Làm" hỏi xác nhận rồi gọi `POST …/archive` hoặc `DELETE /api/episodes/{id}` (W8).
 
-1. `all_published`: có Short `rendered` và mọi Short `rendered` đã tick → "Dọn video nguồn" (`source`, chỉ khi dọn được: `done`, nguồn YouTube, còn file) + "Xóa cả tập" (`total`).
+1. `all_published`: **sửa CP8.7:** tập "Xong" (W10 L4: render `done`, mọi Short `rendered` đã tick đúng file hiện tại; không còn Short nào cũng tính) → "Dọn video nguồn" (`source`, chỉ khi dọn được: `done`, nguồn YouTube, còn file) + "Xóa cả tập" (`total`). (CP8.6 cũ: mọi Short đã tick, kể cả bản cũ, và có ≥ 1 Short.)
 2. `old_source`: dọn được và `render.finished_at` cũ hơn 7 ngày → "Dọn video nguồn".
 3. `stale_unfinished`: `failed` / `incomplete` và lần hoạt động cuối (max `started_at` / `finished_at` các stage; không có → mtime manifest) cũ hơn 7 ngày → "Xóa cả tập".
 
@@ -174,6 +181,43 @@ Mỗi tập tối đa một gợi ý, luật đầu tiên khớp; bỏ qua tập
 
 - `warn` khi một ổ còn < 10 GB **hoặc** < 10 % trống → banner đỏ trên mọi trang (gọi `GET /api/storage/status` khi mở trang) kèm link tab Bộ nhớ.
 - `block` khi ổ trống ít nhất < 3 GB → `POST /api/episodes` trả 507 "Ổ đĩa server còn dưới 3 GB trống: không nhận video mới. Dọn bớt ở tab Bộ nhớ rồi thử lại." trước preflight (áp cho mọi lần gửi URL cần job mới, kể cả gửi lại tập cũ; gửi trùng khi đã có job vẫn trả 200 job đó). Ngưỡng là hằng trong code (P2), không phải config.
+
+## W10. Bộ kinh (playlist) + "Xong" (sửa đổi CP8.7, HUMAN LEAD 2026-09-27)
+
+Quyết định: `docs/tasks/CP8.7-playlist.md` L1–L5, P1–P4. Code: `auto_short.web.playlists` (liệt kê, lưu, trạng thái), `auto_short.web.urls.classify_url` (L2), `auto_short.review.publish.episode_complete` / `mark_downloaded`. Phần "batch" của CP9 kéo lên ở mức này: người dùng bấm từng tập, không tự xử lý cả playlist.
+
+### Lưu bộ kinh (L1)
+
+- `<workspace.dir>/_playlists/<playlist_id>.json` (tên bắt đầu `_` không bao giờ là episode id, CP2 D3; `iter_manifests` / xóa tập không đụng), ghi atomic, thứ tự key cố định:
+
+```json
+{"schema_version": 1, "playlist_id": "PLOynZc0cJJfDVsh0G1RA3z-I3xSsuEvOp", "title": "Thập Thiện Nghiệp Đạo Kinh [trọn bộ 149 tập] - PS Tịnh Không",
+ "url": "https://www.youtube.com/playlist?list=PLOynZc0cJJfDVsh0G1RA3z-I3xSsuEvOp", "fetched_at": "2026-09-27T10:48:48Z",
+ "entries": [{"index": 1, "video_id": "TjltCyW244Y", "title": "Thập Thiện Nghiệp Đạo Kinh tập 1/149 - Pháp Sư Tịnh Không",
+              "duration": 1770.0, "episode": "1", "available": true}]}
+```
+
+- Liệt kê: `yt-dlp` `extract_flat: "in_playlist"`, `skip_download` (không tải video, không tạo `work/<id>`), `socket_timeout` 30 s, `js_runtimes` như ingest; chạy trong request, trong luồng phụ, chờ tối đa 60 s (L5) → quá hạn / lỗi → 502 message tiếng Việt, không ghi file. `index` = `playlist_index` hoặc thứ tự (1-based); `episode` = nhóm `episode` của CP6 `[titling.header] title_pattern` trên title (vd "tập 1/149" → `"1"`); `available` = false khi id không phải 11 ký tự, title `[Private video]` / `[Deleted video]` / `[Unavailable video]` hoặc `availability` private / cần đăng nhập. Playlist trống → 502, không lưu.
+- Thêm playlist đã lưu → trả bản đã lưu (`created: false`, không liệt kê lại). "Cập nhật danh sách" liệt kê lại và **thay** `entries` + `fetched_at` (thứ tự theo YouTube), trả `added` (video id mới). "Xóa bộ kinh" chỉ xóa file này; tập đã xử lý giữ nguyên (về mục "Tập lẻ").
+- Trạng thái xử lý **không** lưu ở đây: đọc từ `work/<video_id>/manifest.json`, `render_manifest.json`, `publish.json`, `archive.json` (cache ≤ 5 s mỗi tập, xóa khi tick / tải / xóa tập / gửi URL qua web) + job runner (không cache).
+
+### Trạng thái tập trong bộ kinh
+
+`state`: `new` (chưa có workspace) · `queued` / `processing` (job đang đợi / chạy, `stage` = stage hiện tại; hoặc stage `running` trong manifest) · `failed` (stage `failed` trong manifest, hoặc job cuối `failed` / `interrupted` — `error` = message của job / stage, vd lỗi YouTube 403) · `rendered` (render `done`, chưa Xong) · `incomplete` (dở dang, không job) · `complete` ("Xong") · `unavailable`. Kèm `shorts`, `published` (đã tick, tính cả bản cũ), `archived`. Nhóm lọc: `todo` = Chưa xử lý (`new`), `doing` = Đang làm (`queued`, `processing`, `failed`, `rendered`, `incomplete`), `done` = Xong; `unavailable` chỉ ở "Tất cả".
+
+### Xử lý tập (L3)
+
+Nút "Xử lý" (tập `new`) / "Chạy tiếp" (`failed`, `incomplete`) = `POST /api/episodes {url: "https://youtu.be/<video_id>", mode: "video"}`: đúng luồng tập lẻ (W4: preflight Ollama, không job trùng, 409 archived, 507 ổ < 3 GB), header lấy từ title video (CP6). Bấm nhiều tập → xếp hàng FIFO (W5). Tập đã xử lý xong → pipeline skip từng stage (CP8 E3).
+
+### "Xong" (L4, suy ra, không lưu)
+
+Tập **Xong** ⇔ stage `render` `done` **và** mọi Short `rendered` trong `render_manifest.json` (Short đã xóa là `skipped`, không tính) có tick với cùng `(clip_id, candidate_id)` **và** `sha256` = file hiện tại (Short "đã đăng bản cũ" chưa tính). Không còn Short `rendered` (xóa hết) → Xong. Bỏ tick / sửa title (render lại) → hết Xong. Không có nút tick Xong riêng. Áp cho tập trong bộ kinh và tập lẻ (`complete` ở trang tập + danh sách, bộ lọc W8, gợi ý dọn W9 mục 1).
+
+### UI
+
+- Trang chủ: form nhận link video hoặc playlist; link `watch?v&list` → hộp hỏi "Chỉ tập này (tập lẻ)" / "Cả bộ kinh (playlist)"; mục "Bộ kinh" (tên, số tập, đã xử lý x, Xong y, đang làm z); mục "Tập lẻ" = tập không nằm trong bộ kinh đã lưu nào (tập của bộ kinh chỉ hiện ở trang bộ kinh). Tập Xong ghi "Xong ·".
+- `/playlists/<pid>`: tên, số tập, lúc lấy danh sách, link YouTube; "Cập nhật danh sách", "Xóa bộ kinh" (xác nhận: không xóa tập đã xử lý); bộ lọc Tất cả / Chưa xử lý / Đang làm / Xong (đếm); mỗi tập theo thứ tự playlist: số thứ tự, title (link trang tập khi đã có), "tập N", thời lượng, trạng thái (+ stage / lỗi / số Short, đã đăng a/n, đã dọn nguồn), nút "Xử lý" / "Chạy tiếp". Poll 5 s khi có tập đang đợi / chạy.
+- Trang tập: "✔ Xong (đã đăng hết)" trong dòng thông tin.
 
 ## Config `[web]`
 
@@ -231,6 +275,25 @@ CP8.5 (2026-09-27, bản sao scratch của `tHtxw6ykUmM` tập 29 (20 Short) + `
 | `DELETE` tập khi job đang chạy / `nope`, `..%2Fwork`, `%2E%2E`, `..%2F..%2Fetc`, `.hidden`, `a%2Fb` / không cookie | 409 / 404 / 401 |
 | `DELETE /api/episodes/rbjfcffq3dk-7271326dbe93` | 200 trong 0,002 s; `work/<id>` bị xóa (không có output); `input/rbjfCfFq3Dk/rbjfCfFq3Dk.mp4` sha256 `7271326d…` không đổi; biến mất khỏi danh sách; `GET` → 404 |
 
+CP8.7 (2026-09-27, bản sao scratch hardlink của `tHtxw6ykUmM`, playlist thật `PLOynZc0cJJfDVsh0G1RA3z-I3xSsuEvOp`, server worktree `127.0.0.1:8081`, curl):
+
+| Bước | Kết quả |
+|---|---|
+| gửi `https://www.youtube.com/playlist?list=PLOynZc0cJJfDVsh0G1RA3z-I3xSsuEvOp&si=abc` | 201 trong 1,98 s: "Thập Thiện Nghiệp Đạo Kinh [trọn bộ 149 tập] - PS Tịnh Không", 149 tập; thứ tự 1…149, `episode` = số thứ tự cho cả 149, 149 thời lượng (tổng 79,8 h); không thư mục `work/<id>` mới (chỉ `_playlists/`); 149 `new` |
+| `tHtxw6ykUmM` có trong playlist? | không (tập 29 của playlist là `nOvMD6aQSt8`, bản 29 phút khác) → AC2 dùng một bộ kinh giả trong scratch (`_playlists/PLscratchFake29test.json`: `tHtxw6ykUmM` + 2 tập thật) |
+| bộ kinh giả | `tHtxw6ykUmM` `rendered`, 20 Short, đã đăng 0/20; 2 tập `new` |
+| "Xử lý" `tHtxw6ykUmM` | 202 trong 0,04 s; lúc chạy `processing` (stage `preflight`); job pipeline `20/20 Shorts`, 6 stage bỏ qua (dưới 1 s) |
+| phát `k01` / tải `k01`–`k03` (`?download=1`) | phát: không tạo `publish.json`; tải: 3 tick với `sha256` file; `Range: bytes=1000000-` + `download=1` → 206, `at` không đổi |
+| `shorts.zip` (317 MB, 0,58 s) | 20/20 đã đăng → `complete: true`; bộ kinh giả: `complete`, counts `done` 1; danh sách tập `publish_group` `done`; tab Bộ nhớ gợi ý `all_published` (dọn 678 949 583 B / xóa 999 329 250 B) |
+| bỏ tick `k05` / tick lại | `complete` false (19/20) / true |
+| restart server | vẫn `complete: true` |
+| sửa title `k02` | job 26,7 s (1 encoded); `k02` `published_stale`, `complete: false`, bộ kinh `rendered` 20/20 |
+| tải lại `k02` | tick lại `sha256` mới → `complete: true` |
+| "Cập nhật danh sách" (không đổi / sau khi cắt 2 tập cuối khỏi file lưu) | 200 trong 1,85 s `added: []` / `added: ["zbvUXm-ekYY", "Kkzcr0m_gDs"]`, 149 tập đúng thứ tự (148, 149 ở cuối) |
+| `playlist?list=WL` / `LL` / `RDnOvMD6aQSt8` | 422 `không nhận danh sách Mix / Xem sau / Đã thích …` |
+| `watch?v=nOvMD6aQSt8&list=PLOy…&index=29` / + `mode: "playlist"` | 200 `{kind: "ask", …}` / 200 `created: false` (đã lưu) |
+| "Xóa bộ kinh" giả | 200; `tHtxw6ykUmM` còn nguyên, `in_playlist: false` (về Tập lẻ) |
+
 CP8.6 (2026-09-27, bản sao scratch hardlink của `tHtxw6ykUmM` (tập 29) + `rbjfCfFq3Dk` + 2 workspace giả, server worktree `127.0.0.1:8081`, curl):
 
 | Bước | Kết quả |
@@ -263,3 +326,6 @@ Dung lượng trống của ổ thật không tăng trong lần thử vì `sourc
 - CP8.6: kích thước là dung lượng biểu kiến (`st_size`), file hardlink được tính ở mọi nơi nó xuất hiện; `freed` có thể lớn hơn dung lượng trống tăng thêm thật (hardlink, file thưa).
 - CP8.6: tab Bộ nhớ cache 30 s theo server; thay đổi ngoài web (CLI) hiện sau tối đa 30 s. Quét cả `work/` + `output/` + `models/` mỗi lần tính (vài ms cho vài tập; chưa đo với vài trăm tập).
 - CP8.6: chưa có CLI cho dọn nguồn; `auto-short run`/`ingest`/`render` trên tập archived báo lỗi, muốn chạy lại phải xóa workspace.
+- CP8.7: liệt kê playlist gọi YouTube trong request (≈ 2 s cho 149 tập); luồng phụ quá 60 s bị bỏ (chạy nốt nền, không ghi). Không có CLI cho bộ kinh. Một tập nằm trong nhiều bộ kinh hiện ở mọi bộ kinh đó.
+- CP8.7: tick khi tải về dựa trên yêu cầu tới server, không biết trình duyệt có lưu xong file hay không (tải hỏng vẫn tính đã tải); bấm "Tải về" rồi hủy cũng tick.
+- CP8.7: trạng thái `failed` từ job chỉ còn trong bộ nhớ (restart server → trạng thái đọc lại từ manifest).

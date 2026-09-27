@@ -104,6 +104,15 @@ never deleted. The "Đã đăng" checkbox marks Shorts you have uploaded (`work/
 input); a Short re-rendered after ticking shows "đã đăng bản cũ". Filters: Tất cả / Chưa đăng / Đã đăng on the
 episode page, Tất cả / Còn Short chưa đăng / Đã đăng hết on the episode list.
 
+Playlists / bộ kinh (CP8.7): paste a playlist link (`youtube.com/playlist?list=…`) to list every episode of the
+series without downloading anything (a `watch?v=…&list=…` link asks: this episode only, or the whole playlist; Mix
+/ Watch later / Liked lists are refused). The home page shows the bộ kinh and the single episodes ("Tập lẻ"); a
+bộ kinh page lists its episodes in playlist order with their state and a "Xử lý" button per episode (several
+clicks queue one after the other), "Cập nhật danh sách" to pick up new episodes and "Xóa bộ kinh" (the list
+only; processed episodes are kept). An episode is "Xong" automatically once every remaining Short is ticked
+"Đã đăng" for its current file (a Short re-rendered after ticking does not count); downloading a Short ("Tải
+về") or the zip ticks it. Xong episodes are suggested for clean-up in the storage tab.
+
 Storage tab (CP8.6, "Bộ nhớ" in the top bar, `/storage`): free / used space of the drive holding `work/` and
 `output/`, the size of every episode (source video / Shorts / other) and of the Whisper models, and clean-up
 suggestions with a "Làm" button (asks first; nothing is ever deleted automatically): episodes whose Shorts are all

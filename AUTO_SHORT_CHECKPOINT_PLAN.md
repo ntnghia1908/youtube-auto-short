@@ -391,6 +391,8 @@ Scope:
 
 ## CP9 — Human Review + Batch Processing
 
+> Re-plan HUMAN LEAD 2026-09-27: phần batch mức playlist (bộ kinh: liệt kê, bấm xử lý từng tập, xếp hàng, trạng thái "Xong" suy ra khi đăng hết) kéo lên CP8.7 (`docs/tasks/CP8.7-playlist.md`, `docs/decisions/CP8.3-web-contract.md` W10). CP9 còn: tự xử lý hàng loạt, approval state, failed-item isolation đầy đủ.
+
 Scope:
 - candidate review;
 - approve/reject/edit clip;

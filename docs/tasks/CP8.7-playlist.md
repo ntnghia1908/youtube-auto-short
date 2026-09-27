@@ -29,6 +29,7 @@ Người dùng dán URL playlist (một bộ kinh) → web liệt kê mọi tậ
   - Tập lẻ (dán URL video) vẫn như cũ, nằm ở mục "Tập lẻ" trên trang chủ.
   - Tests (yt-dlp giả), chạy thật với playlist 149 tập ở trên (liệt kê, xử lý 1 tập đã có sẵn → skip nhanh, tick xong), HUMAN LEAD thử.
   - Docs: CP8.3 record (W3 nhận playlist, bộ kinh, API, state), README, contract Result; roadmap CP9 (ghi phần batch đã kéo lên).
+  - Bổ sung HUMAN LEAD 2026-09-27 ("Nếu bấm tải xuống thì tự tick đã đăng"): tải một Short (`?download=1`, nút "Tải về") tick "Đã đăng" Short đó với `sha256` của file, phía server, trước khi gửi file (idempotent, tải tiếp bằng `Range` không ảnh hưởng); "Tải tất cả" (zip) tick mọi Short trong zip; phát video không tick; bỏ tick vẫn được (chỉ tải lại mới tick lại); tập archived vẫn tick; "Xong" và gợi ý dọn CP8.6 theo đó. Rule: `docs/decisions/CP8.3-web-contract.md` W8.
 - Out of scope:
   - Tự động xử lý cả playlist / hẹn giờ (người dùng bấm từng tập — đúng yêu cầu tiết kiệm bộ nhớ).
   - Upload YouTube (CP8.4); playlist không phải YouTube; channel URL (chỉ playlist).
@@ -74,8 +75,20 @@ Tất cả required verification phải chạy và PASS trước READY.
 ## Result
 
 - Main changes:
-- Tests:
-- Review:
+  - `web/urls.py`: `classify_url` (L2: playlist / hỏi / video; từ chối `RD…`, `WL`, `LL`, `LM`), `valid_playlist_id`, `playlist_url`.
+  - `web/playlists.py` (mới): `ytdlp_list` (`extract_flat`), `build_document` (số tập theo `title_pattern`, tập không khả dụng), `PlaylistStore` (`_playlists/<id>.json`, thêm / cập nhật / xóa, liệt kê trong luồng phụ tối đa 60 s, trạng thái từng tập từ manifest + job, cache 5 s), `disk_status`.
+  - `review/publish.py`: `episode_complete` (L4), `mark_downloaded` (tải về = đã đăng), tick idempotent (cùng file → không đổi `at`).
+  - `web/app.py`: `POST /api/episodes` nhận `mode` + trả `kind` (video / playlist / ask); `GET /api/playlists`, `GET|DELETE /api/playlists/{pid}`, `POST /api/playlists/{pid}/refresh`, trang `/playlists/{pid}`; tick khi tải (`?download=1`, zip); `in_playlist`; `create_app(playlist_lister=…, playlist_timeout=…)`. `web/episodes.py`: `complete` ở trang tập + danh sách; `publish_group` `done` = Xong. `web/storage.py`: gợi ý mục 1 = Xong; model Whisper hiện đường dẫn tuyệt đối + `exists` (sửa finding CP8.6).
+  - UI: form nhận playlist + hộp hỏi, mục "Bộ kinh" / "Tập lẻ" trên trang chủ, trang bộ kinh (bộ lọc, "Xử lý" / "Chạy tiếp", cập nhật, xóa), "✔ Xong" trên trang tập, làm mới sau khi bấm tải.
+  - Docs: CP8.3 record W3, W7, W8, W9, W10 + số đo + giới hạn; roadmap CP9 (phần batch kéo lên); README.
+- Tests: `pytest -q` 588 passed (mới `tests/test_playlist_cp87.py` 23 với yt-dlp giả: phân loại URL, tài liệu + số tập, nhập không tải video, hỏi / `mode`, 422 Mix/WL/LL, lỗi + quá hạn liệt kê → 502, cập nhật thêm tập giữ thứ tự, xóa bộ kinh giữ tập, xử lý tập → xếp hàng + trạng thái, lỗi job đọc được, predicate Xong, Xong theo tick / restart / bản cũ / gợi ý dọn, tải về tick (một Short, zip, phát không tick, `Range`, bỏ tick, bản cũ → tick lại), tập archived, đường dẫn model; sửa kỳ vọng cũ: gợi ý mục 1 và `publish_group` theo Xong, `caches` thêm `exists`). `node scripts/framework-check.mjs` PASS. Chạy thật với playlist 149 tập trên bản sao scratch: AC1–AC4 đạt (số đo `docs/decisions/CP8.3-web-contract.md` § CP8.7); thư mục chính: 25 sha256 không đổi, không có `publish.json` mới.
+- Review: chờ ORCHESTRATOR.
 - Important findings / decisions:
-- Known limitations:
-- PR:
+  - `tHtxw6ykUmM` không nằm trong playlist 149 tập (tập 29 ở đó là `nOvMD6aQSt8`, bản 29 phút khác) → AC2 "tập đã có" chạy thật với một bộ kinh giả trong scratch chứa `tHtxw6ykUmM`; không tải tập mới nào.
+  - `watch?v=…&list=RD…` (Mix cạnh video) coi là video, không hỏi; `playlist?list=RD…/WL/LL/LM` → 422.
+  - Thêm lại playlist đã lưu không liệt kê lại (dùng "Cập nhật danh sách").
+  - Mục "Tập lẻ" chỉ hiện tập không thuộc bộ kinh đã lưu nào; bộ lọc danh sách tập (CP8.5) đổi "Đã đăng hết" thành "Xong" (bản cũ không tính).
+  - `sha256` tick khi tải = `sha256` trong `render_manifest.json` (không băm lại file mỗi lần tải).
+  - Model Whisper (finding CP8.6): giữ đúng ngữ nghĩa stage transcript (tương đối theo thư mục làm việc của server), hiện đường dẫn tuyệt đối + "chưa có thư mục"; server live cần `[transcript.whisper] models_dir` tuyệt đối trong config của nó (vd `/home/ntnghia/youtube-auto-short/models`) — việc cấu hình, không sửa ở CP8.7.
+- Known limitations: xem `docs/decisions/CP8.3-web-contract.md` § Giới hạn đã biết (CP8.7). Chưa kiểm UI trên trình duyệt thật (manual gate HUMAN LEAD).
+- PR: gộp chung PR CP8–CP8.6 (P4); chưa push.
