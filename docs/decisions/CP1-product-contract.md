@@ -76,14 +76,15 @@ Tham số đo từ ảnh mẫu (576×1280), biểu diễn theo chiều rộng kh
 | Nền | đen `#000000` |
 | Header panel | rộng ≈ 0.79 W, căn giữa; cao ≈ 0.27 W; bo góc; nền vàng `#FEDB00`; chữ đen, sans-serif, căn giữa, tối đa 3 dòng |
 | Video | full width W; cao ≈ 1.12 W (tỉ lệ ≈ 8:9); scale + crop giữa theo chiều ngang (nguồn 4:3 giữ ≈ 67 % bề ngang, nguồn 16:9 giữ ≈ 50 %); giữ nguyên chữ burn-in sẵn có của nguồn |
-| Title panel | ngay dưới video (khe ≈ 0.01 W); rộng ≈ 0.81 W, căn giữa; cao ≈ 0.27 W; bo góc; nền `#FEDB00`; chữ đen, cỡ ≈ 1.5× chữ header, tối đa 2 dòng |
+| Title panel | ngay dưới video (khe ≈ 0.01 W); rộng ≈ 0.81 W, căn giữa; cao ≈ 0.27 W (tối thiểu, xem sửa đổi CP7 dưới); bo góc; nền `#FEDB00`; chữ đen, cỡ ≈ 1.33× chữ header (đo lại ở CP7; trước ghi ≈ 1.5×), tối đa 3 dòng |
 | Khoảng cách header→video | ≈ 0.005 W |
 | Khối nội dung | căn giữa theo chiều dọc trong khung 1080×1920, phần còn lại là nền đen |
 | Lower panel / subtitle | không có (subtitle tắt, §7) |
 
-- Font: sans-serif hỗ trợ đầy đủ dấu tiếng Việt, license mở (OFL), đóng gói trong repo ở CP7; tên font cụ thể chốt ở CP7 bằng so sánh trực quan với ảnh mẫu.
+- Font: **Be Vietnam Pro Regular** (OFL), đóng gói trong package `auto_short.render` — HUMAN LEAD chốt 2026-09-27 ở CP7 bằng so sánh trực quan với ảnh mẫu. Nguồn, sha256, số đo ảnh mẫu và tham số chữ: `docs/decisions/CP7-render-contract.md`.
 - CP7 phải render khớp mẫu này (so sánh trực quan với ảnh mẫu là acceptance); không redesign.
 - Sửa đổi HUMAN LEAD 2026-09-26 (CP6): title panel được phép **3 dòng hoặc thu nhỏ chữ** khi title dài hơn sức chứa 2 dòng ở cỡ chữ mẫu (≈ 34–36 ký tự); "tối đa 2 dòng" ở bảng trên không còn là giới hạn cứng. CP7 quyết cách fit với font đã chốt. Header vẫn tối đa 3 dòng.
+- Sửa đổi HUMAN LEAD 2026-09-27 (CP7, P3): title dài → **panel title cao thêm trước** (giữ cỡ chữ mẫu ở 3 dòng, khối nội dung vẫn căn giữa dọc, lề khung ≥ `min_frame_margin` 0.02 W); không đủ mới thu nhỏ chữ. Chiều cao title panel 0.27 W là tối thiểu, không cố định. Rule fit chi tiết (ngắt dòng header kiểu lấp đầy như ảnh mẫu, title ngắt cân): `docs/decisions/CP7-render-contract.md` R5.
 - Ảnh mẫu lưu tại `docs/decisions/assets/cp1-layout-reference.jpg`.
 
 ## 5. Clip selection boundaries

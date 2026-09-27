@@ -4,12 +4,14 @@ Greenfield project for automatically turning Vietnamese long-form lecture videos
 
 ## Current stage
 
-**CP5 — AI clip selection.** Implemented stages:
+**CP7 — Short composition / renderer.** Implemented stages:
 
 - `ingest`: a YouTube URL or a local video enters a per-episode workspace and gets a `metadata.json` and a resumable `manifest.json`. Conventions: `docs/decisions/CP2-workspace-contract.md`.
 - `transcript`: a Vietnamese `transcript.json` with segment/word timestamps, from the YouTube caption, else a local subtitle, else `faster-whisper`. Contract: `docs/decisions/CP3-transcript-contract.md`.
 - `analysis`: shot/silence detection and deterministic clip candidates (`candidates.json`). Contract: `docs/decisions/CP4-analysis-contract.md`.
 - `selection`: a local Ollama model picks up to 25 non-overlapping, self-contained clips among the candidates (`clips.json` + `selection_log.json`). Contract: `docs/decisions/CP5-selection-contract.md`.
+- `titling`: a deterministic header and an AI title/hook per clip (`titles.json` + `titling_log.json`). Contract: `docs/decisions/CP6-titling-contract.md`.
+- `render`: each titled clip becomes a 1080x1920 Short (black background, yellow header/title panels, centre-cropped source video, silences shortened) in `output/<episode_id>/shorts/` + `render_manifest.json`. Contract: `docs/decisions/CP7-render-contract.md`.
 
 The project adopts the universal parts of AI Development Framework v4 from `ntnghia1908/dang-vu-spring`, while keeping this repository independent.
 
@@ -31,7 +33,7 @@ AI generates title/panel text
 multiple Short outputs
 ```
 
-Ingest, transcription, analysis and AI clip selection are implemented; title generation, composition/render and review are planned.
+Ingest, transcription, analysis, AI clip selection, title generation and composition/render are implemented (subtitles are off, CP1 §7); human review (CP9) and the one-command pipeline (CP8) are planned.
 
 ## Setup
 
@@ -122,6 +124,22 @@ Output: `work/<episode_id>/titles.json` (header + one title per clip, `untitled`
 validation) and `titling_log.json` (prompts, raw responses, every option with its reject reason). Rules and
 schemas: `docs/decisions/CP6-titling-contract.md`; parameters in `[titling]` of `config.example.toml`. A local
 video without a matching title needs `--series`/`--episode` (or `[titling.header]` values).
+
+Render the Shorts (after titling; system `ffmpeg`, no AI):
+
+```bash
+# One ffmpeg run per titled clip: the clip's source range minus the silence trims of its candidate,
+# centre-cropped to 1080x1210, header + title panels drawn with the bundled Be Vietnam Pro font.
+# H.264 crf 18 / AAC 192k; ~5 min for 13 clips (826 s of Shorts) on a 48-thread CPU.
+auto-short render <episode_id>    # options: --force, --config PATH
+```
+
+Output: `output/<episode_id>/shorts/<clip_id>.mp4` and `output/<episode_id>/render_manifest.json` (layout,
+display lines and font size per clip, segments, sha256 of every input and file). Titles come straight from
+`titles.json` (`[render] title_source = "titles"`, i.e. AI titles are auto-approved until the review stage exists);
+`untitled` clips are skipped with a warning. A long title first makes the title panel taller (3 lines), and only
+shrinks the font when that is not enough. Rules and schema: `docs/decisions/CP7-render-contract.md`; parameters in
+`[render]` of `config.example.toml` (`output_dir` and `threads` do not re-run the stage; any other key does).
 
 `python -m auto_short ...` works the same. Re-running `ingest` skips when the source and the
 relevant config are unchanged. Artifacts go to `work/<episode_id>/` (`manifest.json`, `metadata.json`).
