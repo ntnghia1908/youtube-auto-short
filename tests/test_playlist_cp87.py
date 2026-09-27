@@ -473,3 +473,121 @@ def test_storage_page_responsive_markup(tcfg):
         assert 'id="ep-cards"' in c.get("/storage").text
         css = c.get("/static/style.css").text
         assert "@media (max-width: 640px)" in css and "min-height: 40px" in css and ".ep-card" in css
+
+
+# --- per-bộ kinh hashtags (bổ sung HUMAN LEAD 2026-09-27) --------------------------------------------------
+
+def test_playlist_hashtags_store_reset_refresh_and_effect(tcfg):
+    eid = VIDS[1]
+    write_episode(tcfg, eid, titles={"k01": "Đánh mắng trẻ là có tội không?", "k02": "x" * 60})
+    (Path(tcfg.workspace.dir) / eid / "titles.json").write_text(json.dumps(
+        {"header": {"fields": {"series": "Thập Thiện Nghiệp Đạo Kinh"}}}), encoding="utf-8")
+    lister = FakeLister()
+    with client(tcfg, lister=lister) as c:
+        _login(c)
+        c.post("/api/episodes", json={"url": f"https://www.youtube.com/playlist?list={PL}"})
+        d = c.get(f"/api/playlists/{PL}").json()
+        assert d["hashtags_custom"] is False
+        assert d["hashtags"] == ["#ThậpThiệnNghiệpĐạoKinh", "#TịnhKhông", "#LờiPhậtDạy", "#TịnhĐộ", "#NiệmPhật"]
+        # invalid -> 422, nothing stored
+        for bad in (["  "], ["A", "a"], ["t" + str(i) for i in range(16)], "x"):
+            r = c.put(f"/api/playlists/{PL}/hashtags", json={"hashtags": bad})
+            assert r.status_code == 422, bad
+        path = Path(tcfg.workspace.dir) / "_playlists" / f"{PL}.json"
+        assert "hashtags" not in json.loads(path.read_text())
+        r = c.put(f"/api/playlists/{PL}/hashtags", json={"hashtags": ["Thập Thiện", "#Tịnh Độ Tông!", "PhápSư"]})
+        assert r.status_code == 200 and r.json() == {"playlist_id": PL, "hashtags": ["#ThậpThiện", "#TịnhĐộTông",
+                                                                                      "#PhápSư"],
+                                                     "hashtags_custom": True}
+        assert json.loads(path.read_text())["hashtags"] == ["ThậpThiện", "TịnhĐộTông", "PhápSư"]
+        k01, k02 = c.get(f"/api/episodes/{eid}").json()["shorts"]
+        assert k01["copy_text"] == "Đánh mắng trẻ là có tội không? #ThậpThiện #TịnhĐộTông #PhápSư"
+        assert k02["hashtags"] == ["#ThậpThiện", "#TịnhĐộTông", "#PhápSư"]
+        p = c.post(f"/api/playlists/{PL}/hashtags/preview", json={"hashtags": ["A" * 20, "B" * 20]}).json()
+        assert p["title"] == "x" * 60 and p["title_is_real"] is True
+        assert p["copy_text"] == "x" * 60 + " #" + "A" * 20 and p["dropped"] == ["#" + "B" * 20]
+        assert c.post(f"/api/playlists/{PL}/hashtags/preview", json={"hashtags": ["a", "A"]}).status_code == 422
+        # "Cập nhật danh sách" keeps the list
+        c.post(f"/api/playlists/{PL}/refresh")
+        assert json.loads(path.read_text())["hashtags"] == ["ThậpThiện", "TịnhĐộTông", "PhápSư"]
+        # single episodes keep the default
+        write_episode(tcfg, "singleEp001", titles={"k01": "Tiêu đề"})
+        assert c.get("/api/episodes/singleEp001").json()["shorts"][0]["hashtags"] == \
+            ["#TịnhKhông", "#LờiPhậtDạy", "#TịnhĐộ", "#NiệmPhật"]
+        # reset
+        r = c.delete(f"/api/playlists/{PL}/hashtags")
+        assert r.status_code == 200 and r.json()["hashtags_custom"] is False
+        assert "hashtags" not in json.loads(path.read_text())
+        assert c.get(f"/api/episodes/{eid}").json()["shorts"][0]["hashtags"][0] == "#ThậpThiệnNghiệpĐạoKinh"
+        assert c.put("/api/playlists/PLnope000000/hashtags", json={"hashtags": []}).status_code == 404
+        # empty custom list = no hashtags at all
+        c.put(f"/api/playlists/{PL}/hashtags", json={"hashtags": []})
+        assert c.get(f"/api/episodes/{eid}").json()["shorts"][0]["copy_text"] == "Đánh mắng trẻ là có tội không?"
+
+
+def test_episode_in_two_playlists_uses_first_by_id(tcfg):
+    eid = VIDS[1]
+    write_episode(tcfg, eid, titles={"k01": "Tiêu đề"})
+    with client(tcfg) as c:
+        _login(c)
+        root = c.app.state.playlists.root
+        root.mkdir(parents=True)
+        for pid, tags in (("PLbbbbbbbbbbbb", ["Hai"]), ("PLaaaaaaaaaaaa", ["Một"]), ("PLcccccccccccc", None)):
+            doc = {"schema_version": 1, "playlist_id": pid, "title": pid, "url": "u", "fetched_at": "x",
+                   "entries": [{"index": 1, "video_id": eid, "title": "t", "duration": 1.0, "episode": "1",
+                                "available": True}]}
+            if tags is not None:
+                doc["hashtags"] = tags
+            (root / f"{pid}.json").write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+        assert c.get(f"/api/episodes/{eid}").json()["shorts"][0]["hashtags"] == ["#Một"]
+        js = c.get("/static/app.js").text
+        assert "hashtags/preview" in js and "Khôi phục mặc định" in c.get(f"/playlists/{PL}").text
+
+
+def test_playlist_hashtags_saved_during_refresh_survive(tcfg):
+    """H5: a list saved while "Cập nhật danh sách" is listing is re-read under the lock, not overwritten."""
+    holder = {}
+
+    class SavingLister(FakeLister):
+        def __call__(self, url, config):
+            if len(self.calls) == 1:  # the refresh listing: the user saves meanwhile
+                holder["store"].set_hashtags(PL, ["Mới"])
+            return super().__call__(url, config)
+
+    with client(tcfg, lister=SavingLister()) as c:
+        _login(c)
+        holder["store"] = c.app.state.playlists
+        c.post("/api/episodes", json={"url": f"https://www.youtube.com/playlist?list={PL}"})
+        assert c.post(f"/api/playlists/{PL}/refresh").status_code == 200
+        path = Path(tcfg.workspace.dir) / "_playlists" / f"{PL}.json"
+        assert json.loads(path.read_text())["hashtags"] == ["Mới"]
+
+
+def test_playlist_hashtags_delete_playlist_auth_body_and_files(tcfg):
+    eid = VIDS[1]
+    write_episode(tcfg, eid, titles={"k01": "Tiêu đề"})
+    with client(tcfg) as c:
+        assert c.put(f"/api/playlists/{PL}/hashtags", json={"hashtags": []}).status_code == 401
+        assert c.post(f"/api/playlists/{PL}/hashtags/preview", json={"hashtags": []}).status_code == 401
+        _login(c)
+        c.post("/api/episodes", json={"url": f"https://www.youtube.com/playlist?list={PL}"})
+        for bad in ({"hashtags": [1]}, {"hashtags": None}, {}, {"hashtags": ["a"] * 101}):
+            assert c.put(f"/api/playlists/{PL}/hashtags", json=bad).status_code == 422, bad
+        before = {p: p.read_bytes() for p in Path(tcfg.workspace.dir, eid).rglob("*") if p.is_file()}
+        assert c.put(f"/api/playlists/{PL}/hashtags", json={"hashtags": ["Riêng"]}).status_code == 200
+        assert c.get(f"/api/episodes/{eid}").json()["shorts"][0]["copy_text"] == "Tiêu đề #Riêng"
+        after = {p: p.read_bytes() for p in Path(tcfg.workspace.dir, eid).rglob("*") if p.is_file()}
+        assert after == before  # AC8: nothing in the episode workspace changes
+        # a hand-edited list of the wrong type -> default
+        path = Path(tcfg.workspace.dir) / "_playlists" / f"{PL}.json"
+        doc = json.loads(path.read_text())
+        path.write_text(json.dumps({**doc, "hashtags": [1, 2]}), encoding="utf-8")
+        assert c.get(f"/api/episodes/{eid}").json()["shorts"][0]["hashtags"] == \
+            ["#TịnhKhông", "#LờiPhậtDạy", "#TịnhĐộ", "#NiệmPhật"]
+        assert c.get(f"/api/playlists/{PL}").json()["hashtags_custom"] is False
+        path.write_text(json.dumps(doc | {"hashtags": ["Riêng"]}), encoding="utf-8")
+        # "Xóa bộ kinh" removes the list with the file -> default again
+        assert c.delete(f"/api/playlists/{PL}").status_code == 200
+        assert c.get(f"/api/episodes/{eid}").json()["shorts"][0]["copy_text"] == \
+            "Tiêu đề #TịnhKhông #LờiPhậtDạy #TịnhĐộ #NiệmPhật"
+        assert c.delete(f"/api/playlists/{PL}/hashtags").status_code == 404

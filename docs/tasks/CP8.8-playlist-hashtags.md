@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: IN_PROGRESS (automated verification PASS; chờ manual test HUMAN LEAD)
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -82,9 +82,10 @@ Chạm public API contract (endpoint mới) — manual test là gate trước in
 
 ## Result
 
-- Main changes:
-- Tests:
-- Review:
-- Important findings / decisions:
-- Known limitations:
-- PR:
+- Main changes: `auto_short.web.playlists` (`normalize_hashtags`, `custom_hashtags`, `PlaylistStore.set_hashtags` / `hashtags_for` / `effective_hashtags` / `sample_title` / `preview`; `refresh` giữ `hashtags`), `web/app.py` (PUT / DELETE / preview), `web/episodes.py` (`episode_view(hashtags=)`), `static/playlist.html` + `app.js` + `style.css` (khung hashtag). Xuất phát từ `wip/playlist-hashtags` (`fced010`), review lại theo H1–H7; sửa khi review: (1) "Cập nhật danh sách" đọc lại `hashtags` dưới lock ngay trước khi ghi (trước đây lấy từ bản đọc trước lúc gọi YouTube → mất danh sách lưu trong lúc liệt kê); (2) trường `hashtags` chỉnh tay sai kiểu → coi như mặc định; (3) `DELETE …/hashtags` khi bộ kinh vừa bị xóa → 404 thay vì 500. Docs: CP8.3 record (W6, W7, W10 L1, Config `[web]`), project profile, README, plan (CP8.8, bỏ mục backlog).
+- Tests: `pytest -q` 604 passed (+4: lưu / chuẩn hóa / 422 / reset / preview / refresh giữ danh sách / tập lẻ giữ mặc định / rỗng = chỉ title; tập thuộc hai bộ kinh (H4); lưu trong lúc refresh; 401, body sai kiểu, bộ kinh bị xóa → mặc định, không file nào trong workspace tập đổi, danh sách chỉnh tay sai kiểu). `node scripts/framework-check.mjs` PASS.
+- Chạy thật (scratch: hardlink `7w4nSj3PguI`, `LBt5AKBBFYg` + bản sao bộ kinh "Phật Thuyết Thập Thiện Nghiệp Đạo Kinh" 80 tập, `127.0.0.1:8091`): mặc định `#ThậpThiệnNghiệpĐạoKinh #TịnhKhông #LờiPhậtDạy #TịnhĐộ #NiệmPhật` (copy 94 ký tự, 2 hashtag cuối bị bỏ); preview 3 hashtag → title dài nhất thật (55 ký tự), 85 ký tự, bỏ `#PhậtPhápNhiệmMàuChoMọiNgười`; PUT trùng → 422; PUT `["Thập Thiện", "#Tịnh Không!"]` → cả hai tập copy `… #ThậpThiện #TịnhKhông`, file lưu `["ThậpThiện", "TịnhKhông"]`; DELETE → về mặc định; trang bộ kinh có khung hashtag. Thư mục `work/` chính: 51 sha256 không đổi, file bộ kinh chính không có `hashtags`.
+- Review: ORCHESTRATOR (single-agent) review toàn bộ diff WIP; 3 sửa ở trên.
+- Important findings / decisions: H1–H7, P1–P3 theo đề xuất.
+- Known limitations: web đang chạy (`eab3134`) không biết trường `hashtags`; nếu bấm "Cập nhật danh sách" trên bản cũ sẽ mất danh sách riêng — hết khi web chạy bản mới. UI trên trình duyệt thật / điện thoại: manual gate.
+- PR: chưa push.

@@ -184,7 +184,7 @@ def _titles(config: Config, episode_id: str) -> tuple[dict[str, dict], list[str]
     return {c["clip_id"]: c for c in doc["clips"]}, list(doc["ignored"]), None
 
 
-def episode_view(config: Config, episode_id: str) -> dict | None:
+def episode_view(config: Config, episode_id: str, *, hashtags: list[str] | None = None) -> dict | None:
     """Full episode detail, or None when there is no manifest."""
     ws = Workspace(Path(config.workspace.dir), episode_id)
     try:
@@ -199,7 +199,9 @@ def episode_view(config: Config, episode_id: str) -> dict | None:
     titles, ignored, titles_error = _titles(config, episode_id) if doc else ({}, [], None)
     names = _names(config, episode_id, doc) if doc else {}
     published, publish_error = _publish(config, episode_id, doc) if doc else ({}, None)
-    series, tags = _series(config, episode_id), tuple(config.web.hashtags)
+    # hashtags: the full list of the episode's bộ kinh (custom), else #<series> + [web] hashtags
+    series, tags = (None, tuple(hashtags)) if hashtags is not None else \
+        (_series(config, episode_id), tuple(config.web.hashtags))
     shorts = [v for v in (_short_view(episode_id, s, titles.get(s.get("clip_id")) if not titles_error else None,
                                       name=names.get(s.get("clip_id")), published=published.get(s.get("clip_id")),
                                       series=series, tags=tags)
