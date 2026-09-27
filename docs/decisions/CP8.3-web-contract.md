@@ -3,13 +3,13 @@
 | Metadata | Value |
 |---|---|
 | Status | ACCEPTED |
-| Accepted by | — (W1–W7, P1–P4 duyệt cùng APPROVE TASK 2026-09-27; phase A review ACCEPTED 2026-09-27; phase B review ACCEPTED; manual test HUMAN LEAD đạt 2026-09-27). Sửa đổi HUMAN LEAD 2026-09-27 (CP8.5, APPROVE TASK X1–X4, P1–P4 + bổ sung lọc danh sách tập): W6, W7, W8 |
+| Accepted by | — (W1–W7, P1–P4 duyệt cùng APPROVE TASK 2026-09-27; phase A review ACCEPTED 2026-09-27; phase B review ACCEPTED; manual test HUMAN LEAD đạt 2026-09-27). Sửa đổi HUMAN LEAD 2026-09-27 (CP8.5, APPROVE TASK X1–X4, P1–P4 + bổ sung lọc danh sách tập): W6, W7, W8. Sửa đổi HUMAN LEAD 2026-09-27 (CP8.6, APPROVE TASK S1–S4, P1 7 ngày, P2 10 GB / 3 GB): W4, W7, W9 |
 | Checkpoint | CP8.3 (S2) |
 | Roadmap | `AUTO_SHORT_CHECKPOINT_PLAN.md` §4 CP8.3 |
-| Task contract | `docs/tasks/CP8.3-web.md`; sửa đổi CP8.5: `docs/tasks/CP8.5-web-review.md` |
+| Task contract | `docs/tasks/CP8.3-web.md`; sửa đổi CP8.5: `docs/tasks/CP8.5-web-review.md`; sửa đổi CP8.6: `docs/tasks/CP8.6-storage.md` |
 | Builds on | `docs/decisions/CP8-pipeline-contract.md` (run, preflight, resume); `docs/decisions/CP7-render-contract.md` (`render_manifest.json`); `docs/decisions/CP8.2-title-override-contract.md` (hàm dùng chung `auto_short.review`, `render_key` + tái dùng từng Short); `docs/decisions/CP2-workspace-contract.md` (manifest, stage status); CP1 §10 (dependency) |
 
-File này là **canonical owner** của web boundary: lệnh `auto-short web`, config `[web]`, auth (mật khẩu + cookie phiên), input URL từ web, job model, API JSON, route phục vụ file và UI; từ CP8.5 cả tên file tải về, xóa tập và artifact `publish.json` (W8). Nơi khác chỉ trỏ tới đây. Web không đổi contract stage CP2–CP8.2: pipeline chạy qua `run_pipeline` / `ollama_preflight` (CP8 E7, E8); sửa title qua hàm dùng chung của `auto_short.review` + `run_render` (CP8.2). Thay đổi cần decision gate mới với HUMAN LEAD.
+File này là **canonical owner** của web boundary: lệnh `auto-short web`, config `[web]`, auth (mật khẩu + cookie phiên), input URL từ web, job model, API JSON, route phục vụ file và UI; từ CP8.5 cả tên file tải về, xóa tập và artifact `publish.json` (W8); từ CP8.6 tab Bộ nhớ, dọn video nguồn và luật episode *archived* (`archive.json`, W9). Nơi khác chỉ trỏ tới đây. Web không đổi contract stage CP2–CP8.2: pipeline chạy qua `run_pipeline` / `ollama_preflight` (CP8 E7, E8); sửa title qua hàm dùng chung của `auto_short.review` + `run_render` (CP8.2). Thay đổi cần decision gate mới với HUMAN LEAD.
 
 Implementation tham chiếu: `src/auto_short/web/` (`app.py` app factory + route, `auth.py`, `urls.py`, `jobs.py`, `episodes.py`, `server.py`, `static/`), `src/auto_short/cli.py` (`web`), `src/auto_short/config.py` (`WebConfig`).
 
@@ -43,7 +43,7 @@ Implementation tham chiếu: `src/auto_short/web/` (`app.py` app factory + route
 
 ## W4. Luồng xử lý
 
-- `POST /api/episodes`: parse URL (lỗi → 422, không job) → nếu episode đã có job `queued`/`running` → 200 `created: false` + job đó (không preflight, không job mới) → preflight Ollama (CP8 E8) ngay trong request (lỗi → 503 `ollama preflight: <lý do>`, không job) → tạo job pipeline → 202 `created: true`.
+- `POST /api/episodes`: parse URL (lỗi → 422, không job) → nếu episode đã có job `queued`/`running` → 200 `created: false` + job đó (không preflight, không job mới) → episode archived → 409 (CP8.6 W9) → ổ còn < 3 GB → 507 (CP8.6 W9) → preflight Ollama (CP8 E8) ngay trong request (lỗi → 503 `ollama preflight: <lý do>`, không job) → tạo job pipeline → 202 `created: true`.
 - Job pipeline gọi `run_pipeline(url, config, series, episode, preflight=ollama_preflight, on_stage=…)`: preflight chạy lại khi job bắt đầu (job có thể đã đợi trong hàng). Kết quả: `done` + `summary` `"<rendered>/<clips> Shorts"`; lỗi stage → `failed`, `error = "<stage>: <message>"` (CP8 E4); lỗi preflight → `failed`, `error = "ollama preflight: …"`.
 - Gửi lại URL của episode đã xong / lỗi / bị ngắt → job mới; pipeline tự skip / resume (CP8 E3).
 - Tiến độ: status từng stage đọc từ `manifest.json` (CP2) + stage hiện tại và thời gian từng stage (`on_stage`: `ran` / skip, giây) + log của job. Trang episode poll JSON mỗi 2,5 s khi có job đang chạy/đợi.
@@ -89,10 +89,14 @@ Mọi route cần cookie (W2). JSON UTF-8.
 | `GET /files/{id}/shorts.zip` | zip stream (`ZIP_STORED`, không nén) mọi Short `rendered` theo thứ tự manifest, entry tên W8 (cờ UTF-8); `Content-Disposition` tên `Tập<episode>_Shorts.zip` (CP8.5; trước đó `<id>_shorts.zip` / `<id>_<clip>.mp4`); 404 khi chưa có Short |
 | `POST /api/episodes/{id}/shorts/{clip}/delete` \| `…/restore` | CP8.5 X2: 202 `{changed, job}` (`job` = job `render`, `clip_ids` = [clip]); 409 `{detail, job}` khi có job đang chạy/đợi; 422 `ReviewError` (clip không có, titling chưa `done`), không ghi |
 | `POST /api/episodes/{id}/shorts/{clip}/published` `{value: true\|false}` | CP8.5 X4: 200 `{clip_id, published, stale, at}`; không job, được cả khi job đang chạy; `value` phải là JSON boolean (khác → 422); tick Short không có file → 422 |
+| `POST /api/episodes/{id}/archive` | CP8.6 S3 (W9): 200 `{archived: id, changed, freed, removed}` (`changed: false`, `freed: 0` khi đã dọn); 404 id sai / không có workspace; 409 `{detail, job}` khi có job đang chạy/đợi; 422 nguồn local / render chưa `done` |
+| `GET /api/storage` | CP8.6 S1, S2, S4 (W9): `{computed_at, disks: [{label, path, total, used, free}], free, warn, block, warn_bytes, warn_ratio, block_bytes, episodes: [{id, title, state, source_kind, source, shorts_bytes, other, total, shorts, published, render_finished_at, last_activity, archived_at}], totals: {source, shorts, other, episodes}, caches: [{name, path, bytes}], recommendations: [{episode_id, title, rule, age_days?, actions: [{action: archive\|delete, frees}]}], old_days}`; cache ≤ 30 s |
+| `GET /api/storage/status` | CP8.6 S4: `{disks, free, warn, block, warn_bytes, warn_ratio, block_bytes}` (không cache) |
+| `GET /storage` | CP8.6: trang "Bộ nhớ" |
 | `DELETE /api/episodes/{id}` | CP8.5 X3: 200 `{deleted: id}`; 404 id sai / traversal / không có; 409 `{detail, job}` khi có job đang chạy/đợi; 500 khi xóa lỗi |
 
 - `job` = các field W5 + `queue_position` (vị trí trong hàng, `null` khi không đợi).
-- `shorts[]` = `{clip_id, status (rendered | skipped), skip_reason, duration, source_start, source_end, title: {text, origin, display_lines}, sha256, video_url, download_url, download_name, deleted, rejected, published, published_stale, published_at, editable, ai_title, alternatives: [{n, title}], override: {title, origin} | null, pending_title: {text, origin} | null, rendering}` (CP8.5 thêm `download_name` … `published_at`; episode thêm `deleted`, `published` (số Short `rendered` đã tick), `publish_error`, `zip_name`; `GET /api/episodes` mỗi item thêm `published`, `publish_group`).
+- `shorts[]` = `{clip_id, status (rendered | skipped), skip_reason, duration, source_start, source_end, title: {text, origin, display_lines}, sha256, video_url, download_url, download_name, deleted, rejected, published, published_stale, published_at, editable, ai_title, alternatives: [{n, title}], override: {title, origin} | null, pending_title: {text, origin} | null, rendering}` (CP8.5 thêm `download_name` … `published_at`; episode thêm `deleted`, `published` (số Short `rendered` đã tick), `publish_error`, `zip_name`; `GET /api/episodes` mỗi item thêm `published`, `publish_group`; CP8.6: episode thêm `archived: {at, freed} | null`, item danh sách thêm `archived: bool`).
   - CP8.5: `deleted` = render cuối bỏ qua Short vì `rejected` (file đã xóa); `rejected` = `review.json` đang xóa (khác `deleted` trong lúc job render chạy); `download_name` = tên W8 (`null` khi không có file).
   - `title` = title **trong file** (`render_manifest.json` `title` / `title_origin` / `title_display_lines`; manifest trước CP8.2 không có `title_origin` → `ai`). `video_url` = `/files/<id>/<clip>.mp4?v=<sha256[:12]>` (đổi khi file đổi), `null` khi Short bị bỏ qua.
   - `ai_title`, `alternatives`, `override` từ `list_titles` (CP8.2); `pending_title` = title lần render tới khi khác title trong file (title hoặc origin), `null` nếu giống; `editable` = `list_titles` đọc được (titling `done`, `review.json` hợp lệ), không thì `titles_error` = message và không sửa được. `titles_ignored` = cảnh báo T3 (override bị bỏ qua).
@@ -136,6 +140,40 @@ Quyết định: `docs/tasks/CP8.5-web-review.md` X1–X4, P1–P4. Hàm thuần
 - Trạng thái (`publish_status`): tick chỉ tính khi cùng `(clip_id, candidate_id)` (selection chạy lại → chưa đăng); `stale` ("đã đăng bản cũ") = file hiện tại có `sha256` khác lúc tick (vd sửa title); Short đã xóa giữ tick, không `stale`.
 - Đếm: `published` = số Short `rendered` đã tick (tính cả bản cũ) / `rendered`. Trang tập: Tất cả / Chưa đăng / Đã đăng (lọc phía client, không dựng lại thẻ).
 - Danh sách tập (**bổ sung HUMAN LEAD 2026-09-27**): `publish_group` — y = số Short `rendered` (không tính đã xóa), x = đã tick trong đó. y > 0: `done` ("Đã đăng hết") khi x = y, không thì `todo` ("Còn Short chưa đăng"). y = 0: `todo` chỉ khi còn việc đang chờ — có job `queued`/`running` hoặc pipeline chưa xong (còn stage không `done`, gồm lỗi / bị ngắt); pipeline đã xong mà không có Short (xóa hết / không title) → `null`, chỉ hiện ở "Tất cả".
+
+## W9. Bộ nhớ + dọn video nguồn (sửa đổi CP8.6, HUMAN LEAD 2026-09-27)
+
+Quyết định: `docs/tasks/CP8.6-storage.md` S1–S4, P1 (7 ngày), P2 (10 GB / 3 GB). Code: `auto_short.web.storage` (đo, gợi ý, ngưỡng; stdlib), `auto_short.review.archive` (dọn nguồn, cờ archived). Không có gì bị xóa tự động.
+
+### Tab Bộ nhớ (S1)
+
+- `/storage` (link "Bộ nhớ" trên thanh trên mọi trang). Ổ: `shutil.disk_usage` của ổ chứa `workspace.dir`, thêm `output_dir` nếu khác ổ (`st_dev`).
+- Mỗi episode có manifest: `source` = tổng `work/<id>/source.*` (lstat), `other` = phần còn lại của `work/<id>/`, `shorts_bytes` = cả `output/<id>/`, `total`; đã đăng / tổng Short `rendered` (W8); trạng thái `processing` (job đang chạy/đợi hoặc stage `running`) > `archived` > `done` (6 stage `done`) > `failed` > `incomplete`. Thư mục `output/<id>` không có workspace → dòng `orphan`. Sắp theo `total` giảm dần.
+- Kích thước = tổng `st_size` file thường (`os.scandir`, không theo symlink, không tính thư mục; không gọi `du`). Cache: `GET /api/storage` tính lại tối đa 30 s một lần (theo tập job đang chạy), bị xóa sau khi dọn / xóa tập qua web.
+- "Cache khác": thư mục `[transcript.whisper] models_dir` (model Whisper).
+
+### Gợi ý (S2)
+
+Mỗi tập tối đa một gợi ý, luật đầu tiên khớp; bỏ qua tập `processing` / `orphan`; mỗi hành động ghi số byte giải phóng; nút "Làm" hỏi xác nhận rồi gọi `POST …/archive` hoặc `DELETE /api/episodes/{id}` (W8).
+
+1. `all_published`: có Short `rendered` và mọi Short `rendered` đã tick → "Dọn video nguồn" (`source`, chỉ khi dọn được: `done`, nguồn YouTube, còn file) + "Xóa cả tập" (`total`).
+2. `old_source`: dọn được và `render.finished_at` cũ hơn 7 ngày → "Dọn video nguồn".
+3. `stale_unfinished`: `failed` / `incomplete` và lần hoạt động cuối (max `started_at` / `finished_at` các stage; không có → mtime manifest) cũ hơn 7 ngày → "Xóa cả tập".
+
+"Bây giờ" lấy từ `clock` của app (tiêm được trong test).
+
+### Dọn video nguồn, episode archived (S3)
+
+- `archive_source(id, config)`: chỉ nguồn `youtube` (`source.kind`) có stage `render` `done`, không thì `ReviewError` (422, không xóa gì). Ghi cờ `work/<id>/archive.json` trước (atomic: `{"schema_version": 1, "episode_id", "archived_at": "<UTC ISO>", "removed": [{"path": "source.mp4", "size": 678949583}]}`), rồi xóa `work/<id>/source.*` (file / symlink ngay trong thư mục tập, không theo symlink). Nguồn local nằm ngoài workspace không bao giờ bị xóa. Đã archived → không làm gì (`changed: false`). `manifest.json` không đổi (stage vẫn `done`).
+- **Cờ archived = sự tồn tại của `archive.json`** (quyết định khi implement; tách khỏi `publish.json` vì là trạng thái pipeline, không phải lựa chọn người dùng). File hỏng vẫn tính là archived.
+- Episode archived: vẫn xem / tải / zip / tick "Đã đăng" / xóa Short / xóa tập. Không được: sửa title (`set`, `alternative`, `reset`), khôi phục Short, gửi lại URL → 409 `{"detail": "tập <id>: đã dọn video nguồn; muốn sửa thì xóa tập rồi chạy lại"}`; ngoài web: `ingest` và `render` từ chối trước khi đụng manifest (CP2 D4, CP7 R10), hàm `review` raise `ArchivedError` (CP8.2).
+- Xóa Short trên tập archived (không render được): `reject_archived_clip` ghi `review.json` `rejected` (CP8.2 T7) rồi áp thẳng vào render cuối: entry → `skipped` / `rejected` (các field như CP7 R11), cập nhật `stats`, ghi `render_manifest.json` atomic, xóa mp4, bỏ path khỏi `artifacts` của stage `render`. Trả 200 `{changed, job: null}` (không job). Không khôi phục được.
+- UI: ghi chú "Đã dọn video nguồn …" trên trang tập; ẩn bộ sửa title, nút khôi phục và "Chạy tiếp / chạy lại"; hộp xác nhận xóa Short nói không khôi phục được; danh sách tập ghi "đã dọn video nguồn".
+
+### Cảnh báo ổ đầy (S4)
+
+- `warn` khi một ổ còn < 10 GB **hoặc** < 10 % trống → banner đỏ trên mọi trang (gọi `GET /api/storage/status` khi mở trang) kèm link tab Bộ nhớ.
+- `block` khi ổ trống ít nhất < 3 GB → `POST /api/episodes` trả 507 "Ổ đĩa server còn dưới 3 GB trống: không nhận video mới. Dọn bớt ở tab Bộ nhớ rồi thử lại." trước preflight (áp cho mọi lần gửi URL cần job mới, kể cả gửi lại tập cũ; gửi trùng khi đã có job vẫn trả 200 job đó). Ngưỡng là hằng trong code (P2), không phải config.
 
 ## Config `[web]`
 
@@ -193,6 +231,21 @@ CP8.5 (2026-09-27, bản sao scratch của `tHtxw6ykUmM` tập 29 (20 Short) + `
 | `DELETE` tập khi job đang chạy / `nope`, `..%2Fwork`, `%2E%2E`, `..%2F..%2Fetc`, `.hidden`, `a%2Fb` / không cookie | 409 / 404 / 401 |
 | `DELETE /api/episodes/rbjfcffq3dk-7271326dbe93` | 200 trong 0,002 s; `work/<id>` bị xóa (không có output); `input/rbjfCfFq3Dk/rbjfCfFq3Dk.mp4` sha256 `7271326d…` không đổi; biến mất khỏi danh sách; `GET` → 404 |
 
+CP8.6 (2026-09-27, bản sao scratch hardlink của `tHtxw6ykUmM` (tập 29) + `rbjfCfFq3Dk` + 2 workspace giả, server worktree `127.0.0.1:8081`, curl):
+
+| Bước | Kết quả |
+|---|---|
+| `GET /api/storage` | 200 trong 0,008 s (lần hai trong 30 s: 0,001 s, cache); ổ 105,1 GB / dùng 32,7 GB / trống 67,0 GB = `shutil.disk_usage`; không cảnh báo |
+| so với `du -sb` (`work/<id>` + `output/<id>`) | `tHtxw6ykUmM` 999 325 412 B (nguồn 678 949 583, Short 317 230 528, khác 3 145 301) = `du`; `rbjfCfFq3Dk` 885 861 835 = `du`; tập giả lỗi 5 000 399 = `du` (lệch 0 %); model Whisper 1 621 667 291 B, `du` 1 621 667 654 (lệch < 0,001 %) |
+| gợi ý | tập giả `failed` từ 2026-09-10 → `stale_unfinished` (17 ngày, Xóa cả tập 5,0 MB); tick 20/20 Short tập 29 → (sau khi hết cache 30 s) `all_published`: Dọn video nguồn 678 949 583 B + Xóa cả tập 999 329 250 B |
+| `POST /api/episodes/tHtxw6ykUmM/archive` | 200 trong 0,003 s, `freed` 678 949 583 B (≈ 648 MiB), `removed: ["source.mp4"]`; lần hai `changed: false`; 20/20 mp4 sha256 không đổi; tải 20 Short: sha256 = manifest; zip 20 entry |
+| trên tập archived: sửa title / alternative / reset / khôi phục / gửi lại URL | 409 `tập tHtxw6ykUmM: đã dọn video nguồn; muốn sửa thì xóa tập rồi chạy lại`; không job |
+| trên tập archived: bỏ tick, xóa Short `k20` | 200; xóa Short: `{changed: true, job: null}`, `k20` `skipped`/`rejected`, còn 19 mp4; bảng: `archived`, nguồn 0, 19/19 đã đăng → gợi ý chỉ còn "Xóa cả tập" |
+| `archive` tập giả nguồn local (`input/rbjfCfFq3Dk/rbjfCfFq3Dk.mp4`) / `nope` / `..%2Fwork` / không cookie | 422 `nguồn là file local …` (file nguồn sha256 không đổi) / 404 / 404 / 401 |
+| "Làm" gợi ý 3 (`DELETE` tập giả) | 200 |
+
+Dung lượng trống của ổ thật không tăng trong lần thử vì `source.mp4` bản sao là hardlink của bản trong thư mục chính (bản chính giữ nguyên); `freed` là kích thước file đã xóa.
+
 ## Giới hạn đã biết
 
 - HTTP không mã hóa: mật khẩu và cookie đi dạng rõ trong LAN (HTTPS ngoài scope).
@@ -207,3 +260,6 @@ CP8.5 (2026-09-27, bản sao scratch của `tHtxw6ykUmM` tập 29 (20 Short) + `
 - CP8.5: tên có dấu dựa vào `filename*` (RFC 5987) và thuộc tính `download`; chưa kiểm trên điện thoại thật trong môi trường agent (manual test HUMAN LEAD). Công cụ chỉ hiểu `filename=` (vd `curl -OJ`) lưu tên ASCII không dấu.
 - CP8.5: xóa tập là `rmtree` đồng bộ trong request, không thùng rác; thời gian trên dữ liệu thật chưa đo (bản thử scratch dùng hardlink: 0,01 s cho tập 29 ~950 MB).
 - CP8.5: `publish.json` ghi từ nhiều request được tuần tự hóa bằng một lock trong server; CLI không ghi file này.
+- CP8.6: kích thước là dung lượng biểu kiến (`st_size`), file hardlink được tính ở mọi nơi nó xuất hiện; `freed` có thể lớn hơn dung lượng trống tăng thêm thật (hardlink, file thưa).
+- CP8.6: tab Bộ nhớ cache 30 s theo server; thay đổi ngoài web (CLI) hiện sau tối đa 30 s. Quét cả `work/` + `output/` + `models/` mỗi lần tính (vài ms cho vài tập; chưa đo với vài trăm tập).
+- CP8.6: chưa có CLI cho dọn nguồn; `auto-short run`/`ingest`/`render` trên tập archived báo lỗi, muốn chạy lại phải xóa workspace.

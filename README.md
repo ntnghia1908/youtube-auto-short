@@ -104,6 +104,16 @@ never deleted. The "Đã đăng" checkbox marks Shorts you have uploaded (`work/
 input); a Short re-rendered after ticking shows "đã đăng bản cũ". Filters: Tất cả / Chưa đăng / Đã đăng on the
 episode page, Tất cả / Còn Short chưa đăng / Đã đăng hết on the episode list.
 
+Storage tab (CP8.6, "Bộ nhớ" in the top bar, `/storage`): free / used space of the drive holding `work/` and
+`output/`, the size of every episode (source video / Shorts / other) and of the Whisper models, and clean-up
+suggestions with a "Làm" button (asks first; nothing is ever deleted automatically): episodes whose Shorts are all
+ticked "Đã đăng", renders older than 7 days that still keep their source video, failed / unfinished episodes idle
+for 7 days. "Dọn video nguồn" deletes only the downloaded `work/<id>/source.*` (≈ 650 MB per episode; never a
+local source file) and keeps the Shorts: the episode becomes read-only (`work/<id>/archive.json`) — play,
+download, tick and delete Shorts still work; editing a title, restoring a Short or resubmitting the link is refused
+(delete the episode and run it again instead). A red banner appears on every page below 10 GB (or 10 %) free;
+below 3 GB free new links are refused.
+
 Single stages:
 
 ```bash

@@ -82,7 +82,7 @@ auto-short title <episode_id> --list [--config PATH]
 
 ## Hàm dùng chung (CLI + web CP8.3)
 
-`from auto_short.review import …` — mỗi hàm đọc lại episode từ workspace (không giữ state), yêu cầu titling `done` và `titles.json` khớp `clips.json` (id, `candidate_id`, thứ tự); lỗi → `ReviewError(message)` (thông báo dùng được trực tiếp cho người dùng). Không gọi AI, không render (gọi `auto_short.render.run_render(episode_id, config)` sau).
+`from auto_short.review import …` — mỗi hàm đọc lại episode từ workspace (không giữ state), yêu cầu titling `done` và `titles.json` khớp `clips.json` (id, `candidate_id`, thứ tự); lỗi → `ReviewError(message)` (thông báo dùng được trực tiếp cho người dùng). Không gọi AI, không render (gọi `auto_short.render.run_render(episode_id, config)` sau). **Sửa đổi CP8.6:** episode đã dọn video nguồn → `set_title`, `set_alternative`, `reset_title`, `restore_clip` raise `ArchivedError` (con của `ReviewError`; web 409); `preview_title`, `list_titles`, `reject_clip` vẫn chạy. Canonical: `docs/decisions/CP8.3-web-contract.md` W9.
 
 ```python
 @dataclass(frozen=True)

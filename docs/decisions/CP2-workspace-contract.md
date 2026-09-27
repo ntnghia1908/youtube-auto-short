@@ -41,6 +41,7 @@ Implementation tham chiếu: `src/auto_short/workspace.py`, `src/auto_short/hash
 
 - YouTube: tải bằng `yt-dlp` (Python library) vào `work/<id>/source.<ext>`; format mặc định `bv*+ba/b` (best video + best audio), merge `mp4`. Tải vào `work/<id>/.ingest-tmp/`, chỉ chuyển thành `source.<ext>` sau khi probe OK. Không tải caption (CP3).
 - File local: **không copy**. Manifest ghi absolute path + sha256 + size + mtime.
+- **Sửa đổi CP8.6** (HUMAN LEAD 2026-09-27): episode đã dọn video nguồn (`work/<id>/archive.json`) → `ingest` từ chối (lỗi, manifest không đổi, không tải lại). Canonical: `docs/decisions/CP8.3-web-contract.md` W9.
 
 ## D5. Manifest schema v1
 

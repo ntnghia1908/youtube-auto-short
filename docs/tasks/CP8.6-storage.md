@@ -75,8 +75,19 @@ Thêm thao tác xóa dữ liệu → manual test là gate.
 ## Result
 
 - Main changes:
-- Tests:
-- Review:
+  - `review/archive.py` (S3): `archive_source` (chỉ `source.*` của nguồn YouTube đã render `done`; ghi `archive.json` rồi xóa), `is_archived` / `read_archive`, `ArchivedError` (thông báo contract), `reject_archived_clip` (xóa Short không cần render). Chặn trên tập archived: `set_title` / `set_alternative` / `reset_title` / `restore_clip` (`ArchivedError`), `run_render` và `run_ingest` từ chối trước khi đụng manifest.
+  - `web/storage.py` (S1, S2, S4): `tree_size` (`os.scandir`), `episode_sizes`, `recommend` (thời gian tiêm được), `disk_info` / `warning` (10 GB hoặc 10 %, chặn < 3 GB), `StorageCache` (≤ 30 s).
+  - `web/app.py`: `GET /storage`, `GET /api/storage`, `GET /api/storage/status`, `POST /api/episodes/{id}/archive`; gửi URL: archived → 409, ổ < 3 GB → 507; sửa title / khôi phục archived → 409; xóa Short trên tập archived → áp thẳng, không job; `create_app(disk_usage=…, clock=…)`. `web/episodes.py`: `archived` trong view + danh sách.
+  - UI: trang `storage.html` (thanh ổ, gợi ý + nút "Làm" có xác nhận, bảng từng tập, cache model), link "Bộ nhớ" + banner đỏ trên mọi trang, ghi chú / ẩn chức năng trên tập archived.
+  - Docs: CP8.3 record W4, W7, W9 + số đo + giới hạn; pointer ở CP2 D4, CP7 R10, CP8.2 (hàm dùng chung); project profile; README.
+- Tests: `pytest -q` 563 passed (mới `tests/test_storage_cp86.py` 19: kích thước so `du -sb`, trạng thái, 3 luật gợi ý + ưu tiên với "now" giả, ngưỡng cảnh báo / chặn với disk usage giả, cache 30 s, dọn nguồn + chặn review/render/ingest, nguồn local / render chưa xong, xóa Short trên tập archived, route + 409 + 507). `node scripts/framework-check.mjs` PASS. Chạy thật trên bản sao scratch (hardlink) của tập 29 + `rbjfCfFq3Dk` + 2 workspace giả, server `127.0.0.1:8081`: AC1 (lệch `du -sb` 0 %), AC2 (luật 1 và 3), AC3 (giải phóng 678 949 583 B ≈ 648 MiB, 20 Short sha256 không đổi và tải được, 5 thao tác → 409 đúng thông báo, nguồn local không bị xóa) — số đo ở `docs/decisions/CP8.3-web-contract.md` § CP8.6. Thư mục chính: 26 sha256 (mp4, manifest, video nguồn tập 29, file input local) không đổi trước/sau.
+- Review: chờ ORCHESTRATOR.
 - Important findings / decisions:
-- Known limitations:
-- PR:
+  - Cờ archived = file `work/<id>/archive.json` (không dùng `publish.json`: đây là trạng thái pipeline). File hỏng vẫn coi là archived.
+  - Xóa Short trên tập archived phải bỏ qua stage render (không có nguồn): ghi `review.json` + sửa trực tiếp `render_manifest.json` (entry `skipped`/`rejected`, stats) + xóa mp4; không khôi phục được.
+  - Chặn archived cả ở `ingest` / `render` (CLI) chứ không chỉ web, để `auto-short run` không tải lại và chạy lại AI.
+  - Chặn < 3 GB áp cho mọi lần gửi URL cần job mới (cả gửi lại tập cũ), mã 507; ngưỡng là hằng (P2).
+  - Luật 1 cho tập đã archived chỉ còn "Xóa cả tập".
+  - "Cache khác" đọc `models_dir` của config; lần thử đọc (chỉ quét kích thước) `models/` của thư mục chính.
+- Known limitations: xem `docs/decisions/CP8.3-web-contract.md` § Giới hạn đã biết (CP8.6). Chưa kiểm UI trên trình duyệt thật (manual gate HUMAN LEAD).
+- PR: gộp chung PR CP8–CP8.5 (P3); chưa push.

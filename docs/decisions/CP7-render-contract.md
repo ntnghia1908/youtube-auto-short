@@ -103,6 +103,7 @@ Kiểm trên trạng thái sau commit (CP8.2 T5: file của Short encode lần n
 
 - Yêu cầu `titling` = `done` và `clips.json`, `titles.json`, `candidates.json`, `metadata.json` tồn tại; không thì `failed` + `error`, không file.
 - `inputs` = 4 file trên (relative + sha256) + `review.json` nếu có (CP8.2 T4) + media nguồn (hash cache CP2 D6).
+- **Sửa đổi CP8.6:** episode đã dọn video nguồn (`archive.json`) → `render` từ chối trước khi đụng manifest (không ghi `failed`, render cuối giữ nguyên). Canonical: `docs/decisions/CP8.3-web-contract.md` W9.
 - `config_hash` = mọi key `[render]` trừ `output_dir`, `threads`, cộng `font_sha256`. Đổi config stage khác không chạy lại render; chạy lại titling/selection → render `stale` (D6).
 - `artifacts` = `render_manifest.json` + các mp4 (absolute).
 - CLI `auto-short render <episode_id> [--force] [--config PATH]`; stdout `<episode_id>\t<rendered (<n>/<m> clips)|skipped (up to date)>\t<path render_manifest.json>`; stderr: font + fps + kích thước nguồn, layout mẫu, header (dòng + cỡ), mỗi clip (dòng title, cỡ, cao panel, số segment, thời lượng, thời gian render), tổng, cảnh báo clip bỏ qua; exit code CP2 D8.
