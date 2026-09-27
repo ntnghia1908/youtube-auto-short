@@ -29,3 +29,8 @@ def test_render_config_parsing():
 def test_render_config_invalid(data):
     with pytest.raises(ConfigError, match="render"):
         from_dict({"render": data})
+
+
+def test_render_encode_defaults():
+    cfg = RenderConfig()
+    assert (cfg.crf, cfg.preset, cfg.audio_bitrate) == (22, "medium", "192k")  # P4 as amended 2026-09-27

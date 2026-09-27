@@ -173,7 +173,7 @@ class RenderConfig:
     panel_padding_x: float = 0.03
     panel_padding_y: float = 0.035
     min_font_scale: float = 0.6
-    crf: int = 18
+    crf: int = 22  # P4 amended by HUMAN LEAD 2026-09-27 (was 18)
     preset: str = "medium"
     audio_bitrate: str = "192k"
     # Execution-only settings (not part of the config hash):

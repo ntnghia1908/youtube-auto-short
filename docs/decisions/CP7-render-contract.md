@@ -72,7 +72,7 @@ Khung 1080×1920, nền `#000000`, panel `#FEDB00` (CP1 §4). Mọi tỉ lệ l�
 - Video: `fps=<fps ra>` đưa frame lên lưới tuyệt đối `k / fps`; mỗi segment lấy `n_k` frame liên tiếp từ frame `round(a × fps)`, với `n_k` = hiệu của `round(thời gian ra cộng dồn × fps)` → video lệch audio ≤ nửa frame dù nhiều segment; `select` + `setpts=N/fps/TB`; crop + scale (R4); đệm lên 1080×1920 nền đen.
 - Audio: `asplit` + `atrim` từng segment theo giây tuyệt đối (chính xác tới sample) + `concat`, 48 kHz stereo. Không fade/crossfade (điểm nối nằm trong khoảng lặng, CP4 A8).
 - Panel + chữ: mỗi panel là một frame RGBA (`color` + `geq` alpha bo góc + `drawtext` từng dòng với `fontfile` đóng gói, `textfile`, `expansion=none`, `text_shaping=1`), đổi sang YUV BT.709 rồi `overlay` (lặp frame cuối) lên video trong YUV 4:4:4; cuối cùng `yuv420p`. Đường dẫn trong filter graph được escape hai tầng; graph qua `-filter_complex_script`.
-- Encode (P4): `libx264` `crf` 18, `preset` medium, `yuv420p`, gắn BT.709 tv-range; fps giữ nguồn nếu ≤ 30, ngược lại 30; AAC 192 kb/s 48 kHz stereo; `+faststart`; `-fflags/-flags +bitexact`, bỏ metadata/chapter nguồn. `threads` (thực thi, không vào hash).
+- Encode (P4, **sửa P4** HUMAN LEAD 2026-09-27 sau xem mẫu: `crf` 22 thay 18; đo 60 s video `k03`: crf 18 → 19 MB, 20 → 15 MB, 22 → 11 MB, 23 → 10 MB): `libx264` `crf` 22, `preset` medium, `yuv420p`, gắn BT.709 tv-range; fps giữ nguồn nếu ≤ 30, ngược lại 30; AAC 192 kb/s 48 kHz stereo; `+faststart`; `-fflags/-flags +bitexact`, bỏ metadata/chapter nguồn. `threads` (thực thi, không vào hash).
 - Ghi `.<clip_id>.mp4.part` cùng thư mục, `ffprobe` kiểm (R9), rồi `os.replace`. `ffmpeg` lỗi → `failed`, `error` = `clip <id>: ffmpeg failed: <dòng cuối stderr>`.
 
 ## R7. Font
@@ -113,7 +113,7 @@ Thứ tự key cố định:
             "header_panel": {"x": 113, "y": 55, "w": 853, "h": 292, "radius": 59},
             "video": {"x": 0, "y": 352, "w": 1080, "h": 1210, "crop": {"w": 964, "h": 1080, "x": 238, "y": 0}},
             "title_panel": {"x": 102, "y": 1573, "w": 875, "h": 292, "radius": 59}},
- "encode": {"vcodec": "libx264", "crf": 18, "preset": "medium", "pix_fmt": "yuv420p", "fps": "30000/1001",
+ "encode": {"vcodec": "libx264", "crf": 22, "preset": "medium", "pix_fmt": "yuv420p", "fps": "30000/1001",
             "acodec": "aac", "sample_rate": 48000, "channels": 2, "audio_bitrate": "192k"},
  "header": {"lines": ["HT.Tịnh Không", "Thập Thiện Nghiệp Đạo Kinh (tập 9)"],
             "display_lines": ["HT.Tịnh Không", "Thập Thiện Nghiệp Đạo", "Kinh (tập 9)"], "font_size": 67},

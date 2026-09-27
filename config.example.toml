@@ -130,7 +130,7 @@ line_spacing = 1.05                  # baseline pitch / font size
 panel_padding_x = 0.03               # text inset inside a panel, horizontal
 panel_padding_y = 0.035              # and vertical
 min_font_scale = 0.6                 # text needing a smaller font than this x the reference size fails
-crf = 18                             # libx264 quality (lower = better, larger files)
+crf = 22                             # libx264 quality (lower = better, larger files; 18 ≈ 1.7x size)
 preset = "medium"
 audio_bitrate = "192k"               # AAC 48 kHz stereo
 # Execution-only (not part of the config hash):
