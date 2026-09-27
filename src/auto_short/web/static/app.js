@@ -1,4 +1,4 @@
-/* Auto Short web UI (CP8.3). Plain JS, no build step. */
+/* Auto Short web UI (CP8.3; CP8.5 delete / restore, "Đã đăng", episode delete). Plain JS, no build step. */
 "use strict";
 
 const AutoShort = (() => {
@@ -90,7 +90,28 @@ const AutoShort = (() => {
         btn.textContent = "Bắt đầu";
       }
     });
+    document.querySelectorAll("#ep-filters [data-filter]").forEach((b) => b.addEventListener("click", () => {
+      epFilter = b.dataset.filter;
+      applyEpisodeFilter();
+    }));
     loadEpisodes();
+  }
+
+  // Episode list filter (CP8.5 X4): publish_group from the API ("todo" | "done" | null).
+  let epFilter = "all";
+  let episodeItems = [];
+
+  function applyEpisodeFilter() {
+    const counts = { all: episodeItems.length, todo: 0, done: 0 };
+    for (const e of episodeItems) if (e.publish_group) counts[e.publish_group] += 1;
+    document.querySelectorAll("#ep-filters [data-filter]").forEach((b) => {
+      b.classList.toggle("active", b.dataset.filter === epFilter);
+      b.querySelector(".n").textContent = counts[b.dataset.filter];
+    });
+    $("#ep-filters").hidden = !episodeItems.length;
+    document.querySelectorAll("#episodes li[data-group]").forEach((li) => {
+      li.hidden = epFilter !== "all" && li.dataset.group !== epFilter;
+    });
   }
 
   async function loadEpisodes() {
@@ -100,8 +121,10 @@ const AutoShort = (() => {
       list.replaceChildren(el("li", { class: "error", text: e.message }));
       return;
     }
+    episodeItems = data.episodes;
     if (!data.episodes.length) {
       list.replaceChildren(el("li", { class: "muted", text: "Chưa có video nào." }));
+      applyEpisodeFilter();
       return;
     }
     let active = false;
@@ -112,13 +135,14 @@ const AutoShort = (() => {
         state = e.job.status === "queued" ? "đang đợi" : `đang chạy: ${STAGE_LABELS[e.job.stage] || e.job.stage || ""}`;
       } else if (e.failed) state = `lỗi ở ${STAGE_LABELS[e.failed] || e.failed}`;
       else if (e.running) state = `dừng giữa chừng ở ${STAGE_LABELS[e.running] || e.running}`;
-      else if (e.stages_done === e.stages_total) state = `${e.shorts} Shorts`;
+      else if (e.stages_done === e.stages_total) state = `${e.shorts} Shorts · đã đăng ${e.published || 0}/${e.shorts}`;
       else state = `${e.stages_done}/${e.stages_total} bước`;
-      return el("li", {},
+      return el("li", { "data-group": e.publish_group || "none" },
         el("a", { href: "/episodes/" + encodeURIComponent(e.id) },
           el("span", { class: "ep-name", text: e.title || e.id }),
           el("span", { class: "ep-state muted", text: `${e.id} · ${state}` })));
     }));
+    applyEpisodeFilter();
     if (active) setTimeout(loadEpisodes, 5000);
   }
 
@@ -131,7 +155,33 @@ const AutoShort = (() => {
   function initEpisode() {
     episodeId = decodeURIComponent(location.pathname.split("/").filter(Boolean)[1] || "");
     $("#resubmit").addEventListener("click", resubmit);
+    $("#delete-episode").addEventListener("click", deleteEpisode);
+    document.querySelectorAll("#filters [data-filter]").forEach((b) => b.addEventListener("click", () => {
+      filter = b.dataset.filter;
+      applyFilter();
+    }));
+    $("#show-deleted").addEventListener("click", () => { showDeleted = !showDeleted; applyFilter(); });
     refreshEpisode();
+  }
+
+  let lastData = null;
+
+  async function deleteEpisode() {
+    const d = lastData || {};
+    const name = d.title || episodeId;
+    const ok = confirm(`Xóa toàn bộ tập "${name}" (${episodeId})?\n\n` +
+      "Sẽ xóa video nguồn đã tải, mọi Short và dữ liệu xử lý của tập này. " +
+      "KHÔNG khôi phục được. (Gửi lại link sau đó = chạy lại từ đầu, AI có thể chọn clip / tiêu đề khác.)");
+    if (!ok) return;
+    const btn = $("#delete-episode");
+    btn.disabled = true;
+    try {
+      await api("/api/episodes/" + encodeURIComponent(episodeId), { method: "DELETE" });
+      location.href = "/";
+    } catch (e) {
+      setJobStatus(`Không xóa được tập: ${e.message}`, "error");
+      btn.disabled = false;
+    }
   }
 
   async function resubmit() {
@@ -210,7 +260,12 @@ const AutoShort = (() => {
     const rb = $("#resubmit");
     rb.hidden = !d.source_url || jobActive(job);
     rb.dataset.url = d.source_url || "";
+    const del = $("#delete-episode");
+    del.hidden = !d.stages.length;
+    del.disabled = jobActive(job);
+    $("#delete-note").hidden = !jobActive(job) || !d.stages.length;
 
+    lastData = d;
     renderShorts(d);
     setEditsLocked(jobActive(job));
   }
@@ -220,10 +275,41 @@ const AutoShort = (() => {
   const cards = new Map(); // clip_id -> {key, node}
   let editsLocked = false;
   let maxChars = 60;
+  let filter = "all"; // all | todo | done ("Chưa đăng" / "Đã đăng")
+  let showDeleted = false;
 
   function cardKey(s) {
     return JSON.stringify([s.status, s.sha256, s.title, s.pending_title, s.override, s.rendering, s.editable,
-      s.alternatives.length]);
+      s.alternatives.length, s.deleted, s.rejected, s.published, s.published_stale, s.download_name]);
+  }
+
+  // Filter + "Short đã xóa" toggle only hide / show cards (no rebuild: a playing video keeps playing).
+  function applyFilter() {
+    const shorts = (lastData && lastData.shorts) || [];
+    const live = shorts.filter((s) => !s.deleted);
+    const done = live.filter((s) => s.status === "rendered" && s.published).length;
+    const rendered = live.filter((s) => s.status === "rendered").length;
+    const counts = { all: live.length, todo: rendered - done, done };
+    document.querySelectorAll("#filters [data-filter]").forEach((b) => {
+      b.classList.toggle("active", b.dataset.filter === filter);
+      b.querySelector(".n").textContent = counts[b.dataset.filter];
+    });
+    $("#filters").hidden = !shorts.length;
+    $("#published-count").textContent = rendered ? `Đã đăng ${done}/${rendered}` : "";
+    const deleted = shorts.filter((s) => s.deleted).length;
+    const sd = $("#show-deleted");
+    sd.hidden = !deleted;
+    sd.textContent = showDeleted ? `Ẩn Short đã xóa (${deleted})` : `Hiện Short đã xóa (${deleted})`;
+    for (const s of shorts) {
+      const entry = cards.get(s.clip_id);
+      if (!entry) continue;
+      let visible;
+      if (s.deleted) visible = showDeleted;
+      else if (filter === "todo") visible = s.status === "rendered" && !s.published;
+      else if (filter === "done") visible = s.status === "rendered" && s.published;
+      else visible = true;
+      entry.node.hidden = !visible;
+    }
   }
 
   function renderShorts(d) {
@@ -232,13 +318,14 @@ const AutoShort = (() => {
     $("#shorts-count").textContent = d.shorts.length ? `(${rendered.length})` : "";
     const zip = $("#zip");
     zip.hidden = !d.zip_url;
-    if (d.zip_url) { zip.href = d.zip_url; zip.setAttribute("download", ""); }
+    if (d.zip_url) { zip.href = d.zip_url; zip.setAttribute("download", d.zip_name || ""); }
     $("#header-lines").textContent = d.header ? "Header: " + d.header.join(" / ") : "";
     const notes = [];
     if (d.shorts.length && d.render_status !== "done") {
       notes.push(`Đang hiển thị bản dựng trước (bước Dựng Short: ${STATUS_LABELS[d.render_status] || d.render_status}).`);
     }
     if (d.titles_error) notes.push(`Chưa sửa title được: ${d.titles_error}`);
+    if (d.publish_error) notes.push(`Không đọc được trạng thái "Đã đăng": ${d.publish_error}`);
     for (const w of d.titles_ignored || []) notes.push(w);
     $("#shorts-note").textContent = notes.join(" ");
     $("#shorts-note").hidden = !notes.length;
@@ -255,6 +342,7 @@ const AutoShort = (() => {
       cards.clear();
       for (const s of d.shorts) cards.set(s.clip_id, { key: cardKey(s), node: shortCard(s) });
       grid.replaceChildren(...ids.map((id) => cards.get(id).node));
+      applyFilter();
       return;
     }
     for (const s of d.shorts) {
@@ -264,6 +352,7 @@ const AutoShort = (() => {
       entry.node.replaceWith(node);
       cards.set(s.clip_id, { key, node });
     }
+    applyFilter();
   }
 
   function setEditsLocked(locked) {
@@ -279,10 +368,16 @@ const AutoShort = (() => {
     const media = el("div", { class: "short-media" });
     if (s.status === "rendered") {
       media.append(el("video", { controls: true, preload: "metadata", playsinline: true, src: s.video_url }));
+    } else if (s.deleted) {
+      card.classList.add("deleted");
+      media.append(el("div", { class: "short-missing", text: "Đã xóa (file đã bỏ; khôi phục = dựng lại)" }));
     } else {
       media.append(el("div", { class: "short-missing", text: `Bỏ qua: ${s.skip_reason || s.status}` }));
     }
-    if (s.rendering) media.append(el("div", { class: "rendering-badge", text: "đang render…" }));
+    if (s.rendering) {
+      const busy = s.rejected && !s.deleted ? "đang xóa…" : (!s.rejected && s.deleted ? "đang khôi phục…" : "đang render…");
+      media.append(el("div", { class: "rendering-badge", text: busy }));
+    }
     card.append(media);
     const body = el("div", { class: "short-body" },
       el("div", { class: "short-head" },
@@ -293,11 +388,72 @@ const AutoShort = (() => {
       s.pending_title ? el("p", { class: "pending small", text: s.pending_title.text
         ? `Tiêu đề mới (${TITLE_SOURCE_LABELS[s.pending_title.origin] || s.pending_title.origin}), chưa render: ${s.pending_title.text}`
         : "Sẽ bỏ qua ở lần render tới (không có tiêu đề)" }) : null,
+      s.status === "rendered" || s.published ? publishBox(s) : null,
       el("div", { class: "short-actions" },
-        s.download_url ? el("a", { class: "btn", href: s.download_url, download: `${episodeId}_${s.clip_id}.mp4`, text: "Tải về" }) : null),
-      s.editable ? titleEditor(s) : el("div", { class: "title-edit", hidden: true }));
+        s.download_url ? el("a", { class: "btn", href: s.download_url, download: s.download_name || "", text: "Tải về" }) : null,
+        s.editable ? deleteButton(s) : null),
+      s.editable && !s.deleted ? titleEditor(s) : el("div", { class: "title-edit", hidden: true }));
     card.append(body);
     return card;
+  }
+
+  // "Đã đăng" (X4): user state only, no job, allowed while a job runs; updated in place (no card rebuild).
+  function publishBox(s) {
+    const box = el("div", { class: "publish" });
+    const input = el("input", { type: "checkbox", checked: s.published });
+    input.disabled = s.status !== "rendered" && !s.published;
+    const label = el("label", { class: "publish-label" }, input, " Đã đăng");
+    const stale = el("span", { class: "stale small", hidden: !s.published_stale }, "đã đăng bản cũ ");
+    const renew = el("button", { class: "btn link-dark small", type: "button", text: "đánh dấu bản này" });
+    stale.append(renew);
+    const msg = el("span", { class: "error small", hidden: true });
+    box.append(label, stale, msg);
+    async function send(value) {
+      input.disabled = renew.disabled = true;
+      msg.hidden = true;
+      try {
+        const r = await api(`/api/episodes/${encodeURIComponent(episodeId)}/shorts/${encodeURIComponent(s.clip_id)}/published`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value }),
+        });
+        s.published = r.published; s.published_stale = r.stale; s.published_at = r.at;
+        const entry = cards.get(s.clip_id);
+        if (entry) entry.key = cardKey(s);
+      } catch (e) {
+        msg.textContent = e.message;
+        msg.hidden = false;
+      }
+      input.checked = s.published;
+      stale.hidden = !s.published_stale;
+      input.disabled = s.status !== "rendered" && !s.published;
+      renew.disabled = false;
+      applyFilter();
+    }
+    input.addEventListener("change", () => send(input.checked));
+    renew.addEventListener("click", () => send(true));
+    return box;
+  }
+
+  // Delete (X2, soft: review.json + render job that removes the mp4) / restore (render job re-encodes it).
+  function deleteButton(s) {
+    const restore = s.deleted;
+    const btn = el("button", { class: "btn small needs-idle" + (restore ? "" : " danger"), type: "button",
+      text: restore ? "Khôi phục" : "Xóa Short" });
+    btn.disabled = editsLocked;
+    btn.addEventListener("click", async () => {
+      const title = (s.title && s.title.text) || s.clip_id;
+      if (!restore && !confirm(`Xóa Short ${s.clip_id} "${title}"?\n\nFile video bị xóa ngay để tiết kiệm bộ nhớ; ` +
+        "có thể khôi phục sau (dựng lại khoảng 16–40 giây, giữ tiêu đề).")) return;
+      btn.disabled = true;
+      try {
+        await api(`/api/episodes/${encodeURIComponent(episodeId)}/shorts/${encodeURIComponent(s.clip_id)}/${restore ? "restore" : "delete"}`,
+          { method: "POST" });
+        refreshEpisode();
+      } catch (e) {
+        alert(e.message);
+        btn.disabled = editsLocked;
+      }
+    });
+    return btn;
   }
 
   function titleEditor(s) {

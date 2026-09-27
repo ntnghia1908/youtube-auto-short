@@ -1,4 +1,4 @@
-/* Auto Short web UI (CP8.3) — mobile first. */
+/* Auto Short web UI (CP8.3, CP8.5) — mobile first. */
 :root {
   --bg: #f4f4f2; --card: #fff; --text: #1d1d1b; --muted: #6b6b66; --accent: #d4a800; --accent-bg: #fedb00;
   --ok: #1f7a3a; --err: #b3261e; --busy: #8a6d00; --border: #deded8; --radius: 10px;
@@ -76,6 +76,20 @@ summary { cursor: pointer; color: var(--muted); }
 .title-preview[hidden] { display: none; }
 .preview-msg { margin: 0; }
 .edit-actions { display: flex; flex-wrap: wrap; gap: .4rem; }
+.btn.danger { color: var(--err); border-color: #e8b4b0; }
+.btn.link-dark { background: none; border: none; text-decoration: underline; padding: .1rem .2rem; color: var(--muted); }
+.actions { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+.filters { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin: .4rem 0 .6rem; }
+.filters[hidden] { display: none; }
+.filters .btn.active { background: var(--accent-bg); border-color: var(--accent); font-weight: 700; }
+.short[hidden], .episode-list li[hidden] { display: none; }
+.short.deleted { opacity: .75; }
+.short-actions { display: flex; flex-wrap: wrap; gap: .4rem; }
+.publish { display: flex; flex-wrap: wrap; gap: .3rem .6rem; align-items: center; }
+.publish-label { display: inline-flex; gap: .35rem; align-items: center; margin: 0; font-weight: 600; cursor: pointer; }
+.publish-label input { width: 1.25rem; height: 1.25rem; margin: 0; }
+.stale { color: var(--busy); }
+.stale[hidden] { display: none; }
 @media (max-width: 520px) {
   .shorts-grid { grid-template-columns: 1fr 1fr; gap: .5rem; }
   .row { grid-template-columns: 1fr; }

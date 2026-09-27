@@ -19,6 +19,8 @@
     <ol id="stages" class="stages"></ol>
     <div class="actions">
       <button id="resubmit" class="btn" type="button" hidden>Chạy tiếp / chạy lại (bước đã xong được bỏ qua)</button>
+      <button id="delete-episode" class="btn danger" type="button" hidden>Xóa tập này</button>
+      <span id="delete-note" class="muted small" hidden>Đang có job chạy — đợi xong để xóa.</span>
     </div>
     <details id="log-box">
       <summary>Nhật ký xử lý</summary>
@@ -32,6 +34,13 @@
     </div>
     <p id="header-lines" class="muted small"></p>
     <p id="shorts-note" class="note small" hidden></p>
+    <div id="filters" class="filters" hidden>
+      <button class="btn small" type="button" data-filter="all">Tất cả (<span class="n">0</span>)</button>
+      <button class="btn small" type="button" data-filter="todo">Chưa đăng (<span class="n">0</span>)</button>
+      <button class="btn small" type="button" data-filter="done">Đã đăng (<span class="n">0</span>)</button>
+      <span id="published-count" class="muted small"></span>
+      <button id="show-deleted" class="btn small link-dark" type="button" hidden></button>
+    </div>
     <div id="shorts" class="shorts-grid"></div>
   </section>
 </main>

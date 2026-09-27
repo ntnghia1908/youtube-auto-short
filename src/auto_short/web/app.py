@@ -17,12 +17,13 @@ from urllib.parse import parse_qs, quote
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictBool
 
 from ..config import Config
 from ..pipeline import PIPELINE_STAGES, PreflightError, ollama_preflight, run_pipeline
 from ..render import run_render
-from ..review import ReviewError, TitlePreview, preview_title, reset_title, set_alternative, set_title
+from ..review import (EpisodeNotFound, ReviewError, TitlePreview, content_disposition, delete_episode, preview_title,
+                      reject_clip, reset_title, restore_clip, set_alternative, set_published, set_title)
 from . import episodes as ep
 from .auth import COOKIE_NAME, SessionSigner, load_or_create_secret
 from .jobs import KIND_PIPELINE, KIND_RENDER, JobRunner, pipeline_target, render_target
@@ -46,6 +47,10 @@ class SubmitIn(BaseModel):
 
 class PreviewIn(BaseModel):
     text: str = Field(max_length=1000)
+
+
+class PublishedIn(BaseModel):
+    value: StrictBool  # JSON true / false only
 
 
 class TitleIn(BaseModel):
@@ -106,11 +111,12 @@ class _ZipSink(io.RawIOBase):
         return data
 
 
-def _zip_stream(episode_id: str, files: list[tuple[str, Path]]):
+def _zip_stream(files: list[tuple[str, Path, str]]):
+    """Entries named like the single downloads (X1); non-ASCII names get the zip UTF-8 flag (bit 11)."""
     sink = _ZipSink()
     with zipfile.ZipFile(sink, "w", compression=zipfile.ZIP_STORED) as zf:
-        for clip_id, path in files:
-            info = zipfile.ZipInfo.from_file(path, f"{episode_id}_{clip_id}.mp4")
+        for _clip_id, path, name in files:
+            info = zipfile.ZipInfo.from_file(path, name)
             info.compress_type = zipfile.ZIP_STORED
             with path.open("rb") as src, zf.open(info, "w") as dst:
                 while chunk := src.read(ZIP_CHUNK):
@@ -130,6 +136,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     # Serialises "no active job for the episode?" + review.json write + job submit (W5: no title write while a
     # pipeline / render job of the episode is queued or running).
     submit_lock = threading.Lock()
+    publish_lock = threading.Lock()  # publish.json read-modify-write (no job check: allowed while a job runs)
     signer = SessionSigner(secret if secret is not None else load_or_create_secret(Path(config.workspace.dir)),
                            password, config.web.session_days)
 
@@ -241,6 +248,8 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         for item in items:
             job = runner.latest(item["id"])
             item["job"] = job.to_dict(logs=False) if job else None
+            item.setdefault("published", 0)
+            item["publish_group"] = ep.publish_group(item)
         return {"episodes": items}
 
     @app.post("/api/episodes")
@@ -275,7 +284,8 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             if job is None:
                 return JSONResponse({"detail": "không có episode này"}, status_code=404)
             view = {"id": episode_id, "title": None, "channel": None, "duration": None, "source_url": None,
-                    "stages": [], "header": None, "shorts": [], "rendered": 0, "zip_url": None}
+                    "stages": [], "header": None, "shorts": [], "rendered": 0, "deleted": 0, "published": 0,
+                    "zip_url": None, "zip_name": None}
         view["job"] = _job_view(job)
         if job is not None and job.active and job.kind == KIND_RENDER:
             for short in view["shorts"]:
@@ -323,6 +333,67 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                  f"{preview.origin} {preview.title!r}" if preview else "reset (untitled)", job.id)
         return JSONResponse({"preview": _preview_dict(preview), "job": _job_view(job)}, status_code=202)
 
+    def _review_render(episode_id: str, clip_id: str, action: Callable, what: str) -> JSONResponse:
+        """CP8.5 X2: delete / restore one Short = write review.json + render job, same rules as a title write
+        (409 while a job of the episode is queued/running, all under the submit lock)."""
+        if (bad := _check_clip(episode_id, clip_id)) is not None:
+            return bad
+        with submit_lock:
+            current = runner.latest(episode_id)
+            if current is not None and current.active:
+                return JSONResponse({"detail": "episode đang có job chạy/đợi; thử lại sau khi job xong",
+                                     "job": _job_view(current)}, status_code=409)
+            try:
+                changed = action(episode_id, config, clip_id)
+            except ReviewError as exc:
+                return JSONResponse({"detail": str(exc)}, status_code=422)
+            job, _ = runner.submit(episode_id, KIND_RENDER, render_target(config, render=render),
+                                   clip_ids=[clip_id])
+        log.info("web: %s %s [%s]%s -> render job %s", what, clip_id, episode_id, "" if changed else " (no change)",
+                 job.id)
+        return JSONResponse({"changed": changed, "job": _job_view(job)}, status_code=202)
+
+    @app.post("/api/episodes/{episode_id}/shorts/{clip_id}/delete")
+    def api_short_delete(episode_id: str, clip_id: str):
+        return _review_render(episode_id, clip_id, reject_clip, "delete Short")
+
+    @app.post("/api/episodes/{episode_id}/shorts/{clip_id}/restore")
+    def api_short_restore(episode_id: str, clip_id: str):
+        return _review_render(episode_id, clip_id, restore_clip, "restore Short")
+
+    @app.post("/api/episodes/{episode_id}/shorts/{clip_id}/published")
+    def api_short_published(episode_id: str, clip_id: str, body: PublishedIn):
+        """X4: tick / untick "Đã đăng" — user state only: no job, allowed while a job runs, render not stale."""
+        if (bad := _check_clip(episode_id, clip_id)) is not None:
+            return bad
+        with publish_lock:
+            try:
+                return set_published(episode_id, config, clip_id, body.value)
+            except ReviewError as exc:
+                return JSONResponse({"detail": str(exc)}, status_code=422)
+
+    @app.delete("/api/episodes/{episode_id}")
+    def api_episode_delete(episode_id: str):
+        """X3: delete work/<id>/ and output/<id>/ (cannot be undone); 409 while a job of the episode is
+        queued/running; unknown / invalid id -> 404."""
+        if not ep.valid_episode_id(episode_id):
+            return JSONResponse({"detail": "không có episode này"}, status_code=404)
+        with submit_lock:
+            current = runner.latest(episode_id)
+            if current is not None and current.active:
+                return JSONResponse({"detail": "episode đang có job chạy/đợi; xóa sau khi job xong",
+                                     "job": _job_view(current)}, status_code=409)
+            try:
+                removed = delete_episode(episode_id, config)
+            except EpisodeNotFound:
+                return JSONResponse({"detail": "không có episode này"}, status_code=404)
+            except (ReviewError, OSError) as exc:
+                log.error("web: delete episode %s failed: %s", episode_id, exc)
+                return JSONResponse({"detail": f"không xóa được: {exc}"}, status_code=500)
+            runner.forget(episode_id)
+        log.warning("web: deleted episode %s (%s)", episode_id, ", ".join(str(p) for p in removed))
+        return {"deleted": episode_id}
+
     # --- files -------------------------------------------------------------------------------------
 
     @app.get("/files/{episode_id}/{name}")
@@ -334,19 +405,19 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             if not items:
                 return JSONResponse({"detail": "chưa có Short nào"}, status_code=404)
             return StreamingResponse(
-                _zip_stream(episode_id, items), media_type="application/zip",
-                headers={"Content-Disposition": f'attachment; filename="{episode_id}_shorts.zip"',
+                _zip_stream(items), media_type="application/zip",
+                headers={"Content-Disposition": content_disposition(ep.zip_download_name(config, episode_id)),
                          "Cache-Control": "no-store"})
         clip_id = name[:-4] if name.endswith(".mp4") else ""
         if not ep.valid_clip_id(clip_id):
             return JSONResponse({"detail": "không có file này"}, status_code=404)
-        path = ep.short_file(config, episode_id, clip_id)
-        if path is None:
+        found = ep.short_file(config, episode_id, clip_id)
+        if found is None:
             return JSONResponse({"detail": "không có file này"}, status_code=404)
+        path, download_name = found
         headers = {"Cache-Control": "private, no-cache"}
         if download is not None:
-            return FileResponse(path, media_type="video/mp4", filename=f"{episode_id}_{clip_id}.mp4",
-                                headers=headers)
+            headers["Content-Disposition"] = content_disposition(download_name)
         return FileResponse(path, media_type="video/mp4", headers=headers)
 
     return app

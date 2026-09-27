@@ -1,7 +1,7 @@
 """Render stage (CP7): titling done -> ``<output_dir>/<episode_id>/shorts/<clip_id>.mp4`` + ``render_manifest.json``.
 
-Canonical contract: docs/decisions/CP7-render-contract.md; title overrides (``review.json``) and per-Short reuse
-(``render_key``): docs/decisions/CP8.2-title-override-contract.md.
+Canonical contract: docs/decisions/CP7-render-contract.md; title overrides and deleted Shorts (``review.json``) and
+per-Short reuse (``render_key``): docs/decisions/CP8.2-title-override-contract.md.
 """
 
 from __future__ import annotations
@@ -47,6 +47,7 @@ RENDER_MANIFEST_NAME = "render_manifest.json"
 SHORTS_DIR = "shorts"
 TITLE_ORIGINS = (review_logic.AI, review_logic.MANUAL, review_logic.ALTERNATIVE)
 RENDERED, SKIPPED = "rendered", "skipped"
+UNTITLED, REJECTED = "untitled", "rejected"  # skip_reason (R2; CP8.5 X2)
 PACKAGE_DIR = Path(__file__).resolve().parent
 
 # [render] keys outside the config hash (R10): execution-only.
@@ -189,6 +190,7 @@ class ClipPlan:
     segments: list[tuple[int, int]]
     title: TextFit | None
     layout: plan.Layout | None
+    rejected: bool = False  # deleted in review.json (CP8.5 X2): skipped, no fit
 
 
 def check_inputs(clips_doc: dict, titles_doc: dict, cand_doc: dict) -> None:
@@ -221,13 +223,13 @@ def plan_clips(clips_doc: dict, titles: list[review_logic.ResolvedTitle], cand_d
         except plan.PlanError as exc:
             raise RenderError(str(exc)) from exc
         fit = lay = None
-        if rt.title is not None:
+        if rt.title is not None and not rt.rejected:
             try:
                 fit = fit_clip_title(font, rt.title, cfg, geo)
             except TextError as exc:
                 raise RenderError(f"clip {clip['id']}: {exc}") from exc
             lay = plan.layout(geo, fit.panel_height, src_w, src_h)
-        out.append(ClipPlan(clip, rt.title, rt.origin, segs, fit, lay))
+        out.append(ClipPlan(clip, rt.title, rt.origin, segs, fit, lay, rt.rejected))
     return out
 
 
@@ -290,6 +292,8 @@ def validate_render(doc: dict, clips_doc: dict, cand_doc: dict, out_dir: Path, *
                     or len(s["render_key"]) != 64:
                 raise RenderError(f"clip {s['clip_id']}: invalid title_origin/render_key")
         elif s["status"] == SKIPPED:
+            if s["skip_reason"] not in (UNTITLED, REJECTED):
+                raise RenderError(f"clip {s['clip_id']}: invalid skip_reason {s['skip_reason']!r}")
             if s["file"] is not None or s["dissolves"] is not None or s["render_key"] is not None \
                     or exists_after(f"{SHORTS_DIR}/{s['clip_id']}.mp4"):
                 raise RenderError(f"clip {s['clip_id']}: skipped clip has a file")
@@ -496,8 +500,13 @@ def _render_all(ws: Workspace, cfg: RenderConfig, fpath: Path, font_sha: str, me
                       "source_start": clip["source_start"], "source_end": clip["source_end"],
                       "segments": plan.segments_seconds(cp.segments), "duration": clip["duration"],
                       "dissolves": None, "title_origin": cp.origin, "render_key": None}
+            if cp.rejected:
+                record["skip_reason"] = REJECTED
+                log.info("%s: clip %s skipped: rejected (deleted in review)", STAGE, clip["id"])
+                shorts.append(record)
+                continue
             if cp.title is None:
-                record["skip_reason"] = "untitled"
+                record["skip_reason"] = UNTITLED
                 log.warning("%s: WARNING: clip %s skipped: untitled (no approved title)", STAGE, clip["id"])
                 shorts.append(record)
                 continue
@@ -577,9 +586,13 @@ def _render_all(ws: Workspace, cfg: RenderConfig, fpath: Path, font_sha: str, me
     encoded = len(files.staged)
     log.info("%s: rendered %d/%d clips (%d encoded, %d reused), %.1f s of Shorts in %.1f s", STAGE, st["rendered"],
              st["clips"], encoded, st["rendered"] - encoded, st["seconds"], time.monotonic() - t_all)
-    if st["skipped"]:
-        log.warning("%s: WARNING: %d clip(s) skipped: %s", STAGE, st["skipped"],
-                    ", ".join(f"{s['clip_id']} ({s['skip_reason']})" for s in shorts if s["status"] == SKIPPED))
+    untitled = [s["clip_id"] for s in shorts if s["status"] == SKIPPED and s["skip_reason"] != REJECTED]
+    if untitled:
+        log.warning("%s: WARNING: %d clip(s) skipped: %s", STAGE, len(untitled),
+                    ", ".join(f"{c} ({UNTITLED})" for c in untitled))
+    if st["skipped"] > len(untitled):
+        log.info("%s: %d clip(s) deleted in review (rejected): %s", STAGE, st["skipped"] - len(untitled),
+                 ", ".join(s["clip_id"] for s in shorts if s["skip_reason"] == REJECTED))
     if not rendered:
         log.warning("%s: WARNING: no titled clip, no Short rendered", STAGE)
     return doc

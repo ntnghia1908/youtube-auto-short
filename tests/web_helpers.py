@@ -35,7 +35,8 @@ def write_episode(cfg, episode_id: str, *, clips=("k01", "k02"), title="Kinh Vô
         data = bytes([i + 1]) * (1000 + i) + clip.encode()
         (out / "shorts" / f"{clip}.mp4").write_bytes(data)
         files[clip] = data
-        shorts.append({"clip_id": clip, "status": "rendered", "skip_reason": None, "file": f"shorts/{clip}.mp4",
+        shorts.append({"clip_id": clip, "candidate_id": f"c{i + 1:05d}", "status": "rendered", "skip_reason": None,
+                       "file": f"shorts/{clip}.mp4",
                        "sha256": f"{i:064x}", "title": (titles or {}).get(clip, f"Tiêu đề {clip}"),
                        "title_origin": (origins or {}).get(clip, "ai"),
                        "title_display_lines": [(titles or {}).get(clip, f"Tiêu đề {clip}")],

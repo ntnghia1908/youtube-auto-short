@@ -1,4 +1,5 @@
 import io
+import json
 import threading
 import time
 import zipfile
@@ -211,7 +212,11 @@ def test_unknown_episode_404(wcfg):
 # --- files: Range, download, zip, traversal -----------------------------------------------------------
 
 def test_files_range_download_and_zip(wcfg):
-    files = write_episode(wcfg, VID)
+    # CP8.5 X1: names from titles.json header.fields.episode + the title in the file (? and " dropped)
+    files = write_episode(wcfg, VID, titles={"k01": "Đánh mắng trẻ là có tội không?", "k02": 'Chữ "hiếu" là gì'})
+    (wcfg.workspace.dir / VID / "titles.json").write_text(
+        json.dumps({"header": {"fields": {"episode": "29"}}}), encoding="utf-8")
+    k01, k02 = "Tập29_S01_Đánh mắng trẻ là có tội không.mp4", "Tập29_S02_Chữ hiếu là gì.mp4"
     with make_client(wcfg) as c:
         login(c)
         r = c.get(f"/files/{VID}/k01.mp4")
@@ -225,16 +230,21 @@ def test_files_range_download_and_zip(wcfg):
 
         r = c.get(f"/files/{VID}/k02.mp4?download=1")
         assert r.status_code == 200 and r.content == files["k02"]
-        assert r.headers["content-disposition"] == f'attachment; filename="{VID}_k02.mp4"'
+        assert r.headers["content-disposition"] == \
+            "attachment; filename=\"Tap29_S02_Chu hieu la gi.mp4\"; filename*=UTF-8''" \
+            "T%E1%BA%ADp29_S02_Ch%E1%BB%AF%20hi%E1%BA%BFu%20l%C3%A0%20g%C3%AC.mp4"
+        assert c.get(f"/api/episodes/{VID}").json()["shorts"][1]["download_name"] == k02
 
         r = c.get(f"/files/{VID}/shorts.zip")
         assert r.status_code == 200 and r.headers["content-type"] == "application/zip"
-        assert r.headers["content-disposition"] == f'attachment; filename="{VID}_shorts.zip"'
+        assert r.headers["content-disposition"] == \
+            "attachment; filename=\"Tap29_Shorts.zip\"; filename*=UTF-8''T%E1%BA%ADp29_Shorts.zip"
         with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
             assert zf.testzip() is None
-            assert zf.namelist() == [f"{VID}_k01.mp4", f"{VID}_k02.mp4"]
+            assert zf.namelist() == [k01, k02]
             assert all(i.compress_type == zipfile.ZIP_STORED for i in zf.infolist())
-            assert zf.read(f"{VID}_k02.mp4") == files["k02"]
+            assert all(i.flag_bits & 0x800 for i in zf.infolist())  # UTF-8 names
+            assert zf.read(k02) == files["k02"]
 
 
 def test_files_rejects_unknown_and_traversal(wcfg, tmp_path):
@@ -254,7 +264,8 @@ def test_files_rejects_unknown_and_traversal(wcfg, tmp_path):
             assert r.status_code == 404, path
             assert b"secret" not in r.content
         with zipfile.ZipFile(io.BytesIO(c.get(f"/files/{VID}/shorts.zip").content)) as zf:
-            assert zf.namelist() == [f"{VID}_k01.mp4", f"{VID}_k02.mp4"]
+            # no titles.json: <episode> = episode id; numbers = position among the 5 manifest entries
+            assert zf.namelist() == [f"Tập{VID}_S01_Tiêu đề k01.mp4", f"Tập{VID}_S02_Tiêu đề k02.mp4"]
         d = c.get(f"/api/episodes/{VID}").json()
         skipped = next(s for s in d["shorts"] if s["clip_id"] == "k11")
         assert skipped["video_url"] is None and skipped["skip_reason"] == "untitled"

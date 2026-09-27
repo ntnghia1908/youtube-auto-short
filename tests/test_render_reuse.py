@@ -14,7 +14,7 @@ from auto_short.cli import main
 from auto_short.config import Config, RenderConfig, WorkspaceConfig
 from auto_short.hashing import sha256_file
 from auto_short.render import RenderError, plan, run_render
-from auto_short.review import reset_title, set_alternative, set_title
+from auto_short.review import reject_clip, reset_title, restore_clip, set_alternative, set_title
 from render_helpers import CANDIDATES, CLIPS, EID, TITLES, make_render_episode, make_source, write_docs
 
 pytestmark = pytest.mark.usefixtures("_ffmpeg")
@@ -205,3 +205,38 @@ def test_cli_title_render(ws, rcfg, tmp_path, capsys):
     assert lines[0] == f"{EID}\tk02\tmanual\tMột câu khác"
     assert lines[2] == f"{EID}\trendered (2/2 clips)\t{_out(rcfg) / 'render_manifest.json'}"
     assert "render: clip k01: reuse" in out.err and "(1 encoded, 1 reused)" in out.err
+
+
+def test_rejected_short_skipped_removed_and_restored(ws, rcfg, caplog):
+    """CP8.5 X2: a deleted Short is skipped (skip_reason rejected), its mp4 removed at the commit, the others
+    reused; restore re-encodes it byte-identical (with its title override)."""
+    caplog.set_level(logging.INFO, logger="auto_short")
+    set_title(EID, rcfg, "k01", NEW)
+    _render(rcfg)
+    base, base_doc = _shas(rcfg), _rm(rcfg)
+    reject_clip(EID, rcfg, "k01")
+    r, enc = _render(rcfg)
+    assert r.ran and enc == [] and (r.rendered, r.clips, r.encoded, r.reused) == (1, 2, 0, 1)
+    k01, k02 = _rm(rcfg)["shorts"]
+    assert (k01["status"], k01["skip_reason"], k01["file"], k01["render_key"], k01["dissolves"]) == \
+        ("skipped", "rejected", None, None, None)
+    assert (k01["title"], k01["title_origin"]) == (NEW, "manual")  # the title it will be restored with
+    assert k02 == base_doc["shorts"][1] and _shas(rcfg) == {"k02.mp4": base["k02.mp4"]}
+    assert _rm(rcfg)["stats"]["skipped"] == 1
+    assert "clip k01 skipped: rejected" in caplog.text and "WARNING: 1 clip(s) skipped" not in caplog.text
+    assert not list(_out(rcfg).glob("shorts/.*"))
+    r, enc = _render(rcfg)
+    assert not r.ran  # up to date
+    restore_clip(EID, rcfg, "k01")
+    r, enc = _render(rcfg)
+    assert enc == ["k01"] and _shas(rcfg) == base and _rm(rcfg) == base_doc
+
+
+def test_rejected_untitled_and_every_short_deleted(ws, rcfg):
+    write_docs(ws, titles={"k01": None, "k02": TITLES["k02"]})
+    reject_clip(EID, rcfg, "k01")
+    reject_clip(EID, rcfg, "k02")
+    r, enc = _render(rcfg)
+    assert r.ran and enc == [] and r.rendered == 0
+    assert [s["skip_reason"] for s in _rm(rcfg)["shorts"]] == ["rejected", "rejected"]
+    assert not list(_out(rcfg).glob("shorts/*.mp4"))

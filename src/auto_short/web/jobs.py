@@ -55,7 +55,7 @@ class Job:
     stages: list[dict] = field(default_factory=list)  # finished stages: {stage, ran, seconds}
     error: str | None = None
     summary: str | None = None
-    clip_ids: list[str] = field(default_factory=list)  # render job: Shorts whose title was just changed
+    clip_ids: list[str] = field(default_factory=list)  # render job: Shorts whose title / deletion just changed
     logs: deque = field(default_factory=lambda: deque(maxlen=LOG_LINES), repr=False)
 
     @property
@@ -175,6 +175,18 @@ class JobRunner:
     def latest(self, episode_id: str) -> Job | None:
         with self._lock:
             return self._latest.get(episode_id)
+
+    def forget(self, episode_id: str) -> bool:
+        """Drop the finished jobs of a deleted episode (CP8.5 X3) so it leaves every view; refused (False) while
+        one of its jobs is queued/running."""
+        with self._lock:
+            latest = self._latest.get(episode_id)
+            if latest is not None and latest.active:
+                return False
+            self._latest.pop(episode_id, None)
+            for job_id in [j.id for j in self._jobs.values() if j.episode_id == episode_id]:
+                del self._jobs[job_id]
+        return True
 
     def jobs(self) -> list[Job]:
         with self._lock:

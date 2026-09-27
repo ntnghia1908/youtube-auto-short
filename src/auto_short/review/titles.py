@@ -17,7 +17,7 @@ from ..config import Config
 from ..titling.logic import TITLED, normalize_title
 from ..workspace import DONE, Workspace, WorkspaceError, atomic_write_json, validate_episode_id
 from .logic import (AI, ALTERNATIVE, MANUAL, REVIEW_NAME, ReviewError, manual_title_error, read_review,
-                    resolve_titles, with_override, without_override)
+                    resolve_titles, with_override, with_rejected, without_override, without_rejected)
 
 
 @dataclass(frozen=True)
@@ -127,7 +127,8 @@ def list_titles(episode_id: str, config: Config) -> dict:
                     "alternatives": [{"n": 1, "title": str}, ...],      # n = number for set_alternative
                     "override": {"title": str, "origin": "manual" | "alternative"} | None,
                     "title": str | None,                               # title the render uses (T4)
-                    "origin": "ai" | "manual" | "alternative" | None}],
+                    "origin": "ai" | "manual" | "alternative" | None,
+                    "rejected": bool}],                                # deleted (CP8.5 X2): not rendered
          "ignored": [str, ...]}                                         # T3 warnings (override not applied)
     """
     ep = _load(episode_id, config)
@@ -142,7 +143,7 @@ def list_titles(episode_id: str, config: Config) -> dict:
                       "alternatives": [{"n": n, "title": a["title"]}
                                        for n, a in enumerate(t.get("alternatives") or [], 1)],
                       "override": {"title": o["title"], "origin": o["origin"]} if applied else None,
-                      "title": r.title, "origin": r.origin})
+                      "title": r.title, "origin": r.origin, "rejected": r.rejected})
     return {"episode_id": ep.ws.episode_id, "clips": clips, "ignored": warnings}
 
 
@@ -190,3 +191,27 @@ def reset_title(episode_id: str, config: Config, clip_id: str) -> TitlePreview |
     if entry["status"] != TITLED:
         return None
     return _fit(config, clip_id, entry["title"], AI)
+
+
+def reject_clip(episode_id: str, config: Config, clip_id: str) -> bool:
+    """CP8.5 X2: delete the Short ``clip_id`` (soft: ``review.json`` ``rejected``). The next render skips it
+    (``skip_reason: "rejected"``) and removes its mp4 at the commit; a title override is kept. Returns False when
+    it was already deleted (file unchanged)."""
+    ep = _load(episode_id, config)
+    entry = ep.entry(clip_id)
+    current = {e["clip_id"]: e["candidate_id"] for e in ep.review.get("rejected", [])}
+    if current.get(clip_id) == entry["candidate_id"]:
+        return False
+    _write(ep, with_rejected(ep.review, ep.order, clip_id=clip_id, candidate_id=entry["candidate_id"]))
+    return True
+
+
+def restore_clip(episode_id: str, config: Config, clip_id: str) -> bool:
+    """CP8.5 X2: undo :func:`reject_clip`; the next render encodes the Short again (with its title override, if
+    any). Returns False when it was not deleted (file unchanged)."""
+    ep = _load(episode_id, config)
+    ep.entry(clip_id)
+    review, removed = without_rejected(ep.review, ep.order, clip_id)
+    if removed:
+        _write(ep, review)
+    return removed
