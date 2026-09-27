@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -104,7 +104,7 @@ Không chạm database, security model. Public interface: chỉ **thêm** lệnh
 - Tests: `pytest -q` → 362 passed (342 test cũ không sửa + 20 mới), 68 s.
   - `tests/test_pipeline.py` (19): stage giả — thứ tự + tham số truyền đúng stage, resume/skip hết, dừng khi lỗi + resume, `force_from` chỉ force đúng stage, stage lạ → `PipelineError`, ngắt nêu đúng stage, preflight chạy trước và chặn mọi stage; preflight với opener giả (một lần/host, hai host, `OLLAMA_HOST` ghi đè, `:latest`, thiếu model selection/titling, không kết nối, HTTP 500, timeout, JSON lỗi); CLI `run` (stdout 6 dòng + dòng cuối, bảng stderr, exit 1 + gợi ý resume, exit 130 không traceback, `--force-from titling`, `--force-from review` → exit 2); preflight với HTTP server thật trên localhost (thiếu model, cổng đóng, env ghi đè → exit 1, `manifest.json` byte-identical; `--no-preflight` chạy stage).
   - `tests/test_pipeline_e2e.py` (1, ≈ 15 s): video lavfi 30 s (tone 4.5 s / lặng 1.5 s) + `.vi.srt` sidecar tiếng Việt + client Ollama giả + `ffmpeg` thật (preset ultrafast), `[analysis]` hạ `min_duration` 4 s …: (1) selection lỗi → exit 1, 3 stage đầu `done`, selection `failed`, titling/render không chạy; (2) chạy lại → resume từ selection, 2 Short, đủ artifact CP2–CP7, 6 stage `done`, `review pending`; (3) chạy lại → 6 `skipped (up to date)`, không gọi AI, mp4 không đổi, 6 lệnh lẻ in đúng dòng như `run`; (4) `--force-from titling` → 4 skip, titling + render chạy; (5) `--force-from render` + Ctrl-C ở lệnh `ffmpeg` → exit 130, render `failed` `interrupted`; (6) chạy lại → render lại, mp4 byte-identical.
-- Review:
+- Review: ACCEPTED (ORCHESTRATOR, diff-first theo contract → diff → AC → evidence; chạy lại `pytest tests/test_pipeline.py tests/test_cli.py` 25 passed). Không có blocking finding. Non-blocking: (1) Ctrl-C trả 130 chỉ cho `run`, lệnh lẻ giữ traceback như cũ (implement chọn trong boundary); (2) exception ngoài `<Stage>Error` (bug) vẫn in traceback — chấp nhận.
 - Verification (máy dev, conda `auto-short`, Ollama `127.0.0.1:11437`, `work/rbjfCfFq3Dk`):
   - `pytest -q` → 362 passed in 67.9 s — AC1, AC4–AC7.
   - AC2: `time auto-short run https://youtu.be/rbjfCfFq3Dk` → preflight ok, 6 stage `skipped (up to date)`, `rbjfCfFq3Dk\tdone (13/13 Shorts)\t…/output/rbjfCfFq3Dk`, exit 0, real 0.32 s; sha256 13 mp4 trước/sau giống hệt, `manifest.json` byte-identical.

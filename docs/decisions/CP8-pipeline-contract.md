@@ -2,8 +2,8 @@
 
 | Metadata | Value |
 |---|---|
-| Status | PROPOSED |
-| Accepted by | — (E1–E8, P1–P4 duyệt cùng APPROVE TASK 2026-09-27; P4 sửa: có preflight Ollama; chờ review) |
+| Status | ACCEPTED |
+| Accepted by | — (E1–E8, P1–P4 duyệt cùng APPROVE TASK 2026-09-27; P4 sửa: có preflight Ollama; review ACCEPTED) |
 | Checkpoint | CP8 (S2) |
 | Roadmap | `AUTO_SHORT_CHECKPOINT_PLAN.md` §4 CP8 |
 | Task contract | `docs/tasks/CP8-pipeline.md` |
