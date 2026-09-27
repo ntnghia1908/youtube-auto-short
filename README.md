@@ -236,6 +236,27 @@ a clip that changed is ignored with a warning. Rules: `docs/decisions/CP8.2-titl
 `python -m auto_short ...` works the same. Re-running `ingest` skips when the source and the
 relevant config are unchanged. Artifacts go to `work/<episode_id>/` (`manifest.json`, `metadata.json`).
 
+### Chinese Learning (experiment CL1, partial)
+
+A second application in the same repository: a lesson from the first 5 minutes of a Chinese YouTube video. So far
+(CL1.1) it only fetches the Chinese subtitle and a local clip; Pinyin / Vietnamese meaning and the web page come
+later. It never touches Auto Short's `work/<id>/` or `output/<id>/`.
+
+```bash
+auto-short learn https://youtu.be/qcqQbMj4s-w          # options: --force (re-run every stage), --config PATH
+```
+
+Two stages, re-run only when needed (like the other commands): `subtitle` picks the original Chinese track —
+manual first (`zh-Hans`, `zh-CN`, `zh-SG`, `zh`, `zh-Hant`, `zh-TW`, `zh-HK`, then other `zh-*`), else a Chinese
+auto (ASR) track; YouTube's machine-translated `zh-*` tracks are never used — and keeps its segments starting
+before `[learning] window_seconds` (300 s); `media` then downloads only `[0, 300 s]` of the video
+(`[learning] media_format`, ≤ 720p, re-encoded at the cut), never the whole video. A video without such a
+subtitle fails with the list of tracks seen, and no clip is downloaded. stdout:
+`<video_id>\t<stage>\t<ran|skipped (up to date)>` per stage, then `<video_id>\tdone\t<dir>`; exit 1 on error.
+Artifacts in `work/_learning/<video_id>/`: `manifest.json`, `subtitle.json3` (the track as downloaded),
+`source.json` (video metadata, Chinese tracks seen, the selected one and why), `clip.mp4`, `media.json`.
+Contract: `docs/decisions/CL1-chinese-learning-contract.md`.
+
 ## Reference project
 
 `youtube-vietnamese-dubber` is used only to study existing patterns for media processing, transcription, Ollama interaction and FFmpeg rendering. It is not a dependency or authority for this repository.

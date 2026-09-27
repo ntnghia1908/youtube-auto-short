@@ -147,3 +147,10 @@ session_days = 30                    # login cookie lifetime (days)
 # Hashtags added after the title by the "Copy" button (after #<series>; "#" optional; spaces / punctuation dropped;
 # dropped from the end when title + tags exceed 100 characters).
 hashtags = ["TịnhKhông", "LờiPhậtDạy", "TịnhĐộ", "NiệmPhật"]
+
+[learning]
+# Chinese Learning: `auto-short learn <url>` (docs/decisions/CL1-chinese-learning-contract.md).
+# Artifacts go to <workspace dir>/_learning/<video id>/.
+window_seconds = 300.0               # only the first N seconds: subtitle segments with start < N, and the clip
+min_han_ratio = 0.5                  # Han characters / letters of the window's subtitle text (below -> rejected)
+media_format = "bv*[height<=720]+ba/b[height<=720]"  # yt-dlp format of clip.mp4 (only [0, N] is downloaded)

@@ -92,6 +92,7 @@ Implementation tham chiếu: `src/auto_short/workspace.py`, `src/auto_short/hash
 - `--force` luôn chạy lại.
 - Lỗi: entry → `failed` + `error`; artifact của stage đó (chỉ file nằm trong workspace) bị xóa; file tạm được dọn; source local không bao giờ bị xóa; exit code ≠ 0.
 - Hash cache: sha256 file được dùng lại khi `(absolute path, size, mtime_ns)` khớp entry `source` trong manifest — không hash lại file lớn khi không đổi. File local chưa biết episode id: tra cache qua mọi manifest nguồn local trong workspace root.
+- **Sửa đổi CL1.1 (gate G3, HUMAN LEAD 2026-09-27):** `run_stage(..., downstream=None)` và `mark_downstream_stale(manifest, stage, downstream=None)`. `None` = quy tắc trên, nguyên trạng (thứ tự CP1 §8, stage phải thuộc `STAGES`). Ứng dụng khác trong host (Chinese Learning) truyền **tập stage downstream tường minh**: chỉ các stage đó (nếu đã có entry) thành `stale`, `()` = không stage nào; stage khi đó không cần thuộc `STAGES`. Orchestrator và đồ thị stage của ứng dụng đó: `docs/decisions/CL1-chinese-learning-contract.md` C9.
 
 ## D7. Config hash
 

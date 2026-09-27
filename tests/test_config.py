@@ -104,3 +104,26 @@ def test_web_config():
     for bad in ({"port": 0}, {"port": 70000}, {"session_days": 0}, {"host": ""}, {"port": "80"}):
         with pytest.raises(ConfigError):
             config_mod.from_dict({"web": bad})
+
+
+def test_learning_config():
+    le = config_mod.Config().learning
+    assert (le.window_seconds, le.min_han_ratio, le.media_format) == (300.0, 0.5, "bv*[height<=720]+ba/b[height<=720]")
+    le = config_mod.from_dict({"learning": {"window_seconds": 120, "min_han_ratio": 0.8, "media_format": "b"}}).learning
+    assert (le.window_seconds, le.min_han_ratio, le.media_format) == (120.0, 0.8, "b")
+    # other sections (and therefore Auto Short stage hashes) are unaffected by [learning]
+    assert config_mod.from_dict({"learning": {"window_seconds": 60}}).transcript == config_mod.Config().transcript
+
+
+@pytest.mark.parametrize("data", [
+    {"learning": {"window_seconds": 0}},
+    {"learning": {"window_seconds": "300"}},
+    {"learning": {"window_seconds": True}},
+    {"learning": {"min_han_ratio": 1.5}},
+    {"learning": {"min_han_ratio": -0.1}},
+    {"learning": {"media_format": ""}},
+    {"learning": []},
+])
+def test_learning_config_invalid(data):
+    with pytest.raises(ConfigError):
+        config_mod.from_dict(data)

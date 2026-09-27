@@ -10,6 +10,7 @@ from pathlib import Path
 from . import config as config_mod
 from .analysis import AnalysisError, run_analysis
 from .ingest import IngestError, run_ingest
+from .learning.cli import cmd_learn
 from .pipeline import (PIPELINE_STAGES, PipelineInterrupted, PipelineResult, PreflightError, ollama_preflight,
                        run_pipeline)
 from .render import RenderError, run_render
@@ -91,6 +92,12 @@ def _build_parser() -> argparse.ArgumentParser:
     act.add_argument("--list", action="store_true", help="list every clip: AI title, alternatives, override")
     tt.add_argument("--render", action="store_true", help="run 'render' after writing review.json")
     tt.add_argument("--config", type=Path, help="config TOML (default: ./config.toml if present)")
+
+    lr = sub.add_parser("learn", help="Chinese Learning: Chinese subtitle + first 5 minutes of a YouTube video "
+                                      "-> <workspace>/_learning/<video id>/")
+    lr.add_argument("url", help="YouTube video URL")
+    lr.add_argument("--force", action="store_true", help="re-run every stage even if up to date")
+    lr.add_argument("--config", type=Path, help="config TOML (default: ./config.toml if present)")
 
     s = sub.add_parser("status", help="show stage status of an episode")
     s.add_argument("episode_id")
@@ -305,6 +312,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_web(args, cfg)
         if args.command == "title":
             return _cmd_title(args, cfg)
+        if args.command == "learn":
+            return cmd_learn(args, cfg)
         return _cmd_status(args, cfg)
     except (config_mod.ConfigError, IngestError, TranscriptError, AnalysisError, SelectionError,
             TitlingError, RenderError, ReviewError, WorkspaceError) as exc:

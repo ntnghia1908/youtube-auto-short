@@ -11,7 +11,7 @@
 
 Khi ACCEPTED, file này là **canonical owner** của: ứng dụng Chinese Learning (input, namespace `work/_learning/`, stage learning, chọn phụ đề tiếng Trung, cửa sổ 5 phút, AI enrichment, schema `lesson.json`, route/API/trang learning, tiến độ phía client) và của **quy ước host/application** tối thiểu ở C1 (G11). Nơi khác chỉ trỏ tới đây. Auto Short (CP1–CP8.7) **không đổi behavior**; mọi điểm chạm code chung liệt kê ở C3 và đi qua gate tương ứng.
 
-Không có mục nào ở đây là implemented. Implementation: `src/auto_short/learning/` (planned).
+Implementation: `src/auto_short/learning/` — CL1.1 *implemented* (C4 workspace/ownership, C5, C6, C9 stage `subtitle` + `media` và `run_stage(downstream)`, C10 phần lấy clip, C12 lệnh `learn`; `[learning]` `window_seconds`, `min_han_ratio`, `media_format`). Còn *planned*: C7 AI enrichment, C8 `lesson.json`/stage `lesson`, C10 phục vụ clip, C11 web/job, xóa bài học.
 
 ## C0. Dữ kiện từ repository (base `eab3134`, 2026-09-27)
 
@@ -245,7 +245,19 @@ Kết luận sơ bộ: (1) không thấy track ASR tiếng Trung gốc nào trê
 
 ### CL1.1 (chính thức)
 
-Chưa có.
+IMPLEMENTER, 2026-09-27, yt-dlp `2026.08.19`, ffmpeg hệ thống, `python -m auto_short learn <url>` (code CL1.1, config mặc định `[learning]`: cửa sổ 300 s, `min_han_ratio` 0.5, format `bv*[height<=720]+ba/b[height<=720]`), workspace tạm ngoài repo. Bytes tải: `bytes_received` của socket TCP thuộc process `ffmpeg` (con của yt-dlp) lấy bằng `ss -tinp` mỗi 0,25 s — chỉ phần media; phần `python` (extract_info + phụ đề) ≈ 0,2–0,5 MB/lần; tổng hai phần khớp `rx` của card mạng trong cùng khoảng (`rx` lớn hơn 3–9 %: header gói tin + lưu lượng nền, nền nhàn rỗi ≈ 78 KB/30 s). "Cả video" = `filesize` yt-dlp của đúng format đã tải (`398` AV1 720p + `251` Opus).
+
+| Video (thời lượng) | Track manual zh | Track auto zh | `-orig` | Track chọn / hành vi rule | Tên track bất thường | Thời gian (lần đầu) | Clip (`ffprobe`) | Bytes media tải / cả video (phần cửa sổ 300 s) |
+|---|---|---|---|---|---|---|---|---|
+| `gnCXffOg7T8` (1253 s) | `zh-Hans` | `zh-Hans` (không json3) | không | manual `zh-Hans`; 84 segment trong cửa sổ, `han_ratio` 1.0, `last_end` 300.936 | key auto trùng key manual | 177.2 s | 300.007 s, h264 1280x720 + aac, 14.1 MB | 10.39 MB / 38.40 MB = 27.1 % (cửa sổ = 23.9 %) |
+| `qcqQbMj4s-w` (414 s) | `zh`, `zh-CN`, `zh-Hant` | `zh`, `zh-CN`, `zh-Hant` (đều không json3) | không | manual `zh-CN` (thứ tự `lang`: `zh-CN` trước `zh`, `zh-Hant`); 98 segment, `han_ratio` 0.999 | như trên | 166.8 s | 300.007 s, h264 1280x720 + aac, 126.2 MB | 58.60 MB / 75.44 MB = 77.7 % (cửa sổ = 72.5 %) |
+| `DVRy3l9ojq4` (1137 s) | `zh` | `zh` (không json3) | không | manual `zh`; 70 segment, `han_ratio` 0.958 | như trên | 165.5 s | 300.007 s, h264 1280x720 + aac, 17.2 MB | 14.26 MB / 51.25 MB = 27.8 % (cửa sổ = 26.4 %) |
+| `rbjfCfFq3Dk` (3622 s, tiếng Việt) | — | `zh-Hans`, `zh-Hant` = `lang=vi&kind=asr&tlang=zh-*` | `vi-orig` (không phải zh) | **không nhận** (bản dịch máy): `subtitle` `failed`, exit 1, `error` = `no Chinese subtitle track (manual zh*, auto zh ASR); found: machine-translated auto zh-Hans (lang=vi, tlang=zh-Hans), machine-translated auto zh-Hant (lang=vi, tlang=zh-Hant)`; không tải phụ đề, không chạy `media`, workspace chỉ còn `manifest.json` | key `zh-*` là bản dịch | 2.7 s | — | 0 (chỉ ≈ 0.2 MB extract_info) |
+
+- Chạy lại cùng lệnh: 3 video tiếng Trung → cả hai stage `skipped (up to date)`, 0,3 s, không truy cập mạng; video tiếng Việt → chạy lại `subtitle` (trạng thái trước `failed`) và lỗi y như trên.
+- **Không tải cả video (AC12):** bytes media tải ≈ 1,06–1,13 × phần cửa sổ của luồng nguồn (đọc trước của ffmpeg), không phải cả video; thời gian ≈ 166–177 s cho cả video 414 s lẫn 1253 s → không tỉ lệ với thời lượng video (bị chặn bởi việc mã hóa lại 300 s, ≈ 1,8× thời gian thực). `.media-tmp/` không còn sau mỗi lần chạy.
+- Clip **lớn hơn** bytes tải vì `force_keyframes_at_cuts` khiến yt-dlp/ffmpeg mã hóa lại cả đoạn sang H.264 (libx264 mặc định): nguồn AV1 1.35 Mbit/s của `qcqQbMj4s-w` thành clip 3.4 Mbit/s (126 MB / 5 phút). Hệ quả: so sánh đúng cho AC12 là bytes tải với phần cửa sổ của nguồn, không phải với kích thước clip. Clip H.264 phát được trong mọi trình duyệt (AV1 thì không chắc). Dung lượng/tốc độ mã hóa là việc của CL1.3 (C10 "cần đo ở CL1.3"); CL1.1 không đổi C10.
+- **C5 (G4):** số đo không bác bỏ rule → giữ nguyên. Chưa gặp track ASR tiếng Trung gốc (`kind=asr`, không `tlang`) trên video nào; nhánh auto mới chỉ được kiểm bằng test giả. Track auto `zh*` không có json3 trên video có manual zh (URL không có `tlang`) — bị bỏ qua đúng rule "không json3".
 
 ### CL1.2, CL1.3
 

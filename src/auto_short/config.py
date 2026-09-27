@@ -194,6 +194,15 @@ class WebConfig:
 
 
 @dataclass(frozen=True)
+class LearningConfig:
+    """Chinese Learning application (docs/decisions/CL1-chinese-learning-contract.md C6, C10)."""
+
+    window_seconds: float = 300.0  # only [0, window) of the video: subtitle segments and clip
+    min_han_ratio: float = 0.5  # Han characters / letters in the window's subtitle text
+    media_format: str = "bv*[height<=720]+ba/b[height<=720]"  # yt-dlp format of the clip
+
+
+@dataclass(frozen=True)
 class Config:
     workspace: WorkspaceConfig = field(default_factory=WorkspaceConfig)
     ingest: IngestConfig = field(default_factory=IngestConfig)
@@ -203,6 +212,7 @@ class Config:
     titling: TitlingConfig = field(default_factory=TitlingConfig)
     render: RenderConfig = field(default_factory=RenderConfig)
     web: WebConfig = field(default_factory=WebConfig)
+    learning: LearningConfig = field(default_factory=LearningConfig)
 
 
 def _section(data: dict, name: str) -> dict:
@@ -470,6 +480,16 @@ def _web(data: dict) -> WebConfig:
     )
 
 
+def _learning(data: dict) -> LearningConfig:
+    le = _section(data, "learning")
+    d, w = LearningConfig(), "learning"
+    return LearningConfig(
+        window_seconds=_number(le, "window_seconds", d.window_seconds, w, lo=1, hi=86400),
+        min_han_ratio=_number(le, "min_han_ratio", d.min_han_ratio, w, lo=0, hi=1),
+        media_format=_str(le, "media_format", d.media_format, w),
+    )
+
+
 def _hashtags(section: dict, default: tuple[str, ...]) -> tuple[str, ...]:
     value = section.get("hashtags", list(default))
     if not isinstance(value, list) or not all(isinstance(x, str) for x in value):
@@ -498,6 +518,7 @@ def from_dict(data: dict) -> Config:
         titling=_titling(data),
         render=_render(data),
         web=_web(data),
+        learning=_learning(data),
     )
 
 

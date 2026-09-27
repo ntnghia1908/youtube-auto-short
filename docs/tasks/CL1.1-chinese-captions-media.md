@@ -2,13 +2,13 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
 - Execution profile: dual-agent
 - Human Lead: HUMAN LEAD
-- Base commit / branch: `eab3134` (`main` = `origin/main`, 2026-09-27) / `feature/cl1-chinese-learning`, worktree `../youtube-auto-short-cl1`
+- Base commit / branch: `eab3134` lúc approve; **rebase lên `fe6c3de`** (`main` sau merge CP8.8, PR #11) 2026-09-27 / `feature/cl1-chinese-learning`, worktree `../youtube-auto-short-cl1`
 - Human Lead approval: accepted 2026-09-27 — kiến trúc hai ứng dụng CL1 duyệt về nguyên tắc (G1, G2, G3, G5 phần lấy clip, G7, G8, G9, G10, G11); "APPROVE ONLY CL1.1"; G4, G6 tạm, chốt bằng số đo
 - Implementation authorized: YES
 
@@ -103,9 +103,13 @@ Task chạm CLI công khai mới và shared abstraction; **không** chạm datab
 
 ## Result
 
-- Main changes:
-- Tests:
-- Review:
+- Main changes: `workspace.py` `run_stage`/`mark_downstream_stale` nhận `downstream` (mặc định `None` = CP2 D6 nguyên trạng; ghi chú sửa đổi ở CP2 D6); `config.py` + `config.example.toml` section `[learning]`; package `src/auto_short/learning/` (`tracks.py` chọn track C5 theo query URL, `subtitle.py`, `media.py`, `run.py` orchestrator `subtitle → media`, `cli.py`); `cli.py` đăng ký `learn`; docs: project-profile (host hai ứng dụng, authority CL1, module map), README (Chinese Learning), CL1 contract (dòng implementation, § Đo thực tế / CL1.1).
+- Tests: `tests/test_learning_tracks.py`, `test_learning_subtitle.py`, `test_learning_media.py`, `test_learning_cli.py` (+ `learning_helpers.py`, fixture thật `fixtures/learning/qcqQbMj4s-w.zh-CN.head20.json3`); thêm case vào `test_workspace.py`, `test_config.py`. Toàn bộ `pytest -q` PASS; số đo thật trên 4 video (CL1 contract § Đo thực tế / CL1.1).
+- Review: ORCHESTRATOR 2026-09-27, diff-first (contract → diff → AC → evidence) — **ACCEPTED**, không có blocking finding. Shared code chỉ thêm (`workspace.py` +`downstream`, `config.py` +`[learning]`, `cli.py` +`learn`); `learning/` chỉ import hạ tầng loại A/C, không import `pipeline`/`web`. ORCHESTRATOR tự chạy lại: `pytest -q` 663 passed (baseline 600); `pytest -q tests/test_workspace.py tests/test_learning_*.py` 62 passed; diff AC13 0 byte; 0 dòng bị xóa trong test cũ; `node scripts/framework-check.mjs` PASS; kiểm artifact thật `gnCXffOg7T8` (ffprobe 300.007 s h264 1280x720 + aac, `source.json` chọn manual `zh-Hans`). Non-blocking: (1) `force_keyframes_at_cuts` mã hóa lại toàn đoạn (≈ 170 s, clip tới 126 MB) dù điểm cắt đầu là 0 — cân nhắc stream copy + ưu tiên format H.264 ở CL1.3 (gate C10, HUMAN LEAD); (2) finding ngoài scope stdout `ingest` (dưới); (3) nhánh CP8.8 song song có thể chạm `config.py`/README/project-profile → rebase lên `main` trước PR.
 - Important findings / decisions:
-- Known limitations:
+  - Quyết định cục bộ trong boundary: kiểm timestamp (CP3 T5 #2) trên **mọi** segment của track (không chỉ cửa sổ) để một segment hỏng/không đơn điệu không lọt vì nằm sau segment ngoài cửa sổ; `end` vẫn không bị kẹp ở cửa sổ (chỉ `normalize()` CP3 cắt `end` về `start` segment kế — hành vi có sẵn). `media.json` có thêm `schema_version`, `episode_id` ở đầu (như mọi artifact khác). `source.json` theo schema của task này (không có `attempts` như bảng C4 — task cụ thể hơn). Clip tải về phải là `.mp4` (khác → `failed`). yt-dlp của stage `media` chạy với `logtostderr` để stdout chỉ còn dòng kết quả. `learn` bị Ctrl-C → exit 130 (như `run`).
+  - `force_keyframes_at_cuts` (C10) làm yt-dlp mã hóa lại toàn đoạn sang H.264: ≈ 165–177 s cho 5 phút, clip có thể lớn gấp ~2 bytes tải (126 MB cho `qcqQbMj4s-w`). Đầu vào cho CL1.3; không đổi C10 ở CL1.1.
+  - Ngoài scope (không sửa): `ingest/youtube.py` `ytdlp_download` không đặt `logtostderr` → dòng `[youtube] …`/`[download] …` của yt-dlp lẫn vào stdout của `auto-short ingest`/`run` (CP2 D8/CP8 E6 nói stdout chỉ có dòng kết quả).
+- Rebase: lên `fe6c3de` (CP8.8) — một conflict docs ở `project-profile.md` (danh sách authority: giữ CP8.8, thêm CL1). Verification lại sau rebase: `pytest -q` 667 passed (600 + 4 CP8.8 + 63 CL1.1); test riêng 62 passed; diff AC13 so với `fe6c3de` 0 byte; 0 dòng test cũ bị xóa; framework-check PASS.
+- Known limitations: video id bắt đầu `-`/`_` bị từ chối (thừa hưởng `validate_episode_id`, finding đã báo); chưa gặp track ASR tiếng Trung gốc thật (nhánh auto chỉ kiểm bằng test giả); video không có phụ đề Trung gốc → lỗi (Whisper là task sau); không chuyển giản ↔ phồn thể.
 - PR:
