@@ -8,18 +8,18 @@ Chỉ ghi operational state không suy ra được từ Git, task contract hoặ
 
 ## Current focus
 
-CP6 — AI Title / Hook Generation (`docs/tasks/CP6-titling.md`): READY, PR #8 (`feature/cp6-titling`) chờ HUMAN LEAD merge. CP5 đã merge (PR #7).
+CP7 — Short Composition / Renderer (`docs/tasks/CP7-render.md`): APPROVED 2026-09-27 (P3 sửa: panel title cao thêm trước), IN_PROGRESS trên `feature/cp7-render`. CP6 đã merge (PR #8).
 
 ## Next proposed action
 
-1. HUMAN LEAD merge PR #8 (CP6).
-2. Sau merge: HUMAN LEAD quyết mở CP7 — Short Composition / Renderer (roadmap §4 CP7; title có thể 3 dòng/thu nhỏ chữ theo CP1 §4).
+1. IMPLEMENTER render ảnh so sánh font; HUMAN LEAD chốt font (P2).
+2. Hoàn tất implement + verification → review → READY.
 
 Đây là PROPOSED, không authorize implementation tiếp theo.
 
 ## Open decisions
 
-- Không.
+- CP7 P2: chọn font sau ảnh so sánh.
 
 ## Blockers
 
