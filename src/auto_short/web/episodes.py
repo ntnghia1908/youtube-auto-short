@@ -12,6 +12,7 @@ from pathlib import Path
 
 from ..config import Config
 from ..pipeline import PIPELINE_STAGES
+from ..review import ReviewError, list_titles
 from ..workspace import DONE, PENDING, Workspace, WorkspaceError, iter_manifests, validate_episode_id
 from .urls import UrlError, parse_youtube_url
 
@@ -52,10 +53,10 @@ def _stages(manifest: dict) -> list[dict]:
     return out
 
 
-def _render_manifest(config: Config, episode_id: str, stages: list[dict]) -> dict | None:
-    """The episode's render manifest, only while the render stage is ``done`` (a running render rewrites it)."""
-    if next(s for s in stages if s["stage"] == "render")["status"] != DONE:
-        return None
+def _render_manifest(config: Config, episode_id: str) -> dict | None:
+    """The episode's last committed render manifest, whatever the render stage status is now: a render run stages
+    new Shorts as ``.part`` files and only replaces files + manifest at its commit, and a failed / interrupted run
+    leaves the previous render intact (CP8.2 T5), so the listed files always exist and match."""
     doc = _read_json(_output_dir(config, episode_id) / RENDER_MANIFEST)
     if doc is None or doc.get("episode_id") != episode_id or not isinstance(doc.get("shorts"), list):
         return None
@@ -73,27 +74,46 @@ def _source_url(manifest: dict) -> str | None:
         return None
 
 
-def _short_view(episode_id: str, short: dict) -> dict | None:
+def _short_view(episode_id: str, short: dict, titles: dict | None) -> dict | None:
     clip_id = short.get("clip_id")
     if not isinstance(clip_id, str) or not valid_clip_id(clip_id):
         return None
     rendered = short.get("status") == "rendered"
     sha = short.get("sha256") or ""
     base = f"/files/{episode_id}/{clip_id}.mp4"
-    return {
+    view = {
         "clip_id": clip_id,
         "status": short.get("status"),
         "skip_reason": short.get("skip_reason"),
         "duration": short.get("duration"),
         "source_start": short.get("source_start"),
         "source_end": short.get("source_end"),
-        # ``source``: "ai" while titles come from titles.json (CP7 R2); CP8.2 adds "manual" / "alternative".
-        "title": {"text": short.get("title"), "source": "ai",
+        # The title burnt into the file (render_manifest.json, CP8.2 T4).
+        "title": {"text": short.get("title"), "origin": short.get("title_origin") or ("ai" if rendered else None),
                   "display_lines": short.get("title_display_lines") or []},
         "sha256": sha or None,
         "video_url": f"{base}?v={sha[:12]}" if rendered else None,
         "download_url": f"{base}?download=1" if rendered else None,
+        "editable": titles is not None,
+        "ai_title": None, "alternatives": [], "override": None,
+        "pending_title": None,  # title the next render will use, when it differs from the file's
+        "rendering": False,
     }
+    if titles is not None:
+        view.update(ai_title=titles["ai_title"], alternatives=titles["alternatives"], override=titles["override"])
+        if titles["title"] != short.get("title") or (titles["title"] is not None
+                                                     and titles["origin"] != view["title"]["origin"]):
+            view["pending_title"] = {"text": titles["title"], "origin": titles["origin"]}
+    return view
+
+
+def _titles(config: Config, episode_id: str) -> tuple[dict[str, dict], list[str], str | None]:
+    """CP8.2 ``list_titles`` by clip id, T3 warnings and an error message (titling not done, review.json broken)."""
+    try:
+        doc = list_titles(episode_id, config)
+    except ReviewError as exc:
+        return {}, [], str(exc)
+    return {c["clip_id"]: c for c in doc["clips"]}, list(doc["ignored"]), None
 
 
 def episode_view(config: Config, episode_id: str) -> dict | None:
@@ -107,8 +127,10 @@ def episode_view(config: Config, episode_id: str) -> dict | None:
         return None
     meta = _read_json(ws.dir / "metadata.json") or {}
     stages = _stages(manifest)
-    doc = _render_manifest(config, episode_id, stages)
-    shorts = [v for v in (_short_view(episode_id, s) for s in (doc or {}).get("shorts", [])) if v]
+    doc = _render_manifest(config, episode_id)
+    titles, ignored, titles_error = _titles(config, episode_id) if doc else ({}, [], None)
+    shorts = [v for v in (_short_view(episode_id, s, titles.get(s.get("clip_id")) if not titles_error else None)
+                          for s in (doc or {}).get("shorts", [])) if v]
     rendered = sum(1 for s in shorts if s["status"] == "rendered")
     return {
         "id": episode_id,
@@ -117,10 +139,14 @@ def episode_view(config: Config, episode_id: str) -> dict | None:
         "duration": meta.get("duration"),
         "source_url": _source_url(manifest),
         "stages": stages,
+        "render_status": stages[-1]["status"],
         "header": (doc or {}).get("header", {}).get("lines"),
         "shorts": shorts,
         "rendered": rendered,
         "zip_url": f"/files/{episode_id}/shorts.zip" if rendered else None,
+        "max_title_chars": config.titling.max_chars,
+        "titles_error": titles_error,
+        "titles_ignored": ignored,
     }
 
 
@@ -130,7 +156,7 @@ def list_episodes(config: Config) -> list[dict]:
     for ws, manifest in iter_manifests(Path(config.workspace.dir)):
         meta = _read_json(ws.dir / "metadata.json") or {}
         stages = _stages(manifest)
-        doc = _render_manifest(config, ws.episode_id, stages)
+        doc = _render_manifest(config, ws.episode_id)
         try:
             mtime = ws.manifest_path.stat().st_mtime
         except OSError:
@@ -159,7 +185,7 @@ def short_files(config: Config, episode_id: str) -> list[tuple[str, Path]] | Non
         return None
     if manifest is None:
         return None
-    doc = _render_manifest(config, episode_id, _stages(manifest))
+    doc = _render_manifest(config, episode_id)
     if doc is None:
         return None
     out_dir = _output_dir(config, episode_id)

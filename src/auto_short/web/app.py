@@ -7,6 +7,7 @@ import html
 import io
 import json
 import logging
+import threading
 import zipfile
 from collections.abc import Callable
 from contextlib import asynccontextmanager
@@ -20,9 +21,11 @@ from pydantic import BaseModel, Field
 
 from ..config import Config
 from ..pipeline import PIPELINE_STAGES, PreflightError, ollama_preflight, run_pipeline
+from ..render import run_render
+from ..review import ReviewError, TitlePreview, preview_title, reset_title, set_alternative, set_title
 from . import episodes as ep
 from .auth import COOKIE_NAME, SessionSigner, load_or_create_secret
-from .jobs import KIND_PIPELINE, JobRunner, pipeline_target
+from .jobs import KIND_PIPELINE, KIND_RENDER, JobRunner, pipeline_target, render_target
 from .urls import UrlError, parse_youtube_url
 
 log = logging.getLogger("auto_short")
@@ -39,6 +42,25 @@ class SubmitIn(BaseModel):
     url: str = Field(max_length=2000)
     series: str | None = Field(default=None, max_length=MAX_FIELD)
     episode: str | None = Field(default=None, max_length=MAX_FIELD)
+
+
+class PreviewIn(BaseModel):
+    text: str = Field(max_length=1000)
+
+
+class TitleIn(BaseModel):
+    """Exactly one action: ``set`` (manual text), ``alternative`` (1-based AI alternative) or ``reset: true``."""
+
+    set: str | None = Field(default=None, max_length=1000)
+    alternative: int | None = None
+    reset: bool = False
+
+
+def _preview_dict(p: TitlePreview | None) -> dict | None:
+    if p is None:
+        return None
+    return {"clip_id": p.clip_id, "title": p.title, "origin": p.origin, "display_lines": list(p.display_lines),
+            "font_size": p.font_size, "panel_height": p.panel_height, "chars": len(p.title)}
 
 
 def _clean(value: str | None) -> str | None:
@@ -100,10 +122,14 @@ def _zip_stream(episode_id: str, files: list[tuple[str, Path]]):
 
 def create_app(config: Config, password: str, *, runner: JobRunner | None = None,
                preflight: Callable[[Config], None] | None = ollama_preflight,
-               pipeline: Callable = run_pipeline, secret: bytes | None = None) -> FastAPI:
-    """``preflight`` / ``pipeline`` are injectable for tests (defaults: CP8 ``ollama_preflight`` /
-    ``run_pipeline``)."""
+               pipeline: Callable = run_pipeline, render: Callable = run_render,
+               secret: bytes | None = None) -> FastAPI:
+    """``preflight`` / ``pipeline`` / ``render`` are injectable for tests (defaults: CP8 ``ollama_preflight`` /
+    ``run_pipeline``, CP7/CP8.2 ``run_render``)."""
     runner = runner or JobRunner()
+    # Serialises "no active job for the episode?" + review.json write + job submit (W5: no title write while a
+    # pipeline / render job of the episode is queued or running).
+    submit_lock = threading.Lock()
     signer = SessionSigner(secret if secret is not None else load_or_create_secret(Path(config.workspace.dir)),
                            password, config.web.session_days)
 
@@ -232,9 +258,10 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                 preflight(config)
             except PreflightError as exc:
                 return JSONResponse({"detail": f"ollama preflight: {exc}"}, status_code=503)
-        job, created = runner.submit(video_id, KIND_PIPELINE,
-                                     pipeline_target(url, config, series=series, episode=episode,
-                                                     pipeline=pipeline, preflight=preflight))
+        with submit_lock:
+            job, created = runner.submit(video_id, KIND_PIPELINE,
+                                         pipeline_target(url, config, series=series, episode=episode,
+                                                         pipeline=pipeline, preflight=preflight))
         return JSONResponse({"created": created, "episode_id": video_id, "job": _job_view(job)},
                             status_code=202 if created else 200)
 
@@ -250,7 +277,51 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             view = {"id": episode_id, "title": None, "channel": None, "duration": None, "source_url": None,
                     "stages": [], "header": None, "shorts": [], "rendered": 0, "zip_url": None}
         view["job"] = _job_view(job)
+        if job is not None and job.active and job.kind == KIND_RENDER:
+            for short in view["shorts"]:
+                short["rendering"] = short["clip_id"] in job.clip_ids
         return view
+
+    def _check_clip(episode_id: str, clip_id: str) -> JSONResponse | None:
+        if not ep.valid_episode_id(episode_id) or not ep.valid_clip_id(clip_id):
+            return JSONResponse({"detail": "không có Short này"}, status_code=404)
+        return None
+
+    @app.post("/api/episodes/{episode_id}/shorts/{clip_id}/title/preview")
+    def api_title_preview(episode_id: str, clip_id: str, body: PreviewIn):
+        if (bad := _check_clip(episode_id, clip_id)) is not None:
+            return bad
+        try:
+            return _preview_dict(preview_title(episode_id, config, clip_id, body.text))
+        except ReviewError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=422)
+
+    @app.post("/api/episodes/{episode_id}/shorts/{clip_id}/title")
+    def api_title(episode_id: str, clip_id: str, body: TitleIn):
+        if (bad := _check_clip(episode_id, clip_id)) is not None:
+            return bad
+        actions = (body.set is not None) + (body.alternative is not None) + bool(body.reset)
+        if actions != 1:
+            return JSONResponse({"detail": "cần đúng một trong: set, alternative, reset"}, status_code=422)
+        with submit_lock:
+            current = runner.latest(episode_id)
+            if current is not None and current.active:
+                return JSONResponse({"detail": "episode đang có job chạy/đợi; sửa title sau khi job xong",
+                                     "job": _job_view(current)}, status_code=409)
+            try:
+                if body.set is not None:
+                    preview = set_title(episode_id, config, clip_id, body.set)
+                elif body.alternative is not None:
+                    preview = set_alternative(episode_id, config, clip_id, body.alternative)
+                else:
+                    preview = reset_title(episode_id, config, clip_id)
+            except ReviewError as exc:
+                return JSONResponse({"detail": str(exc)}, status_code=422)
+            job, _ = runner.submit(episode_id, KIND_RENDER, render_target(config, render=render),
+                                   clip_ids=[clip_id])
+        log.info("web: title %s [%s]: %s -> render job %s", clip_id, episode_id,
+                 f"{preview.origin} {preview.title!r}" if preview else "reset (untitled)", job.id)
+        return JSONResponse({"preview": _preview_dict(preview), "job": _job_view(job)}, status_code=202)
 
     # --- files -------------------------------------------------------------------------------------
 

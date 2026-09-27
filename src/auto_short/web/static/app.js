@@ -14,7 +14,7 @@ const AutoShort = (() => {
     pending: "chờ", running: "đang chạy", done: "xong", failed: "lỗi", stale: "cần chạy lại",
     queued: "đang đợi", interrupted: "bị ngắt",
   };
-  const TITLE_SOURCE_LABELS = { ai: "AI", manual: "sửa tay", alternative: "phương án khác" };
+  const TITLE_SOURCE_LABELS = { ai: "AI", manual: "sửa tay", alternative: "phương án AI khác" };
   const POLL_MS = 2500;
 
   const $ = (sel) => document.querySelector(sel);
@@ -212,46 +212,179 @@ const AutoShort = (() => {
     rb.dataset.url = d.source_url || "";
 
     renderShorts(d);
+    setEditsLocked(jobActive(job));
+  }
+
+  // Shorts grid: a card is rebuilt only when its own state changes, in place, so polling never stops a playing
+  // video or wipes a title being typed in another card.
+  const cards = new Map(); // clip_id -> {key, node}
+  let editsLocked = false;
+  let maxChars = 60;
+
+  function cardKey(s) {
+    return JSON.stringify([s.status, s.sha256, s.title, s.pending_title, s.override, s.rendering, s.editable,
+      s.alternatives.length]);
   }
 
   function renderShorts(d) {
-    const key = JSON.stringify(d.shorts.map((s) => [s.clip_id, s.sha256, s.title && s.title.text]));
-    if (key === shortsKey) return; // keep playing videos untouched while polling
-    shortsKey = key;
+    maxChars = d.max_title_chars || 60;
     const rendered = d.shorts.filter((s) => s.status === "rendered");
     $("#shorts-count").textContent = d.shorts.length ? `(${rendered.length})` : "";
     const zip = $("#zip");
     zip.hidden = !d.zip_url;
     if (d.zip_url) { zip.href = d.zip_url; zip.setAttribute("download", ""); }
     $("#header-lines").textContent = d.header ? "Header: " + d.header.join(" / ") : "";
+    const notes = [];
+    if (d.shorts.length && d.render_status !== "done") {
+      notes.push(`Đang hiển thị bản dựng trước (bước Dựng Short: ${STATUS_LABELS[d.render_status] || d.render_status}).`);
+    }
+    if (d.titles_error) notes.push(`Chưa sửa title được: ${d.titles_error}`);
+    for (const w of d.titles_ignored || []) notes.push(w);
+    $("#shorts-note").textContent = notes.join(" ");
+    $("#shorts-note").hidden = !notes.length;
+
     const grid = $("#shorts");
     if (!d.shorts.length) {
+      cards.clear();
       grid.replaceChildren(el("p", { class: "muted", text: "Chưa có Short (bước Dựng Short chưa xong)." }));
       return;
     }
-    grid.replaceChildren(...d.shorts.map(shortCard));
+    const ids = d.shorts.map((s) => s.clip_id);
+    const sameSet = ids.length === cards.size && ids.every((id, i) => cards.has(id) && grid.children[i] === cards.get(id).node);
+    if (!sameSet) {
+      cards.clear();
+      for (const s of d.shorts) cards.set(s.clip_id, { key: cardKey(s), node: shortCard(s) });
+      grid.replaceChildren(...ids.map((id) => cards.get(id).node));
+      return;
+    }
+    for (const s of d.shorts) {
+      const entry = cards.get(s.clip_id), key = cardKey(s);
+      if (entry.key === key) continue;
+      const node = shortCard(s);
+      entry.node.replaceWith(node);
+      cards.set(s.clip_id, { key, node });
+    }
   }
 
-  // One card per Short. The ``.title-edit`` slot is where CP8.2 title editing plugs in.
+  function setEditsLocked(locked) {
+    editsLocked = locked;
+    document.querySelectorAll(".short .needs-idle").forEach((b) => { b.disabled = locked || b.dataset.invalid === "1"; });
+    document.querySelectorAll(".short .lock-note").forEach((n) => { n.hidden = !locked; });
+  }
+
+  // One card per Short; ``.title-edit`` holds the title editor (CP8.2 functions via the API).
   function shortCard(s) {
     const title = s.title || {};
-    const card = el("article", { class: "short", "data-clip": s.clip_id });
+    const card = el("article", { class: "short" + (s.rendering ? " rendering" : ""), "data-clip": s.clip_id });
+    const media = el("div", { class: "short-media" });
     if (s.status === "rendered") {
-      card.append(el("video", { controls: true, preload: "metadata", playsinline: true, src: s.video_url }));
+      media.append(el("video", { controls: true, preload: "metadata", playsinline: true, src: s.video_url }));
     } else {
-      card.append(el("div", { class: "short-missing", text: `Bỏ qua: ${s.skip_reason || s.status}` }));
+      media.append(el("div", { class: "short-missing", text: `Bỏ qua: ${s.skip_reason || s.status}` }));
     }
+    if (s.rendering) media.append(el("div", { class: "rendering-badge", text: "đang render…" }));
+    card.append(media);
     const body = el("div", { class: "short-body" },
       el("div", { class: "short-head" },
         el("span", { class: "clip-id", text: s.clip_id }),
-        el("span", { class: "badge", text: TITLE_SOURCE_LABELS[title.source] || title.source || "" }),
+        title.origin ? el("span", { class: "badge " + title.origin, text: TITLE_SOURCE_LABELS[title.origin] || title.origin }) : null,
         el("span", { class: "muted small", text: fmtSeconds(s.duration) })),
       el("p", { class: "short-title", text: title.text || "(không có tiêu đề)" }),
+      s.pending_title ? el("p", { class: "pending small", text: s.pending_title.text
+        ? `Tiêu đề mới (${TITLE_SOURCE_LABELS[s.pending_title.origin] || s.pending_title.origin}), chưa render: ${s.pending_title.text}`
+        : "Sẽ bỏ qua ở lần render tới (không có tiêu đề)" }) : null,
       el("div", { class: "short-actions" },
         s.download_url ? el("a", { class: "btn", href: s.download_url, download: `${episodeId}_${s.clip_id}.mp4`, text: "Tải về" }) : null),
-      el("div", { class: "title-edit", hidden: true }));
+      s.editable ? titleEditor(s) : el("div", { class: "title-edit", hidden: true }));
     card.append(body);
     return card;
+  }
+
+  function titleEditor(s) {
+    const current = (s.pending_title && s.pending_title.text) || (s.title && s.title.text) || s.ai_title || "";
+    const box = el("div", { class: "title-edit" });
+    const toggle = el("button", { class: "btn small", type: "button", text: "Sửa tiêu đề" });
+    const panel = el("div", { class: "edit-panel", hidden: true });
+    const input = el("input", { type: "text", value: current, autocomplete: "off", "aria-label": "Tiêu đề mới" });
+    const counter = el("span", { class: "counter small" });
+    const select = el("select", { "aria-label": "Chọn tiêu đề AI" },
+      el("option", { value: "", text: s.alternatives.length ? "— Chọn phương án AI khác —" : "(không có phương án AI khác)" }),
+      ...s.alternatives.map((a) => el("option", { value: String(a.n), text: `${a.n}. ${a.title}` })));
+    select.disabled = !s.alternatives.length;
+    const preview = el("div", { class: "title-preview" });
+    const msg = el("p", { class: "preview-msg small" });
+    const save = el("button", { class: "btn primary small needs-idle", type: "button", text: "Lưu & render lại" });
+    const reset = s.override ? el("button", { class: "btn small needs-idle", type: "button", text: "Khôi phục title AI" }) : null;
+    const lockNote = el("p", { class: "lock-note muted small", text: "Đang có job chạy — đợi xong để lưu.", hidden: !editsLocked });
+    panel.append(el("label", {}, "Tiêu đề mới ", counter), input, select, preview, msg,
+      el("div", { class: "edit-actions" }, save, reset), lockNote);
+    box.append(toggle, panel);
+
+    let alt = null, timer = null, seq = 0;
+    const setValid = (ok) => { save.dataset.invalid = ok ? "0" : "1"; save.disabled = !ok || editsLocked; };
+    const count = () => {
+      const n = [...input.value.trim()].length;
+      counter.textContent = `${n}/${maxChars}`;
+      counter.classList.toggle("over", n > maxChars);
+    };
+    async function runPreview() {
+      const my = ++seq;
+      msg.textContent = "Đang kiểm tra…";
+      msg.className = "preview-msg small muted";
+      try {
+        const p = await api(`/api/episodes/${encodeURIComponent(episodeId)}/shorts/${encodeURIComponent(s.clip_id)}/title/preview`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: input.value }),
+        });
+        if (my !== seq) return;
+        preview.replaceChildren(...p.display_lines.map((l) => el("div", { text: l })));
+        preview.hidden = false;
+        msg.textContent = `${p.display_lines.length} dòng, chữ ${p.font_size} px`;
+        msg.className = "preview-msg small muted";
+        setValid(true);
+      } catch (e) {
+        if (my !== seq) return;
+        preview.hidden = true;
+        msg.textContent = e.message;
+        msg.className = "preview-msg small error";
+        setValid(false);
+      }
+    }
+    const schedule = () => { count(); setValid(false); clearTimeout(timer); timer = setTimeout(runPreview, 350); };
+    toggle.addEventListener("click", () => {
+      panel.hidden = !panel.hidden;
+      toggle.textContent = panel.hidden ? "Sửa tiêu đề" : "Đóng";
+      if (!panel.hidden) { count(); runPreview(); input.focus(); }
+    });
+    input.addEventListener("input", () => {
+      if (alt !== null && input.value !== s.alternatives.find((a) => a.n === alt).title) { alt = null; select.value = ""; }
+      schedule();
+    });
+    select.addEventListener("change", () => {
+      alt = select.value ? Number(select.value) : null;
+      if (alt !== null) input.value = s.alternatives.find((a) => a.n === alt).title;
+      schedule();
+    });
+    async function send(body) {
+      save.disabled = true;
+      if (reset) reset.disabled = true;
+      try {
+        await api(`/api/episodes/${encodeURIComponent(episodeId)}/shorts/${encodeURIComponent(s.clip_id)}/title`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+        });
+        msg.textContent = "Đã lưu, đang render lại…";
+        msg.className = "preview-msg small";
+        refreshEpisode();
+      } catch (e) {
+        msg.textContent = e.message;
+        msg.className = "preview-msg small error";
+        save.disabled = editsLocked;
+        if (reset) reset.disabled = editsLocked;
+      }
+    }
+    save.addEventListener("click", () => send(alt !== null ? { alternative: alt } : { set: input.value }));
+    if (reset) reset.addEventListener("click", () => send({ reset: true }));
+    setValid(false);
+    return box;
   }
 
   return { initIndex, initEpisode };

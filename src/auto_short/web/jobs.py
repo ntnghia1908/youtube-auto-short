@@ -22,6 +22,7 @@ from pathlib import Path
 
 from ..config import Config
 from ..pipeline import PIPELINE_STAGES, PreflightError, StageRun, ollama_preflight, run_pipeline
+from ..render import RenderError, run_render
 
 log = logging.getLogger("auto_short")
 
@@ -29,6 +30,7 @@ QUEUED, RUNNING, DONE, FAILED, INTERRUPTED = "queued", "running", "done", "faile
 ACTIVE = (QUEUED, RUNNING)
 LOG_LINES = 200
 KIND_PIPELINE = "pipeline"
+KIND_RENDER = "render"
 
 
 def _now() -> str:
@@ -53,6 +55,7 @@ class Job:
     stages: list[dict] = field(default_factory=list)  # finished stages: {stage, ran, seconds}
     error: str | None = None
     summary: str | None = None
+    clip_ids: list[str] = field(default_factory=list)  # render job: Shorts whose title was just changed
     logs: deque = field(default_factory=lambda: deque(maxlen=LOG_LINES), repr=False)
 
     @property
@@ -64,6 +67,7 @@ class Job:
             "id": self.id, "episode_id": self.episode_id, "kind": self.kind, "status": self.status,
             "created_at": self.created_at, "started_at": self.started_at, "finished_at": self.finished_at,
             "stage": self.stage, "stages": list(self.stages), "error": self.error, "summary": self.summary,
+            "clip_ids": list(self.clip_ids),
         }
         if logs:
             out["logs"] = list(self.logs)
@@ -152,13 +156,15 @@ class JobRunner:
 
     # --- queue ---------------------------------------------------------------------------------
 
-    def submit(self, episode_id: str, kind: str, target: Callable[[Job], None]) -> tuple[Job, bool]:
+    def submit(self, episode_id: str, kind: str, target: Callable[[Job], None], *,
+               clip_ids: list[str] | None = None) -> tuple[Job, bool]:
         """Queue a job; returns ``(job, True)``, or ``(existing active job, False)`` for a duplicate."""
         with self._lock:
             latest = self._latest.get(episode_id)
             if latest is not None and latest.active:
                 return latest, False
-            job = Job(id=str(next(self._ids)), episode_id=episode_id, kind=kind, target=target)
+            job = Job(id=str(next(self._ids)), episode_id=episode_id, kind=kind, target=target,
+                      clip_ids=list(clip_ids or []))
             self._jobs[job.id] = job
             self._latest[episode_id] = job
             self._queue.append(job)
@@ -264,5 +270,31 @@ def pipeline_target(url: str, config: Config, *, series: str | None = None, epis
             raise JobFailed(f"{result.failed_stage}: {result.error}")
         job.stage = None
         job.summary = f"{result.rendered}/{result.clips} Shorts"
+        render = result.stages[-1].result if result.stages else None
+        if render is not None and render.ran and getattr(render, "encoded", None) is not None:
+            job.summary += f" ({render.encoded} encoded, {render.reused} reused)"
+
+    return target
+
+
+# --- render job (W4 title edit) ------------------------------------------------------------------------
+
+def render_target(config: Config, *, render: Callable = run_render) -> Callable[[Job], None]:
+    """Job target re-running the render stage after a title change: CP8.2 T5 re-encodes only the Shorts whose
+    render_key changed and reuses the others."""
+
+    def target(job: Job) -> None:
+        job.stage = "render"
+        t0 = time.monotonic()
+        try:
+            result = render(job.episode_id, config)
+        except RenderError as exc:
+            raise JobFailed(f"render: {exc}") from exc
+        job.stages.append({"stage": "render", "ran": bool(result.ran), "seconds": round(time.monotonic() - t0, 3)})
+        job.stage = None
+        if result.ran:
+            job.summary = f"{result.rendered}/{result.clips} Shorts ({result.encoded} encoded, {result.reused} reused)"
+        else:
+            job.summary = "render up to date (nothing to encode)"
 
     return target
