@@ -11,6 +11,7 @@ from . import config as config_mod
 from .analysis import AnalysisError, run_analysis
 from .ingest import IngestError, run_ingest
 from .render import RenderError, run_render
+from .review import ReviewError, TitlePreview, list_titles, reset_title, set_alternative, set_title
 from .selection import SelectionError, run_selection
 from .titling import TitlingError, run_titling
 from .transcript import TranscriptError, run_transcript
@@ -58,6 +59,17 @@ def _build_parser() -> argparse.ArgumentParser:
     r.add_argument("--force", action="store_true", help="re-run even if up to date")
     r.add_argument("--config", type=Path, help="config TOML (default: ./config.toml if present)")
 
+    tt = sub.add_parser("title", help="set, choose or reset the title of one Short (review.json), or --list")
+    tt.add_argument("episode_id")
+    tt.add_argument("clip_id", nargs="?", help="clip id (e.g. k03); not with --list")
+    act = tt.add_mutually_exclusive_group(required=True)
+    act.add_argument("--set", metavar="TEXT", dest="set_text", help="manual title")
+    act.add_argument("--alternative", metavar="N", type=int, help="use AI alternative number N (see --list)")
+    act.add_argument("--reset", action="store_true", help="remove the override (back to the AI title)")
+    act.add_argument("--list", action="store_true", help="list every clip: AI title, alternatives, override")
+    tt.add_argument("--render", action="store_true", help="run 'render' after writing review.json")
+    tt.add_argument("--config", type=Path, help="config TOML (default: ./config.toml if present)")
+
     s = sub.add_parser("status", help="show stage status of an episode")
     s.add_argument("episode_id")
     s.add_argument("--config", type=Path, help="config TOML (default: ./config.toml if present)")
@@ -103,6 +115,44 @@ def _cmd_render(args: argparse.Namespace, cfg: config_mod.Config) -> int:
     result = run_render(args.episode_id, cfg, force=args.force)
     state = f"rendered ({result.rendered}/{result.clips} clips)" if result.ran else "skipped (up to date)"
     print(f"{result.episode_id}\t{state}\t{result.path}")
+    return 0
+
+
+def _print_preview(episode_id: str, clip_id: str, p: TitlePreview | None) -> None:
+    if p is None:
+        print(f"{episode_id}\t{clip_id}\tuntitled\t-")
+        print("  not rendered: untitled clip without an override")
+        return
+    print(f"{episode_id}\t{clip_id}\t{p.origin}\t{p.title}")
+    print(f"  display ({p.font_size} px, panel {p.panel_height} px): {' / '.join(p.display_lines)}")
+
+
+def _cmd_title(args: argparse.Namespace, cfg: config_mod.Config) -> int:
+    if args.list:
+        if args.clip_id is not None or args.render:
+            raise ReviewError("--list takes no clip id and no --render")
+        doc = list_titles(args.episode_id, cfg)
+        for c in doc["clips"]:
+            print(f"{c['clip_id']}\t{c['candidate_id']}\t{c['origin'] or 'untitled'}\t{c['title'] or '-'}")
+            print(f"  AI: {c['ai_title'] or '- (untitled)'}")
+            for a in c["alternatives"]:
+                print(f"  {a['n']}: {a['title']}")
+            if c["override"]:
+                print(f"  override ({c['override']['origin']}): {c['override']['title']}")
+        for w in doc["ignored"]:
+            log.warning("title: WARNING: %s", w)
+        return 0
+    if args.clip_id is None:
+        raise ReviewError("clip id required (or use --list)")
+    if args.set_text is not None:
+        preview = set_title(args.episode_id, cfg, args.clip_id, args.set_text)
+    elif args.alternative is not None:
+        preview = set_alternative(args.episode_id, cfg, args.clip_id, args.alternative)
+    else:
+        preview = reset_title(args.episode_id, cfg, args.clip_id)
+    _print_preview(args.episode_id, args.clip_id, preview)
+    if args.render:
+        return _cmd_render(argparse.Namespace(episode_id=args.episode_id, force=False), cfg)
     return 0
 
 
@@ -160,8 +210,10 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_titling(args, cfg)
         if args.command == "render":
             return _cmd_render(args, cfg)
+        if args.command == "title":
+            return _cmd_title(args, cfg)
         return _cmd_status(args, cfg)
     except (config_mod.ConfigError, IngestError, TranscriptError, AnalysisError, SelectionError,
-            TitlingError, RenderError, WorkspaceError) as exc:
+            TitlingError, RenderError, ReviewError, WorkspaceError) as exc:
         print(f"auto-short: error: {exc}", file=sys.stderr)
         return 1

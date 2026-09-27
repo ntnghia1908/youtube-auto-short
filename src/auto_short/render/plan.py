@@ -16,6 +16,10 @@ MAX_FPS = Fraction(30)  # CP1 §2: keep the source rate when <= 30, else 30
 VCODEC, PIX_FMT, ACODEC = "libx264", "yuv420p", "aac"
 SAMPLE_RATE, CHANNELS = 48000, 2
 SCALE_FLAGS = "lanczos"
+# Version of the way a Short is built from its plan (filter graph, ffmpeg command, encode constants). Part of
+# every Short's render_key (CP8.2 T5): increase it whenever that construction changes, so Shorts rendered by
+# older code are encoded again instead of reused.
+RENDER_PLAN_VERSION = 1
 
 
 class PlanError(Exception):
