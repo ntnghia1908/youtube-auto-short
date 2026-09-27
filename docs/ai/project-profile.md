@@ -3,7 +3,7 @@
 | Metadata | Value |
 |---|---|
 | Status | CURRENT |
-| Project stage | CP7 — Short composition / renderer |
+| Project stage | CP8 — End-to-end Auto Short MVP (`auto-short run`) |
 
 ## 1. Project
 
@@ -14,13 +14,13 @@
 
 ## 2. Authority order
 
-1. HUMAN LEAD decisions / approved task contracts và accepted decision records trong `docs/decisions/` (hiện có `docs/decisions/CP1-product-contract.md` — product contract & architecture baseline; `docs/decisions/CP2-workspace-contract.md` — workspace/manifest/stage convention; `docs/decisions/CP3-transcript-contract.md` — transcript provider/validation/normalization và schema `transcript.json`; `docs/decisions/CP4-analysis-contract.md` — shot/silence detection, content window, điểm cắt, candidate và schema `shots.json`/`silences.json`/`candidates.json`; `docs/decisions/CP5-selection-contract.md` — AI clip selection: window, prompt/versioning, map về candidate, chọn cuối và schema `clips.json`/`selection_log.json`; `docs/decisions/CP6-titling-contract.md` — header deterministic, prompt/versioning titling, validation title và schema `titles.json`/`titling_log.json`; `docs/decisions/CP7-render-contract.md` — layout pixel, font, đo chữ/ngắt dòng/fit, render ffmpeg và schema `render_manifest.json`);
+1. HUMAN LEAD decisions / approved task contracts và accepted decision records trong `docs/decisions/` (hiện có `docs/decisions/CP1-product-contract.md` — product contract & architecture baseline; `docs/decisions/CP2-workspace-contract.md` — workspace/manifest/stage convention; `docs/decisions/CP3-transcript-contract.md` — transcript provider/validation/normalization và schema `transcript.json`; `docs/decisions/CP4-analysis-contract.md` — shot/silence detection, content window, điểm cắt, candidate và schema `shots.json`/`silences.json`/`candidates.json`; `docs/decisions/CP5-selection-contract.md` — AI clip selection: window, prompt/versioning, map về candidate, chọn cuối và schema `clips.json`/`selection_log.json`; `docs/decisions/CP6-titling-contract.md` — header deterministic, prompt/versioning titling, validation title và schema `titles.json`/`titling_log.json`; `docs/decisions/CP7-render-contract.md` — layout pixel, font, đo chữ/ngắt dòng/fit, render ffmpeg và schema `render_manifest.json`; `docs/decisions/CP8-pipeline-contract.md` — lệnh `run`, thứ tự stage của pipeline, resume, dừng khi lỗi, `--force-from`, preflight Ollama và exit code; `docs/decisions/CP8.2-title-override-contract.md` — `review.json` title override, validate title tay, `render_key` + tái dùng từng Short, CLI `title`; `docs/decisions/CP8.3-web-contract.md` — web boundary: lệnh `web`, auth mật khẩu + cookie, input URL, job model, API, phục vụ file; CP8.5: tên file tải về, xóa tập, `publish.json`; CP8.6: tab Bộ nhớ, dọn video nguồn, luật episode archived; CP8.7: bộ kinh, "Xong", tải về = đã đăng);
 2. `docs/ai/workflow.md`, `docs/ai/execution-profiles.md` và file này cho workflow/policy;
 3. source code và tests hiện hành cho implementation state;
 4. `docs/workflow/current-state.md` chỉ là operational state, không phải authority;
 5. `README.md` và tài liệu onboarding chỉ mô tả/cross-link, không tạo policy mới.
 
-Không có database, security hay public API authority ở CP0/CP1. Nếu những boundary này xuất hiện trong feature sau, phải tạo authority tương ứng trước khi implementation.
+Không có database, security hay public API authority ở CP0/CP1. Nếu những boundary này xuất hiện trong feature sau, phải tạo authority tương ứng trước khi implementation. Web MVP (CP8.3) là boundary security + HTTP API đầu tiên; authority: `docs/decisions/CP8.3-web-contract.md`.
 
 ## 3. Module map
 
@@ -29,12 +29,14 @@ Các boundary dưới đây là **planned module boundaries**, chưa phải impl
 | Path | Stage / vai trò | Rule riêng |
 |---|---|---|
 | `src/auto_short/` (`workspace.py`, `hashing.py`, `config.py`, `cli.py`) | stage framework dùng chung, config, CLI — *implemented* (CP2) | `docs/decisions/CP2-workspace-contract.md` |
+| `src/auto_short/pipeline.py` | điều phối end-to-end `ingest → … → render` + preflight Ollama (lệnh `run` trong `cli.py`) — *implemented* (CP8) | `docs/decisions/CP8-pipeline-contract.md` |
 | `src/auto_short/ingest/` | ingest: input/download/metadata — *implemented* (CP2) | `docs/decisions/CP2-workspace-contract.md` |
 | `src/auto_short/transcript/` | transcript: caption YouTube / subtitle local / Whisper + timestamps — *implemented* (CP3) | `docs/decisions/CP3-transcript-contract.md` |
 | `src/auto_short/analysis/` | analysis: shot/silence detection + candidate generation (deterministic) — *implemented* (CP4) | `docs/decisions/CP4-analysis-contract.md` |
 | `src/auto_short/selection/` | selection: AI (Ollama) chọn clip trong candidates + validate — *implemented* (CP5) | `docs/decisions/CP5-selection-contract.md` |
 | `src/auto_short/titling/` | titling: header deterministic + AI (Ollama) sinh title/hook + validate — *implemented* (CP6) | `docs/decisions/CP6-titling-contract.md` |
-| `src/auto_short/review/` | review: human approve/reject/edit | chưa có module rule |
+| `src/auto_short/review/` | review: human approve/reject/edit — *implemented, partial* (CP8.2: title tay `review.json`; CP8.5: xóa / khôi phục Short `rejected`, `publish.json` "Đã đăng", tên file tải về, xóa tập; CP8.6: dọn video nguồn, cờ archived `archive.json`; approve đầy đủ, header, điểm cắt thuộc CP9) | `docs/decisions/CP8.2-title-override-contract.md`; CP8.5 phần web: `docs/decisions/CP8.3-web-contract.md` W8 |
+| `src/auto_short/web/` | web MVP: `auto-short web` (FastAPI, extra `[web]`), đăng nhập mật khẩu, gửi URL YouTube, job nền chạy pipeline, tiến độ, xem/tải Short, sửa title một Short + render lại (qua `review`) — *implemented* (CP8.3); tên file tải về, xóa / khôi phục Short, xóa tập, "Đã đăng" + bộ lọc — *implemented* (CP8.5); tab Bộ nhớ, gợi ý dọn, cảnh báo ổ đầy — *implemented* (CP8.6); bộ kinh (playlist), "Xong" suy ra, tải về = đã đăng — *implemented* (CP8.7) | `docs/decisions/CP8.3-web-contract.md` |
 | `src/auto_short/render/` | render: composition 9:16 theo template (font OFL đóng gói) + export `output/<id>/` — *implemented* (CP7) | `docs/decisions/CP7-render-contract.md` |
 | `tests/` | automated verification | project workflow applies |
 | `docs/` | authority, tasks, decisions, workflow | authority by section |

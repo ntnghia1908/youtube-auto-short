@@ -133,6 +133,17 @@ min_font_scale = 0.6                 # text needing a smaller font than this x t
 crf = 22                             # libx264 quality (lower = better, larger files; 18 ≈ 1.7x size)
 preset = "medium"
 audio_bitrate = "192k"               # AAC 48 kHz stereo
+dissolve = 0.15                      # s, video dissolve at silence-trim junctions (audio stays a hard cut); 0 = hard cut
 # Execution-only (not part of the config hash):
 output_dir = "output"                # Shorts go to <output_dir>/<episode_id>/
 threads = 0                          # ffmpeg/x264 threads; 0 = automatic
+
+[web]
+# Web MVP: `auto-short web` (docs/decisions/CP8.3-web-contract.md). Execution-only (no stage uses it).
+# The password comes from the environment variable AUTO_SHORT_WEB_PASSWORD (never from this file).
+host = "0.0.0.0"                     # listen on the LAN; "127.0.0.1" = this machine only
+port = 8080
+session_days = 30                    # login cookie lifetime (days)
+# Hashtags added after the title by the "Copy" button (after #<series>; "#" optional; spaces / punctuation dropped;
+# dropped from the end when title + tags exceed 100 characters).
+hashtags = ["TịnhKhông", "LờiPhậtDạy", "TịnhĐộ", "NiệmPhật"]

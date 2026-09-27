@@ -152,8 +152,9 @@ def evidence_in_text(evidence: str, text_norm: str) -> bool:
     return bool(ev) and f" {ev} " in f" {text_norm} "
 
 
-def reject_reason(title: str, evidence: str, text_norm: str, *, min_chars: int, max_chars: int) -> str | None:
-    """G5: None when the option is valid, else the first failed rule. ``title`` is the raw AI title."""
+def form_reject_reason(title: str, *, min_chars: int, max_chars: int) -> str | None:
+    """G5 rules 1-8 (form of the title, no evidence): None when valid, else the first failed rule. ``title`` is
+    the raw text. Also the form check of manual titles (CP8.2 T2, with ``min_chars`` = 1)."""
     if _LINE_BREAKS.search(title.strip()):
         return "multi-line title"
     t = normalize_title(title)
@@ -174,6 +175,14 @@ def reject_reason(title: str, evidence: str, text_norm: str, *, min_chars: int, 
         return "wrapped in quotes"
     if t.upper() == t and t.lower() != t:
         return "all caps"
+    return None
+
+
+def reject_reason(title: str, evidence: str, text_norm: str, *, min_chars: int, max_chars: int) -> str | None:
+    """G5: None when the option is valid, else the first failed rule. ``title`` is the raw AI title."""
+    reason = form_reject_reason(title, min_chars=min_chars, max_chars=max_chars)
+    if reason:
+        return reason
     ev_words = normalize_match(evidence).split()
     if len(ev_words) < MIN_EVIDENCE_WORDS:
         return f"evidence too short ({len(ev_words)} < {MIN_EVIDENCE_WORDS} words)"

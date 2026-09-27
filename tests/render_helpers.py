@@ -50,9 +50,11 @@ def make_source(path: Path, size: str = "1440x1080", rate: str = "30000/1001", s
 
 
 def write_docs(ws: Workspace, *, clips: list[dict] | None = None, titles: dict | None = None,
-               candidates: list[dict] | None = None, header: list[str] | None = None) -> None:
+               candidates: list[dict] | None = None, header: list[str] | None = None,
+               alternatives: dict | None = None) -> None:
     """(Re)write candidates.json, clips.json and titles.json with consistent sha256 links.
-    ``titles`` maps clip id -> title (None = untitled); default TITLES."""
+    ``titles`` maps clip id -> title (None = untitled); default TITLES. ``alternatives`` maps clip id -> list of
+    alternative titles (default none)."""
     cand_doc = {"schema_version": 1, "episode_id": ws.episode_id, "params": {},
                 "candidates": CANDIDATES if candidates is None else candidates}
     clips = CLIPS if clips is None else clips
@@ -60,7 +62,9 @@ def write_docs(ws: Workspace, *, clips: list[dict] | None = None, titles: dict |
                  "clips": clips}
     titles = TITLES if titles is None else titles
     entries = [{"clip_id": c["id"], "candidate_id": c["candidate_id"], "title": titles.get(c["id"]),
-                "evidence": None, "alternatives": [], "status": "titled" if titles.get(c["id"]) else "untitled"}
+                "evidence": None,
+                "alternatives": [{"title": a, "evidence": "x"} for a in (alternatives or {}).get(c["id"], [])],
+                "status": "titled" if titles.get(c["id"]) else "untitled"}
                for c in clips]
     titles_doc = {"schema_version": 1, "episode_id": ws.episode_id, "clips_sha256": sha(clips_doc),
                   "candidates_sha256": sha(cand_doc), "header": {"lines": HEADER if header is None else header},

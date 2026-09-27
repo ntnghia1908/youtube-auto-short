@@ -4,7 +4,7 @@ Greenfield project for automatically turning Vietnamese long-form lecture videos
 
 ## Current stage
 
-**CP7 — Short composition / renderer.** Implemented stages:
+**CP8 — End-to-end Auto Short MVP.** One command, `auto-short run <youtube-url|path>`, runs every stage below in order and resumes after an error or Ctrl-C (contract: `docs/decisions/CP8-pipeline-contract.md`). Implemented stages:
 
 - `ingest`: a YouTube URL or a local video enters a per-episode workspace and gets a `metadata.json` and a resumable `manifest.json`. Conventions: `docs/decisions/CP2-workspace-contract.md`.
 - `transcript`: a Vietnamese `transcript.json` with segment/word timestamps, from the YouTube caption, else a local subtitle, else `faster-whisper`. Contract: `docs/decisions/CP3-transcript-contract.md`.
@@ -12,6 +12,7 @@ Greenfield project for automatically turning Vietnamese long-form lecture videos
 - `selection`: a local Ollama model picks up to 25 non-overlapping, self-contained clips among the candidates (`clips.json` + `selection_log.json`). Contract: `docs/decisions/CP5-selection-contract.md`.
 - `titling`: a deterministic header and an AI title/hook per clip (`titles.json` + `titling_log.json`). Contract: `docs/decisions/CP6-titling-contract.md`.
 - `render`: each titled clip becomes a 1080x1920 Short (black background, yellow header/title panels, centre-cropped source video, silences shortened) in `output/<episode_id>/shorts/` + `render_manifest.json`. Contract: `docs/decisions/CP7-render-contract.md`.
+- manual titles (review, partial — CP8.2): set a title by hand or pick an AI alternative for one Short (`work/<episode_id>/review.json`); re-rendering encodes only the Shorts that changed. Contract: `docs/decisions/CP8.2-title-override-contract.md`.
 
 The project adopts the universal parts of AI Development Framework v4 from `ntnghia1908/dang-vu-spring`, while keeping this repository independent.
 
@@ -33,7 +34,7 @@ AI generates title/panel text
 multiple Short outputs
 ```
 
-Ingest, transcription, analysis, AI clip selection, title generation and composition/render are implemented (subtitles are off, CP1 §7); human review (CP9) and the one-command pipeline (CP8) are planned.
+Ingest, transcription, analysis, AI clip selection, title generation and composition/render are implemented (subtitles are off, CP1 §7) and chained by `auto-short run` (CP8); Shorts can be reviewed in a LAN web UI (CP8.3; delete / restore a Short, mark Shorts as published, delete an episode: CP8.5) and a Short's title can be set by hand with only that Short re-rendered (CP8.2); full human review and batch processing (CP9) are planned.
 
 ## Setup
 
@@ -43,7 +44,7 @@ YouTube downloads may also need a JavaScript runtime on `PATH` (default config u
 ```bash
 conda create -n auto-short python=3.12
 conda activate auto-short
-pip install -e ".[dev]"
+pip install -e ".[dev]"                # add ",web" for the web UI: pip install -e ".[dev,web]"
 cp config.example.toml config.toml   # local, gitignored; edit as needed
 ```
 
@@ -54,6 +55,79 @@ pytest -q
 ```
 
 ## Usage
+
+Whole pipeline in one command (ingest -> transcript -> analysis -> selection -> titling -> render):
+
+```bash
+auto-short run https://youtu.be/rbjfCfFq3Dk
+auto-short run input/lecture.mp4 --series "Thập Thiện Nghiệp Đạo Kinh" --episode 9   # local video
+# Options: --episode-id ID (ingest), --subtitle PATH (transcript), --speaker/--series/--episode (titling),
+#          --force-from STAGE (re-run STAGE even if up to date; later stages follow), --no-preflight, --config PATH
+```
+
+`run` first checks that Ollama answers and has the `[selection]` and `[titling]` models (`--no-preflight` skips
+this, e.g. when those stages are already done). stdout gets the same line per stage as the single-stage
+commands below, then `<episode_id>\tdone (<rendered>/<clips> Shorts)\t<output dir>`; stderr gets the stage logs and
+a timing table. Re-running the same command after an error or Ctrl-C (exit 1 / 130) skips the stages that are up
+to date and continues from the first one that is not; re-running when everything is done skips all six stages
+(well under a second). The review stage is not run yet: AI titles are auto-approved. Rules:
+`docs/decisions/CP8-pipeline-contract.md`.
+
+### Web UI (LAN)
+
+The same pipeline from a browser on the LAN (phone or computer): log in, paste a YouTube link, follow the
+stages, play / download each Short or all of them as a zip, and change one Short's title (type it, or pick one of
+the AI alternatives; live preview of the title lines) then re-render only that Short. Needs the `[web]` extra
+(`pip install -e ".[dev,web]"`).
+
+```bash
+export AUTO_SHORT_WEB_PASSWORD='choose-a-password'   # required; never stored in config or the repo
+auto-short web                    # http://<this machine's LAN IP>:8080 ; options: --host, --port, --config PATH
+auto-short web --host 127.0.0.1   # this machine only
+```
+
+The login is remembered for 30 days per browser (`[web] session_days`); restarting the server keeps it (the
+signing key lives in `<workspace>/.web_secret`), changing the password logs every device out. Only single-video
+YouTube links are accepted (`youtu.be/…`, `youtube.com/watch?v=…`, `youtube.com/shorts/…`; `?si=…` and other
+parameters are dropped); local paths are CLI-only. One job runs at a time; pasting the link of an episode again
+resumes it (finished stages are skipped). Title changes use the same rules and `review.json` as
+`auto-short title` (CP8.2); saving is refused while a job of that episode is queued or running, and the previous
+Shorts stay playable while one is re-rendered. Plain HTTP: use it on a trusted network only. Contract:
+`docs/decisions/CP8.3-web-contract.md`.
+
+Review workflow (CP8.5): downloads are named `Tập<episode>_S<NN>_<title>.mp4` (e.g.
+`Tập29_S01_Đánh mắng trẻ là có tội không.mp4`; the zip is `Tập29_Shorts.zip`; characters not allowed in file
+names such as `?` and `"` are dropped). "Xóa Short" deletes a Short's mp4 (soft delete, kept in `review.json`
+`rejected`; "Hiện Short đã xóa" → "Khôi phục" re-renders it). "Xóa tập này" permanently deletes the episode's
+`work/<id>/` (including the downloaded video) and `output/<id>/`; a local source file outside the workspace is
+never deleted. The "Đã đăng" checkbox marks Shorts you have uploaded (`work/<id>/publish.json`, not a pipeline
+input); a Short re-rendered after ticking shows "đã đăng bản cũ". Filters: Tất cả / Chưa đăng / Đã đăng on the
+episode page, Tất cả / Còn Short chưa đăng / Đã đăng hết on the episode list.
+
+Playlists / bộ kinh (CP8.7): paste a playlist link (`youtube.com/playlist?list=…`) to list every episode of the
+series without downloading anything (a `watch?v=…&list=…` link asks: this episode only, or the whole playlist; Mix
+/ Watch later / Liked lists are refused). The home page shows the bộ kinh and the single episodes ("Tập lẻ"); a
+bộ kinh page lists its episodes in playlist order with their state and a "Xử lý" button per episode (several
+clicks queue one after the other), "Cập nhật danh sách" to pick up new episodes and "Xóa bộ kinh" (the list
+only; processed episodes are kept). An episode is "Xong" automatically once every remaining Short is ticked
+"Đã đăng" for its current file (a Short re-rendered after ticking does not count); downloading a Short ("Tải
+về") or the zip ticks it. Xong episodes are suggested for clean-up in the storage tab. Deleting an episode keeps a small record
+(`work/_deleted/<id>.json`) so a bộ kinh still counts it ("✔ Xong (đã xóa dữ liệu)", "Xử lý lại" asks first);
+deleted single episodes are listed under "Đã xóa" on the home page ("Xóa khỏi lịch sử" drops the record). The
+"Copy" button next to a Short's title copies the title plus hashtags (`#<series>` + `[web] hashtags`), kept within
+YouTube's 100-character title limit.
+
+Storage tab (CP8.6, "Bộ nhớ" in the top bar, `/storage`): free / used space of the drive holding `work/` and
+`output/`, the size of every episode (source video / Shorts / other) and of the Whisper models, and clean-up
+suggestions with a "Làm" button (asks first; nothing is ever deleted automatically): episodes whose Shorts are all
+ticked "Đã đăng", renders older than 7 days that still keep their source video, failed / unfinished episodes idle
+for 7 days. "Dọn video nguồn" deletes only the downloaded `work/<id>/source.*` (≈ 650 MB per episode; never a
+local source file) and keeps the Shorts: the episode becomes read-only (`work/<id>/archive.json`) — play,
+download, tick and delete Shorts still work; editing a title, restoring a Short or resubmitting the link is refused
+(delete the episode and run it again instead). A red banner appears on every page below 10 GB (or 10 %) free;
+below 3 GB free new links are refused.
+
+Single stages:
 
 ```bash
 # Local file: referenced in place (not copied); episode id = <slug>-<sha256[:12]>
@@ -135,11 +209,28 @@ auto-short render <episode_id>    # options: --force, --config PATH
 ```
 
 Output: `output/<episode_id>/shorts/<clip_id>.mp4` and `output/<episode_id>/render_manifest.json` (layout,
-display lines and font size per clip, segments, sha256 of every input and file). Titles come straight from
-`titles.json` (`[render] title_source = "titles"`, i.e. AI titles are auto-approved until the review stage exists);
-`untitled` clips are skipped with a warning. A long title first makes the title panel taller (3 lines), and only
+display lines and font size per clip, segments, sha256 of every input and file). Titles come from
+`titles.json` (`[render] title_source = "titles"`, i.e. AI titles are auto-approved until the review stage exists)
+unless a manual title is set in `review.json` (see `title` below); `untitled` clips without one are skipped with a
+warning. Each Short records a `render_key`; a Short whose key, file and sha256 are unchanged is reused instead of
+encoded again (`--force` encodes all). A long title first makes the title panel taller (3 lines), and only
 shrinks the font when that is not enough. Rules and schema: `docs/decisions/CP7-render-contract.md`; parameters in
 `[render]` of `config.example.toml` (`output_dir` and `threads` do not re-run the stage; any other key does).
+
+Set the title of one Short by hand, then re-render only that Short (no AI call):
+
+```bash
+auto-short title <episode_id> --list                        # every clip: AI title, numbered alternatives, override
+auto-short title <episode_id> <clip_id> --set "Tiêu đề mới" # manual title; prints the display lines + font size
+auto-short title <episode_id> <clip_id> --alternative 1     # use AI alternative 1 verbatim
+auto-short title <episode_id> <clip_id> --reset             # back to the AI title
+# add --render to run 'render' right away (~40 s for one Short of the test episode; the others are reused)
+```
+
+A manual title must be 1 to `[titling] max_chars` (60) characters on one line, without emoji, `#`, `@`, `!`, URL, surrounding quotes or all
+caps, use only characters of the font and fit the title panel (at most 3 lines); otherwise the command exits 1 and
+`review.json` is unchanged. Overrides are keyed by `(clip_id, candidate_id)`: after selection re-runs, an override for
+a clip that changed is ignored with a warning. Rules: `docs/decisions/CP8.2-title-override-contract.md`.
 
 `python -m auto_short ...` works the same. Re-running `ingest` skips when the source and the
 relevant config are unchanged. Artifacts go to `work/<episode_id>/` (`manifest.json`, `metadata.json`).

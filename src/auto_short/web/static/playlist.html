@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bộ kinh — Auto Short</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/">&larr; Auto Short</a>
+  <nav class="topnav"><a href="/storage">Bộ nhớ</a>
+  <form method="post" action="/logout"><button class="btn link" type="submit">Đăng xuất</button></form></nav>
+</header>
+<div id="disk-banner" class="disk-banner" hidden></div>
+<main class="container">
+  <section class="card">
+    <h2 id="pl-title">…</h2>
+    <p id="pl-meta" class="muted small"></p>
+    <div class="actions">
+      <button id="pl-refresh" class="btn" type="button">Cập nhật danh sách</button>
+      <button id="pl-delete" class="btn danger" type="button">Xóa bộ kinh</button>
+      <span id="pl-msg" class="small" hidden></span>
+    </div>
+  </section>
+  <section class="card">
+    <div id="pl-filters" class="filters">
+      <button class="btn small" type="button" data-filter="all">Tất cả (<span class="n">0</span>)</button>
+      <button class="btn small" type="button" data-filter="todo">Chưa xử lý (<span class="n">0</span>)</button>
+      <button class="btn small" type="button" data-filter="doing">Đang làm (<span class="n">0</span>)</button>
+      <button class="btn small" type="button" data-filter="done">Xong (<span class="n">0</span>)</button>
+    </div>
+    <ol id="pl-entries" class="pl-list"><li class="muted">Đang tải…</li></ol>
+  </section>
+</main>
+<script src="/static/app.js"></script>
+<script>AutoShort.initPlaylist();</script>
+</body>
+</html>

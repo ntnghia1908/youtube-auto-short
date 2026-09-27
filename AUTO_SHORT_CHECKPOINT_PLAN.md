@@ -333,7 +333,65 @@ MVP requirements:
 
 ---
 
+## CP8.1 — Video Dissolve at Silence Cuts
+
+> Re-plan HUMAN LEAD 2026-09-27: moved forward from CP10.
+
+Video dissolve 0.15 s at every silence-shortening cut, extending segments into the trimmed silence (method and choice: `docs/decisions/CP7-render-contract.md` § Chuyển cảnh). Audio stays a hard cut.
+
+**Success:** Rendered Shorts show a short dissolve instead of a visual jump at each cut; duration and audio unchanged.
+
+---
+
+## CP8.2 — Manual Title + Single-Short Rerender
+
+> Re-plan HUMAN LEAD 2026-09-27: title editing pulled forward from CP9.
+
+Scope:
+- per-Short title override (typed by the user, or picked from the AI `alternatives`), stored as an artifact, never calling AI again;
+- render uses the override when present;
+- rerendering after an edit re-encodes only the edited Short (per-Short render cache); other Shorts are reused byte-identical.
+
+**Success:** Editing one Short's title and rerendering takes one Short's render time and changes only that file.
+
+---
+
+## CP8.3 — Web MVP
+
+> Re-plan HUMAN LEAD 2026-09-27: new scope. Stack FastAPI + uvicorn (dependency proposal in the task contract); reachable on the LAN, so it requires a password.
+
+Scope:
+- submit a YouTube URL (or local path); Ollama preflight; run the CP8 pipeline in the background;
+- per-stage progress from the episode manifest;
+- list episodes and their Shorts; play and download each Short;
+- edit a Short's title and rerender that Short only (CP8.2).
+
+**Success:** From a browser on the LAN, one URL becomes reviewed, downloadable Shorts without using the CLI.
+
+---
+
+## CP8.4 — YouTube Upload (planned, not scheduled)
+
+> HUMAN LEAD 2026-09-27: wanted if feasible; otherwise Shorts are downloaded and uploaded by hand. Amends CP1 §2 when opened.
+
+Upload a reviewed Short to the user's own channel from the web (YouTube Data API v3, OAuth). Prerequisites and constraints are decided in its task contract: Google Cloud OAuth client created by the user, token storage (security gate), Google API dependency, daily upload quota, and API-uploaded videos from an unaudited project being locked to private.
+
+---
+
+## CP8.5 — Web Review Workflow
+
+> HUMAN LEAD 2026-09-27, after the CP8.3 manual test. Workflow: listen → edit title if needed → download to mobile → upload to YouTube by hand.
+
+Scope:
+- download file names `Tập<episode>_S<n>_<title>.mp4` (and inside the zip) instead of the video id;
+- delete one Short (excluded from later renders) or a whole episode;
+- per-Short "Đã đăng" (published) tick to track what is already on YouTube.
+
+---
+
 ## CP9 — Human Review + Batch Processing
+
+> Re-plan HUMAN LEAD 2026-09-27: phần batch mức playlist (bộ kinh: liệt kê, bấm xử lý từng tập, xếp hàng, trạng thái "Xong" suy ra khi đăng hết) kéo lên CP8.7 (`docs/tasks/CP8.7-playlist.md`, `docs/decisions/CP8.3-web-contract.md` W10). CP9 còn: tự xử lý hàng loạt, approval state, failed-item isolation đầy đủ.
 
 Scope:
 - candidate review;
@@ -403,6 +461,14 @@ Verify:
 - representative end-to-end run.
 
 **Final state:** The project can reliably process real Vietnamese lecture videos without manual source-level editing for every Short.
+
+---
+
+## Backlog (not scheduled)
+
+- HUMAN LEAD 2026-09-27: per-playlist (bộ kinh) hashtag editor on the web (manual list per playlist, overriding `[web] hashtags`). Started, then paused by HUMAN LEAD; unfinished, unreviewed code parked on local branch `wip/playlist-hashtags` (not pushed).
+
+- HUMAN LEAD 2026-09-27: support short clips in other formats, not only 9:16 Shorts (e.g. short horizontal clips). Needs its own product decision (CP1 §2/§4) when opened.
 
 ---
 

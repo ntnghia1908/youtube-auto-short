@@ -176,9 +176,21 @@ class RenderConfig:
     crf: int = 22  # P4 amended by HUMAN LEAD 2026-09-27 (was 18)
     preset: str = "medium"
     audio_bitrate: str = "192k"
+    dissolve: float = 0.15  # s, video dissolve at silence-trim junctions; 0 = hard cut (CP8.1 V1)
     # Execution-only settings (not part of the config hash):
     output_dir: Path = Path("output")
     threads: int = 0  # 0 = ffmpeg/x264 default
+
+
+@dataclass(frozen=True)
+class WebConfig:
+    """Web MVP server (docs/decisions/CP8.3-web-contract.md). Execution-only: no stage uses it."""
+
+    host: str = "0.0.0.0"
+    port: int = 8080
+    session_days: int = 30  # login cookie lifetime
+    # CP8.7: hashtags appended to the copied title (after #<series>); written without "#"
+    hashtags: tuple[str, ...] = ("TịnhKhông", "LờiPhậtDạy", "TịnhĐộ", "NiệmPhật")
 
 
 @dataclass(frozen=True)
@@ -190,6 +202,7 @@ class Config:
     selection: SelectionConfig = field(default_factory=SelectionConfig)
     titling: TitlingConfig = field(default_factory=TitlingConfig)
     render: RenderConfig = field(default_factory=RenderConfig)
+    web: WebConfig = field(default_factory=WebConfig)
 
 
 def _section(data: dict, name: str) -> dict:
@@ -440,9 +453,28 @@ def _render(data: dict) -> RenderConfig:
         crf=_int(re_, "crf", d.crf, w, lo=0, hi=51),
         preset=preset,
         audio_bitrate=bitrate,
+        dissolve=num("dissolve", 0, 1),
         output_dir=Path(_str(re_, "output_dir", str(d.output_dir), w)),
         threads=_int(re_, "threads", d.threads, w, lo=0, hi=256),
     )
+
+
+def _web(data: dict) -> WebConfig:
+    we = _section(data, "web")
+    d, w = WebConfig(), "web"
+    return WebConfig(
+        host=_str(we, "host", d.host, w),
+        port=_int(we, "port", d.port, w, lo=1, hi=65535),
+        session_days=_int(we, "session_days", d.session_days, w, lo=1, hi=365),
+        hashtags=_hashtags(we, d.hashtags),
+    )
+
+
+def _hashtags(section: dict, default: tuple[str, ...]) -> tuple[str, ...]:
+    value = section.get("hashtags", list(default))
+    if not isinstance(value, list) or not all(isinstance(x, str) for x in value):
+        raise ConfigError("web.hashtags must be a list of strings")
+    return tuple(value)
 
 
 def from_dict(data: dict) -> Config:
@@ -465,6 +497,7 @@ def from_dict(data: dict) -> Config:
         selection=_selection(data),
         titling=_titling(data),
         render=_render(data),
+        web=_web(data),
     )
 
 

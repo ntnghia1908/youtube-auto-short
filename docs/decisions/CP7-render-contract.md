@@ -3,10 +3,10 @@
 | Metadata | Value |
 |---|---|
 | Status | ACCEPTED |
-| Accepted by | — (R1–R11, P1–P5 duyệt cùng APPROVE TASK 2026-09-27, P3 sửa; font, ngắt dòng header, lề khung HUMAN LEAD 2026-09-27 sau phase 1; sửa P4 `crf` 22; AC4 chấp nhận (cắt thẳng); chuyển cảnh video → CP10; review ACCEPTED) |
+| Accepted by | — (R1–R11, P1–P5 duyệt cùng APPROVE TASK 2026-09-27, P3 sửa; font, ngắt dòng header, lề khung HUMAN LEAD 2026-09-27 sau phase 1; sửa P4 `crf` 22; AC4 chấp nhận (cắt thẳng); chuyển cảnh video → CP10; review ACCEPTED). Sửa đổi HUMAN LEAD 2026-09-27 (CP8.1, APPROVE TASK V1–V6, P1, P2): dissolve video 0.15 s ở điểm nối (R6, R11, § Chuyển cảnh). Sửa đổi HUMAN LEAD 2026-09-27 (CP8.2, APPROVE TASK T1–T6): title override `review.json`, tái dùng từng Short (R2, R6, R8, R10, R11). Sửa đổi HUMAN LEAD 2026-09-27 (CP8.5, APPROVE TASK X2): Short bị xóa `skip_reason: "rejected"` (R2, R11) |
 | Checkpoint | CP7 (S2) |
 | Roadmap | `AUTO_SHORT_CHECKPOINT_PLAN.md` §4 CP7 |
-| Task contract | `docs/tasks/CP7-render.md` |
+| Task contract | `docs/tasks/CP7-render.md`; sửa đổi CP8.1: `docs/tasks/CP8.1-dissolve.md`; sửa đổi CP8.2: `docs/tasks/CP8.2-title-override.md`; sửa đổi CP8.5: `docs/tasks/CP8.5-web-review.md` |
 | Builds on | `docs/decisions/CP1-product-contract.md` §2, §4, §5, §7, §8, §10; `docs/decisions/CP2-workspace-contract.md` D1–D8; `docs/decisions/CP4-analysis-contract.md` A8; `docs/decisions/CP5-selection-contract.md` B11; `docs/decisions/CP6-titling-contract.md` G2, G5, G6, G7 |
 
 File này là **canonical owner** của layout pixel, font đóng gói, đo chữ / ngắt dòng / fit, cách dựng lệnh `ffmpeg`, vị trí output và schema `render_manifest.json` mà CP8 (end-to-end) và CP9 (review) dùng lại. Nơi khác chỉ trỏ tới đây. Layout mẫu và tỉ lệ gốc: `docs/decisions/CP1-product-contract.md` §4; stage framework (manifest v1, skip/stale, config hash, CLI exit code): `docs/decisions/CP2-workspace-contract.md`. Thay đổi cần decision gate mới với HUMAN LEAD.
@@ -20,8 +20,10 @@ Implementation tham chiếu: `src/auto_short/render/` (`text.py`, `plan.py`, `st
 
 ## R2. Clip được render, nguồn title
 
-- Mọi clip của `clips.json` có entry `titles.json` `status = titled`, theo thứ tự `clips.json`. Clip `untitled` → `status: "skipped"`, `skip_reason: "untitled"`, không file, cảnh báo stderr (CP6 G6). `clips: []` hoặc không clip `titled` → stage `done`, không mp4, cảnh báo.
-- Nguồn title/header (P1): `[render] title_source = "titles"` — giá trị duy nhất ở CP7, nghĩa là auto-approve title AI (CP1 §8); header + title đọc từ `titles.json`, `title_source` ghi ở `render_manifest.json`. CP9 thêm `"review"`.
+- Mọi clip của `clips.json` có title — entry `titles.json` `status = titled` **hoặc** override hợp lệ trong `review.json` (CP8.2) — theo thứ tự `clips.json`. Clip `untitled` không override → `status: "skipped"`, `skip_reason: "untitled"`, không file, cảnh báo stderr (CP6 G6). `clips: []` hoặc không clip nào có title → stage `done`, không mp4, cảnh báo.
+- Nguồn title/header (P1): `[render] title_source = "titles"` — giá trị duy nhất, nghĩa là auto-approve title AI (CP1 §8); header + title đọc từ `titles.json`, `title_source` ghi ở `render_manifest.json`. CP9 thêm `"review"`.
+- **Sửa đổi CP8.2:** title của clip = override `review.json` hợp lệ > `titles.json` `title`; khóa override, cảnh báo override bị bỏ qua, `title_origin`: canonical ở `docs/decisions/CP8.2-title-override-contract.md` T3–T4.
+- **Sửa đổi CP8.5** (HUMAN LEAD 2026-09-27): clip bị xóa trong `review.json` (`rejected`) → `status: "skipped"`, `skip_reason: "rejected"`, không file (mp4 cũ bị xóa ở bước commit), ưu tiên hơn `untitled`; log INFO, không cảnh báo. `skip_reason` ∈ `untitled` | `rejected` (R9 kiểm). Canonical: `docs/decisions/CP8.2-title-override-contract.md` T7.
 
 ## R3. Đoạn giữ lại
 
@@ -70,10 +72,15 @@ Khung 1080×1920, nền `#000000`, panel `#FEDB00` (CP1 §4). Mọi tỉ lệ l�
 
 - Input seek `-ss (đầu đoạn đầu − 1 s) -t … -copyts` (giữ timestamp tuyệt đối của nguồn), decode rồi chọn, không stream-copy.
 - Video: `fps=<fps ra>` đưa frame lên lưới tuyệt đối `k / fps`; mỗi segment lấy `n_k` frame liên tiếp từ frame `round(a × fps)`, với `n_k` = hiệu của `round(thời gian ra cộng dồn × fps)` → video lệch audio ≤ nửa frame dù nhiều segment; `select` + `setpts=N/fps/TB`; crop + scale (R4); đệm lên 1080×1920 nền đen.
+- Chuyển cảnh video ở điểm nối (**sửa đổi HUMAN LEAD 2026-09-27, CP8.1**; trước đó cắt thẳng): `[render] dissolve` (giây, mặc định 0.15; `0` = cắt thẳng; trong `config_hash`). Theo frame, deterministic:
+  - `e = round(dissolve × fps / 2)` frame mỗi phía (0.15 s @ 29.97 → e = 2). Điểm nối j (giữa segment j và j+1): `gap` = số frame lưới bị trim giữa `first_j + n_j` và `first_{j+1}`; `e_j = max(0, min(e, gap // 2, n_j // 2, n_{j+1} // 2))`; `D_j = 2 e_j`. Segment j lấy thêm `e_j` frame sau, segment j+1 thêm `e_j` frame trước — lấy từ phần khoảng lặng bị trim, không bao giờ ra ngoài `[source_start, source_end]` (segment đầu không kéo về trước, segment cuối không kéo về sau). Kẹp `n // 2` (quyết định khi implement, ngoài V2): mỗi segment cho mỗi phía tối đa nửa số frame của nó → hai cửa sổ dissolve liên tiếp không chồng nhau; chỉ có tác dụng với segment ngắn hơn 2e frame (không có ở video test).
+  - Nhánh video: `split` → mỗi segment `trim=start_pts=first − e_in:end_pts=first + n + e_out` (sau `fps=` pts là chỉ số lưới, time base 1/fps → đúng các frame `select` `[first − e_in, first + n + e_out − 1]` sẽ lấy) + `setpts=PTS-STARTPTS` + crop/scale/đổi màu (per frame) → nối trái sang phải bằng `xfade=transition=fade` dài `D_j` frame, `offset` = (độ dài tích lũy − D_j)/fps (`D_j = 0` → `concat`) → `setpts=N/fps/TB` → `pad`. Tổng frame = tổng `n_k` (như cắt thẳng); cửa sổ dissolve là D_j frame giữa hai bên điểm nối; frame đầu cửa sổ `xfade` vẫn 100 % segment trước, nên phần hòa trộn thật là D_j − 1 frame (3/4, 1/2, 1/4 với D = 4).
+  - Không điểm nối nào có `D_j > 0` (`dissolve = 0`, 1 segment, mọi gap < 2 frame) → filter graph **y hệt** cắt thẳng ở trên (mp4 byte-identical bản CP7).
+  - Audio vẫn cắt thẳng (không đổi).
 - Audio: `asplit` + `atrim` từng segment theo giây tuyệt đối (chính xác tới sample) + `concat`, 48 kHz stereo. Không fade/crossfade (điểm nối nằm trong khoảng lặng, CP4 A8).
 - Panel + chữ: mỗi panel là một frame RGBA (`color` + `geq` alpha bo góc + `drawtext` từng dòng với `fontfile` đóng gói, `textfile`, `expansion=none`, `text_shaping=1`), đổi sang YUV BT.709 rồi `overlay` (lặp frame cuối) lên video trong YUV 4:4:4; cuối cùng `yuv420p`. Đường dẫn trong filter graph được escape hai tầng; graph qua `-filter_complex_script`.
 - Encode (P4, **sửa P4** HUMAN LEAD 2026-09-27 sau xem mẫu: `crf` 22 thay 18; đo 60 s video `k03`: crf 18 → 19 MB, 20 → 15 MB, 22 → 11 MB, 23 → 10 MB): `libx264` `crf` 22, `preset` medium, `yuv420p`, gắn BT.709 tv-range; fps giữ nguồn nếu ≤ 30, ngược lại 30; AAC 192 kb/s 48 kHz stereo; `+faststart`; `-fflags/-flags +bitexact`, bỏ metadata/chapter nguồn. `threads` (thực thi, không vào hash).
-- Ghi `.<clip_id>.mp4.part` cùng thư mục, `ffprobe` kiểm (R9), rồi `os.replace`. `ffmpeg` lỗi → `failed`, `error` = `clip <id>: ffmpeg failed: <dòng cuối stderr>`.
+- Ghi `.<clip_id>.mp4.part` cùng thư mục, `ffprobe` kiểm (R9), rồi `os.replace` — **sửa đổi CP8.2:** `os.replace` dời tới bước commit sau khi mọi clip xong (R8). `ffmpeg` lỗi → `failed`, `error` = `clip <id>: ffmpeg failed: <dòng cuối stderr>`.
 
 ## R7. Font
 
@@ -84,17 +91,19 @@ Khung 1080×1920, nền `#000000`, panel `#FEDB00` (CP1 §4). Mọi tỉ lệ l�
 ## R8. Output
 
 - `<output_dir>/<episode_id>/`, `[render] output_dir` mặc định `"output"` (CP1 §2, `.gitignore`), thực thi (không vào hash) như `workspace.dir`. Entry manifest episode ghi path artifact **absolute** (file ngoài workspace).
-- `run_stage` của CP2 dùng nguyên trạng; stage tự dọn: trước khi chạy xóa các file của lần render trước (artifact của entry `render` trong manifest + file liệt kê trong `render_manifest.json` cũ + chính nó), chỉ file nằm trong `<output_dir>/<episode_id>/`. Lỗi ở bất kỳ bước nào (kể cả kiểm input trước khi chạy) → xóa mọi file render của episode (cũ và của lần chạy đó) → không còn mp4/manifest dở.
+- `run_stage` của CP2 dùng nguyên trạng; stage tự dọn, chỉ file nằm trong `<output_dir>/<episode_id>/`. File của lần render trước = artifact của entry `render` trong manifest + file liệt kê trong `render_manifest.json` cũ + chính nó.
+- **Sửa đổi CP8.2** (thay luật cũ "trước khi chạy xóa mọi file của lần render trước; lỗi ở bất kỳ bước nào → xóa mọi file render của episode"): Short có `render_key` không đổi được tái dùng; Short encode giữ ở `.part` tới khi mọi clip xong, rồi commit (thay file, xóa file cũ không còn thuộc lần này, ghi `render_manifest.json`); lỗi chỉ xóa file lần chạy đó đã ghi, output thành công trước giữ nguyên. Canonical: `docs/decisions/CP8.2-title-override-contract.md` T5.
 - Đổi `output_dir` không chạy lại stage (artifact cũ vẫn ở chỗ cũ); muốn render sang chỗ mới dùng `--force`.
 
 ## R9. Validation trước khi ghi `render_manifest.json` (vi phạm → `failed`)
 
-Mỗi clip của `clips.json` có đúng một entry, cùng thứ tự, `clip_id`/`candidate_id` khớp; `segments` bằng R3 tính lại và `duration` = `clip.duration`; entry `rendered`: file tồn tại, sha256 khớp, `ffprobe` cho 1080×1920 `h264` `yuv420p`, `r_frame_rate` = fps R6, `aac` 48 kHz 2 kênh, thời lượng video **và** audio lệch thời lượng kế hoạch ≤ 0.1 s, title 1–3 dòng hiển thị; entry `skipped`: không file; header ≤ 3 dòng hiển thị; `stats` nhất quán.
+Kiểm trên trạng thái sau commit (CP8.2 T5: file của Short encode lần này đọc ở `.part`, file cũ sắp xóa coi như không còn). Mỗi clip của `clips.json` có đúng một entry, cùng thứ tự, `clip_id`/`candidate_id` khớp; `segments` bằng R3 tính lại và `duration` = `clip.duration`; entry `rendered`: file tồn tại, sha256 khớp, `title_origin` hợp lệ, `render_key` 64 ký tự hex, `ffprobe` cho 1080×1920 `h264` `yuv420p`, `r_frame_rate` = fps R6, `aac` 48 kHz 2 kênh, thời lượng video **và** audio lệch thời lượng kế hoạch ≤ 0.1 s, số frame video (`nb_frames`) = tổng `n_k` kế hoạch (CP8.1 V5), `dissolves` = kế hoạch R6 tính lại, title 1–3 dòng hiển thị; entry `skipped`: không file, `dissolves` = `null`, `render_key` = `null`; header ≤ 3 dòng hiển thị; `stats` nhất quán.
 
 ## R10. Stage / resume / CLI
 
 - Yêu cầu `titling` = `done` và `clips.json`, `titles.json`, `candidates.json`, `metadata.json` tồn tại; không thì `failed` + `error`, không file.
-- `inputs` = 4 file trên (relative + sha256) + media nguồn (hash cache CP2 D6).
+- `inputs` = 4 file trên (relative + sha256) + `review.json` nếu có (CP8.2 T4) + media nguồn (hash cache CP2 D6).
+- **Sửa đổi CP8.6:** episode đã dọn video nguồn (`archive.json`) → `render` từ chối trước khi đụng manifest (không ghi `failed`, render cuối giữ nguyên). Canonical: `docs/decisions/CP8.3-web-contract.md` W9.
 - `config_hash` = mọi key `[render]` trừ `output_dir`, `threads`, cộng `font_sha256`. Đổi config stage khác không chạy lại render; chạy lại titling/selection → render `stale` (D6).
 - `artifacts` = `render_manifest.json` + các mp4 (absolute).
 - CLI `auto-short render <episode_id> [--force] [--config PATH]`; stdout `<episode_id>\t<rendered (<n>/<m> clips)|skipped (up to date)>\t<path render_manifest.json>`; stderr: font + fps + kích thước nguồn, layout mẫu, header (dòng + cỡ), mỗi clip (dòng title, cỡ, cao panel, số segment, thời lượng, thời gian render), tổng, cảnh báo clip bỏ qua; exit code CP2 D8.
@@ -114,7 +123,7 @@ Thứ tự key cố định:
             "video": {"x": 0, "y": 352, "w": 1080, "h": 1210, "crop": {"w": 964, "h": 1080, "x": 238, "y": 0}},
             "title_panel": {"x": 102, "y": 1573, "w": 875, "h": 292, "radius": 59}},
  "encode": {"vcodec": "libx264", "crf": 22, "preset": "medium", "pix_fmt": "yuv420p", "fps": "30000/1001",
-            "acodec": "aac", "sample_rate": 48000, "channels": 2, "audio_bitrate": "192k"},
+            "acodec": "aac", "sample_rate": 48000, "channels": 2, "audio_bitrate": "192k", "dissolve": 0.15},
  "header": {"lines": ["HT.Tịnh Không", "Thập Thiện Nghiệp Đạo Kinh (tập 9)"],
             "display_lines": ["HT.Tịnh Không", "Thập Thiện Nghiệp Đạo", "Kinh (tập 9)"], "font_size": 67},
  "stats": {"clips": 13, "rendered": 13, "skipped": 0, "seconds": 826.196},
@@ -123,12 +132,16 @@ Thứ tự key cố định:
              "title_display_lines": ["Tâm thiện thì", "tướng mạo", "cũng từ bi"], "title_font_size": 88,
              "layout": {"header_panel": {"x": 113, "y": 24, …}, "video": {"x": 0, "y": 321, …},
                         "title_panel": {"x": 102, "y": 1542, "w": 875, "h": 353, "radius": 59}},
-             "source_start": 964.228, "source_end": 1087.32, "segments": [[964.228, 966.979], …], "duration": 98.612}]}
+             "source_start": 964.228, "source_end": 1087.32, "segments": [[964.228, 966.979], …], "duration": 98.612,
+             "dissolves": [{"at": 2.736, "frames": 2}, {"at": 6.607, "frames": 4}, …],
+             "title_origin": "ai", "render_key": "…"}]}
 ```
 
 - `layout` gốc = layout mẫu (title panel 0.27 W); `shorts[].layout` = layout thật của clip. `fps` là phân số chuỗi.
-- Entry `skipped`: `file`, `sha256`, `title_display_lines`, `title_font_size`, `layout` = `null`; `title` = title của `titles.json` (`null` khi `untitled`); `segments`/`duration` vẫn ghi.
+- Entry `skipped`: `file`, `sha256`, `title_display_lines`, `title_font_size`, `layout` = `null`; `title` = title của `titles.json` (`null` khi `untitled`); `segments`/`duration` vẫn ghi. CP8.5: entry `skip_reason: "rejected"` ghi `title` / `title_origin` = title sẽ dùng khi khôi phục (override nếu có).
 - `file` relative theo `<output_dir>/<episode_id>/`; `stats.seconds` = Σ `duration` clip `rendered` (3 chữ số).
+- CP8.1 (additive, giữ `schema_version: 1`, P1): `encode.dissolve` = giây cấu hình (key cuối của `encode`); `shorts[].dissolves` (sau `duration`) = mỗi điểm nối một phần tử theo thứ tự, `at` = giây trên timeline video của Short tại điểm nối (frame đầu của segment j+1 / fps, 3 chữ số — tâm cửa sổ dissolve), `frames` = `D_j` (0 = cắt thẳng); clip 1 segment → `[]`; entry `skipped` → `null`.
+- CP8.2 (additive, giữ `schema_version: 1`): sau `dissolves`, `shorts[].title_origin` = `"ai" | "manual" | "alternative"` (`null` cho clip `untitled` không override) và `shorts[].render_key` = sha256 hex (key cuối của entry; `null` khi `skipped`). `title` = title thật được render (override nếu có). Định nghĩa: `docs/decisions/CP8.2-title-override-contract.md` T4, T5.
 
 ## Số đo ảnh mẫu (`docs/decisions/assets/cp1-layout-reference.jpg`, 576×1280)
 
@@ -155,12 +168,14 @@ Hình học R4 giữ mặc định đã duyệt (sai khác số đo ≤ 6 px @10
 - Lưới frame tuyệt đối + đếm frame theo thời gian cộng dồn (R6) thay vì `trim` theo giây từng segment (sai số ±1 frame/segment cộng dồn với clip 22 segment).
 - Dựng panel một frame rồi `overlay` lặp (không `geq`/`drawtext` mỗi frame); ghép trong YUV 4:4:4 + ma trận BT.709 cho panel (tránh lệch màu BT.601 mặc định của swscale).
 - `-fflags/-flags +bitexact`, bỏ metadata nguồn: render lại cùng input/config/máy → mp4 byte-identical (đo: 13/13 + `render_manifest.json`).
+- CP8.1: nhánh dissolve dùng `trim` thay `select` (V3 cho phép cách tương đương): `select` chỉ kết thúc khi hết input nên `concat`/`xfade` chờ EOF của nhánh trước và giữ frame (4:4:4 1080×1210) của mọi segment sau trong bộ nhớ — đo `k03` (22 segment): đỉnh RSS 13.7 GB với `select`, 2.6 GB với `trim` (cắt thẳng 2.0 GB); frame ra trùng hash từng frame (framemd5 `k04`), packet mã hóa trùng.
 
 ## Chuyển cảnh ở điểm nối (HUMAN LEAD 2026-09-27)
 
 - Audio: cắt thẳng, **không fade** (nghe A/B `k04` với fade 15 ms: không khác; bước nhảy tại điểm nối đo trên PCM −66 … −82 dBFS, ngang nhiễu nền).
 - Video: CP7 giữ **cắt thẳng** (AC4 chấp nhận). Đã thử trên `k04` (scratch, không vào `src/`): dissolve 0.25 / 0.5 / 0.15 s (kéo dài mỗi segment vào phần khoảng lặng bị trim, `xfade=fade`, số frame + audio giữ nguyên; trim ngắn hơn độ dài dissolve thì kẹp, trim 1 frame giữ cắt thẳng) và zoom luân phiên 1.12× ("punch-in"). Nhược điểm quan sát: dissolve dài lộ bóng mặt chồng khi người giảng đổi tư thế, chữ Hán burn-in chồng nhau; zoom làm mềm ảnh và đổi khung ở mọi điểm nối.
 - **HUMAN LEAD chọn dissolve 0.15 s (≈ 4 frame) và để làm ở CP10**, không đưa vào CP7. CP10 dùng lại cách kéo dài vào khoảng lặng bị trim nêu trên.
+- **Sửa đổi HUMAN LEAD 2026-09-27 (CP8.1):** re-plan kéo dissolve từ CP10 lên CP8.1 (`docs/tasks/CP8.1-dissolve.md`, V1–V6); bật mặc định `[render] dissolve = 0.15` (P2). Rule canonical ở R6 (kế hoạch + filter graph), R9 (V5), R11 (schema). Audio giữ cắt thẳng.
 
 ## Giới hạn đã biết
 

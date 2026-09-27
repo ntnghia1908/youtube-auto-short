@@ -142,6 +142,10 @@ def run_ingest(
     except WorkspaceError as exc:
         raise IngestError(str(exc)) from exc
     if manifest is not None:
+        from ..review.archive import is_archived
+        if is_archived(ws.dir):  # CP8.6 S3: never re-download / re-run an archived episode
+            raise IngestError(f"episode {ws.episode_id!r} is archived (source video cleaned up); delete the "
+                              "episode (web: Xóa tập) to run it again")
         _check_same_source(ws, manifest, spec)
     else:
         manifest = ws.new_manifest(_source_entry(ws, spec, None))

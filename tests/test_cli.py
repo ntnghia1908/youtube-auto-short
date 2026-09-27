@@ -83,3 +83,9 @@ def test_cli_transcript_errors(config_file, tmp_path, capsys):
     assert "auto-short: error: no manifest" in capsys.readouterr().err
     assert main(["transcript", "nope", "--subtitle", str(tmp_path / "x.srt"), "--config", str(config_file)]) == 1
     capsys.readouterr()
+
+
+def test_cli_web_requires_password(monkeypatch, config_file, capsys):
+    monkeypatch.delenv("AUTO_SHORT_WEB_PASSWORD", raising=False)
+    assert main(["web", "--config", str(config_file)]) == 1
+    assert "AUTO_SHORT_WEB_PASSWORD is not set" in capsys.readouterr().err

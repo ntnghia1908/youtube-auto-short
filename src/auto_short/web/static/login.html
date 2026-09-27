@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Đăng nhập — Auto Short</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="login-body">
+<main class="card login-card">
+  <h1>Auto Short</h1>
+  <form method="post" action="/login">
+    <input type="hidden" name="next" value="{{next}}">
+    <label for="password">Mật khẩu</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
+    {{error}}
+    <button type="submit" class="btn primary">Đăng nhập</button>
+  </form>
+  <p class="muted small">Đăng nhập được ghi nhớ {{days}} ngày trên thiết bị này.</p>
+</main>
+</body>
+</html>

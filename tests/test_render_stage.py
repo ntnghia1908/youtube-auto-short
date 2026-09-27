@@ -104,7 +104,12 @@ def test_render_writes_shorts_and_manifest(ws, rcfg):
     k01, k02 = doc["shorts"]
     assert list(k01) == ["clip_id", "candidate_id", "status", "skip_reason", "file", "sha256", "title",
                          "title_display_lines", "title_font_size", "layout", "source_start", "source_end",
-                         "segments", "duration"]
+                         "segments", "duration", "dissolves", "title_origin", "render_key"]
+    assert (k01["title_origin"], k02["title_origin"]) == ("ai", "ai")  # CP8.2 T4: no review.json
+    assert len(k01["render_key"]) == 64 and k01["render_key"] != k02["render_key"]
+    assert doc["encode"]["dissolve"] == 0.15 and list(doc["encode"])[-1] == "dissolve"
+    # one junction each, trimmed gaps of 15 / 18 frames -> full 4-frame dissolve (CP8.1 V2, V4)
+    assert k01["dissolves"] == [{"at": 0.901, "frames": 4}] and k02["dissolves"] == [{"at": 0.5, "frames": 4}]
     assert k01["segments"] == SEGMENTS["k01"] and k02["segments"] == SEGMENTS["k02"]
     assert len(k01["title_display_lines"]) == 3 and k01["title_font_size"] == 88
     assert k01["layout"]["title_panel"]["h"] > 292  # 3 lines: panel grew (P3)
@@ -119,6 +124,7 @@ def test_render_writes_shorts_and_manifest(ws, rcfg):
         assert (a["codec_name"], a["sample_rate"], a["channels"]) == ("aac", "48000", 2)
         assert abs(float(v["duration"]) - clip["duration"]) <= 0.1
         assert abs(float(a["duration"]) - clip["duration"]) <= 0.1
+        assert int(v["nb_frames"]) == round(clip["duration"] * 30000 / 1001)  # V5
     entry = _stage(ws)
     assert entry["status"] == "done"
     assert entry["artifacts"] == [str(out / "render_manifest.json"), str(out / "shorts/k01.mp4"),
@@ -134,6 +140,7 @@ def test_untitled_clip_is_skipped(ws, rcfg, caplog):
     doc = _rm(rcfg)
     k01 = doc["shorts"][0]
     assert (k01["status"], k01["skip_reason"], k01["file"], k01["sha256"]) == ("skipped", "untitled", None, None)
+    assert k01["dissolves"] is None
     assert k01["segments"] == SEGMENTS["k01"]
     assert doc["stats"] == {"clips": 2, "rendered": 1, "skipped": 1, "seconds": 2.7}
     assert _files(rcfg) == [f"{EID}/render_manifest.json", f"{EID}/shorts/k02.mp4"]
@@ -176,7 +183,10 @@ def test_resume_skip_config_and_stale(ws, rcfg):
 
 def test_config_hash_keys():
     assert "output_dir" not in HASH_KEYS and "threads" not in HASH_KEYS
-    assert {"font_file", "title_font_size", "min_frame_margin", "crf", "preset", "title_source"} <= set(HASH_KEYS)
+    assert {"font_file", "title_font_size", "min_frame_margin", "crf", "preset", "title_source",
+            "dissolve"} <= set(HASH_KEYS)
+    assert config_hash(used_config(replace(RenderConfig(), dissolve=0), "f" * 64)) != \
+        config_hash(used_config(RenderConfig(), "f" * 64))
     a = used_config(RenderConfig(), "f" * 64)
     assert a["render.font_sha256"] == "f" * 64
     assert config_hash(a) != config_hash(used_config(RenderConfig(), "0" * 64))
@@ -199,14 +209,23 @@ def _assert_failed(ws, rcfg, match):
     assert _files(rcfg) == []
 
 
+def _snapshot(rcfg):
+    root = rcfg.render.output_dir
+    return {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+
+
 def test_titling_not_done(ws, rcfg):
-    run_render(EID, rcfg)  # earlier outputs are removed on failure
+    run_render(EID, rcfg)
+    before = _snapshot(rcfg)
     manifest = json.loads(ws.manifest_path.read_text(encoding="utf-8"))
     manifest["stages"]["titling"]["status"] = "failed"
     ws.save_manifest(manifest)
     with pytest.raises(RenderError, match="titling is not done"):
         run_render(EID, rcfg)
-    _assert_failed(ws, rcfg, "titling is not done")
+    entry = _stage(ws)
+    assert entry["status"] == "failed" and "titling is not done" in entry["error"]
+    # CP8.2 T5: a failure only deletes files written by that run; the previous render stays intact.
+    assert _snapshot(rcfg) == before
 
 
 def test_sha_mismatch(ws, rcfg):
@@ -245,13 +264,28 @@ def test_missing_glyph_and_fit_failures(ws, rcfg):
     _assert_failed(ws, rcfg, "does not fit")
 
 
-def test_ffmpeg_failure_cleans_everything(ws, rcfg):
+def test_ffmpeg_failure_keeps_previous_render(ws, rcfg):
     run_render(EID, rcfg)
+    before = _snapshot(rcfg)
     rec = Recorder(fail_ffmpeg_at=2)  # k01 succeeds, k02 fails
     with pytest.raises(RenderError, match=r"clip k02: ffmpeg failed: \[fake\] Conversion failed!"):
         run_render(EID, rcfg, force=True, run=rec)
-    _assert_failed(ws, rcfg, "clip k02: ffmpeg failed")
+    entry = _stage(ws)
+    assert entry["status"] == "failed" and "clip k02: ffmpeg failed" in entry["error"]
     assert rec.ffmpeg_calls == 2
+    # CP8.2 T5: the k01 encoded by the failed run is deleted (never committed); the previous render is intact.
+    assert _snapshot(rcfg) == before
+
+    # Without a previous render, the failed run leaves nothing.
+    _remove_all(rcfg)
+    with pytest.raises(RenderError, match="clip k02: ffmpeg failed"):
+        run_render(EID, rcfg, force=True, run=Recorder(fail_ffmpeg_at=2))
+    _assert_failed(ws, rcfg, "clip k02: ffmpeg failed")
+
+
+def _remove_all(rcfg):
+    import shutil
+    shutil.rmtree(rcfg.render.output_dir)
 
 
 # --- CLI ------------------------------------------------------------------------------------------------------
@@ -274,3 +308,86 @@ def test_cli_render_and_status(ws, rcfg, tmp_path, capsys):
     write_docs(ws, titles={"k01": "Tâm 心", "k02": "x y"})
     assert main(["render", EID, "--config", str(cfg_file)]) == 1
     assert "error: render failed: clip k01: font" in capsys.readouterr().err
+
+
+# --- CP8.1: video dissolve (V2-V5) ----------------------------------------------------------------------------
+
+# Candidate over the whole source with three trims: segments [0, 1] [1.5, 3] [3.07, 5] [6, 7.9] (6.33 s);
+# gaps 15, 2 and 30 grid frames -> dissolves of 4, 2 and 4 frames.
+MULTI_CAND = {"id": "c00009", "source_start": 0.0, "source_end": 7.9, "source_duration": 7.9, "duration": 6.33,
+              "trims": [[1.0, 1.5], [3.0, 3.07], [5.0, 6.0]]}
+MULTI_CLIP = {"id": "k01", "candidate_id": "c00009", "source_start": 0.0, "source_end": 7.9, "source_duration": 7.9,
+              "duration": 6.33, "head_cut": None}
+
+
+def _framemd5(graph: str, source: Path, segments, tmp: Path, tag: str) -> tuple[list[str], list[str]]:
+    from auto_short.render import plan
+    script = tmp / f"{tag}.filter"
+    script.write_text(graph, encoding="utf-8")
+    seek, length = plan.input_window(segments, plan.Fraction(30000, 1001))
+    out = subprocess.run(["ffmpeg", "-v", "error", "-ss", str(seek), "-t", str(length), "-copyts", "-i", str(source),
+                          "-filter_complex_script", str(script), "-map", "[vout]", "-map", "[aout]",
+                          "-f", "framemd5", "-"], capture_output=True, text=True, check=True).stdout
+    rows = [ln.split(",") for ln in out.splitlines() if ln and not ln.startswith("#")]
+    return [r[-1].strip() for r in rows if r[0].strip() == "0"], [r[-1].strip() for r in rows if r[0].strip() == "1"]
+
+
+def test_dissolve_render_multi_segment(ws, rcfg, tmp_path):
+    from fractions import Fraction
+
+    from auto_short.render import plan
+    write_docs(ws, clips=[MULTI_CLIP], candidates=[MULTI_CAND], titles={"k01": "Mỗi suy nghĩ đều là tội lỗi?"})
+    run_render(EID, rcfg)
+    doc = _rm(rcfg)
+    k01 = doc["shorts"][0]
+    assert k01["segments"] == [[0.0, 1.0], [1.5, 3.0], [3.07, 5.0], [6.0, 7.9]]
+    assert [d["frames"] for d in k01["dissolves"]] == [4, 2, 4]
+    fps = Fraction(30000, 1001)
+    segs = plan.kept_segments(0.0, 7.9, MULTI_CAND["trims"])
+    planned = plan.planned_frames(segs, fps)
+    assert planned == round(Fraction(633, 100) * fps) == 190
+    path = _out(rcfg) / k01["file"]
+    probe = subprocess.run(["ffprobe", "-v", "error", "-count_frames", "-select_streams", "v:0", "-show_entries",
+                            "stream=nb_read_frames,duration", "-of", "json", str(path)],
+                           capture_output=True, text=True, check=True).stdout
+    v = json.loads(probe)["streams"][0]
+    assert int(v["nb_read_frames"]) == planned  # V5: same frame count as the hard-cut plan
+    assert abs(float(v["duration"]) - 6.33) <= 0.1
+
+    # Composed (pre-encode) frames: dissolve 0.15 vs 0 differ only inside the dissolve windows; audio identical.
+    g = plan.geometry(RenderConfig())
+    lay = plan.layout(g, g.title_h, 1440, 1080)
+    (tmp_path / "l.txt").write_text("x", encoding="utf-8")
+    lines = [plan.TextLine(tmp_path / "l.txt", 100)]
+    kw = dict(segments=segs, fps=fps, lay=lay, font_file=font_path(RenderConfig()), header_lines=lines,
+              header_size=67, title_lines=lines, title_size=88)
+    src = ws.dir / "source.mp4"
+    v0, a0 = _framemd5(plan.filter_graph(**kw, dissolve=0), src, segs, tmp_path, "cut")
+    v1, a1 = _framemd5(plan.filter_graph(**kw, dissolve=0.15), src, segs, tmp_path, "dissolve")
+    assert len(v0) == len(v1) == planned and a0 == a1
+    # Window of D frames centred on the junction; xfade's first blended frame is still 100 % the outgoing
+    # segment (progress 1 at the offset), so the frames that differ are the last D - 1 of each window.
+    blended = []
+    for d in k01["dissolves"]:
+        c = round(Fraction(str(d["at"])) * fps)
+        blended += range(c - d["frames"] // 2 + 1, c + d["frames"] // 2)
+    assert blended == [29, 30, 31, 75, 132, 133, 134]
+    assert [i for i in range(planned) if v0[i] != v1[i]] == blended
+
+
+def test_verify_output_checks_frame_count(tmp_path):
+    from fractions import Fraction
+
+    from auto_short.render.stage import verify_output
+
+    def fake(nb):
+        doc = {"streams": [{"codec_type": "video", "codec_name": "h264", "width": 1080, "height": 1920,
+                            "pix_fmt": "yuv420p", "r_frame_rate": "30000/1001", "duration": "1.001",
+                            "nb_frames": str(nb)},
+                           {"codec_type": "audio", "codec_name": "aac", "sample_rate": "48000", "channels": 2,
+                            "duration": "1.0"}], "format": {"duration": "1.001"}}
+        return lambda cmd: subprocess.CompletedProcess(cmd, 0, json.dumps(doc), "")
+
+    verify_output(tmp_path / "x.mp4", Fraction(30000, 1001), 30, fake(30))
+    with pytest.raises(RenderError, match="video frames 29 != 30"):
+        verify_output(tmp_path / "x.mp4", Fraction(30000, 1001), 30, fake(29))

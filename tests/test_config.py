@@ -94,3 +94,13 @@ def test_selection_config_parsing():
 def test_selection_config_invalid(data):
     with pytest.raises(ConfigError):
         config_mod.from_dict(data)
+
+
+def test_web_config():
+    w = config_mod.from_dict({"web": {"host": "127.0.0.1", "port": 9000, "session_days": 7}}).web
+    assert (w.host, w.port, w.session_days) == ("127.0.0.1", 9000, 7)
+    d = config_mod.Config().web
+    assert (d.host, d.port, d.session_days) == ("0.0.0.0", 8080, 30)
+    for bad in ({"port": 0}, {"port": 70000}, {"session_days": 0}, {"host": ""}, {"port": "80"}):
+        with pytest.raises(ConfigError):
+            config_mod.from_dict({"web": bad})
