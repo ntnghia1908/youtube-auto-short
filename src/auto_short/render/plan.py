@@ -295,7 +295,7 @@ def _video_cut(frames: list[tuple[int, int]], f: str, per_frame: str, pad: str) 
 
 def _video_dissolve(frames: list[tuple[int, int]], fps: Fraction, dp: DissolvePlan, per_frame: str,
                     pad: str) -> list[str]:
-    """V3: one branch per segment (``split`` + ``select`` of the extended range + per-frame conversions), joined
+    """V3: one branch per segment (``split`` + ``trim`` of the extended range + per-frame conversions), joined
     left to right with ``xfade=transition=fade`` over D_j frames (``concat`` when D_j = 0); ``pad`` after."""
     f = fps_text(fps)
     idx = [i for i, (_, n) in enumerate(frames) if n > 0]  # segments shorter than half a frame have no video
@@ -303,7 +303,10 @@ def _video_dissolve(frames: list[tuple[int, int]], fps: Fraction, dp: DissolvePl
     chain = [f"[0:v]fps={f},split={m}" + "".join(f"[s{i}]" for i in idx)]
     for i in idx:
         (first, n), (e_in, e_out) = frames[i], dp.extend[i]
-        chain.append(f"[s{i}]select='between(round(t*{f}),{first - e_in},{first + n + e_out - 1})',"
+        # after fps= the pts are the grid indices (time base 1/fps), so this trim keeps exactly the frames of
+        # select='between(round(t*fps),lo,hi)' but ends the branch after its last frame: concat/xfade move on
+        # without buffering the later segments until the end of the input (select only ends at input EOF).
+        chain.append(f"[s{i}]trim=start_pts={first - e_in}:end_pts={first + n + e_out},"
                      f"setpts=PTS-STARTPTS,{per_frame}[v{i}]")
     cur, length = f"v{idx[0]}", sum(dp.extend[idx[0]]) + frames[idx[0]][1]
     for prev, i in zip(idx, idx[1:]):

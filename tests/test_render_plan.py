@@ -204,10 +204,10 @@ def test_filter_graph_dissolve_structure():
     per_frame = ("crop=964:1080:238:0,scale=1080:1210:flags=lanczos,setsar=1,"
                  "scale=out_color_matrix=bt709:out_range=tv,format=yuv444p")
     assert graph.startswith(f"[0:v]fps={f},split=4[s0][s1][s2][s3];"
-                            f"[s0]select='between(round(t*{f}),33,61)',setpts=PTS-STARTPTS,{per_frame}[v0];"
-                            f"[s1]select='between(round(t*{f}),73,119)',setpts=PTS-STARTPTS,{per_frame}[v1];"
-                            f"[s2]select='between(round(t*{f}),121,150)',setpts=PTS-STARTPTS,{per_frame}[v2];"
-                            f"[s3]select='between(round(t*{f}),163,179)',setpts=PTS-STARTPTS,{per_frame}[v3];")
+                            f"[s0]trim=start_pts=33:end_pts=62,setpts=PTS-STARTPTS,{per_frame}[v0];"
+                            f"[s1]trim=start_pts=73:end_pts=120,setpts=PTS-STARTPTS,{per_frame}[v1];"
+                            f"[s2]trim=start_pts=121:end_pts=151,setpts=PTS-STARTPTS,{per_frame}[v2];"
+                            f"[s3]trim=start_pts=163:end_pts=180,setpts=PTS-STARTPTS,{per_frame}[v3];")
     # offsets: (accumulated length - D) / fps; D = 0 -> concat
     assert f"[v0][v1]xfade=transition=fade:duration=0.133467:offset=0.834167[x1]" in graph  # 29 - 4 = 25 frames
     assert f"[x1][v2]concat=n=2:v=1:a=0,settb=1/({f}),setpts=N[x2]" in graph  # 29 + 47 - 4 = 72 frames, + 30
