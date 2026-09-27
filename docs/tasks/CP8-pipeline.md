@@ -98,8 +98,26 @@ Không chạm database, security model. Public interface: chỉ **thêm** lệnh
 ## Result
 
 - Main changes:
-- Tests:
+  - `src/auto_short/pipeline.py` (mới): `PIPELINE_STAGES` (E2), `run_pipeline()` → `PipelineResult` (từng stage: `ran`, giây, `…Result`; `failed_stage`/`error`; `rendered`/`clips`/`output_dir`), `StageDeps` (dependency injectable + thay hàm `run_<stage>` cho test), callback `on_stage`, `ollama_preflight()` (E8, `urllib`, opener injectable), `PreflightError`, `PipelineInterrupted` (subclass `KeyboardInterrupt`, mang tên stage). Không sửa `workspace.run_stage` hay module stage.
+  - `src/auto_short/cli.py`: subparser `run` (E1; `--force-from` = `choices` 6 stage → exit 2); `stage_line()` dùng chung cho lệnh lẻ và `run` (output lệnh lẻ không đổi byte nào); dòng cuối `done (<r>/<c> Shorts)`, bảng tổng kết stderr, exit 1/130 (E4, E6). Bắt Ctrl-C → 130 **chỉ cho `run`** (lệnh lẻ giữ hành vi cũ).
+  - Docs: `docs/decisions/CP8-pipeline-contract.md` (PROPOSED, chờ review → ACCEPTED), project profile (authority order, module map `pipeline.py`, stage), README (current stage, usage `run`).
+- Tests: `pytest -q` → 362 passed (342 test cũ không sửa + 20 mới), 68 s.
+  - `tests/test_pipeline.py` (19): stage giả — thứ tự + tham số truyền đúng stage, resume/skip hết, dừng khi lỗi + resume, `force_from` chỉ force đúng stage, stage lạ → `PipelineError`, ngắt nêu đúng stage, preflight chạy trước và chặn mọi stage; preflight với opener giả (một lần/host, hai host, `OLLAMA_HOST` ghi đè, `:latest`, thiếu model selection/titling, không kết nối, HTTP 500, timeout, JSON lỗi); CLI `run` (stdout 6 dòng + dòng cuối, bảng stderr, exit 1 + gợi ý resume, exit 130 không traceback, `--force-from titling`, `--force-from review` → exit 2); preflight với HTTP server thật trên localhost (thiếu model, cổng đóng, env ghi đè → exit 1, `manifest.json` byte-identical; `--no-preflight` chạy stage).
+  - `tests/test_pipeline_e2e.py` (1, ≈ 15 s): video lavfi 30 s (tone 4.5 s / lặng 1.5 s) + `.vi.srt` sidecar tiếng Việt + client Ollama giả + `ffmpeg` thật (preset ultrafast), `[analysis]` hạ `min_duration` 4 s …: (1) selection lỗi → exit 1, 3 stage đầu `done`, selection `failed`, titling/render không chạy; (2) chạy lại → resume từ selection, 2 Short, đủ artifact CP2–CP7, 6 stage `done`, `review pending`; (3) chạy lại → 6 `skipped (up to date)`, không gọi AI, mp4 không đổi, 6 lệnh lẻ in đúng dòng như `run`; (4) `--force-from titling` → 4 skip, titling + render chạy; (5) `--force-from render` + Ctrl-C ở lệnh `ffmpeg` → exit 130, render `failed` `interrupted`; (6) chạy lại → render lại, mp4 byte-identical.
 - Review:
+- Verification (máy dev, conda `auto-short`, Ollama `127.0.0.1:11437`, `work/rbjfCfFq3Dk`):
+  - `pytest -q` → 362 passed in 67.9 s — AC1, AC4–AC7.
+  - AC2: `time auto-short run https://youtu.be/rbjfCfFq3Dk` → preflight ok, 6 stage `skipped (up to date)`, `rbjfCfFq3Dk\tdone (13/13 Shorts)\t…/output/rbjfCfFq3Dk`, exit 0, real 0.32 s; sha256 13 mp4 trước/sau giống hệt, `manifest.json` byte-identical.
+  - AC3: `auto-short run https://youtu.be/rbjfCfFq3Dk --force-from render`, SIGINT cả process group (như Ctrl-C) sau 60 s (k01, k02 đã render) → exit 130, stderr `auto-short: interrupted during render; re-run the same command to resume`, không traceback; `status`: render `failed … error: interrupted`, `shorts/` rỗng, không file tạm sót. Chạy lại không `--force-from` → 5 stage skip, `render: run (previous status is failed)`, `rendered (13/13 clips)`, render 301.4 s, exit 0; `status` render `done`; sha256 13 mp4 giống hệt trước khi force.
+  - AC5: `OLLAMA_HOST=http://127.0.0.1:1 auto-short run https://youtu.be/rbjfCfFq3Dk` → `auto-short: error: ollama preflight: cannot reach Ollama at http://127.0.0.1:1: [Errno 111] Connection refused`, exit 1, real 0.18 s, manifest không đổi. Thêm: cùng lệnh với `--no-preflight` → 6 skip, exit 0; `--force-from bogus` → exit 2.
+  - AC8: `node scripts/framework-check.mjs` → PASS (gồm decision record CP8).
 - Important findings / decisions:
+  - Dòng cuối stdout dùng đường dẫn thư mục output (`<output_dir>/<episode_id>`, không dấu `/` cuối); số Short lấy từ `render_manifest.json` `stats` khi render skip.
+  - Lỗi stage được trả về trong `PipelineResult` (không raise) để CLI in bảng tổng kết trước message lỗi; preflight lỗi và Ctrl-C raise.
+  - Finding ngoài scope (không sửa): dòng stdout của lệnh lẻ in path theo `workspace.dir` (tương đối với config mặc định, vd `work/rbjfCfFq3Dk/transcript.json`) còn render in path tuyệt đối — có từ CP2–CP7, `run` giữ nguyên để byte-identical với lệnh lẻ.
+  - Render dọn đúng khi bị ngắt: mp4 đã render trong lần chạy bị xóa, không file tạm sót (đã kiểm trên video thật).
 - Known limitations:
+  - Lệnh lẻ vẫn in traceback khi Ctrl-C (chọn chỉ bắt cho `run`, không đổi hành vi lệnh lẻ).
+  - Timeout preflight 10 s là hằng số; preflight không kiểm `node` / `ffmpeg` / Whisper (ngoài scope E8).
+  - Chưa chạy thật trên video mới từ đầu (ingest YouTube → render): chuyển sang verification CP8.3 theo P3.
 - PR:

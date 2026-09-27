@@ -4,7 +4,7 @@ Greenfield project for automatically turning Vietnamese long-form lecture videos
 
 ## Current stage
 
-**CP7 — Short composition / renderer.** Implemented stages:
+**CP8 — End-to-end Auto Short MVP.** One command, `auto-short run <youtube-url|path>`, runs every stage below in order and resumes after an error or Ctrl-C (contract: `docs/decisions/CP8-pipeline-contract.md`). Implemented stages:
 
 - `ingest`: a YouTube URL or a local video enters a per-episode workspace and gets a `metadata.json` and a resumable `manifest.json`. Conventions: `docs/decisions/CP2-workspace-contract.md`.
 - `transcript`: a Vietnamese `transcript.json` with segment/word timestamps, from the YouTube caption, else a local subtitle, else `faster-whisper`. Contract: `docs/decisions/CP3-transcript-contract.md`.
@@ -33,7 +33,7 @@ AI generates title/panel text
 multiple Short outputs
 ```
 
-Ingest, transcription, analysis, AI clip selection, title generation and composition/render are implemented (subtitles are off, CP1 §7); human review (CP9) and the one-command pipeline (CP8) are planned.
+Ingest, transcription, analysis, AI clip selection, title generation and composition/render are implemented (subtitles are off, CP1 §7) and chained by `auto-short run` (CP8); human review and batch processing (CP9) are planned.
 
 ## Setup
 
@@ -54,6 +54,25 @@ pytest -q
 ```
 
 ## Usage
+
+Whole pipeline in one command (ingest -> transcript -> analysis -> selection -> titling -> render):
+
+```bash
+auto-short run https://youtu.be/rbjfCfFq3Dk
+auto-short run input/lecture.mp4 --series "Thập Thiện Nghiệp Đạo Kinh" --episode 9   # local video
+# Options: --episode-id ID (ingest), --subtitle PATH (transcript), --speaker/--series/--episode (titling),
+#          --force-from STAGE (re-run STAGE even if up to date; later stages follow), --no-preflight, --config PATH
+```
+
+`run` first checks that Ollama answers and has the `[selection]` and `[titling]` models (`--no-preflight` skips
+this, e.g. when those stages are already done). stdout gets the same line per stage as the single-stage
+commands below, then `<episode_id>\tdone (<rendered>/<clips> Shorts)\t<output dir>`; stderr gets the stage logs and
+a timing table. Re-running the same command after an error or Ctrl-C (exit 1 / 130) skips the stages that are up
+to date and continues from the first one that is not; re-running when everything is done skips all six stages
+(well under a second). The review stage is not run yet: AI titles are auto-approved. Rules:
+`docs/decisions/CP8-pipeline-contract.md`.
+
+Single stages:
 
 ```bash
 # Local file: referenced in place (not copied); episode id = <slug>-<sha256[:12]>

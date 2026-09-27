@@ -3,7 +3,7 @@
 | Metadata | Value |
 |---|---|
 | Status | CURRENT |
-| Project stage | CP7 — Short composition / renderer |
+| Project stage | CP8 — End-to-end Auto Short MVP (`auto-short run`) |
 
 ## 1. Project
 
@@ -14,7 +14,7 @@
 
 ## 2. Authority order
 
-1. HUMAN LEAD decisions / approved task contracts và accepted decision records trong `docs/decisions/` (hiện có `docs/decisions/CP1-product-contract.md` — product contract & architecture baseline; `docs/decisions/CP2-workspace-contract.md` — workspace/manifest/stage convention; `docs/decisions/CP3-transcript-contract.md` — transcript provider/validation/normalization và schema `transcript.json`; `docs/decisions/CP4-analysis-contract.md` — shot/silence detection, content window, điểm cắt, candidate và schema `shots.json`/`silences.json`/`candidates.json`; `docs/decisions/CP5-selection-contract.md` — AI clip selection: window, prompt/versioning, map về candidate, chọn cuối và schema `clips.json`/`selection_log.json`; `docs/decisions/CP6-titling-contract.md` — header deterministic, prompt/versioning titling, validation title và schema `titles.json`/`titling_log.json`; `docs/decisions/CP7-render-contract.md` — layout pixel, font, đo chữ/ngắt dòng/fit, render ffmpeg và schema `render_manifest.json`);
+1. HUMAN LEAD decisions / approved task contracts và accepted decision records trong `docs/decisions/` (hiện có `docs/decisions/CP1-product-contract.md` — product contract & architecture baseline; `docs/decisions/CP2-workspace-contract.md` — workspace/manifest/stage convention; `docs/decisions/CP3-transcript-contract.md` — transcript provider/validation/normalization và schema `transcript.json`; `docs/decisions/CP4-analysis-contract.md` — shot/silence detection, content window, điểm cắt, candidate và schema `shots.json`/`silences.json`/`candidates.json`; `docs/decisions/CP5-selection-contract.md` — AI clip selection: window, prompt/versioning, map về candidate, chọn cuối và schema `clips.json`/`selection_log.json`; `docs/decisions/CP6-titling-contract.md` — header deterministic, prompt/versioning titling, validation title và schema `titles.json`/`titling_log.json`; `docs/decisions/CP7-render-contract.md` — layout pixel, font, đo chữ/ngắt dòng/fit, render ffmpeg và schema `render_manifest.json`; `docs/decisions/CP8-pipeline-contract.md` — lệnh `run`, thứ tự stage của pipeline, resume, dừng khi lỗi, `--force-from`, preflight Ollama và exit code);
 2. `docs/ai/workflow.md`, `docs/ai/execution-profiles.md` và file này cho workflow/policy;
 3. source code và tests hiện hành cho implementation state;
 4. `docs/workflow/current-state.md` chỉ là operational state, không phải authority;
@@ -29,6 +29,7 @@ Các boundary dưới đây là **planned module boundaries**, chưa phải impl
 | Path | Stage / vai trò | Rule riêng |
 |---|---|---|
 | `src/auto_short/` (`workspace.py`, `hashing.py`, `config.py`, `cli.py`) | stage framework dùng chung, config, CLI — *implemented* (CP2) | `docs/decisions/CP2-workspace-contract.md` |
+| `src/auto_short/pipeline.py` | điều phối end-to-end `ingest → … → render` + preflight Ollama (lệnh `run` trong `cli.py`) — *implemented* (CP8) | `docs/decisions/CP8-pipeline-contract.md` |
 | `src/auto_short/ingest/` | ingest: input/download/metadata — *implemented* (CP2) | `docs/decisions/CP2-workspace-contract.md` |
 | `src/auto_short/transcript/` | transcript: caption YouTube / subtitle local / Whisper + timestamps — *implemented* (CP3) | `docs/decisions/CP3-transcript-contract.md` |
 | `src/auto_short/analysis/` | analysis: shot/silence detection + candidate generation (deterministic) — *implemented* (CP4) | `docs/decisions/CP4-analysis-contract.md` |
