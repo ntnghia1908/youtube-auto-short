@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Episode — Auto Short</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/">&larr; Auto Short</a>
+  <form method="post" action="/logout"><button class="btn link" type="submit">Đăng xuất</button></form>
+</header>
+<main class="container">
+  <section class="card">
+    <h2 id="ep-title">…</h2>
+    <p id="ep-meta" class="muted small"></p>
+    <div id="job-status" class="job-status"></div>
+    <ol id="stages" class="stages"></ol>
+    <div class="actions">
+      <button id="resubmit" class="btn" type="button" hidden>Chạy tiếp / chạy lại (bước đã xong được bỏ qua)</button>
+    </div>
+    <details id="log-box">
+      <summary>Nhật ký xử lý</summary>
+      <pre id="log" class="log"></pre>
+    </details>
+  </section>
+  <section class="card">
+    <div class="shorts-head">
+      <h2>Shorts <span id="shorts-count" class="muted"></span></h2>
+      <a id="zip" class="btn" hidden>Tải tất cả (.zip)</a>
+    </div>
+    <p id="header-lines" class="muted small"></p>
+    <div id="shorts" class="shorts-grid"></div>
+  </section>
+</main>
+<script src="/static/app.js"></script>
+<script>AutoShort.initEpisode();</script>
+</body>
+</html>

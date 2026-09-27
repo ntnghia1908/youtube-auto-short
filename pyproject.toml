@@ -18,6 +18,13 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest",
+    # TestClient for the web tests (CP8.3); already a transitive dependency of the env.
+    "httpx",
+]
+# Web MVP `auto-short web` (CP8.3, docs/decisions/CP8.3-web-contract.md): pip install -e ".[dev,web]".
+web = [
+    "fastapi==0.141.1",
+    "uvicorn==0.54.0",
 ]
 
 [project.scripts]

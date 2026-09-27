@@ -74,6 +74,12 @@ def _build_parser() -> argparse.ArgumentParser:
     u.add_argument("--no-preflight", action="store_true", help="skip the Ollama host/model check")
     u.add_argument("--config", type=Path, help="config TOML (default: ./config.toml if present)")
 
+    w = sub.add_parser("web", help="web UI on the LAN (password from env AUTO_SHORT_WEB_PASSWORD; needs the "
+                                   "[web] extra)")
+    w.add_argument("--host", help="listen address (default: [web] host, 0.0.0.0)")
+    w.add_argument("--port", type=int, help="listen port (default: [web] port, 8080)")
+    w.add_argument("--config", type=Path, help="config TOML (default: ./config.toml if present)")
+
     s = sub.add_parser("status", help="show stage status of an episode")
     s.add_argument("episode_id")
     s.add_argument("--config", type=Path, help="config TOML (default: ./config.toml if present)")
@@ -189,6 +195,32 @@ def _cmd_status(args: argparse.Namespace, cfg: config_mod.Config) -> int:
     return 0
 
 
+def _cmd_web(args: argparse.Namespace, cfg: config_mod.Config) -> int:
+    from .web.auth import AuthError, password_from_env  # stdlib only
+
+    try:
+        password_from_env()
+    except AuthError as exc:
+        print(f"auto-short: error: {exc}", file=sys.stderr)
+        return 1
+    try:
+        from .web.server import serve
+    except ImportError as exc:
+        print(f"auto-short: error: the web server needs the [web] extra (pip install -e \".[web]\"): {exc}",
+              file=sys.stderr)
+        return 1
+    port = args.port if args.port is not None else cfg.web.port
+    if not 1 <= port <= 65535:
+        print(f"auto-short: error: invalid port {port}", file=sys.stderr)
+        return 1
+    try:
+        serve(cfg, host=args.host or cfg.web.host, port=port)
+    except AuthError as exc:
+        print(f"auto-short: error: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def _setup_logging() -> None:
     """Log to the current stderr; idempotent across repeated main() calls."""
     for h in list(log.handlers):
@@ -219,6 +251,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_render(args, cfg)
         if args.command == "run":
             return _cmd_run(args, cfg)
+        if args.command == "web":
+            return _cmd_web(args, cfg)
         return _cmd_status(args, cfg)
     except (config_mod.ConfigError, IngestError, TranscriptError, AnalysisError, SelectionError,
             TitlingError, RenderError, WorkspaceError) as exc:

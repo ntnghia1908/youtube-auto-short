@@ -182,6 +182,15 @@ class RenderConfig:
 
 
 @dataclass(frozen=True)
+class WebConfig:
+    """Web MVP server (docs/decisions/CP8.3-web-contract.md). Execution-only: no stage uses it."""
+
+    host: str = "0.0.0.0"
+    port: int = 8080
+    session_days: int = 30  # login cookie lifetime
+
+
+@dataclass(frozen=True)
 class Config:
     workspace: WorkspaceConfig = field(default_factory=WorkspaceConfig)
     ingest: IngestConfig = field(default_factory=IngestConfig)
@@ -190,6 +199,7 @@ class Config:
     selection: SelectionConfig = field(default_factory=SelectionConfig)
     titling: TitlingConfig = field(default_factory=TitlingConfig)
     render: RenderConfig = field(default_factory=RenderConfig)
+    web: WebConfig = field(default_factory=WebConfig)
 
 
 def _section(data: dict, name: str) -> dict:
@@ -445,6 +455,16 @@ def _render(data: dict) -> RenderConfig:
     )
 
 
+def _web(data: dict) -> WebConfig:
+    we = _section(data, "web")
+    d, w = WebConfig(), "web"
+    return WebConfig(
+        host=_str(we, "host", d.host, w),
+        port=_int(we, "port", d.port, w, lo=1, hi=65535),
+        session_days=_int(we, "session_days", d.session_days, w, lo=1, hi=365),
+    )
+
+
 def from_dict(data: dict) -> Config:
     ws = _section(data, "workspace")
     ing = _section(data, "ingest")
@@ -465,6 +485,7 @@ def from_dict(data: dict) -> Config:
         selection=_selection(data),
         titling=_titling(data),
         render=_render(data),
+        web=_web(data),
     )
 
 
