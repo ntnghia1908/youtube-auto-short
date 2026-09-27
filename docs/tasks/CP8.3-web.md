@@ -110,10 +110,30 @@ Tất cả required verification phải chạy và PASS trước READY.
   - Docs: `docs/decisions/CP8.3-web-contract.md` (PROPOSED), CP1 §10 (3 dòng dependency + ghi chú scope), project profile (module map `web/`, authority), README (Web UI).
 - Tests: `pytest -q` → 422 passed (60 test mới: `test_web_urls.py`, `test_web_auth.py`, `test_web_jobs.py`, `test_web_app.py`, `test_cli.py`/`test_config.py` bổ sung), 1 warning (starlette: `httpx` với TestClient deprecated, khuyên `httpx2`). `node scripts/framework-check.mjs` → PASS.
 - Chạy thật (server `auto-short web --config config.toml` của worktree, workspace/output trỏ repo chính; `curl` qua `10.8.102.101:8080`): bảng số đo ở `docs/decisions/CP8.3-web-contract.md` § Số đo. AC1 (thiếu mật khẩu exit 1; 303/401; sai mật khẩu 401 sau 1 s không cookie; cookie 30 ngày; restart vẫn đăng nhập; cookie sửa → 401), AC2 (`tHtxw6ykUmM` → 6 stage `done`, 20/20 Short trong 1500 s; preflight lỗi → 503, không job), AC3 (Range 206; sha256 20/20 khớp; zip 20 entry khớp), AC5 (422 URL sai; 404 id lạ / traversal), AC6 (gửi trùng khi đang chạy → cùng job; gửi lại khi xong → 6 skip, 0,1 s) — PASS. Mật khẩu chạy thật sinh ngẫu nhiên, chỉ ở biến môi trường của tiến trình (không lưu trong repo). Server đã tắt.
-- Review:
+- Review: ORCHESTRATOR review phase A ACCEPTED (2026-09-27), không finding chặn.
 - Important findings / decisions:
   - W3: `watch?v=<id>&list=…` được hiểu là một video (bỏ `list`); chỉ `/playlist?list=…` bị từ chối — ghi trong decision record.
   - Tắt server khi job đang chạy: stage ghi `failed interrupted` nếu stage trả quyền về Python trong 30 s (test đơn vị); request Ollama dài có thể giữ manifest `running` → resume theo CP8 E3. Chưa đo trên server thật (không có job dài an toàn để ngắt).
   - Kết quả tập mới: 20 clip (header "Thập Thiện Nghiệp Đạo Kinh (tập 29)"), cả 20 có title AI; clip dài nhất 116,6 s (k14), ngắn nhất 31,8 s (k15); render dùng renderer CP7 (hard cut) vì CP8.1 chưa merge.
-- Known limitations: xem decision record § Giới hạn đã biết. Chưa có: sửa title (phase B, sau CP8.2); manual test trên thiết bị khác trong LAN (gate HUMAN LEAD).
+- Known limitations: xem decision record § Giới hạn đã biết.
+
+### Phase B (sửa title; 2026-09-27, trên merge CP8.1 + CP8.2 `31af948`)
+
+- Main changes:
+  - `web/app.py`: `POST /api/episodes/{id}/shorts/{clip}/title/preview` và `…/title` (`set` / `alternative` / `reset`, đúng một hành động) qua hàm dùng chung `auto_short.review`; 409 khi episode có job đang chạy/đợi (kiểm + ghi + tạo job trong một lock, dùng chung với gửi URL); `ReviewError` → 422. `render` injectable.
+  - `web/jobs.py`: job `render` (`clip_ids`) gọi `run_render` (CP8.2 T5 chỉ encode Short đổi); `summary` ghi `(<e> encoded, <r> reused)` cho cả job pipeline.
+  - `web/episodes.py`: Short view thêm `title.origin` (thay `source`), `editable`, `ai_title`, `alternatives`, `override`, `pending_title`, `rendering`; episode thêm `render_status`, `max_title_chars`, `titles_error`, `titles_ignored`. **Đổi luật phase A**: Short / file / zip lấy từ `render_manifest.json` đã commit bất kể status stage render (CP8.2 T5 giữ render trước tới commit / khi lỗi) — ghi trong decision record W7.
+  - UI: bộ sửa title trong `.title-edit` (đếm ký tự, dropdown phương án AI, xem trước debounce 350 ms, "Lưu & render lại", "Khôi phục title AI", khóa khi có job), nhãn "đang render…", thẻ Short thay tại chỗ; ghi chú "Đang hiển thị bản dựng trước".
+  - Docs: decision record (phase B: W4 § Sửa title, W5, W6, W7, số đo, giới hạn; vẫn PROPOSED), README (Web UI), project profile (module map `web/`).
+- Tests: `pytest -q` → 496 passed (sau merge 474 + 22 test web mới/đổi: `test_web_titles.py` gồm 1 test render thật bằng ffmpeg — sửa `k01` → `1 encoded, 1 reused`, `k02` byte không đổi, reset → byte-identical), 1 warning (như phase A). `node scripts/framework-check.mjs` → PASS.
+- Chạy thật (`curl` qua `10.8.102.101:8080`, server mới + mật khẩu ngẫu nhiên mới, không lưu): bảng phase B ở decision record § Số đo.
+  - Render lại 2 tập trong thư mục repo chính bằng renderer mới (dissolve 0.15 s, `render_key`) qua web: `tHtxw6ykUmM` 20/20 encode 509 s; `rbjfCfFq3Dk` (xếp hàng sau) 13/13 encode 310 s. ffprobe 33 mp4: \|`nb_frames` − `duration`×fps\| ≤ 0,49 frame, `dissolves` có ở 204/209 và 150/157 điểm nối, sha256 = manifest.
+  - AC4: preview hợp lệ (3 dòng, 88 px) / 4 title sai → 422; `set` tay `k04` → 1 encoded + 19 reused (16,3 s), 19 file khác sha256 không đổi, file mới được phục vụ đúng sha256; `alternative: 2` → như trên, origin `alternative`; `reset` → 20/20 mp4 byte-identical bản AI; 409 khi job pipeline chạy và khi job render của Short khác chạy.
+  - Server đã tắt; mật khẩu và cookie jar đã xóa.
+- Review:
+- Important findings / decisions:
+  - Luật "danh sách Short theo render cuối đã commit" thay luật phase A (xem trên).
+  - Sửa title bị từ chối (409) cả khi job render của **Short khác** đang chạy; UI khóa nút lưu tới khi job xong.
+  - `title.source` (phase A) đổi tên `title.origin` theo CP8.2.
+- Known limitations: decision record § Giới hạn đã biết. UI chỉ kiểm cú pháp (`node --check`) và qua API; manual test trên thiết bị khác trong LAN (gate HUMAN LEAD) chưa làm.
 - PR:

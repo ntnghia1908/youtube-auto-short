@@ -36,7 +36,7 @@ Các boundary dưới đây là **planned module boundaries**, chưa phải impl
 | `src/auto_short/selection/` | selection: AI (Ollama) chọn clip trong candidates + validate — *implemented* (CP5) | `docs/decisions/CP5-selection-contract.md` |
 | `src/auto_short/titling/` | titling: header deterministic + AI (Ollama) sinh title/hook + validate — *implemented* (CP6) | `docs/decisions/CP6-titling-contract.md` |
 | `src/auto_short/review/` | review: human approve/reject/edit — *implemented, partial* (CP8.2: chỉ title tay `review.json`; approve/reject, header, điểm cắt thuộc CP9) | `docs/decisions/CP8.2-title-override-contract.md` |
-| `src/auto_short/web/` | web MVP: `auto-short web` (FastAPI, extra `[web]`), đăng nhập mật khẩu, gửi URL YouTube, job nền chạy pipeline, tiến độ, xem/tải Short — *implemented* (CP8.3 phase A; sửa title chờ CP8.2) | `docs/decisions/CP8.3-web-contract.md` |
+| `src/auto_short/web/` | web MVP: `auto-short web` (FastAPI, extra `[web]`), đăng nhập mật khẩu, gửi URL YouTube, job nền chạy pipeline, tiến độ, xem/tải Short, sửa title một Short + render lại (qua `review`) — *implemented* (CP8.3) | `docs/decisions/CP8.3-web-contract.md` |
 | `src/auto_short/render/` | render: composition 9:16 theo template (font OFL đóng gói) + export `output/<id>/` — *implemented* (CP7) | `docs/decisions/CP7-render-contract.md` |
 | `tests/` | automated verification | project workflow applies |
 | `docs/` | authority, tasks, decisions, workflow | authority by section |

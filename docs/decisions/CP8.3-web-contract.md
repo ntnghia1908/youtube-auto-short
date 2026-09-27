@@ -3,17 +3,17 @@
 | Metadata | Value |
 |---|---|
 | Status | PROPOSED |
-| Accepted by | — (W1–W7, P1–P4 duyệt cùng APPROVE TASK 2026-09-27; chờ review) |
+| Accepted by | — (W1–W7, P1–P4 duyệt cùng APPROVE TASK 2026-09-27; phase A review ACCEPTED 2026-09-27; phase B chờ review) |
 | Checkpoint | CP8.3 (S2) |
 | Roadmap | `AUTO_SHORT_CHECKPOINT_PLAN.md` §4 CP8.3 |
 | Task contract | `docs/tasks/CP8.3-web.md` |
-| Builds on | `docs/decisions/CP8-pipeline-contract.md` (run, preflight, resume); `docs/decisions/CP7-render-contract.md` (`render_manifest.json`); `docs/decisions/CP2-workspace-contract.md` (manifest, stage status); CP1 §10 (dependency) |
+| Builds on | `docs/decisions/CP8-pipeline-contract.md` (run, preflight, resume); `docs/decisions/CP7-render-contract.md` (`render_manifest.json`); `docs/decisions/CP8.2-title-override-contract.md` (hàm dùng chung `auto_short.review`, `render_key` + tái dùng từng Short); `docs/decisions/CP2-workspace-contract.md` (manifest, stage status); CP1 §10 (dependency) |
 
-File này là **canonical owner** của web boundary: lệnh `auto-short web`, config `[web]`, auth (mật khẩu + cookie phiên), input URL từ web, job model, API JSON, route phục vụ file và UI. Nơi khác chỉ trỏ tới đây. Web không đổi contract stage CP2–CP8: pipeline chạy qua `run_pipeline` / `ollama_preflight` (CP8 E7, E8). Thay đổi cần decision gate mới với HUMAN LEAD.
+File này là **canonical owner** của web boundary: lệnh `auto-short web`, config `[web]`, auth (mật khẩu + cookie phiên), input URL từ web, job model, API JSON, route phục vụ file và UI. Nơi khác chỉ trỏ tới đây. Web không đổi contract stage CP2–CP8.2: pipeline chạy qua `run_pipeline` / `ollama_preflight` (CP8 E7, E8); sửa title qua hàm dùng chung của `auto_short.review` + `run_render` (CP8.2). Thay đổi cần decision gate mới với HUMAN LEAD.
 
 Implementation tham chiếu: `src/auto_short/web/` (`app.py` app factory + route, `auth.py`, `urls.py`, `jobs.py`, `episodes.py`, `server.py`, `static/`), `src/auto_short/cli.py` (`web`), `src/auto_short/config.py` (`WebConfig`).
 
-**Phase:** phase A (mọi mục dưới đây trừ sửa title) đã implement. Sửa title một Short (W4 phần title, W6 ô sửa title, W7 hai endpoint `…/title`, `…/title/preview`) ghép ở phase B sau khi CP8.2 (`review`, render cache từng Short) READY; chỗ cắm đã chừa sẵn (W5 job `render`, W6 `.title-edit`, W7 `title.source`).
+**Phase:** phase A (mọi mục trừ sửa title) và phase B (sửa title một Short: W4 § Sửa title, W5 job `render`, W6 bộ sửa title, W7 hai endpoint `…/title`, `…/title/preview`; danh sách Short theo render cuối, W7) đã implement.
 
 ## W1. Dependency
 
@@ -47,11 +47,19 @@ Implementation tham chiếu: `src/auto_short/web/` (`app.py` app factory + route
 - Job pipeline gọi `run_pipeline(url, config, series, episode, preflight=ollama_preflight, on_stage=…)`: preflight chạy lại khi job bắt đầu (job có thể đã đợi trong hàng). Kết quả: `done` + `summary` `"<rendered>/<clips> Shorts"`; lỗi stage → `failed`, `error = "<stage>: <message>"` (CP8 E4); lỗi preflight → `failed`, `error = "ollama preflight: …"`.
 - Gửi lại URL của episode đã xong / lỗi / bị ngắt → job mới; pipeline tự skip / resume (CP8 E3).
 - Tiến độ: status từng stage đọc từ `manifest.json` (CP2) + stage hiện tại và thời gian từng stage (`on_stage`: `ran` / skip, giây) + log của job. Trang episode poll JSON mỗi 2,5 s khi có job đang chạy/đợi.
+- Khi render chạy trong job, `summary` thêm `" (<e> encoded, <r> reused)"` từ `RenderResult.encoded` / `reused` (CP8.2 T5).
+
+### Sửa title (phase B)
+
+- Dùng đúng hàm dùng chung của CP8.2 (`preview_title`, `set_title`, `set_alternative` (1-based), `reset_title`, `list_titles`); luật validate, `review.json`, thứ tự nguồn title, `render_key` và tái dùng: `docs/decisions/CP8.2-title-override-contract.md` (canonical owner). Web không tự validate / ghi `review.json`.
+- Xem trước: `preview_title` (không ghi, không job) — dùng được cả khi có job đang chạy.
+- Ghi (`set` / `alternative` / `reset`): **từ chối 409** khi episode có job `queued`/`running` (pipeline hoặc render) → `review.json` không bị ghi giữa lúc render đọc nó. Kiểm "không có job" + ghi + tạo job nằm trong một lock của app (gửi URL cũng lấy lock đó khi tạo job) nên không lọt job giữa hai bước. `ReviewError` → 422 (message CP8.2), không ghi, không job.
+- Ghi thành công → tạo job `render` (`clip_ids` = [clip vừa sửa]) gọi `run_render(episode_id, config)` không `force`: CP8.2 T5 chỉ encode Short có `render_key` đổi, các Short khác `reuse`. `reset` khi không có override vẫn tạo job (render skip ngay). Lỗi render → job `failed`, `error = "render: <message>"`; output lần render trước giữ nguyên (CP8.2 T5).
 
 ## W5. Job model
 
-- Một worker thread, hàng đợi FIFO trong bộ nhớ; tại một thời điểm chỉ một job chạy. Job: `id` (số tăng dần trong phiên server), `episode_id`, `kind` (`pipeline`; phase B thêm `render`), `status` (`queued`, `running`, `done`, `failed`, `interrupted`), `created_at` / `started_at` / `finished_at` (UTC ISO), `stage`, `stages` [{`stage`, `ran`, `seconds`}], `error`, `summary`, `logs`.
-- Một episode chỉ có tối đa một job `queued`/`running`; gửi trùng trả job đang có.
+- Một worker thread, hàng đợi FIFO trong bộ nhớ; tại một thời điểm chỉ một job chạy. Job: `id` (số tăng dần trong phiên server), `episode_id`, `kind` (`pipeline` | `render`), `clip_ids` (job `render`: Short vừa sửa title), `status` (`queued`, `running`, `done`, `failed`, `interrupted`), `created_at` / `started_at` / `finished_at` (UTC ISO), `stage`, `stages` [{`stage`, `ran`, `seconds`}], `error`, `summary`, `logs`.
+- Một episode chỉ có tối đa một job `queued`/`running` (pipeline hoặc render); gửi URL trùng trả job đang có (kể cả job `render`), ghi title → 409.
 - Log: mọi record của logger `auto_short` phát ra trên worker thread khi job chạy (level ≥ INFO) được chép vào vòng đệm 200 dòng cuối của job, dạng `HH:MM:SS [LEVEL ]message`; server vẫn log ra stderr như CLI. Không gồm stderr của tiến trình con (ffmpeg, yt-dlp).
 - Lịch sử job chỉ trong bộ nhớ: restart server mất hàng đợi và log (manifest còn; gửi lại URL → resume).
 - Tắt server (Ctrl-C / SIGINT / SIGTERM qua uvicorn) khi job đang chạy: worker nhận `KeyboardInterrupt` (inject vào thread) + tiến trình con trực tiếp nhận SIGINT; chờ tối đa 30 s. Stage đang chạy ghi `failed` + `error: "interrupted"` (CP2 `run_stage`), job `interrupted`. Nếu stage đang kẹt trong một lời gọi dài không trả về trong 30 s (vd request Ollama) thì server thoát, manifest giữ `running` — CP8 E3 coi là chưa up to date, gửi lại URL sẽ chạy lại stage đó.
@@ -61,7 +69,9 @@ Implementation tham chiếu: `src/auto_short/web/` (`app.py` app factory + route
 - HTML + CSS + JS thuần trong `src/auto_short/web/static/` (package data; không build step, không framework frontend), tiếng Việt, responsive (lưới Short 2 cột trên điện thoại).
 - `/` : form URL (+ tuỳ chọn series / tập), lỗi (422 / 503) hiện ngay dưới form; danh sách episode (tên video, trạng thái: đang chạy stage / lỗi ở stage / N Shorts).
 - `/episodes/<id>`: tên, kênh, thời lượng; trạng thái job; 6 stage (`chờ`, `đang chạy`, `xong`, `lỗi` + message, `cần chạy lại`) + thời gian hoặc "bỏ qua (đã có)"; nhật ký (mở sẵn khi đang chạy / lỗi); nút "Chạy tiếp / chạy lại" (gửi lại `source_url`, ẩn khi có job đang chạy); lưới Short; nút "Tải tất cả (.zip)" (P3).
-- Mỗi Short: `<video controls preload="metadata" playsinline>` (tua bằng Range), mã clip, nhãn nguồn title (`AI` / `sửa tay` / `phương án khác`), thời lượng, title, nút "Tải về". Chỗ `<div class="title-edit">` (ẩn) dành cho phase B (sửa title). Lưới chỉ dựng lại khi danh sách / sha256 / title đổi (poll không làm dừng video đang xem).
+- Mỗi Short: `<video controls preload="metadata" playsinline>` (tua bằng Range), mã clip, nhãn nguồn title trong file (`AI` / `sửa tay` / `phương án AI khác`), thời lượng, title, "Tiêu đề mới … chưa render" khi title lần render tới khác file (vd render lỗi), nút "Tải về".
+- Sửa title (`.title-edit`, chỉ khi `editable`): nút "Sửa tiêu đề" mở ô nhập (giá trị = title sẽ render) + bộ đếm `n/<max_title_chars>` (đỏ khi vượt), dropdown phương án AI khác (chọn → điền ô nhập; lưu gửi `alternative: n` nếu ô nhập còn đúng chữ đó, sửa thêm → `set`), xem trước (gọi preview sau 350 ms ngừng gõ: dòng hiển thị trên nền vàng + cỡ chữ, hoặc lỗi 422), "Lưu & render lại" (bật khi xem trước hợp lệ và không có job), "Khôi phục title AI" (khi có override). Khi episode có job: nút lưu tắt + ghi chú "Đang có job chạy — đợi xong để lưu"; Short đang render lại có viền + nhãn "đang render…" trên video.
+- Mỗi thẻ Short chỉ dựng lại (thay tại chỗ) khi trạng thái của chính nó đổi (sha256, title, override, title chờ, đang render); danh sách clip đổi mới dựng lại cả lưới → poll không dừng video đang xem hay xóa chữ đang gõ ở thẻ khác; Short render xong tự thay bằng video mới (`video_url` đổi theo sha256).
 
 ## W7. API và file
 
@@ -71,15 +81,19 @@ Mọi route cần cookie (W2). JSON UTF-8.
 |---|---|
 | `POST /api/episodes` `{url, series?, episode?}` | 202 `{created: true, episode_id, job}`; 200 `{created: false, episode_id, job}` (đã có job đang chạy/đợi); 422 `{detail}` (URL / field sai); 503 `{detail: "ollama preflight: …"}` |
 | `GET /api/episodes` | `{episodes: [{id, title, stages_done, stages_total, running, failed, shorts, job}]}` — mọi workspace có manifest (mới nhất trước) + job đang đợi chưa có workspace; `job` không kèm `logs` |
-| `GET /api/episodes/{id}` | `{id, title, channel, duration, source_url, stages: [{stage, status, started_at, finished_at, error}], header, shorts, rendered, zip_url, job}`; 404 khi không có manifest và không có job |
+| `GET /api/episodes/{id}` | `{id, title, channel, duration, source_url, stages: [{stage, status, started_at, finished_at, error}], render_status, header, shorts, rendered, zip_url, max_title_chars, titles_error, titles_ignored, job}`; 404 khi không có manifest và không có job |
+| `POST /api/episodes/{id}/shorts/{clip}/title/preview` `{text}` | 200 `{clip_id, title, origin: "manual", display_lines, font_size, panel_height, chars}`; 422 `{detail}` (`ReviewError`: title sai, clip không có, titling chưa `done`); không ghi |
+| `POST /api/episodes/{id}/shorts/{clip}/title` `{set: text}` \| `{alternative: n}` \| `{reset: true}` | đúng một hành động, không thì 422; 202 `{preview, job}` (`preview` như trên với `origin` thật, `null` khi reset clip `untitled`; `job` = job `render` mới); 409 `{detail, job}` khi có job đang chạy/đợi; 422 `ReviewError`, không ghi |
 | `GET /files/{id}/{clip}.mp4` | `video/mp4`, hỗ trợ `Range` (206 + `Content-Range`), `Cache-Control: private, no-cache` |
 | `GET /files/{id}/{clip}.mp4?download=1` | như trên + `Content-Disposition: attachment; filename="<id>_<clip>.mp4"` |
 | `GET /files/{id}/shorts.zip` | zip stream (`ZIP_STORED`, không nén) mọi Short `rendered` theo thứ tự manifest, tên `<id>_<clip>.mp4`; `Content-Disposition: attachment; filename="<id>_shorts.zip"`; 404 khi chưa có Short |
 
 - `job` = các field W5 + `queue_position` (vị trí trong hàng, `null` khi không đợi).
-- `shorts[]` = `{clip_id, status (rendered | skipped), skip_reason, duration, source_start, source_end, title: {text, source, display_lines}, sha256, video_url, download_url}`; `video_url` = `/files/<id>/<clip>.mp4?v=<sha256[:12]>` (đổi khi file đổi), `null` khi Short bị bỏ qua. Phase A: `title.source = "ai"` (title lấy từ `titles.json`, CP7 R2); phase B lấy từ CP8.2 (`ai | manual | alternative`) và thêm field sửa title.
-- `shorts` chỉ có khi stage `render` = `done` (render đang chạy ghi đè manifest và file) — file cũng 404 lúc đó.
-- Phase B (sau CP8.2): `POST /api/episodes/{id}/shorts/{clip}/title` `{set | alternative | reset}` và `POST …/title/preview` — field chốt khi ghép.
+- `shorts[]` = `{clip_id, status (rendered | skipped), skip_reason, duration, source_start, source_end, title: {text, origin, display_lines}, sha256, video_url, download_url, editable, ai_title, alternatives: [{n, title}], override: {title, origin} | null, pending_title: {text, origin} | null, rendering}`.
+  - `title` = title **trong file** (`render_manifest.json` `title` / `title_origin` / `title_display_lines`; manifest trước CP8.2 không có `title_origin` → `ai`). `video_url` = `/files/<id>/<clip>.mp4?v=<sha256[:12]>` (đổi khi file đổi), `null` khi Short bị bỏ qua.
+  - `ai_title`, `alternatives`, `override` từ `list_titles` (CP8.2); `pending_title` = title lần render tới khi khác title trong file (title hoặc origin), `null` nếu giống; `editable` = `list_titles` đọc được (titling `done`, `review.json` hợp lệ), không thì `titles_error` = message và không sửa được. `titles_ignored` = cảnh báo T3 (override bị bỏ qua).
+  - `rendering` = episode có job `render` đang chạy/đợi và clip nằm trong `clip_ids`.
+- **Danh sách Short = render cuối đã commit** (quyết định phase B, thay luật phase A "chỉ khi render `done`"): `shorts`, file và zip lấy từ `render_manifest.json` hiện có (đúng `episode_id`) **bất kể** status stage render (`running`, `stale`, `failed`, `pending`); `render_status` cho UI ghi chú "Đang hiển thị bản dựng trước". Lý do: CP8.2 T5 — render mới encode vào `.part`, chỉ thay mp4 + manifest ở bước commit, lỗi / bị ngắt trước commit giữ nguyên render trước (mp4 khớp manifest); nên trong lúc render lại một Short (hoặc cả pipeline), mọi Short cũ vẫn xem / tải được. Khoảng nhỏ trong lúc commit (file đã thay, manifest chưa ghi) có thể cho sha256 cũ với file mới — chấp nhận. Lỗi giữa commit → CP8.2 xóa manifest → danh sách rỗng.
 
 ## Config `[web]`
 
@@ -109,6 +123,21 @@ Execution-only: không stage nào dùng, không vào config hash.
 | `shorts.zip` | 315 MB trong 0,7 s, 20 entry `ZIP_STORED` đúng thứ tự, sha256 từng entry = manifest |
 | gửi lại khi đã xong | job 2 xong trong 0,1 s (6 stage skip), mp4 + `render_manifest.json` không đổi |
 
+Phase B (2026-09-27, sau merge CP8.1 dissolve + CP8.2; server mới, mật khẩu mới):
+
+| Bước | Kết quả |
+|---|---|
+| gửi lại `https://youtu.be/tHtxw6ykUmM` (render `run (config changed)` vì `[render] dissolve`) | job pipeline 509 s: 5 stage skip, render 20/20 `(20 encoded, 0 reused)`; trong lúc chạy: 20 Short vẫn liệt kê (`render_status` `running`), `Range` → 206 |
+| ghi title `k01` khi job pipeline đang chạy | 409, `review.json` không được tạo |
+| gửi `https://youtu.be/rbjfCfFq3Dk` khi job trên đang chạy | 202, `queue_position` 1; chạy sau đó: render 13/13 `(13 encoded, 0 reused)` trong 310 s |
+| kiểm 33 mp4 mới (ffprobe) | 1080×1920; \|`nb_frames` − `duration`×fps\| ≤ 0,49 frame; `encode.dissolve` 0.15; điểm nối có dissolve: 204/209 (`tHtxw6ykUmM`), 150/157 (`rbjfCfFq3Dk`); `render_key` đủ; sha256 = manifest |
+| preview `k04` "Giữ miệng không nói xấu người khác thế nào" | 200 trong 0,005 s: 3 dòng, 88 px, panel 353 px, 42 ký tự |
+| preview 61 ký tự / emoji / HOA toàn bộ / `!` | 422 `invalid title: too long (61 > 60 chars)` / `emoji/pictograph` / `all caps` / `exclamation mark`; không ghi |
+| `set` title tay `k04` | 202; trong lúc render: `rendering` = [`k04`], ghi `k05` → 409; job render 16,3 s `20/20 Shorts (1 encoded, 19 reused)`, 19 dòng `reuse (render_key unchanged)`; chỉ `k04.mp4` đổi sha256; file tải về = manifest; `title.origin` `manual` |
+| `alternative: 2` | 202, 16,2 s, 1 encoded / 19 reused, `origin` `alternative`, `review.json` entry `alternative` |
+| `reset` | 202, 16,3 s, 1 encoded / 19 reused; 20/20 mp4 **byte-identical** bản AI trước khi sửa; `review.json` `titles: []` |
+| gửi lại URL khi đã xong | 6 stage skip |
+
 ## Giới hạn đã biết
 
 - HTTP không mã hóa: mật khẩu và cookie đi dạng rõ trong LAN (HTTPS ngoài scope).
@@ -116,3 +145,7 @@ Execution-only: không stage nào dùng, không vào config hash.
 - Job và log chỉ trong bộ nhớ; log không gồm output của ffmpeg / yt-dlp.
 - Một job tại một thời điểm; job dài (selection ~8 phút) chặn job khác của episode khác.
 - Danh sách episode đọc lại toàn bộ manifest mỗi lần gọi (đủ cho vài chục episode).
+- Sửa title một Short phải đợi job của episode xong (409), kể cả job render của Short khác; không có hàng đợi nhiều lần sửa.
+- `titles.json` / `review.json` / `clips.json` được đọc lại mỗi lần poll trang episode (`list_titles`, vài chục KB).
+- Ghi `review.json` đồng thời từ CLI `auto-short title` và web không có khóa chung (CP8.2 § Quyết định khi implement): lần ghi sau thắng.
+- UI chưa được kiểm trên trình duyệt thật trong môi trường agent (không có browser); manual test HUMAN LEAD là gate.

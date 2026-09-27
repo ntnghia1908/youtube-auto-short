@@ -76,7 +76,8 @@ to date and continues from the first one that is not; re-running when everything
 ### Web UI (LAN)
 
 The same pipeline from a browser on the LAN (phone or computer): log in, paste a YouTube link, follow the
-stages, play / download each Short or all of them as a zip. Needs the `[web]` extra
+stages, play / download each Short or all of them as a zip, and change one Short's title (type it, or pick one of
+the AI alternatives; live preview of the title lines) then re-render only that Short. Needs the `[web]` extra
 (`pip install -e ".[dev,web]"`).
 
 ```bash
@@ -89,7 +90,9 @@ The login is remembered for 30 days per browser (`[web] session_days`); restarti
 signing key lives in `<workspace>/.web_secret`), changing the password logs every device out. Only single-video
 YouTube links are accepted (`youtu.be/…`, `youtube.com/watch?v=…`, `youtube.com/shorts/…`; `?si=…` and other
 parameters are dropped); local paths are CLI-only. One job runs at a time; pasting the link of an episode again
-resumes it (finished stages are skipped). Plain HTTP: use it on a trusted network only. Contract:
+resumes it (finished stages are skipped). Title changes use the same rules and `review.json` as
+`auto-short title` (CP8.2); saving is refused while a job of that episode is queued or running, and the previous
+Shorts stay playable while one is re-rendered. Plain HTTP: use it on a trusted network only. Contract:
 `docs/decisions/CP8.3-web-contract.md`.
 
 Single stages:
