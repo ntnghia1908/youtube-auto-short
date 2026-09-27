@@ -1,4 +1,5 @@
-/* Auto Short web UI (CP8.3; CP8.5 delete / restore, "Đã đăng", episode delete). Plain JS, no build step. */
+/* Auto Short web UI (CP8.3; CP8.5 delete / restore, "Đã đăng", episode delete; CP8.6 storage tab, archived
+   episodes, low-disk banner). Plain JS, no build step. */
 "use strict";
 
 const AutoShort = (() => {
@@ -62,6 +63,28 @@ const AutoShort = (() => {
 
   function jobActive(job) { return job && (job.status === "queued" || job.status === "running"); }
 
+  function fmtBytes(n) {
+    if (n === null || n === undefined) return "";
+    if (n >= 1e9) return `${(n / 1e9).toFixed(1).replace(".", ",")} GB`;
+    if (n >= 1e6) return `${Math.round(n / 1e6)} MB`;
+    if (n >= 1e3) return `${Math.round(n / 1e3)} kB`;
+    return `${n} B`;
+  }
+
+  // S4: red banner on every page when the disk is low (and new URLs are refused below 3 GB).
+  async function checkDisk() {
+    const box = $("#disk-banner");
+    if (!box) return;
+    let st;
+    try { st = await api("/api/storage/status"); } catch (_) { return; }
+    box.hidden = !st.warn;
+    if (!st.warn) return;
+    box.replaceChildren(
+      document.createTextNode(`Ổ đĩa server sắp đầy: còn ${fmtBytes(st.free)} trống. ` +
+        (st.block ? "Đang CHẶN gửi video mới (dưới 3 GB). " : "") + "Xem gợi ý dọn ở "),
+      el("a", { href: "/storage", text: "tab Bộ nhớ" }), document.createTextNode("."));
+  }
+
   async function submitUrl(url, series, episode) {
     return api("/api/episodes", {
       method: "POST",
@@ -95,6 +118,7 @@ const AutoShort = (() => {
       applyEpisodeFilter();
     }));
     loadEpisodes();
+    checkDisk();
   }
 
   // Episode list filter (CP8.5 X4): publish_group from the API ("todo" | "done" | null).
@@ -135,7 +159,7 @@ const AutoShort = (() => {
         state = e.job.status === "queued" ? "đang đợi" : `đang chạy: ${STAGE_LABELS[e.job.stage] || e.job.stage || ""}`;
       } else if (e.failed) state = `lỗi ở ${STAGE_LABELS[e.failed] || e.failed}`;
       else if (e.running) state = `dừng giữa chừng ở ${STAGE_LABELS[e.running] || e.running}`;
-      else if (e.stages_done === e.stages_total) state = `${e.shorts} Shorts · đã đăng ${e.published || 0}/${e.shorts}`;
+      else if (e.stages_done === e.stages_total) state = `${e.shorts} Shorts · đã đăng ${e.published || 0}/${e.shorts}` + (e.archived ? " · đã dọn video nguồn" : "");
       else state = `${e.stages_done}/${e.stages_total} bước`;
       return el("li", { "data-group": e.publish_group || "none" },
         el("a", { href: "/episodes/" + encodeURIComponent(e.id) },
@@ -162,6 +186,7 @@ const AutoShort = (() => {
     }));
     $("#show-deleted").addEventListener("click", () => { showDeleted = !showDeleted; applyFilter(); });
     refreshEpisode();
+    checkDisk();
   }
 
   let lastData = null;
@@ -257,8 +282,16 @@ const AutoShort = (() => {
     if (atBottom) pre.scrollTop = pre.scrollHeight;
     if (jobActive(job) || (job && job.status === "failed")) $("#log-box").open = true;
 
+    archived = !!d.archived;
+    const an = $("#archived-note");
+    an.hidden = !archived;
+    if (archived) {
+      an.textContent = `Đã dọn video nguồn${d.archived.freed ? ` (giải phóng ${fmtBytes(d.archived.freed)})` : ""}` +
+        `${d.archived.at ? `, ${fmtTime(d.archived.at)}` : ""}: chỉ xem / tải / đánh dấu đã đăng / xóa Short. ` +
+        "Muốn sửa tiêu đề hay khôi phục Short thì xóa tập rồi chạy lại.";
+    }
     const rb = $("#resubmit");
-    rb.hidden = !d.source_url || jobActive(job);
+    rb.hidden = !d.source_url || jobActive(job) || archived;
     rb.dataset.url = d.source_url || "";
     const del = $("#delete-episode");
     del.hidden = !d.stages.length;
@@ -276,11 +309,12 @@ const AutoShort = (() => {
   let editsLocked = false;
   let maxChars = 60;
   let filter = "all"; // all | todo | done ("Chưa đăng" / "Đã đăng")
+  let archived = false; // CP8.6: source video cleaned up
   let showDeleted = false;
 
   function cardKey(s) {
     return JSON.stringify([s.status, s.sha256, s.title, s.pending_title, s.override, s.rendering, s.editable,
-      s.alternatives.length, s.deleted, s.rejected, s.published, s.published_stale, s.download_name]);
+      s.alternatives.length, s.deleted, s.rejected, s.published, s.published_stale, s.download_name, archived]);
   }
 
   // Filter + "Short đã xóa" toggle only hide / show cards (no rebuild: a playing video keeps playing).
@@ -391,8 +425,8 @@ const AutoShort = (() => {
       s.status === "rendered" || s.published ? publishBox(s) : null,
       el("div", { class: "short-actions" },
         s.download_url ? el("a", { class: "btn", href: s.download_url, download: s.download_name || "", text: "Tải về" }) : null,
-        s.editable ? deleteButton(s) : null),
-      s.editable && !s.deleted ? titleEditor(s) : el("div", { class: "title-edit", hidden: true }));
+        s.editable && !(archived && s.deleted) ? deleteButton(s) : null),
+      s.editable && !s.deleted && !archived ? titleEditor(s) : el("div", { class: "title-edit", hidden: true }));
     card.append(body);
     return card;
   }
@@ -442,7 +476,8 @@ const AutoShort = (() => {
     btn.addEventListener("click", async () => {
       const title = (s.title && s.title.text) || s.clip_id;
       if (!restore && !confirm(`Xóa Short ${s.clip_id} "${title}"?\n\nFile video bị xóa ngay để tiết kiệm bộ nhớ; ` +
-        "có thể khôi phục sau (dựng lại khoảng 16–40 giây, giữ tiêu đề).")) return;
+        (archived ? "tập đã dọn video nguồn nên KHÔNG khôi phục được." :
+          "có thể khôi phục sau (dựng lại khoảng 16–40 giây, giữ tiêu đề)."))) return;
       btn.disabled = true;
       try {
         await api(`/api/episodes/${encodeURIComponent(episodeId)}/shorts/${encodeURIComponent(s.clip_id)}/${restore ? "restore" : "delete"}`,
@@ -543,5 +578,96 @@ const AutoShort = (() => {
     return box;
   }
 
-  return { initIndex, initEpisode };
+  // --- storage page (CP8.6) ---------------------------------------------------------------------
+
+  const STATE_LABELS = {
+    processing: "đang xử lý", done: "xong", failed: "lỗi", incomplete: "dở dang", archived: "đã dọn nguồn",
+    orphan: "chỉ còn Short (không có workspace)",
+  };
+  const ACTION_LABELS = { archive: "Dọn video nguồn", delete: "Xóa cả tập" };
+
+  function initStorage() {
+    loadStorage();
+    checkDisk();
+  }
+
+  function recReason(r) {
+    if (r.rule === "all_published") return "Đã đăng hết Short.";
+    if (r.rule === "old_source") return `Dựng Short xong ${r.age_days} ngày trước, còn video nguồn.`;
+    return `Lỗi / dở dang, không hoạt động ${r.age_days} ngày.`;
+  }
+
+  async function runAction(r, a, btn) {
+    const name = r.title || r.episode_id;
+    const msg = a.action === "archive"
+      ? `Dọn video nguồn của "${name}" (${r.episode_id})? Giải phóng ${fmtBytes(a.frees)}.\n\n` +
+        "Short vẫn xem / tải được. Sau đó KHÔNG sửa tiêu đề, khôi phục Short hay chạy lại được nữa " +
+        "(muốn sửa thì xóa tập rồi chạy lại từ đầu)."
+      : `Xóa toàn bộ tập "${name}" (${r.episode_id})? Giải phóng ${fmtBytes(a.frees)}.\n\n` +
+        "Sẽ xóa video nguồn đã tải, mọi Short và dữ liệu xử lý. KHÔNG khôi phục được.";
+    if (!confirm(msg)) return;
+    btn.disabled = true;
+    const out = $("#rec-msg");
+    try {
+      if (a.action === "archive") {
+        const res = await api(`/api/episodes/${encodeURIComponent(r.episode_id)}/archive`, { method: "POST" });
+        out.textContent = `Đã dọn video nguồn "${name}": giải phóng ${fmtBytes(res.freed)}.`;
+      } else {
+        await api(`/api/episodes/${encodeURIComponent(r.episode_id)}`, { method: "DELETE" });
+        out.textContent = `Đã xóa tập "${name}".`;
+      }
+      out.className = "small ok";
+    } catch (e) {
+      out.textContent = e.message;
+      out.className = "small error";
+      btn.disabled = false;
+    }
+    out.hidden = false;
+    loadStorage();
+    checkDisk();
+  }
+
+  async function loadStorage() {
+    let d;
+    try { d = await api("/api/storage"); } catch (e) {
+      $("#disks").replaceChildren(el("p", { class: "error", text: e.message }));
+      return;
+    }
+    $("#disks").replaceChildren(...d.disks.map((k) => {
+      const pct = k.total ? Math.round((k.used / k.total) * 100) : 0;
+      return el("div", { class: "disk" + (d.warn ? " low" : "") },
+        el("div", { class: "disk-line", text: `Ổ chứa ${k.label === "work" ? "work/" : "output/"}: đã dùng ${fmtBytes(k.used)} / ${fmtBytes(k.total)} (${pct} %), còn trống ${fmtBytes(k.free)}` }),
+        el("div", { class: "bar" }, el("div", { class: "bar-used", style: `width:${pct}%` })));
+    }));
+    const t = d.totals;
+    $("#storage-meta").textContent = `Các tập: ${fmtBytes(t.episodes)} (video nguồn ${fmtBytes(t.source)}, Short ${fmtBytes(t.shorts)}, khác ${fmtBytes(t.other)}). ` +
+      `Tính lúc ${fmtTime(d.computed_at)} (làm mới tối đa 30 giây một lần).`;
+
+    const recs = $("#recs");
+    if (!d.recommendations.length) {
+      recs.replaceChildren(el("li", { class: "muted", text: "Không có gợi ý nào." }));
+    } else {
+      recs.replaceChildren(...d.recommendations.map((r) => el("li", { class: "rec" },
+        el("a", { href: "/episodes/" + encodeURIComponent(r.episode_id), class: "ep-name", text: r.title || r.episode_id }),
+        el("span", { class: "muted small", text: `${r.episode_id} · ${recReason(r)}` }),
+        el("div", { class: "rec-actions" }, ...r.actions.map((a) => {
+          const btn = el("button", { class: "btn small" + (a.action === "delete" ? " danger" : ""), type: "button",
+            text: `Làm: ${ACTION_LABELS[a.action]} (giải phóng ${fmtBytes(a.frees)})` });
+          btn.addEventListener("click", () => runAction(r, a, btn));
+          return btn;
+        })))));
+    }
+    $("#ep-rows").replaceChildren(...d.episodes.map((e) => el("tr", {},
+      el("td", {}, e.state === "orphan" ? el("span", { text: e.id })
+        : el("a", { href: "/episodes/" + encodeURIComponent(e.id), text: e.title || e.id })),
+      el("td", { text: STATE_LABELS[e.state] || e.state }),
+      el("td", { class: "num", text: e.source_kind === "local" ? "(file local)" : fmtBytes(e.source) }),
+      el("td", { class: "num", text: fmtBytes(e.shorts_bytes) }),
+      el("td", { class: "num", text: fmtBytes(e.other) }),
+      el("td", { class: "num", text: fmtBytes(e.total) }),
+      el("td", { class: "num", text: e.shorts ? `${e.published}/${e.shorts}` : "–" }))));
+    $("#caches").replaceChildren(...d.caches.map((c) => el("li", { text: `${c.name} (${c.path}): ${fmtBytes(c.bytes)}` })));
+  }
+
+  return { initIndex, initEpisode, initStorage };
 })();

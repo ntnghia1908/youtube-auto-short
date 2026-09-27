@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bộ nhớ — Auto Short</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/">&larr; Auto Short</a>
+  <nav class="topnav"><a href="/storage">Bộ nhớ</a>
+  <form method="post" action="/logout"><button class="btn link" type="submit">Đăng xuất</button></form></nav>
+</header>
+<div id="disk-banner" class="disk-banner" hidden></div>
+<main class="container">
+  <section class="card">
+    <h2>Bộ nhớ server</h2>
+    <div id="disks"></div>
+    <p id="storage-meta" class="muted small"></p>
+  </section>
+  <section class="card">
+    <h2>Gợi ý dọn dẹp</h2>
+    <p class="muted small">Chỉ là gợi ý: không có gì bị xóa khi bạn chưa bấm "Làm".</p>
+    <ul id="recs" class="rec-list"><li class="muted">Đang tính…</li></ul>
+    <p id="rec-msg" class="small" hidden></p>
+  </section>
+  <section class="card">
+    <h2>Từng tập</h2>
+    <div class="table-wrap"><table class="storage-table">
+      <thead><tr><th>Tập</th><th>Trạng thái</th><th>Video nguồn</th><th>Short</th><th>Khác</th><th>Tổng</th><th>Đã đăng</th></tr></thead>
+      <tbody id="ep-rows"></tbody>
+    </table></div>
+    <h3 class="small">Cache khác</h3>
+    <ul id="caches" class="small"></ul>
+  </section>
+</main>
+<script src="/static/app.js"></script>
+<script>AutoShort.initStorage();</script>
+</body>
+</html>

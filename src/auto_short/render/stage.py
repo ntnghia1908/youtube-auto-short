@@ -30,6 +30,7 @@ from ..workspace import (
     run_stage,
     validate_episode_id,
 )
+from ..review import archive as review_archive
 from ..review import logic as review_logic
 from . import plan
 from .text import MAX_LINES, Font, TextError, TextFit, baselines, fit_header, fit_title, nfc
@@ -382,6 +383,10 @@ def run_render(episode_id: str, config: Config, *, force: bool = False, run: Run
         raise RenderError(str(exc)) from exc
     if manifest is None:
         raise RenderError(f"no manifest for episode {episode_id!r} in {ws.dir}; run 'auto-short ingest' first")
+    if review_archive.is_archived(ws.dir):
+        # CP8.6 S3: the source video was cleaned up; the last render stays as it is (manifest untouched).
+        raise RenderError(f"episode {ws.episode_id!r} is archived (source video cleaned up); its Shorts are kept "
+                          "as they are — delete the episode and run it again to change them")
     out_dir = (cfg.output_dir / ws.episode_id).resolve()
     prior = list((manifest["stages"].get(STAGE) or {}).get("artifacts", []))
 

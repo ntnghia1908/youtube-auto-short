@@ -7,7 +7,9 @@ import html
 import io
 import json
 import logging
+import shutil
 import threading
+import time
 import zipfile
 from collections.abc import Callable
 from contextlib import asynccontextmanager
@@ -22,10 +24,12 @@ from pydantic import BaseModel, Field, StrictBool
 from ..config import Config
 from ..pipeline import PIPELINE_STAGES, PreflightError, ollama_preflight, run_pipeline
 from ..render import run_render
-from ..review import (EpisodeNotFound, ReviewError, TitlePreview, content_disposition, delete_episode, preview_title,
-                      reject_clip, reset_title, restore_clip, set_alternative, set_published, set_title)
+from ..review import (ArchivedError, EpisodeNotFound, ReviewError, TitlePreview, archive_source, content_disposition,
+                      delete_episode, is_archived, preview_title, reject_archived_clip, reject_clip, reset_title,
+                      restore_clip, set_alternative, set_published, set_title)
 from . import episodes as ep
 from .auth import COOKIE_NAME, SessionSigner, load_or_create_secret
+from .storage import StorageCache
 from .jobs import KIND_PIPELINE, KIND_RENDER, JobRunner, pipeline_target, render_target
 from .urls import UrlError, parse_youtube_url
 
@@ -129,10 +133,13 @@ def _zip_stream(files: list[tuple[str, Path, str]]):
 def create_app(config: Config, password: str, *, runner: JobRunner | None = None,
                preflight: Callable[[Config], None] | None = ollama_preflight,
                pipeline: Callable = run_pipeline, render: Callable = run_render,
-               secret: bytes | None = None) -> FastAPI:
+               secret: bytes | None = None, disk_usage: Callable = shutil.disk_usage,
+               clock: Callable[[], float] = time.time) -> FastAPI:
     """``preflight`` / ``pipeline`` / ``render`` are injectable for tests (defaults: CP8 ``ollama_preflight`` /
-    ``run_pipeline``, CP7/CP8.2 ``run_render``)."""
+    ``run_pipeline``, CP7/CP8.2 ``run_render``); so are ``disk_usage`` (``shutil.disk_usage``) and ``clock`` (epoch
+    seconds, ages of the storage recommendations) for CP8.6."""
     runner = runner or JobRunner()
+    storage = StorageCache(config, disk_usage=disk_usage, clock=clock)
     # Serialises "no active job for the episode?" + review.json write + job submit (W5: no title write while a
     # pipeline / render job of the episode is queued or running).
     submit_lock = threading.Lock()
@@ -150,6 +157,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
 
     app = FastAPI(title="auto-short web", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.state.runner = runner
+    app.state.storage = storage
     app.state.signer = signer
 
     @app.middleware("http")
@@ -262,6 +270,11 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         current = runner.latest(video_id)
         if current is not None and current.active:
             return JSONResponse({"created": False, "episode_id": video_id, "job": _job_view(current)})
+        if is_archived(Path(config.workspace.dir) / video_id):  # CP8.6 S3
+            return JSONResponse({"detail": str(ArchivedError(video_id))}, status_code=409)
+        if storage.status()["block"]:  # CP8.6 S4
+            return JSONResponse({"detail": "Ổ đĩa server còn dưới 3 GB trống: không nhận video mới. "
+                                           "Dọn bớt ở tab Bộ nhớ rồi thử lại."}, status_code=507)
         if preflight is not None:
             try:
                 preflight(config)
@@ -285,7 +298,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                 return JSONResponse({"detail": "không có episode này"}, status_code=404)
             view = {"id": episode_id, "title": None, "channel": None, "duration": None, "source_url": None,
                     "stages": [], "header": None, "shorts": [], "rendered": 0, "deleted": 0, "published": 0,
-                    "zip_url": None, "zip_name": None}
+                    "zip_url": None, "zip_name": None, "archived": None}
         view["job"] = _job_view(job)
         if job is not None and job.active and job.kind == KIND_RENDER:
             for short in view["shorts"]:
@@ -325,6 +338,8 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                     preview = set_alternative(episode_id, config, clip_id, body.alternative)
                 else:
                     preview = reset_title(episode_id, config, clip_id)
+            except ArchivedError as exc:  # CP8.6 S3
+                return JSONResponse({"detail": str(exc)}, status_code=409)
             except ReviewError as exc:
                 return JSONResponse({"detail": str(exc)}, status_code=422)
             job, _ = runner.submit(episode_id, KIND_RENDER, render_target(config, render=render),
@@ -343,8 +358,17 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             if current is not None and current.active:
                 return JSONResponse({"detail": "episode đang có job chạy/đợi; thử lại sau khi job xong",
                                      "job": _job_view(current)}, status_code=409)
+            archived = is_archived(Path(config.workspace.dir) / episode_id)
             try:
+                if archived and action is reject_clip:
+                    # CP8.6 S3: no render possible; the deletion is applied to the last render directly.
+                    changed = reject_archived_clip(episode_id, config, clip_id)
+                    storage.invalidate()
+                    log.info("web: %s %s [%s] (archived, no render)", what, clip_id, episode_id)
+                    return JSONResponse({"changed": changed, "job": None})
                 changed = action(episode_id, config, clip_id)
+            except ArchivedError as exc:
+                return JSONResponse({"detail": str(exc)}, status_code=409)
             except ReviewError as exc:
                 return JSONResponse({"detail": str(exc)}, status_code=422)
             job, _ = runner.submit(episode_id, KIND_RENDER, render_target(config, render=render),
@@ -391,8 +415,46 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                 log.error("web: delete episode %s failed: %s", episode_id, exc)
                 return JSONResponse({"detail": f"không xóa được: {exc}"}, status_code=500)
             runner.forget(episode_id)
+            storage.invalidate()
         log.warning("web: deleted episode %s (%s)", episode_id, ", ".join(str(p) for p in removed))
         return {"deleted": episode_id}
+
+    # --- storage (CP8.6) ---------------------------------------------------------------------------
+
+    @app.get("/storage")
+    async def storage_page():
+        return FileResponse(STATIC_DIR / "storage.html", headers={"Cache-Control": "no-cache"})
+
+    @app.get("/api/storage")
+    def api_storage():
+        """S1 + S2 + S4: disks, episode sizes, caches, recommendations, warning (cached up to 30 s)."""
+        active = {j.episode_id for j in runner.jobs() if j.active}
+        return storage.report(active)
+
+    @app.get("/api/storage/status")
+    def api_storage_status():
+        """S4 banner on every page: free space, ``warn``, ``block`` (not cached)."""
+        return storage.status()
+
+    @app.post("/api/episodes/{episode_id}/archive")
+    def api_archive(episode_id: str):
+        """S3: delete the downloaded source video, keep the Shorts; 409 while a job of the episode is
+        queued/running; 422 local source / render not done; 404 unknown id."""
+        if not ep.valid_episode_id(episode_id) or not (Path(config.workspace.dir) / episode_id).is_dir():
+            return JSONResponse({"detail": "không có episode này"}, status_code=404)
+        with submit_lock:
+            current = runner.latest(episode_id)
+            if current is not None and current.active:
+                return JSONResponse({"detail": "episode đang có job chạy/đợi; dọn sau khi job xong",
+                                     "job": _job_view(current)}, status_code=409)
+            try:
+                result = archive_source(episode_id, config)
+            except ReviewError as exc:
+                return JSONResponse({"detail": str(exc)}, status_code=422)
+            storage.invalidate()
+        log.warning("web: archived %s: removed %s (%d bytes)", episode_id, ", ".join(result.removed) or "-",
+                    result.freed)
+        return {"archived": episode_id, "changed": result.changed, "freed": result.freed, "removed": result.removed}
 
     # --- files -------------------------------------------------------------------------------------
 

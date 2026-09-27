@@ -9,13 +9,16 @@
 <body>
 <header class="topbar">
   <a class="brand" href="/">&larr; Auto Short</a>
-  <form method="post" action="/logout"><button class="btn link" type="submit">Đăng xuất</button></form>
+  <nav class="topnav"><a href="/storage">Bộ nhớ</a>
+  <form method="post" action="/logout"><button class="btn link" type="submit">Đăng xuất</button></form></nav>
 </header>
+<div id="disk-banner" class="disk-banner" hidden></div>
 <main class="container">
   <section class="card">
     <h2 id="ep-title">…</h2>
     <p id="ep-meta" class="muted small"></p>
     <div id="job-status" class="job-status"></div>
+    <p id="archived-note" class="note small" hidden></p>
     <ol id="stages" class="stages"></ol>
     <div class="actions">
       <button id="resubmit" class="btn" type="button" hidden>Chạy tiếp / chạy lại (bước đã xong được bỏ qua)</button>

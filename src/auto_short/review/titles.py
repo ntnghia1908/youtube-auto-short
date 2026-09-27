@@ -16,6 +16,7 @@ from pathlib import Path
 from ..config import Config
 from ..titling.logic import TITLED, normalize_title
 from ..workspace import DONE, Workspace, WorkspaceError, atomic_write_json, validate_episode_id
+from .archive import check_not_archived
 from .logic import (AI, ALTERNATIVE, MANUAL, REVIEW_NAME, ReviewError, manual_title_error, read_review,
                     resolve_titles, with_override, with_rejected, without_override, without_rejected)
 
@@ -158,6 +159,7 @@ def set_title(episode_id: str, config: Config, clip_id: str, text: str) -> Title
     """Store ``text`` as the manual title of ``clip_id`` (origin ``manual``). Invalid -> ReviewError, review.json
     unchanged."""
     ep = _load(episode_id, config)
+    check_not_archived(ep.ws.dir, ep.ws.episode_id)  # CP8.6 S3
     entry = ep.entry(clip_id)
     preview = _validate(config, clip_id, text, MANUAL)
     _write(ep, with_override(ep.review, ep.order, clip_id=clip_id, candidate_id=entry["candidate_id"],
@@ -169,6 +171,7 @@ def set_alternative(episode_id: str, config: Config, clip_id: str, n: int) -> Ti
     """Use AI alternative number ``n`` (1-based, titles.json ``alternatives`` order) of ``clip_id`` verbatim as its
     title (origin ``alternative``). Unknown number or invalid title -> ReviewError, review.json unchanged."""
     ep = _load(episode_id, config)
+    check_not_archived(ep.ws.dir, ep.ws.episode_id)  # CP8.6 S3
     entry = ep.entry(clip_id)
     alts = entry.get("alternatives") or []
     if isinstance(n, bool) or not isinstance(n, int) or not 1 <= n <= len(alts):
@@ -184,6 +187,7 @@ def reset_title(episode_id: str, config: Config, clip_id: str) -> TitlePreview |
     """Remove the override of ``clip_id`` (back to the AI title; review.json rewritten only if one existed).
     Returns the AI title's display, or None when the clip is untitled (it will not be rendered)."""
     ep = _load(episode_id, config)
+    check_not_archived(ep.ws.dir, ep.ws.episode_id)  # CP8.6 S3
     entry = ep.entry(clip_id)
     review, removed = without_override(ep.review, ep.order, clip_id)
     if removed:
@@ -210,6 +214,7 @@ def restore_clip(episode_id: str, config: Config, clip_id: str) -> bool:
     """CP8.5 X2: undo :func:`reject_clip`; the next render encodes the Short again (with its title override, if
     any). Returns False when it was not deleted (file unchanged)."""
     ep = _load(episode_id, config)
+    check_not_archived(ep.ws.dir, ep.ws.episode_id)  # CP8.6 S3: re-encoding needs the source
     ep.entry(clip_id)
     review, removed = without_rejected(ep.review, ep.order, clip_id)
     if removed:

@@ -1,4 +1,4 @@
-/* Auto Short web UI (CP8.3, CP8.5) — mobile first. */
+/* Auto Short web UI (CP8.3, CP8.5, CP8.6) — mobile first. */
 :root {
   --bg: #f4f4f2; --card: #fff; --text: #1d1d1b; --muted: #6b6b66; --accent: #d4a800; --accent-bg: #fedb00;
   --ok: #1f7a3a; --err: #b3261e; --busy: #8a6d00; --border: #deded8; --radius: 10px;
@@ -90,6 +90,24 @@ summary { cursor: pointer; color: var(--muted); }
 .publish-label input { width: 1.25rem; height: 1.25rem; margin: 0; }
 .stale { color: var(--busy); }
 .stale[hidden] { display: none; }
+.topnav { display: flex; align-items: center; gap: .75rem; }
+.topnav a { color: #fff; }
+.topnav form { margin: 0; }
+.disk-banner { background: var(--err); color: #fff; padding: .6rem .75rem; font-weight: 600; }
+.disk-banner a { color: #fff; }
+.disk-banner[hidden] { display: none; }
+.disk { margin: .4rem 0; }
+.bar { height: .7rem; background: #eee; border-radius: 999px; overflow: hidden; margin-top: .25rem; }
+.bar-used { height: 100%; background: var(--accent); }
+.disk.low .bar-used { background: var(--err); }
+.rec-list { list-style: none; padding: 0; margin: 0; display: grid; gap: .5rem; }
+.rec { border: 1px solid var(--border); border-radius: 8px; padding: .5rem; display: grid; gap: .25rem; }
+.rec-actions { display: flex; flex-wrap: wrap; gap: .4rem; }
+.ok { color: var(--ok); }
+.table-wrap { overflow-x: auto; }
+.storage-table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+.storage-table th, .storage-table td { padding: .35rem .4rem; border-bottom: 1px solid var(--border); text-align: left; }
+.storage-table td.num { text-align: right; white-space: nowrap; }
 @media (max-width: 520px) {
   .shorts-grid { grid-template-columns: 1fr 1fr; gap: .5rem; }
   .row { grid-template-columns: 1fr; }

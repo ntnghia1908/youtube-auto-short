@@ -12,7 +12,7 @@ from pathlib import Path
 
 from ..config import Config
 from ..pipeline import PIPELINE_STAGES
-from ..review import ReviewError, download_name, episode_label, list_titles, publish_status, zip_name
+from ..review import ReviewError, download_name, episode_label, list_titles, publish_status, read_archive, zip_name
 from ..review.publish import PUBLISH_NAME, read_publish
 from ..workspace import DONE, PENDING, Workspace, WorkspaceError, iter_manifests, validate_episode_id
 from .urls import UrlError, parse_youtube_url
@@ -190,7 +190,18 @@ def episode_view(config: Config, episode_id: str) -> dict | None:
         "max_title_chars": config.titling.max_chars,
         "titles_error": titles_error,
         "titles_ignored": ignored,
+        # CP8.6 S3: source video cleaned up -> view / download / tick / delete Short only
+        "archived": _archived_view(ws.dir),
     }
+
+
+def _archived_view(ws_dir: Path) -> dict | None:
+    doc = read_archive(ws_dir)
+    if doc is None:
+        return None
+    removed = doc.get("removed") if isinstance(doc.get("removed"), list) else []
+    return {"at": doc.get("archived_at"),
+            "freed": sum(r.get("size", 0) for r in removed if isinstance(r, dict) and isinstance(r.get("size"), int))}
 
 
 def list_episodes(config: Config) -> list[dict]:
@@ -216,6 +227,7 @@ def list_episodes(config: Config) -> list[dict]:
             # "đã đăng x/y" (X4): x = rendered Shorts ticked (an old version counts), y = "shorts"
             "published": sum(1 for s in doc["shorts"] if s.get("status") == "rendered"
                              and pub.get(s.get("clip_id"), {}).get("published")) if doc else 0,
+            "archived": read_archive(ws.dir) is not None,  # CP8.6
             "_mtime": mtime,
         })
     items.sort(key=lambda x: x.pop("_mtime"), reverse=True)
