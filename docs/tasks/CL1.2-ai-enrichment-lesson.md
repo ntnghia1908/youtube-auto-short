@@ -37,7 +37,7 @@ S2 vì: stage AI mới của ứng dụng thứ hai, schema artifact mới `less
 - `docs/decisions/CL1-chinese-learning-contract.md` R3: C4 (artifact), C7 (AI enrichment), C8 (`lesson.json` v1), C9 (stage `lesson`: inputs, config hash, `downstream`), C12 (CLI).
 - `docs/decisions/CP2-workspace-contract.md` D5–D8 (`run_stage`, skip/stale, config hash, exit code).
 - Quyết định cục bộ CL1.2 (trong boundary đã duyệt):
-  - `[learning]` thêm (mặc định): `model = "qwen3:14b"`, `think = false`, `temperature = 0.0`, `seed = 42`, `num_ctx = 8192`, `prompt_version = "v1"`, `batch_lines = 20`, `retries = 2`; execution-only: `ollama_host = "http://127.0.0.1:11437"` (env `OLLAMA_HOST` ghi đè qua `resolve_host`), `timeout = 600.0`, `retry_backoff = [5.0, 15.0]`. Validate như section khác (`batch_lines ≥ 1`, `retries ≥ 0`, `prompt_version` phải có trong `prompt.py`).
+  - `[learning]` thêm (mặc định): `model = "qwen3:14b"`, `think = false`, `temperature = 0.0`, `seed = 42`, `num_ctx = 8192`, `prompt_version = "v1"`, `batch_lines = 20`, `retries = 2`; execution-only: `ollama_host = "http://127.0.0.1:11437"` (env `OLLAMA_HOST` ghi đè qua `resolve_host`), `timeout = 600.0`, `retry_backoff = [5.0, 15.0]`. Validate kiểu/khoảng trong `config.py` như section khác (`batch_lines ≥ 1`, `retries ≥ 0`); `prompt_version` kiểm trong `run_learning` trước mọi stage (như `run_selection`, tránh import vòng) → `LearningError`.
   - Stage `lesson`: `downstream = ()`; `inputs` = `[{"path": "subtitle.json3", "sha256"}, {"path": "source.json", "sha256"}]` + `{"path": "clip.mp4", "sha256"}` khi file có mặt; `config_hash` = `{"learning.model", "learning.think", "learning.temperature", "learning.seed", "learning.num_ctx", "learning.prompt_version", "learning.prompt_sha256", "learning.batch_lines", "learning.window_seconds"}` — **không** gồm `ollama_host`, `timeout`, `retry_backoff`, `retries`. `prompt_sha256` như CP5 (prompt sửa mà quên tăng version vẫn không skip).
   - Dòng bài học: segment `normalize(parse_json3(subtitle.json3))` có `kind = speech`, `start < window_seconds` (dùng lại `subtitle.in_window`) → `{id, start, end, zh = text}`; batch liên tiếp `batch_lines` dòng.
   - Payload user message mỗi batch = **đúng** JSON `[{"id", "zh"}]` (không timestamp, thời lượng, media, tiêu đề); hướng dẫn nằm ở system prompt có version. Output ép bằng JSON schema `format`: `{"lines": [{"id", "pinyin", "vi"}]}`.
@@ -64,14 +64,14 @@ S2 vì: stage AI mới của ứng dụng thứ hai, schema artifact mới `less
 4. `lesson.json` đúng C8, thứ tự key cố định, không thời điểm tạo; AI giả deterministic + `--force` → byte-identical; `media` trỏ `clip.mp4` với sha thật hoặc `null`.
 5. Chạy lại không đổi → `lesson` skip; đổi `model` / `prompt_version` / key khác trong config hash → chạy lại; đổi `ollama_host` / `timeout` / `retries` / `retry_backoff` → skip; `subtitle` chạy lại → `lesson` stale + chạy lại, `media` không chạy lại.
 6. Preflight: không tới được Ollama / thiếu model → lỗi rõ, không gọi `chat`.
-7. Auto Short không đổi: `git diff 0a61637 -- src/auto_short/pipeline.py src/auto_short/ingest src/auto_short/transcript src/auto_short/selection src/auto_short/web src/auto_short/workspace.py pyproject.toml` rỗng; test hiện có không bị sửa.
+7. Auto Short không đổi: `git diff 0a61637 -- src/auto_short/pipeline.py src/auto_short/ingest src/auto_short/transcript src/auto_short/selection src/auto_short/web src/auto_short/workspace.py pyproject.toml` rỗng; test Auto Short hiện có không bị sửa. Ngoại lệ duy nhất (HUMAN LEAD 2026-09-27, vì orchestrator thêm stage `lesson`): test learning CL1.1 `tests/test_learning_cli.py`, `tests/test_learning_subtitle.py`, `tests/test_learning_media.py`, `tests/learning_helpers.py` được sửa **hẹp** — chỉ (a) thêm dòng/file/stage `lesson` vào giá trị mong đợi, (b) inject fake preflight/client/sleep để không test nào gọi Ollama thật; không xóa, không nới điều kiện kiểm tra nào.
 
 ## Required verification
 
 - `pytest -q tests/test_learning_lesson.py tests/test_learning_enrich.py` — AC1–AC6.
 - `pytest -q` — hồi quy.
 - `node scripts/framework-check.mjs` PASS.
-- Lệnh `git diff` ở AC7 rỗng; `git diff 0a61637 --stat -- tests` chỉ có file mới.
+- Lệnh `git diff` ở AC7 rỗng; `git diff 0a61637 --stat -- tests` chỉ có file mới + 4 file CL1.1 ở ngoại lệ AC7 (review từng hunk: không assertion nào bị xóa/nới).
 - Số đo thật trên video CL1.1 (≥ 2): `qwen3:14b` think off + 1 model so sánh (`qwen3:30b` think off) → tổng thời gian, thời gian từng batch, số retry, mẫu 20 dòng liên tiếp, nhận xét Pinyin / nghĩa → CL1 contract § Đo thực tế / CL1.2. Model **chưa** chốt cho tới khi HUMAN LEAD đọc mẫu.
 
 Tất cả required verification phải chạy và PASS trước READY.
