@@ -1,0 +1,77 @@
+{
+  "wireMagic": "pb3",
+  "pens": [
+    {}
+  ],
+  "wsWinStyles": [
+    {}
+  ],
+  "wpWinPositions": [
+    {}
+  ],
+  "events": [
+    {
+      "tStartMs": 566,
+      "dDurationMs": 2000,
+      "segs": [
+        {
+          "utf8": "我现在要出门去上班啦"
+        }
+      ]
+    },
+    {
+      "tStartMs": 2566,
+      "dDurationMs": 1367,
+      "segs": [
+        {
+          "utf8": "跟我一起去看看吧"
+        }
+      ]
+    },
+    {
+      "tStartMs": 4800,
+      "dDurationMs": 1033,
+      "segs": [
+        {
+          "utf8": "拜拜"
+        }
+      ]
+    },
+    {
+      "tStartMs": 6533,
+      "dDurationMs": 3267,
+      "segs": [
+        {
+          "utf8": "今天路上的车特别的少"
+        }
+      ]
+    },
+    {
+      "tStartMs": 11066,
+      "dDurationMs": 3100,
+      "segs": [
+        {
+          "utf8": "这样的话就能省很多时间"
+        }
+      ]
+    },
+    {
+      "tStartMs": 15933,
+      "dDurationMs": 1833,
+      "segs": [
+        {
+          "utf8": "天气也不错"
+        }
+      ]
+    },
+    {
+      "tStartMs": 18400,
+      "dDurationMs": 2266,
+      "segs": [
+        {
+          "utf8": "我现在在车站等车"
+        }
+      ]
+    }
+  ]
+}

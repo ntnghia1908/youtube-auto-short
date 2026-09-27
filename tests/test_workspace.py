@@ -63,3 +63,42 @@ def test_example_config_matches_defaults():
     from auto_short.config import Config
     root = Path(__file__).resolve().parents[1]
     assert load(root / "config.example.toml") == Config()
+
+
+# --- CL1 C9 / CP2 D6 amendment: explicit ``downstream`` (CL1.1 AC1) ---------------------------
+
+def test_mark_downstream_stale_explicit_downstream():
+    m = {"stages": {"subtitle": {"status": "done"}, "media": {"status": "done"}, "lesson": {"status": "done"}}}
+    assert mark_downstream_stale(m, "subtitle", ("lesson",)) == ["lesson"]
+    assert m["stages"]["media"]["status"] == "done" and m["stages"]["lesson"]["status"] == "stale"
+    assert mark_downstream_stale(m, "media", ()) == []
+    assert mark_downstream_stale({"stages": {}}, "subtitle", ("lesson",)) == []  # no entry -> nothing
+    with pytest.raises(ValueError):  # without downstream a stage outside STAGES is still an error
+        mark_downstream_stale(m, "subtitle")
+
+
+def test_run_stage_default_downstream_unchanged(tmp_path):
+    from auto_short.workspace import run_stage
+    ws = Workspace(tmp_path, "ep")
+    m = ws.new_manifest({"kind": "local"})
+    for name in ("ingest", "analysis", "render"):
+        m["stages"][name] = {"status": "done", "artifacts": [], "inputs": [], "config_hash": "h"}
+    assert run_stage(ws, m, "transcript", inputs=[], cfg_hash="h", force=False, action=lambda: [])
+    assert [m["stages"][s]["status"] for s in ("ingest", "transcript", "analysis", "render")] == [
+        "done", "done", "stale", "stale"]
+
+
+def test_run_stage_with_downstream_outside_stages(tmp_path):
+    from auto_short.workspace import run_stage
+    ws = Workspace(tmp_path, "ep")
+    m = ws.new_manifest({"kind": "youtube"})
+    m["stages"]["lesson"] = {"status": "done", "artifacts": [], "inputs": [], "config_hash": "h"}
+    m["stages"]["render"] = {"status": "done", "artifacts": [], "inputs": [], "config_hash": "h"}
+    assert run_stage(ws, m, "subtitle", inputs=[], cfg_hash="h", force=False, action=lambda: [],
+                     downstream=("lesson",))
+    assert m["stages"]["subtitle"]["status"] == "done"
+    assert m["stages"]["lesson"]["status"] == "stale" and m["stages"]["render"]["status"] == "done"
+    m["stages"]["lesson"]["status"] = "done"
+    assert run_stage(ws, m, "media", inputs=[], cfg_hash="h", force=False, action=lambda: [], downstream=())
+    assert m["stages"]["lesson"]["status"] == "done" and m["stages"]["render"]["status"] == "done"
+    assert not run_stage(ws, m, "media", inputs=[], cfg_hash="h", force=False, action=lambda: [], downstream=())
