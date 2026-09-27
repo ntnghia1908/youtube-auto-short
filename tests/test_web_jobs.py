@@ -119,7 +119,7 @@ def test_pipeline_target_success_and_failure(cfg):
     pre = []
     pipeline_target("https://youtu.be/abcdefghijk", cfg, series="S", episode="4",
                     pipeline=fake_pipeline(calls), preflight=lambda c: pre.append(c))(job)
-    assert pre == [cfg] and job.summary == "2/2 Shorts" and job.stage is None
+    assert pre == [cfg] and job.summary == "2/2 Shorts (2 encoded, 0 reused)" and job.stage is None
     assert [s["stage"] for s in job.stages] == ["ingest", "transcript", "analysis", "selection", "titling", "render"]
     assert job.stages[2]["ran"] is False
     titling = next(kw for stage, _, kw in calls if stage == "titling")

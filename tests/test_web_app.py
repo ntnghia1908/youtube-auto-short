@@ -151,13 +151,14 @@ def test_submit_runs_pipeline_and_episode_view(wcfg):
         assert [s["status"] for s in d["stages"]] == ["done"] * 6
         assert [s["stage"] for s in d["stages"]] == ["ingest", "transcript", "analysis", "selection", "titling",
                                                      "render"]
-        assert d["job"]["status"] == "done" and d["job"]["summary"] == "2/2 Shorts"
+        assert d["job"]["status"] == "done" and d["job"]["summary"] == "2/2 Shorts (2 encoded, 0 reused)"
         assert [s["stage"] for s in d["job"]["stages"]] == [s["stage"] for s in d["stages"]]
         assert any("start pipeline job" in line for line in d["job"]["logs"])
         assert d["title"] == "Kinh Vô Lượng Thọ tập 3" and d["source_url"] == f"https://youtu.be/{VID}"
         assert [s["clip_id"] for s in d["shorts"]] == ["k01", "k02"] and d["rendered"] == 2
         s1 = d["shorts"][0]
-        assert s1["title"] == {"text": "Tiêu đề k01", "source": "ai", "display_lines": ["Tiêu đề k01"]}
+        assert s1["title"] == {"text": "Tiêu đề k01", "origin": "ai", "display_lines": ["Tiêu đề k01"]}
+        assert s1["editable"] is False and s1["rendering"] is False  # fake episode: no titles.json
         assert s1["video_url"] == f"/files/{VID}/k01.mp4?v={'0' * 12}"
         assert s1["download_url"] == f"/files/{VID}/k01.mp4?download=1"
         assert d["zip_url"] == f"/files/{VID}/shorts.zip"
@@ -259,13 +260,26 @@ def test_files_rejects_unknown_and_traversal(wcfg, tmp_path):
         assert skipped["video_url"] is None and skipped["skip_reason"] == "untitled"
 
 
-def test_render_not_done_hides_shorts(wcfg):
-    write_episode(wcfg, VID, render_status="running")
+@pytest.mark.parametrize("status", ["running", "failed", "stale"])
+def test_previous_render_listed_while_render_not_done(wcfg, status):
+    """A render run replaces files only at its commit and a failed run keeps the previous render (CP8.2 T5): the
+    last render_manifest.json stays listed and served whatever the render stage status is."""
+    files = write_episode(wcfg, VID, render_status=status)
+    with make_client(wcfg) as c:
+        login(c)
+        d = c.get(f"/api/episodes/{VID}").json()
+        assert d["render_status"] == status and [s["clip_id"] for s in d["shorts"]] == ["k01", "k02"]
+        assert d["zip_url"] == f"/files/{VID}/shorts.zip"
+        assert c.get(f"/files/{VID}/k01.mp4").content == files["k01"]
+
+
+def test_no_render_manifest_no_shorts(wcfg):
+    write_episode(wcfg, VID)
+    (Path(wcfg.render.output_dir) / VID / "render_manifest.json").unlink()
     with make_client(wcfg) as c:
         login(c)
         d = c.get(f"/api/episodes/{VID}").json()
         assert d["shorts"] == [] and d["zip_url"] is None
-        assert d["stages"][-1]["status"] == "running"
         assert c.get(f"/files/{VID}/k01.mp4").status_code == 404
         assert c.get(f"/files/{VID}/shorts.zip").status_code == 404
 

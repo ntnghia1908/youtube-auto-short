@@ -12,7 +12,8 @@ from auto_short.workspace import STAGES, Workspace
 
 
 def write_episode(cfg, episode_id: str, *, clips=("k01", "k02"), title="Kinh Vô Lượng Thọ tập 3",
-                  render_status="done", extra_shorts=()) -> dict[str, bytes]:
+                  render_status="done", extra_shorts=(), titles: dict | None = None,
+                  origins: dict | None = None) -> dict[str, bytes]:
     """Workspace manifest (every pipeline stage ``done``), metadata and a render manifest + fake mp4 files.
     Returns clip_id -> file bytes."""
     ws = Workspace(Path(cfg.workspace.dir), episode_id)
@@ -35,7 +36,9 @@ def write_episode(cfg, episode_id: str, *, clips=("k01", "k02"), title="Kinh Vô
         (out / "shorts" / f"{clip}.mp4").write_bytes(data)
         files[clip] = data
         shorts.append({"clip_id": clip, "status": "rendered", "skip_reason": None, "file": f"shorts/{clip}.mp4",
-                       "sha256": f"{i:064x}", "title": f"Tiêu đề {clip}", "title_display_lines": [f"Tiêu đề {clip}"],
+                       "sha256": f"{i:064x}", "title": (titles or {}).get(clip, f"Tiêu đề {clip}"),
+                       "title_origin": (origins or {}).get(clip, "ai"),
+                       "title_display_lines": [(titles or {}).get(clip, f"Tiêu đề {clip}")],
                        "duration": 60.0 + i, "source_start": 10.0, "source_end": 80.0})
     shorts += list(extra_shorts)
     doc = {"schema_version": 1, "episode_id": episode_id, "header": {"lines": ["HT.Tịnh Không", "X (tập 3)"]},
@@ -63,7 +66,8 @@ def fake_pipeline(calls: list, *, fail_stage: str | None = None, gate=None):
             if stage == "render":
                 write_episode(config, target_or_id)
                 path = Path(config.render.output_dir) / target_or_id / "render_manifest.json"
-                return SimpleNamespace(episode_id=target_or_id, ran=True, path=path, rendered=2, clips=2)
+                return SimpleNamespace(episode_id=target_or_id, ran=True, path=path, rendered=2, clips=2,
+                                       encoded=2, reused=0)
             return SimpleNamespace(episode_id=target_or_id, ran=stage != "analysis", path=None)
         return run
 
