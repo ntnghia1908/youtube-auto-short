@@ -104,7 +104,9 @@ def test_render_writes_shorts_and_manifest(ws, rcfg):
     k01, k02 = doc["shorts"]
     assert list(k01) == ["clip_id", "candidate_id", "status", "skip_reason", "file", "sha256", "title",
                          "title_display_lines", "title_font_size", "layout", "source_start", "source_end",
-                         "segments", "duration", "dissolves"]
+                         "segments", "duration", "dissolves", "title_origin", "render_key"]
+    assert (k01["title_origin"], k02["title_origin"]) == ("ai", "ai")  # CP8.2 T4: no review.json
+    assert len(k01["render_key"]) == 64 and k01["render_key"] != k02["render_key"]
     assert doc["encode"]["dissolve"] == 0.15 and list(doc["encode"])[-1] == "dissolve"
     # one junction each, trimmed gaps of 15 / 18 frames -> full 4-frame dissolve (CP8.1 V2, V4)
     assert k01["dissolves"] == [{"at": 0.901, "frames": 4}] and k02["dissolves"] == [{"at": 0.5, "frames": 4}]
@@ -207,14 +209,23 @@ def _assert_failed(ws, rcfg, match):
     assert _files(rcfg) == []
 
 
+def _snapshot(rcfg):
+    root = rcfg.render.output_dir
+    return {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+
+
 def test_titling_not_done(ws, rcfg):
-    run_render(EID, rcfg)  # earlier outputs are removed on failure
+    run_render(EID, rcfg)
+    before = _snapshot(rcfg)
     manifest = json.loads(ws.manifest_path.read_text(encoding="utf-8"))
     manifest["stages"]["titling"]["status"] = "failed"
     ws.save_manifest(manifest)
     with pytest.raises(RenderError, match="titling is not done"):
         run_render(EID, rcfg)
-    _assert_failed(ws, rcfg, "titling is not done")
+    entry = _stage(ws)
+    assert entry["status"] == "failed" and "titling is not done" in entry["error"]
+    # CP8.2 T5: a failure only deletes files written by that run; the previous render stays intact.
+    assert _snapshot(rcfg) == before
 
 
 def test_sha_mismatch(ws, rcfg):
@@ -253,13 +264,28 @@ def test_missing_glyph_and_fit_failures(ws, rcfg):
     _assert_failed(ws, rcfg, "does not fit")
 
 
-def test_ffmpeg_failure_cleans_everything(ws, rcfg):
+def test_ffmpeg_failure_keeps_previous_render(ws, rcfg):
     run_render(EID, rcfg)
+    before = _snapshot(rcfg)
     rec = Recorder(fail_ffmpeg_at=2)  # k01 succeeds, k02 fails
     with pytest.raises(RenderError, match=r"clip k02: ffmpeg failed: \[fake\] Conversion failed!"):
         run_render(EID, rcfg, force=True, run=rec)
-    _assert_failed(ws, rcfg, "clip k02: ffmpeg failed")
+    entry = _stage(ws)
+    assert entry["status"] == "failed" and "clip k02: ffmpeg failed" in entry["error"]
     assert rec.ffmpeg_calls == 2
+    # CP8.2 T5: the k01 encoded by the failed run is deleted (never committed); the previous render is intact.
+    assert _snapshot(rcfg) == before
+
+    # Without a previous render, the failed run leaves nothing.
+    _remove_all(rcfg)
+    with pytest.raises(RenderError, match="clip k02: ffmpeg failed"):
+        run_render(EID, rcfg, force=True, run=Recorder(fail_ffmpeg_at=2))
+    _assert_failed(ws, rcfg, "clip k02: ffmpeg failed")
+
+
+def _remove_all(rcfg):
+    import shutil
+    shutil.rmtree(rcfg.render.output_dir)
 
 
 # --- CLI ------------------------------------------------------------------------------------------------------
