@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: CHANGE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -82,7 +82,7 @@ Không chạm database, security model, public API. Manual test là điểm danh
   - AC1: render cả 13 clip với `dissolve = 0` (workspace + output tạm) → 13/13 mp4 sha256 trùng output CP7 (vd `k04` `3daa8138…`); graph `dissolve = 0` so chuỗi với `plan.py` CP7 (`e020d63`) trên 13 clip thật: 13/13 trùng.
   - AC3/AC4: `auto-short render rbjfCfFq3Dk --force` (mặc định 0.15): 13/13 rendered, R9 + V5 PASS trong stage; kiểm độc lập `ffprobe -count_frames`: 1080×1920 h264 yuv420p 30000/1001, AAC 48 kHz 2 kênh, `nb_read_frames` = `nb_frames` = kế hoạch cả 13 clip, lệch thời lượng ≤ 0.017 s; PCM audio (s16le) 13/13 trùng bản CP7; entry manifest trùng CP7 ngoài `sha256` + `dissolves`; `encode.dissolve` 0.15; 157 điểm nối: 143 × D = 4, 7 × D = 2 (gap 2–3 frame), 7 × D = 0 (gap 0–1 frame). `k04` framemd5 trước encode: 1077 frame cả hai bản; 21 frame khác nhau đều trong 7 cửa sổ dissolve (đúng D − 1 frame cuối mỗi cửa sổ), mọi frame ngoài cửa sổ trùng hash, audio trùng. Render lại `k04` hai lần → byte-identical.
   - AC5 (V6): 13 Short 325.0 s wall (`/usr/bin/time`), bản `dissolve = 0` cùng máy cùng lúc 294.0 s (CP7 ghi ≈ 260–300 s) → ≈ 1.1×; đỉnh RSS 2.6 GB (`k03`, cắt thẳng 2.0 GB). Máy đang có tải khác (load 8–15 / 48 core).
-- Review:
+- Review: ACCEPTED (ORCHESTRATOR, diff-first; chạy lại `pytest tests/test_render_plan.py tests/test_render_config.py` PASS). Không có blocking finding. Hai điểm lệch được chấp nhận trong boundary: (1) nhánh segment dùng `trim` thay `select` — V3 cho phép cách tương đương; cùng frame (framemd5 k04 trùng), RAM đỉnh 13.7 → 2.6 GB; (2) kẹp thêm `n // 2` và `max(0, …)` ngoài V2 — chỉ tác động segment < 4 frame (không xảy ra ở video test), tránh cửa sổ dissolve chồng nhau; đã ghi R6. Non-blocking: xfade để frame đầu cửa sổ 100 % đoạn trước (D = 4 thực chất blend 3 frame) — giống mẫu HUMAN LEAD đã chọn.
 - Important findings / decisions: (1) `select` trong nhánh segment chỉ kết thúc ở EOF input → `concat`/`xfade` giữ frame mọi segment sau trong RAM: `k03` đỉnh RSS 13.7 GB, cả lượt 13 Short 373.7 s; chuyển sang `trim=start_pts/end_pts` (cùng frame: framemd5 `k04` trùng từng frame, packet mã hóa trùng) → 2.6 GB, 325 s. (2) Kẹp thêm ngoài V2: `e_j ≤ n_j // 2, n_{j+1} // 2` (segment < 2e frame, không có ở video test) để cửa sổ không chồng và input `xfade` đủ dài; `e_j ≥ 0` khi làm tròn làm hai segment chạm/chồng 1 frame. (3) `xfade` frame đầu cửa sổ vẫn 100 % segment trước → blend thật D − 1 = 3 frame (3/4, 1/2, 1/4), như mẫu HUMAN LEAD đã xem. (4) `at` = frame đầu segment j+1 / fps (tâm cửa sổ); entry `skipped` → `dissolves: null`, clip 1 segment → `[]`.
 - Known limitations: như decision record CP7 § Giới hạn đã biết; dissolve không áp ở đầu/cuối Short (ngoài scope).
 - PR:
