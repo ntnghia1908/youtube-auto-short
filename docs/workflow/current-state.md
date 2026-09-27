@@ -8,19 +8,20 @@ Chỉ ghi operational state không suy ra được từ Git, task contract hoặ
 
 ## Current focus
 
-CP7 — Short Composition / Renderer (`docs/tasks/CP7-render.md`): READY, PR #9 (`feature/cp7-render`) chờ HUMAN LEAD merge. CP6 đã merge (PR #8).
+Re-plan HUMAN LEAD 2026-09-27 (`AUTO_SHORT_CHECKPOINT_PLAN.md`): CP8 rút gọn (+ preflight Ollama) → CP8.1 dissolve 0.15 s → CP8.2 sửa title tay + render lại một Short → CP8.3 Web (FastAPI + uvicorn, LAN có mật khẩu, nhập URL, xem/tải/sửa title) → CP8.4 upload YouTube (planned, chưa lên lịch). Approve/reject clip + batch vẫn ở CP9.
+
+CP8 — End-to-End Auto Short MVP (`docs/tasks/CP8-pipeline.md`): APPROVED (2026-09-27), đang implement trên `feature/cp8-pipeline`.
 
 ## Next proposed action
 
-1. HUMAN LEAD merge PR #9 (CP7).
-2. Sau merge: HUMAN LEAD quyết mở CP8 — End-to-End MVP (roadmap §4 CP8).
-3. Ghi nhớ cho CP10: chuyển cảnh video dissolve 0.15 s ở điểm rút lặng (HUMAN LEAD chọn 2026-09-27; `docs/decisions/CP7-render-contract.md` § Chuyển cảnh).
+1. Implementer thực hiện CP8 → review → READY.
+2. Sau CP8 READY: contract CP8.1, CP8.2, CP8.3 (dependency proposal FastAPI + uvicorn; security: LAN + mật khẩu).
 
 Đây là PROPOSED, không authorize implementation tiếp theo.
 
 ## Open decisions
 
-- Không.
+- Không (P1–P4 CP8 đã chốt trong re-plan).
 
 ## Blockers
 

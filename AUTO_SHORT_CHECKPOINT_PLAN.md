@@ -333,6 +333,51 @@ MVP requirements:
 
 ---
 
+## CP8.1 — Video Dissolve at Silence Cuts
+
+> Re-plan HUMAN LEAD 2026-09-27: moved forward from CP10.
+
+Video dissolve 0.15 s at every silence-shortening cut, extending segments into the trimmed silence (method and choice: `docs/decisions/CP7-render-contract.md` § Chuyển cảnh). Audio stays a hard cut.
+
+**Success:** Rendered Shorts show a short dissolve instead of a visual jump at each cut; duration and audio unchanged.
+
+---
+
+## CP8.2 — Manual Title + Single-Short Rerender
+
+> Re-plan HUMAN LEAD 2026-09-27: title editing pulled forward from CP9.
+
+Scope:
+- per-Short title override (typed by the user, or picked from the AI `alternatives`), stored as an artifact, never calling AI again;
+- render uses the override when present;
+- rerendering after an edit re-encodes only the edited Short (per-Short render cache); other Shorts are reused byte-identical.
+
+**Success:** Editing one Short's title and rerendering takes one Short's render time and changes only that file.
+
+---
+
+## CP8.3 — Web MVP
+
+> Re-plan HUMAN LEAD 2026-09-27: new scope. Stack FastAPI + uvicorn (dependency proposal in the task contract); reachable on the LAN, so it requires a password.
+
+Scope:
+- submit a YouTube URL (or local path); Ollama preflight; run the CP8 pipeline in the background;
+- per-stage progress from the episode manifest;
+- list episodes and their Shorts; play and download each Short;
+- edit a Short's title and rerender that Short only (CP8.2).
+
+**Success:** From a browser on the LAN, one URL becomes reviewed, downloadable Shorts without using the CLI.
+
+---
+
+## CP8.4 — YouTube Upload (planned, not scheduled)
+
+> HUMAN LEAD 2026-09-27: wanted if feasible; otherwise Shorts are downloaded and uploaded by hand. Amends CP1 §2 when opened.
+
+Upload a reviewed Short to the user's own channel from the web (YouTube Data API v3, OAuth). Prerequisites and constraints are decided in its task contract: Google Cloud OAuth client created by the user, token storage (security gate), Google API dependency, daily upload quota, and API-uploaded videos from an unaudited project being locked to private.
+
+---
+
 ## CP9 — Human Review + Batch Processing
 
 Scope:
