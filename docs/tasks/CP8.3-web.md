@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: IN_PROGRESS
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -101,9 +101,19 @@ Tất cả required verification phải chạy và PASS trước READY.
 
 ## Result
 
+### Phase A (mọi thứ trừ sửa title; 2026-09-27)
+
 - Main changes:
-- Tests:
+  - `src/auto_short/web/`: `app.py` (FastAPI app factory: auth middleware, `/login` `/logout`, trang `/` và `/episodes/<id>`, `/api/episodes[/{id}]`, `/files/{id}/{clip}.mp4` có Range + `?download=1`, `/files/{id}/shorts.zip` stream `ZIP_STORED`), `auth.py` (mật khẩu env, `.web_secret` 600, cookie HMAC-SHA256 30 ngày, khóa ký trộn hash mật khẩu), `urls.py` (W3: chỉ URL một video, bỏ `si`/tham số khác, chuẩn hóa `https://youtu.be/<id>`), `jobs.py` (W5: một worker, FIFO, không trùng job theo episode, log vòng đệm 200 dòng, stop → `KeyboardInterrupt` cho stage đang chạy; job pipeline qua `run_pipeline` + preflight), `episodes.py` (đọc manifest / metadata / `render_manifest.json`, chỉ trả file Short trong `shorts/`), `server.py` (uvicorn), `static/` (login, index, episode, `app.js`, `style.css`; thẻ Short có chỗ `.title-edit` cho phase B).
+  - `cli.py`: `auto-short web [--host] [--port] [--config]` (thiếu mật khẩu → exit 1; thiếu extra `[web]` → exit 1). `config.py` + `config.example.toml`: `[web] host/port/session_days`.
+  - `pyproject.toml`: extra `[web]` = `fastapi==0.141.1`, `uvicorn==0.54.0`; `httpx` ở `dev`. Đã cài vào env `auto-short` (kéo `starlette 1.7.0`, `pydantic 2.13.5`), không `pip install -e`.
+  - Docs: `docs/decisions/CP8.3-web-contract.md` (PROPOSED), CP1 §10 (3 dòng dependency + ghi chú scope), project profile (module map `web/`, authority), README (Web UI).
+- Tests: `pytest -q` → 422 passed (60 test mới: `test_web_urls.py`, `test_web_auth.py`, `test_web_jobs.py`, `test_web_app.py`, `test_cli.py`/`test_config.py` bổ sung), 1 warning (starlette: `httpx` với TestClient deprecated, khuyên `httpx2`). `node scripts/framework-check.mjs` → PASS.
+- Chạy thật (server `auto-short web --config config.toml` của worktree, workspace/output trỏ repo chính; `curl` qua `10.8.102.101:8080`): bảng số đo ở `docs/decisions/CP8.3-web-contract.md` § Số đo. AC1 (thiếu mật khẩu exit 1; 303/401; sai mật khẩu 401 sau 1 s không cookie; cookie 30 ngày; restart vẫn đăng nhập; cookie sửa → 401), AC2 (`tHtxw6ykUmM` → 6 stage `done`, 20/20 Short trong 1500 s; preflight lỗi → 503, không job), AC3 (Range 206; sha256 20/20 khớp; zip 20 entry khớp), AC5 (422 URL sai; 404 id lạ / traversal), AC6 (gửi trùng khi đang chạy → cùng job; gửi lại khi xong → 6 skip, 0,1 s) — PASS. Mật khẩu chạy thật sinh ngẫu nhiên, chỉ ở biến môi trường của tiến trình (không lưu trong repo). Server đã tắt.
 - Review:
 - Important findings / decisions:
-- Known limitations:
+  - W3: `watch?v=<id>&list=…` được hiểu là một video (bỏ `list`); chỉ `/playlist?list=…` bị từ chối — ghi trong decision record.
+  - Tắt server khi job đang chạy: stage ghi `failed interrupted` nếu stage trả quyền về Python trong 30 s (test đơn vị); request Ollama dài có thể giữ manifest `running` → resume theo CP8 E3. Chưa đo trên server thật (không có job dài an toàn để ngắt).
+  - Kết quả tập mới: 20 clip (header "Thập Thiện Nghiệp Đạo Kinh (tập 29)"), cả 20 có title AI; clip dài nhất 116,6 s (k14), ngắn nhất 31,8 s (k15); render dùng renderer CP7 (hard cut) vì CP8.1 chưa merge.
+- Known limitations: xem decision record § Giới hạn đã biết. Chưa có: sửa title (phase B, sau CP8.2); manual test trên thiết bị khác trong LAN (gate HUMAN LEAD).
 - PR:

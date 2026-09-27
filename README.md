@@ -43,7 +43,7 @@ YouTube downloads may also need a JavaScript runtime on `PATH` (default config u
 ```bash
 conda create -n auto-short python=3.12
 conda activate auto-short
-pip install -e ".[dev]"
+pip install -e ".[dev]"                # add ",web" for the web UI: pip install -e ".[dev,web]"
 cp config.example.toml config.toml   # local, gitignored; edit as needed
 ```
 
@@ -71,6 +71,25 @@ a timing table. Re-running the same command after an error or Ctrl-C (exit 1 / 1
 to date and continues from the first one that is not; re-running when everything is done skips all six stages
 (well under a second). The review stage is not run yet: AI titles are auto-approved. Rules:
 `docs/decisions/CP8-pipeline-contract.md`.
+
+### Web UI (LAN)
+
+The same pipeline from a browser on the LAN (phone or computer): log in, paste a YouTube link, follow the
+stages, play / download each Short or all of them as a zip. Needs the `[web]` extra
+(`pip install -e ".[dev,web]"`).
+
+```bash
+export AUTO_SHORT_WEB_PASSWORD='choose-a-password'   # required; never stored in config or the repo
+auto-short web                    # http://<this machine's LAN IP>:8080 ; options: --host, --port, --config PATH
+auto-short web --host 127.0.0.1   # this machine only
+```
+
+The login is remembered for 30 days per browser (`[web] session_days`); restarting the server keeps it (the
+signing key lives in `<workspace>/.web_secret`), changing the password logs every device out. Only single-video
+YouTube links are accepted (`youtu.be/…`, `youtube.com/watch?v=…`, `youtube.com/shorts/…`; `?si=…` and other
+parameters are dropped); local paths are CLI-only. One job runs at a time; pasting the link of an episode again
+resumes it (finished stages are skipped). Plain HTTP: use it on a trusted network only. Contract:
+`docs/decisions/CP8.3-web-contract.md`.
 
 Single stages:
 
