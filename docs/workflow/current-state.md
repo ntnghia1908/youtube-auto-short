@@ -8,17 +8,19 @@ Chỉ ghi operational state không suy ra được từ Git, task contract hoặ
 
 ## Current focus
 
-CP8–CP8.7 đã merge (PR #10, `main` = `eab3134`). CP8.8 hashtag riêng từng bộ kinh: READY (manual test HUMAN LEAD cho đạt 2026-09-27), PR chờ merge (`docs/tasks/CP8.8-playlist-hashtags.md`), worktree `../youtube-auto-short-hashtags`, nhánh `feature/cp8.8-playlist-hashtags`; code dở tham khảo ở nhánh local `wip/playlist-hashtags`. CP8.4 upload YouTube: planned, chưa lên lịch.
+Auto Short: CP8–CP8.8 đã merge (CP8.8 hashtag bộ kinh: PR #11, `fe6c3de`). CP8.4 upload YouTube: planned, chưa lên lịch.
 
-Web chạy cho HUMAN LEAD trong tmux `youtube:web` từ worktree `../youtube-auto-short-web` (detached, ghim `eab3134`, `PYTHONPATH=<worktree>/src`, `--config` của repo chính → `work/`, `output/`, `models/` repo chính); mật khẩu chỉ qua env của pane, không lưu.
+Chinese Learning (CL1, bản đồ: `docs/tasks/CL1-roadmap.md`): CL1.1 MERGED (PR #12); CL1.2 MERGED (PR #15, `38d828f`). G6A (Pinyin authority) và G6B (model dịch): PENDING HUMAN LEAD DECISION — chưa chọn model. CL1.3: PENDING G6A/G6B + C10. CL1.4: PENDING CL1.3.
 
-Session song song hướng CL1: worktree `../youtube-auto-short-cl1`, nhánh `feature/cl1-chinese-learning` — không sửa từ session khác.
+Web chạy cho HUMAN LEAD trong tmux `youtube:web` từ worktree `../youtube-auto-short-web` (detached, ghim `fe6c3de`, `PYTHONPATH=<worktree>/src`, `--config` của repo chính → `work/`, `output/`, `models/` repo chính); mật khẩu chỉ qua env của pane, không lưu.
+
+Còn lại cục bộ (HUMAN LEAD quyết dọn): worktree `../youtube-auto-short-hashtags` (CP8.8, đã merge), nhánh `wip/playlist-hashtags`.
 
 ## Next proposed action
 
-1. HUMAN LEAD merge PR CP8.8.
-2. Sau merge CP8.8: đưa worktree web lên commit mới và khởi động lại web; dọn worktree `../youtube-auto-short-hashtags`, nhánh `wip/playlist-hashtags` (HUMAN LEAD quyết).
-3. Việc kế tiếp HUMAN LEAD chọn: CP8.4 upload YouTube, CP9, CP10.
+1. G6A — thí nghiệm + khuyến nghị chiến lược Pinyin authority (task contract riêng, từ `origin/main` sạch); không đổi production Pinyin trước khi HUMAN LEAD duyệt.
+2. Sau G6A: G6B → CL1.3 (+ C10) → CL1.4 theo roadmap.
+3. Auto Short tiếp theo do HUMAN LEAD chọn: CP8.4 upload YouTube, CP9, CP10.
 
 Đây là PROPOSED, không authorize implementation tiếp theo.
 
