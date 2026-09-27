@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -84,7 +84,7 @@ Không chạm database, security model. Thêm lệnh CLI (additive). Manual test
   - AC2: `--alternative 1` → "Tâm xấu khiến người khác sợ hãi", `alternative`, 1 encode + 12 reuse, 38.5 s. `--reset` → k03 encode lại (38.6 s), `review.json` `titles: []`, 13/13 mp4 byte-identical baseline, mọi `title_origin` `ai`.
   - AC3: 8 title không hợp lệ (61 ký tự, rỗng, khoảng trắng, emoji, `心`, HOA toàn bộ, từ dài không fit, xuống dòng) + `--alternative 9` + clip `k99` → exit 1, thông báo lý do, `review.json` byte không đổi, render sau đó skip.
   - AC5: `render` lần hai → `skip (up to date)`; xóa `k07.mp4` → `run (artifact missing)`, chỉ `k07` encode (28.9 s), byte-identical bản trước.
-- Review:
+- Review: ACCEPTED (ORCHESTRATOR, diff-first). Không có blocking finding. Chấp nhận các quyết định khi implement (ghi ở decision record): lỗi/ngắt giữa chừng giữ nguyên bản render trước (file mới ở `.part`, chỉ commit khi mọi clip xong) — đúng T5; hai test CP7 đổi theo rule mới của contract, không phải che lỗi; `render_key` gồm cả render config hash. Non-blocking: `review.json` chưa có khóa ghi đồng thời CLI/web (ghi atomic, lần sau thắng) — web CP8.3 chạy job tuần tự; nâng ffmpeg cần `--force` hoặc tăng `RENDER_PLAN_VERSION`.
 - Important findings / decisions: (1) Manifest trước CP8.2 không có `render_key` → lần render đầu sau nâng cấp encode hết (không tái dùng mù quáng); trên `rbjfCfFq3Dk` đã chạy `--force` một lần. (2) `render_key` gồm cả `render_config_hash` (bảo thủ: mọi key `[render]` trong hash đều encode lại). (3) Short encode giữ ở `.part` tới khi mọi clip xong → lỗi giữa chừng để nguyên output thành công trước (khớp manifest cũ), lần sau vẫn tái dùng; lỗi kiểm input trước khi chạy cũng không xóa output cũ nữa (CP7 R8 cũ xóa hết) — một luật "chỉ xóa file của lần chạy đó". (4) Luật hình thức T2 chỉ kiểm lúc ghi; render kiểm schema `review.json` + glyph/fit. (5) `review.json` không phải stage (stage `review` trong manifest vẫn `pending`).
 - Known limitations: chưa có khóa ghi đồng thời CLI + web (ghi atomic, lần sau thắng); đổi phiên bản ffmpeg/x264 không vào `render_key` (dùng `--force` hoặc tăng `RENDER_PLAN_VERSION`); ngắt dòng cân R5 có thể cho 3 dòng ngắn với title tay như title AI.
 - PR:
