@@ -12,6 +12,7 @@ Greenfield project for automatically turning Vietnamese long-form lecture videos
 - `selection`: a local Ollama model picks up to 25 non-overlapping, self-contained clips among the candidates (`clips.json` + `selection_log.json`). Contract: `docs/decisions/CP5-selection-contract.md`.
 - `titling`: a deterministic header and an AI title/hook per clip (`titles.json` + `titling_log.json`). Contract: `docs/decisions/CP6-titling-contract.md`.
 - `render`: each titled clip becomes a 1080x1920 Short (black background, yellow header/title panels, centre-cropped source video, silences shortened) in `output/<episode_id>/shorts/` + `render_manifest.json`. Contract: `docs/decisions/CP7-render-contract.md`.
+- manual titles (review, partial — CP8.2): set a title by hand or pick an AI alternative for one Short (`work/<episode_id>/review.json`); re-rendering encodes only the Shorts that changed. Contract: `docs/decisions/CP8.2-title-override-contract.md`.
 
 The project adopts the universal parts of AI Development Framework v4 from `ntnghia1908/dang-vu-spring`, while keeping this repository independent.
 
@@ -33,7 +34,7 @@ AI generates title/panel text
 multiple Short outputs
 ```
 
-Ingest, transcription, analysis, AI clip selection, title generation and composition/render are implemented (subtitles are off, CP1 §7); human review (CP9) and the one-command pipeline (CP8) are planned.
+Ingest, transcription, analysis, AI clip selection, title generation and composition/render are implemented (subtitles are off, CP1 §7); manual title overrides exist (CP8.2); full human review (CP9) and the one-command pipeline (CP8) are planned.
 
 ## Setup
 
@@ -135,11 +136,28 @@ auto-short render <episode_id>    # options: --force, --config PATH
 ```
 
 Output: `output/<episode_id>/shorts/<clip_id>.mp4` and `output/<episode_id>/render_manifest.json` (layout,
-display lines and font size per clip, segments, sha256 of every input and file). Titles come straight from
-`titles.json` (`[render] title_source = "titles"`, i.e. AI titles are auto-approved until the review stage exists);
-`untitled` clips are skipped with a warning. A long title first makes the title panel taller (3 lines), and only
+display lines and font size per clip, segments, sha256 of every input and file). Titles come from
+`titles.json` (`[render] title_source = "titles"`, i.e. AI titles are auto-approved until the review stage exists)
+unless a manual title is set in `review.json` (see `title` below); `untitled` clips without one are skipped with a
+warning. Each Short records a `render_key`; a Short whose key, file and sha256 are unchanged is reused instead of
+encoded again (`--force` encodes all). A long title first makes the title panel taller (3 lines), and only
 shrinks the font when that is not enough. Rules and schema: `docs/decisions/CP7-render-contract.md`; parameters in
 `[render]` of `config.example.toml` (`output_dir` and `threads` do not re-run the stage; any other key does).
+
+Set the title of one Short by hand, then re-render only that Short (no AI call):
+
+```bash
+auto-short title <episode_id> --list                        # every clip: AI title, numbered alternatives, override
+auto-short title <episode_id> <clip_id> --set "Tiêu đề mới" # manual title; prints the display lines + font size
+auto-short title <episode_id> <clip_id> --alternative 1     # use AI alternative 1 verbatim
+auto-short title <episode_id> <clip_id> --reset             # back to the AI title
+# add --render to run 'render' right away (~40 s for one Short of the test episode; the others are reused)
+```
+
+A manual title must be 1 to `[titling] max_chars` (60) characters on one line, without emoji, `#`, `@`, `!`, URL, surrounding quotes or all
+caps, use only characters of the font and fit the title panel (at most 3 lines); otherwise the command exits 1 and
+`review.json` is unchanged. Overrides are keyed by `(clip_id, candidate_id)`: after selection re-runs, an override for
+a clip that changed is ignored with a warning. Rules: `docs/decisions/CP8.2-title-override-contract.md`.
 
 `python -m auto_short ...` works the same. Re-running `ingest` skips when the source and the
 relevant config are unchanged. Artifacts go to `work/<episode_id>/` (`manifest.json`, `metadata.json`).
