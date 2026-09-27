@@ -2,8 +2,8 @@
 
 | Metadata | Value |
 |---|---|
-| Status | PROPOSED |
-| Accepted by | — (W1–W7, P1–P4 duyệt cùng APPROVE TASK 2026-09-27; phase A review ACCEPTED 2026-09-27; phase B chờ review) |
+| Status | ACCEPTED |
+| Accepted by | — (W1–W7, P1–P4 duyệt cùng APPROVE TASK 2026-09-27; phase A review ACCEPTED 2026-09-27; phase B review ACCEPTED; manual test HUMAN LEAD đạt 2026-09-27) |
 | Checkpoint | CP8.3 (S2) |
 | Roadmap | `AUTO_SHORT_CHECKPOINT_PLAN.md` §4 CP8.3 |
 | Task contract | `docs/tasks/CP8.3-web.md` |

@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -94,10 +94,10 @@ Tất cả required verification phải chạy và PASS trước READY.
 
 **Chạm security model** (server mở trên LAN, auth mật khẩu) → manual test là **gate** trước integration.
 
-- [ ] Mở `http://10.8.102.101:8080` từ máy/điện thoại khác: hiện trang đăng nhập; sai mật khẩu bị chặn; đăng nhập xong, đóng mở lại trình duyệt không bị hỏi lại.
-- [ ] Dán URL, theo dõi tiến độ tới khi có Short.
-- [ ] Xem, tua, tải một Short; tải tất cả.
-- [ ] Sửa title một Short, render lại, xem kết quả.
+- [x] Mở `http://10.8.102.101:8080` từ máy/điện thoại khác: hiện trang đăng nhập; sai mật khẩu bị chặn; đăng nhập xong, đóng mở lại trình duyệt không bị hỏi lại.
+- [x] Dán URL, theo dõi tiến độ tới khi có Short.
+- [x] Xem, tua, tải một Short; tải tất cả.
+- [x] Sửa title một Short, render lại, xem kết quả.
 
 ## Result
 
@@ -130,7 +130,7 @@ Tất cả required verification phải chạy và PASS trước READY.
   - Render lại 2 tập trong thư mục repo chính bằng renderer mới (dissolve 0.15 s, `render_key`) qua web: `tHtxw6ykUmM` 20/20 encode 509 s; `rbjfCfFq3Dk` (xếp hàng sau) 13/13 encode 310 s. ffprobe 33 mp4: \|`nb_frames` − `duration`×fps\| ≤ 0,49 frame, `dissolves` có ở 204/209 và 150/157 điểm nối, sha256 = manifest.
   - AC4: preview hợp lệ (3 dòng, 88 px) / 4 title sai → 422; `set` tay `k04` → 1 encoded + 19 reused (16,3 s), 19 file khác sha256 không đổi, file mới được phục vụ đúng sha256; `alternative: 2` → như trên, origin `alternative`; `reset` → 20/20 mp4 byte-identical bản AI; 409 khi job pipeline chạy và khi job render của Short khác chạy.
   - Server đã tắt; mật khẩu và cookie jar đã xóa.
-- Review:
+- Review: ORCHESTRATOR review phase B ACCEPTED (2026-09-27): khóa `submit_lock` bao check + ghi `review.json` + submit job (409 đúng); rule liệt kê từ `render_manifest.json` đã commit phù hợp CP8.2 T5. Không finding chặn. Non-blocking: 409 chặn sửa Short khác của cùng tập trong ~16 s render (chấp nhận MVP).
 - Important findings / decisions:
   - Luật "danh sách Short theo render cuối đã commit" thay luật phase A (xem trên).
   - Sửa title bị từ chối (409) cả khi job render của **Short khác** đang chạy; UI khóa nút lưu tới khi job xong.
