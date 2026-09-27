@@ -174,4 +174,4 @@ Không chạm database, security model hay public API contract. Manual test ở 
 - Review: ORCHESTRATOR review diff theo contract → AC (plan/stage/cli/config, docs CP1/CP6), chạy lại pytest, skip, ffprobe, blackdetect 13 clip: ACCEPTED, không có blocking finding.
 - Important findings / decisions: P1 `title_source = "titles"`; P2 Be Vietnam Pro Regular; P3 panel title cao thêm trước (tối đa ≈ 358 px, lề khung 0.02 W) rồi mới thu nhỏ; header ngắt kiểu lấp đầy như ảnh mẫu, title ngắt cân; P4 sửa `crf` 22; P5 `output/<id>/`. AC4 chấp nhận (HUMAN LEAD 2026-09-27). Audio không fade. Chuyển cảnh video: HUMAN LEAD chọn dissolve 0.15 s, làm ở **CP10** (mẫu và cách làm: decision record § Chuyển cảnh). Title chữ Hán nền xanh trong nguồn (k13) chỉ là nội dung video, không phải khung đen.
 - Known limitations: decision record § Giới hạn đã biết (viền chroma 1 px ở cạnh lẻ, SAR ≠ 1 chưa xét, title vừa quá 2 dòng có thể ra 3 dòng ngắn, clip `untitled` không render cho tới CP9).
-- PR: chưa (chờ HUMAN LEAD cho phép push/PR).
+- PR: #9 (`feature/cp7-render`).
