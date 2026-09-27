@@ -5,6 +5,7 @@ import shutil
 
 import pytest
 from learning_helpers import URL, VIDEO_ID, FakeClipDownloader, FakeLister, learning_config, make_clip
+from learning_helpers import no_real_ollama  # noqa: F401  (autouse: no test reaches a real Ollama)
 
 from auto_short import hashing
 from auto_short.learning import LearningError, run_learning
@@ -101,7 +102,9 @@ def test_download_failure_cleans_tmp_and_artifacts(tmp_path, clips, exc, expecte
     entry = _manifest(cfg)["stages"]["media"]
     assert entry["status"] == FAILED and expected in entry["error"]
     assert not (ws / TMP_DIR).exists()
-    assert sorted(p.name for p in ws.iterdir()) == ["manifest.json", "source.json", "subtitle.json3"]
+    # lesson.json / lesson_log.json of the first run are not media artifacts (media downstream = ())
+    assert sorted(p.name for p in ws.iterdir()) == ["lesson.json", "lesson_log.json", "manifest.json",
+                                                    "source.json", "subtitle.json3"]
 
 
 def test_subtitle_interrupt_records_and_cleans(tmp_path, clips):

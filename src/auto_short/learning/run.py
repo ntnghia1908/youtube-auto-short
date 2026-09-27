@@ -1,12 +1,14 @@
-"""Chinese Learning orchestrator (CL1 C9, option C): ``subtitle`` -> ``media``.
+"""Chinese Learning orchestrator (CL1 C9, option C): ``subtitle`` -> ``media`` -> ``lesson``.
 
 Own stage order, independent of ``pipeline.py``; each stage goes through the shared
-``run_stage`` (CP2 D6) with an explicit ``downstream``. Stops at the first failing stage.
+``run_stage`` (CP2 D6) with an explicit ``downstream``. Stops at the first failing stage. The
+Ollama preflight runs right before ``lesson``, and only when that stage will actually run.
 """
 
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -14,15 +16,19 @@ from pathlib import Path
 from .. import hashing
 from ..config import Config
 from ..ingest.source import youtube_video_id
-from ..workspace import DONE, StageError, Workspace, WorkspaceError, run_stage, validate_episode_id
-from . import media, subtitle
+from ..selection.client import ChatClient, OllamaClient, resolve_host
+from ..workspace import DONE, StageError, Workspace, WorkspaceError, atomic_write_json, check_up_to_date, \
+    run_stage, validate_episode_id
+from . import lesson, media, subtitle
 from .media import ClipDownloader, ytdlp_clip
+from .preflight import LearningPreflightError, learning_preflight
+from .prompt import prompt_texts
 from .tracks import TrackLister, YtDlpChineseFetcher
 
 log = logging.getLogger("auto_short")
 
 LEARNING_DIR = "_learning"  # namespace of the application in the workspace root (C4)
-STAGES = (subtitle.STAGE, media.STAGE)
+STAGES = (subtitle.STAGE, media.STAGE, lesson.STAGE)
 
 
 class LearningError(Exception):
@@ -57,10 +63,17 @@ def run_learning(
     lister: TrackLister | None = None,
     downloader: ClipDownloader | None = None,
     on_stage: Callable[[str, str, bool], None] | None = None,  # (episode_id, stage, ran)
+    client: ChatClient | None = None,
+    preflight: Callable[[Config], None] | None = None,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> LearningResult:
     video_id = youtube_video_id(url)
     if video_id is None:
         raise LearningError(f"unsupported URL (expected a single YouTube video URL): {url}")
+    try:
+        prompt_texts(config.learning.prompt_version)
+    except ValueError as exc:
+        raise LearningError(f"learning.prompt_version: {exc}") from exc
     try:
         ws = Workspace(learning_root(config), validate_episode_id(video_id))
         manifest = ws.load_manifest()
@@ -74,12 +87,15 @@ def run_learning(
     result = LearningResult(ws.episode_id, ws.dir)
 
     def run(stage: str, cfg: dict, downstream: tuple[str, ...], action: Callable[[], list[str]],
-            cleanup: Callable[[Workspace], None]) -> None:
+            cleanup: Callable[[Workspace], None], inputs: list[dict] | None = None,
+            after_failure: Callable[[], None] | None = None) -> None:
         try:
-            ran = run_stage(ws, manifest, stage, inputs=[], cfg_hash=hashing.config_hash(cfg), force=force,
-                            action=action, downstream=downstream)
+            ran = run_stage(ws, manifest, stage, inputs=inputs or [], cfg_hash=hashing.config_hash(cfg),
+                            force=force, action=action, downstream=downstream)
         except StageError as exc:
             cleanup(ws)
+            if after_failure is not None:
+                after_failure()
             raise LearningError(str(exc)) from exc
         except KeyboardInterrupt:
             cleanup(ws)
@@ -97,4 +113,26 @@ def run_learning(
     run(media.STAGE, media.used_config(config), media.DOWNSTREAM,
         lambda: media.produce(ws, uri, config, downloader or ytdlp_clip),
         media.remove_outputs)
+
+    if (manifest["stages"].get(media.STAGE) or {}).get("status") != DONE:  # defensive
+        raise LearningError(f"{media.STAGE} is not done; {lesson.STAGE} not run")
+    lesson_inputs = lesson.inputs(ws)
+    lesson_cfg = lesson.used_config(config)
+    if force or check_up_to_date(ws, manifest, lesson.STAGE, lesson_inputs,
+                                 hashing.config_hash(lesson_cfg)) is not None:
+        try:
+            (preflight or learning_preflight)(config)
+        except LearningPreflightError as exc:
+            raise LearningError(str(exc)) from exc
+    chat = client or OllamaClient(resolve_host(config.learning.ollama_host), timeout=config.learning.timeout)
+    failure: dict = {}
+
+    def keep_failure_log() -> None:
+        # After record_failure: the log of the failed attempts survives, outside the failed entry's artifacts.
+        if failure.get("log") is not None:
+            atomic_write_json(ws.dir / lesson.LOG_NAME, failure["log"])
+
+    run(lesson.STAGE, lesson_cfg, lesson.DOWNSTREAM,
+        lambda: lesson.produce(ws, config, chat, sleep, failure),
+        lesson.remove_outputs, lesson_inputs, keep_failure_log)
     return result

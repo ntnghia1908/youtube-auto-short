@@ -9,7 +9,7 @@
 - Execution profile: dual-agent
 - Human Lead: HUMAN LEAD
 - Base commit / branch: `eab3134` / `feature/cl1-chinese-learning` (worktree `../youtube-auto-short-cl1`, tạo 2026-09-27)
-- Human Lead approval: kiến trúc duyệt về nguyên tắc 2026-09-27; chỉ CL1.1 APPROVED (`docs/tasks/CL1.1-chinese-captions-media.md`); CL1.2–CL1.4 pending; G4, G6 tạm
+- Human Lead approval: kiến trúc duyệt về nguyên tắc 2026-09-27; CL1.1 APPROVED (`docs/tasks/CL1.1-chinese-captions-media.md`, merge PR #12 `0a61637`); CL1.2 APPROVED 2026-09-27 (`docs/tasks/CL1.2-ai-enrichment-lesson.md`, nhánh `feature/cl1.2-lesson`); CL1.3–CL1.4 pending; G4, G6 tạm
 - Implementation authorized: NO
 
 Lifecycle: `DRAFT → APPROVED → IN_PROGRESS → READY`. DONE suy ra từ Git sau khi merge.
@@ -54,6 +54,8 @@ Protected cho **mọi** task con (không sửa): danh sách MUST NOT MODIFY ở 
 **APPROVED 2026-09-27** (HUMAN LEAD: "APPROVE ONLY CL1.1"). Contract riêng, canonical cho task con này: `docs/tasks/CL1.1-chinese-captions-media.md` (gồm cả stage `media` lấy clip 0–300 s, trước đây ở CL1.3).
 
 ### CL1.2 — AI enrichment + `lesson.json`
+
+**APPROVED 2026-09-27** (HUMAN LEAD: "APPROVES CL1.2 ONLY"). Contract riêng, canonical cho task con này: `docs/tasks/CL1.2-ai-enrichment-lesson.md` (orchestrator `subtitle → media → lesson`). Mục dưới là bản nháp gốc.
 
 - Scope: `learning/prompt.py`, `learning/enrich.py`, `learning/lesson.py`, `learning/preflight.py`; `[learning]` đủ key C7; `learn` chạy `subtitle → lesson`.
 - Acceptance Criteria:

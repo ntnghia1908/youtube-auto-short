@@ -195,11 +195,24 @@ class WebConfig:
 
 @dataclass(frozen=True)
 class LearningConfig:
-    """Chinese Learning application (docs/decisions/CL1-chinese-learning-contract.md C6, C10)."""
+    """Chinese Learning application (docs/decisions/CL1-chinese-learning-contract.md C6, C7, C10)."""
 
     window_seconds: float = 300.0  # only [0, window) of the video: subtitle segments and clip
     min_han_ratio: float = 0.5  # Han characters / letters in the window's subtitle text
     media_format: str = "bv*[height<=720]+ba/b[height<=720]"  # yt-dlp format of the clip
+    # C7 AI enrichment (stage ``lesson``) via Ollama; G6 model not final until HUMAN LEAD reviews a sample.
+    model: str = "qwen3:14b"
+    think: bool = False
+    temperature: float = 0.0
+    seed: int = 42
+    num_ctx: int = 8192
+    prompt_version: str = "v1"  # checked against learning/prompt.py by run_learning
+    batch_lines: int = 20
+    retries: int = 2
+    # Execution-only settings (not part of the config hash); env OLLAMA_HOST overrides ollama_host.
+    ollama_host: str = "http://127.0.0.1:11437"
+    timeout: float = 600.0
+    retry_backoff: tuple[float, ...] = (5.0, 15.0)
 
 
 @dataclass(frozen=True)
@@ -483,10 +496,25 @@ def _web(data: dict) -> WebConfig:
 def _learning(data: dict) -> LearningConfig:
     le = _section(data, "learning")
     d, w = LearningConfig(), "learning"
+    backoff = le.get("retry_backoff", list(d.retry_backoff))
+    if not isinstance(backoff, list) or not all(
+            isinstance(x, (int, float)) and not isinstance(x, bool) and 0 <= x <= 3600 for x in backoff):
+        raise ConfigError(f"{w}.retry_backoff must be a list of numbers between 0 and 3600 (seconds)")
     return LearningConfig(
         window_seconds=_number(le, "window_seconds", d.window_seconds, w, lo=1, hi=86400),
         min_han_ratio=_number(le, "min_han_ratio", d.min_han_ratio, w, lo=0, hi=1),
         media_format=_str(le, "media_format", d.media_format, w),
+        model=_str(le, "model", d.model, w),
+        think=_bool(le, "think", d.think, w),
+        temperature=_number(le, "temperature", d.temperature, w, lo=0, hi=2),
+        seed=_int(le, "seed", d.seed, w, lo=0),
+        num_ctx=_int(le, "num_ctx", d.num_ctx, w, lo=512),
+        prompt_version=_str(le, "prompt_version", d.prompt_version, w),
+        batch_lines=_int(le, "batch_lines", d.batch_lines, w, lo=1),
+        retries=_int(le, "retries", d.retries, w, lo=0),
+        ollama_host=_str(le, "ollama_host", d.ollama_host, w),
+        timeout=_number(le, "timeout", d.timeout, w, lo=1),
+        retry_backoff=tuple(float(x) for x in backoff),
     )
 
 

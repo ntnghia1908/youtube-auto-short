@@ -7,6 +7,7 @@ import shutil
 import pytest
 from learning_helpers import (REAL_JSON3, URL, VIDEO_ID, ZH_EVENTS, FakeClipDownloader, FakeLister, json3,
                               learning_config, make_clip, track)
+from learning_helpers import no_real_ollama  # noqa: F401  (autouse: no test reaches a real Ollama)
 
 from auto_short.learning import LearningError, run_learning
 from auto_short.learning.subtitle import han_ratio, in_window, validate
@@ -192,7 +193,7 @@ def test_artifacts_schema_and_force_byte_stable(tmp_path, clip):
                         tracks=[track("zh"), track("zh-CN"), track("zh-Hant"),
                                 track("zh", auto=True, json3=False), track("en", auto=True, lang="en", kind="asr")])
     result = run_learning(URL, cfg, lister=lister, downloader=FakeClipDownloader(clip))
-    assert result.stages == [("subtitle", True), ("media", True)]
+    assert result.stages == [("subtitle", True), ("media", True), ("lesson", True)]
     ws = _ws(cfg)
     assert (ws / "subtitle.json3").read_bytes() == REAL_JSON3.read_bytes()
     source_bytes = (ws / "source.json").read_bytes()
@@ -224,5 +225,5 @@ def test_artifacts_schema_and_force_byte_stable(tmp_path, clip):
     assert sub["status"] == "done" and sub["artifacts"] == ["subtitle.json3", "source.json"] and sub["inputs"] == []
 
     result = run_learning(URL, cfg, force=True, lister=lister, downloader=FakeClipDownloader(clip))
-    assert result.stages == [("subtitle", True), ("media", True)]
+    assert result.stages == [("subtitle", True), ("media", True), ("lesson", True)]
     assert (ws / "source.json").read_bytes() == source_bytes

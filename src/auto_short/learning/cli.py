@@ -16,7 +16,8 @@ def _print_stage(episode_id: str, stage: str, ran: bool) -> None:
 def cmd_learn(args: argparse.Namespace, cfg: Config) -> int:
     """stdout: ``<id>\\t<stage>\\t<ran|skipped (up to date)>`` per stage, then ``<id>\\tdone\\t<dir>``.
 
-    Log on stderr; exit 0 on success, 1 on error (``auto-short: error: …``, CP2 D8), 130 on Ctrl-C.
+    Stages: ``subtitle``, ``media``, ``lesson`` (CL1.2). Log on stderr; exit 0 on success, 1 on error
+    (``auto-short: error: …``, CP2 D8; also an Ollama preflight error before ``lesson``), 130 on Ctrl-C.
     """
     try:
         result = run_learning(args.url, cfg, force=args.force, on_stage=_print_stage)
