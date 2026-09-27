@@ -120,7 +120,7 @@ Từ một episode đã có `clips.json` (CP5) và `titles.json` (CP6), stage `r
     - **Lề khung:** `min_frame_margin` 0.02 W (22 px) → `title_panel_max_height` ≈ 358 px (một tham số suy ra từ tham số kia, không đặt cả hai độc lập).
     - Quyết định ORCHESTRATOR trong boundary: lề trong panel tách ngang/dọc; bo góc 0.055 W; cỡ chữ theo x-height đo (header 0.0330 W, title 0.0434 W); bước dòng ≈ 1.05× cỡ chữ; căn giữa dọc theo khối cap-height (OS/2 `sCapHeight`).
   - **Sửa P4 (HUMAN LEAD 2026-09-27, sau xem mẫu):** `crf` **22** thay cho 18 (đo 60 s video k03: 18 → 19 MB, 20 → 15 MB, 22 → 11 MB, 23 → 10 MB).
-  - **Fade ở điểm nối (HUMAN LEAD 2026-09-27):** làm 1 mẫu thử (A/B cùng clip, có/không fade audio ngắn) để nghe; chưa vào scope CP7 cho tới khi HUMAN LEAD quyết sau khi nghe.
+  - **Fade ở điểm nối (HUMAN LEAD 2026-09-27):** audio — nghe mẫu A/B k04: cắt thẳng ổn, **không fade audio**. Ý HUMAN LEAD là độ mượt **hình** ở chỗ cắt (rút lặng làm hình nhảy): làm mẫu chuyển cảnh video (dissolve ngắn) để xem; chưa vào scope CP7 cho tới khi HUMAN LEAD quyết sau khi xem.
   - **P4 Encode:** `crf` 18 / `preset` medium / AAC 192k (R6). Phương án khác: `crf` 20–23 (file nhỏ hơn), `preset` slow.
   - **P5 Output:** `output/<episode_id>/` ngoài workspace theo CP1 §2 (R8). Phương án khác: render vào `work/<id>/shorts/` (đúng hoàn toàn CP2, không cần tự dọn) rồi copy sang `output/` ở CP8.
 
