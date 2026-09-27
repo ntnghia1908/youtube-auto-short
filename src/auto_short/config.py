@@ -189,6 +189,8 @@ class WebConfig:
     host: str = "0.0.0.0"
     port: int = 8080
     session_days: int = 30  # login cookie lifetime
+    # CP8.7: hashtags appended to the copied title (after #<series>); written without "#"
+    hashtags: tuple[str, ...] = ("TịnhKhông", "LờiPhậtDạy", "TịnhĐộ", "NiệmPhật")
 
 
 @dataclass(frozen=True)
@@ -464,7 +466,15 @@ def _web(data: dict) -> WebConfig:
         host=_str(we, "host", d.host, w),
         port=_int(we, "port", d.port, w, lo=1, hi=65535),
         session_days=_int(we, "session_days", d.session_days, w, lo=1, hi=365),
+        hashtags=_hashtags(we, d.hashtags),
     )
+
+
+def _hashtags(section: dict, default: tuple[str, ...]) -> tuple[str, ...]:
+    value = section.get("hashtags", list(default))
+    if not isinstance(value, list) or not all(isinstance(x, str) for x in value):
+        raise ConfigError("web.hashtags must be a list of strings")
+    return tuple(value)
 
 
 def from_dict(data: dict) -> Config:

@@ -48,8 +48,11 @@ def episode_dirs(episode_id: str, config: Config) -> list[Path]:
 
 def delete_episode(episode_id: str, config: Config) -> list[Path]:
     """Remove the episode's output then workspace directory (the episode leaves the list only once its manifest
-    is gone); returns the removed paths."""
+    is gone); returns the removed paths. CP8.7: a tombstone ``_deleted/<id>.json`` is written first (when the
+    workspace has a manifest) so playlist statistics survive."""
     dirs = episode_dirs(episode_id, config)
+    from .tombstone import write_tombstone
+    write_tombstone(episode_id, config)
     for path in sorted(dirs, key=lambda p: p.parent.resolve() == Path(config.workspace.dir).resolve()):
         shutil.rmtree(path)
         log.info("review: deleted %s", path)

@@ -74,3 +74,37 @@ def content_disposition(name: str) -> str:
     """``attachment; filename="<ascii>"; filename*=UTF-8''<percent-encoded UTF-8>`` (RFC 6266 + RFC 5987):
     browsers that know ``filename*`` save the Vietnamese name, others the ASCII fallback."""
     return f'attachment; filename="{ascii_fallback(name)}"; filename*=UTF-8\'\'{quote(name, safe="")}'
+
+
+# --- CP8.7: copy text = title + hashtags (bổ sung HUMAN LEAD 2026-09-27) ----------------------------------------
+
+MAX_COPY_CHARS = 100  # YouTube title limit
+
+
+def hashtag(text: str | None) -> str | None:
+    """``#`` + the letters and digits of ``text`` (NFC, Vietnamese diacritics kept; spaces, punctuation and a
+    leading ``#`` dropped), e.g. "Thập Thiện Nghiệp Đạo Kinh" -> "#ThậpThiệnNghiệpĐạoKinh"; None when empty."""
+    body = "".join(c for c in unicodedata.normalize("NFC", text or "") if c.isalnum())
+    return f"#{body}" if body else None
+
+
+def hashtags(series: str | None, tags: tuple[str, ...] | list[str]) -> list[str]:
+    """``#<series>`` then the configured tags, order kept, duplicates (case-insensitive) and empty ones dropped."""
+    out, seen = [], set()
+    for raw in [series, *tags]:
+        tag = hashtag(raw)
+        if tag is not None and tag.casefold() not in seen:
+            seen.add(tag.casefold())
+            out.append(tag)
+    return out
+
+
+def copy_text(title: str | None, series: str | None, tags: tuple[str, ...] | list[str], *,
+              max_chars: int = MAX_COPY_CHARS) -> tuple[str, list[str]]:
+    """``"<title> #tag1 #tag2 …"`` within ``max_chars`` characters: hashtags are dropped from the end until it
+    fits; the title is never cut. Returns (text, hashtags kept)."""
+    title = unicodedata.normalize("NFC", title or "").strip()
+    kept = hashtags(series, tags)
+    while kept and len(" ".join([title, *kept]).strip()) > max_chars:
+        kept.pop()
+    return " ".join([title, *kept]).strip(), kept

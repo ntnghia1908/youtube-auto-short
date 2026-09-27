@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..config import Config
-from ..review import ReviewError, episode_complete, publish_status, read_archive, read_publish
+from ..review import ReviewError, episode_complete, publish_status, read_archive, read_publish, read_tombstone
 from ..review.publish import PUBLISH_NAME
 from ..workspace import DONE, Workspace, WorkspaceError, atomic_write_json
 from . import episodes as ep
@@ -38,10 +38,19 @@ _VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 UNAVAILABLE_TITLES = {"[Private video]", "[Deleted video]", "[Unavailable video]"}
 
 # entry states (L4 + UI filter groups)
-NEW, QUEUED, PROCESSING, FAILED, RENDERED, INCOMPLETE, COMPLETE, UNAVAILABLE = (
-    "new", "queued", "processing", "failed", "rendered", "incomplete", "complete", "unavailable")
+NEW, QUEUED, PROCESSING, FAILED, RENDERED, INCOMPLETE, COMPLETE, UNAVAILABLE, DELETED = (
+    "new", "queued", "processing", "failed", "rendered", "incomplete", "complete", "unavailable", "deleted")
 GROUPS = {NEW: "todo", QUEUED: "doing", PROCESSING: "doing", FAILED: "doing", RENDERED: "doing",
           INCOMPLETE: "doing", COMPLETE: "done", UNAVAILABLE: None}
+# button per state: process (Xử lý), resume (Chạy tiếp), reprocess (Xử lý lại, asks first: new download, the AI may
+# choose other clips / titles)
+ACTIONS = {NEW: "process", FAILED: "resume", INCOMPLETE: "resume", DELETED: "reprocess"}
+
+
+def group_of(state: str, complete: bool) -> str | None:
+    if state == DELETED:  # tombstone: Xong when it was Xong at deletion, else back to "Chưa xử lý"
+        return "done" if complete else "todo"
+    return GROUPS[state]
 
 Lister = Callable[[str, Config], dict]  # (playlist url, config) -> yt-dlp flat info {"id", "title", "entries"}
 
@@ -237,7 +246,8 @@ class PlaylistStore:
                 st["stage"] = job.get("stage")
             elif job is not None and job["status"] in ("failed", "interrupted") and st["state"] != COMPLETE:
                 st["state"], st["error"] = FAILED, job.get("error") or job["status"]
-            st["group"] = GROUPS[st["state"]]
+            st["group"] = group_of(st["state"], bool(st.get("complete")))
+            st["action"] = ACTIONS.get(st["state"]) if e.get("available") and vid else None
             st["job"] = job
             counts["all"] += 1
             if st["group"]:
@@ -250,21 +260,28 @@ class PlaylistStore:
     def summary(self, doc: dict, jobs: dict[str, dict]) -> dict:
         v = self.view(doc, jobs)
         processed = sum(1 for e in v["entries"] if e["state"] not in (NEW, UNAVAILABLE))
+        deleted = sum(1 for e in v["entries"] if e["state"] == DELETED)
         return {"id": v["id"], "title": v["title"], "count": v["count"], "fetched_at": v["fetched_at"],
-                "processed": processed, "complete": v["counts"]["done"], "doing": v["counts"]["doing"]}
+                "processed": processed, "complete": v["counts"]["done"], "doing": v["counts"]["doing"],
+                "deleted": deleted}
 
 
 def disk_status(config: Config, video_id: str) -> dict:
     """State of an entry from ``work/<video_id>`` (L4): ``new`` (no workspace), ``processing`` (a stage
     running), ``failed``, ``incomplete``, ``rendered`` (render done, not every Short ticked), ``complete`` (Xong),
     plus Short counts and the archived flag."""
-    out = {"state": NEW, "stage": None, "error": None, "shorts": 0, "published": 0, "archived": False}
+    out = {"state": NEW, "stage": None, "error": None, "shorts": 0, "published": 0, "archived": False,
+           "complete": False, "deleted_at": None}
     try:
         ws = Workspace(Path(config.workspace.dir), video_id)
         manifest = ws.load_manifest()
     except WorkspaceError:
         return out
     if manifest is None:
+        tomb = read_tombstone(config, video_id)  # deleted to save disk: stats kept (bổ sung HUMAN LEAD 2026-09-27)
+        if tomb is not None:
+            out.update(state=DELETED, complete=bool(tomb.get("complete")), deleted_at=tomb.get("deleted_at"),
+                       shorts=tomb.get("shorts") or 0, published=tomb.get("published") or 0)
         return out
     stages = manifest.get("stages") or {}
     statuses = {s: (stages.get(s) or {}).get("status") for s in ep.PIPELINE_STAGES}
@@ -286,6 +303,7 @@ def disk_status(config: Config, video_id: str) -> dict:
     elif statuses.get("render") == DONE and doc is not None:
         complete = episode_complete(DONE, doc.get("shorts") or [], pub)
         out["state"] = COMPLETE if complete else RENDERED
+        out["complete"] = complete
     else:
         out["state"] = INCOMPLETE
     return out

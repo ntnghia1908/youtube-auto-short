@@ -111,7 +111,11 @@ bộ kinh page lists its episodes in playlist order with their state and a "Xử
 clicks queue one after the other), "Cập nhật danh sách" to pick up new episodes and "Xóa bộ kinh" (the list
 only; processed episodes are kept). An episode is "Xong" automatically once every remaining Short is ticked
 "Đã đăng" for its current file (a Short re-rendered after ticking does not count); downloading a Short ("Tải
-về") or the zip ticks it. Xong episodes are suggested for clean-up in the storage tab.
+về") or the zip ticks it. Xong episodes are suggested for clean-up in the storage tab. Deleting an episode keeps a small record
+(`work/_deleted/<id>.json`) so a bộ kinh still counts it ("✔ Xong (đã xóa dữ liệu)", "Xử lý lại" asks first);
+deleted single episodes are listed under "Đã xóa" on the home page ("Xóa khỏi lịch sử" drops the record). The
+"Copy" button next to a Short's title copies the title plus hashtags (`#<series>` + `[web] hashtags`), kept within
+YouTube's 100-character title limit.
 
 Storage tab (CP8.6, "Bộ nhớ" in the top bar, `/storage`): free / used space of the drive holding `work/` and
 `output/`, the size of every episode (source video / Shorts / other) and of the Whisper models, and clean-up

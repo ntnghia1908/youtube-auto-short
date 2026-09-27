@@ -26,7 +26,7 @@ from ..config import Config
 from ..pipeline import PIPELINE_STAGES, PreflightError, ollama_preflight, run_pipeline
 from ..render import run_render
 from ..review import (ArchivedError, EpisodeNotFound, ReviewError, TitlePreview, archive_source, content_disposition,
-                      mark_downloaded,
+                      list_tombstones, mark_downloaded, remove_tombstone,
                       delete_episode, is_archived, preview_title, reject_archived_clip, reject_clip, reset_title,
                       restore_clip, set_alternative, set_published, set_title)
 from . import episodes as ep
@@ -335,6 +335,20 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             return playlists.load(playlist_id)
         except PlaylistError:
             return None
+
+    @app.get("/api/deleted")
+    def api_deleted():
+        """Tombstones of deleted single episodes (not in a stored bộ kinh, no workspace now)."""
+        in_playlists = playlists.video_ids()
+        return {"episodes": [d for d in list_tombstones(config) if d["episode_id"] not in in_playlists]}
+
+    @app.delete("/api/deleted/{episode_id}")
+    def api_deleted_remove(episode_id: str):
+        """"Xóa khỏi lịch sử": removes the tombstone only."""
+        if not ep.valid_episode_id(episode_id) or not remove_tombstone(config, episode_id):
+            return JSONResponse({"detail": "không có trong lịch sử"}, status_code=404)
+        playlists.invalidate(episode_id)
+        return {"removed": episode_id}
 
     @app.get("/playlists/{playlist_id}")
     async def playlist_page(playlist_id: str):

@@ -63,11 +63,13 @@ const AutoShort = (() => {
 
   function jobActive(job) { return job && (job.status === "queued" || job.status === "running"); }
 
+  // Human-readable size, binary units like the OS (648 MB = 678 949 583 bytes); GB with 1 decimal.
   function fmtBytes(n) {
     if (n === null || n === undefined) return "";
-    if (n >= 1e9) return `${(n / 1e9).toFixed(1).replace(".", ",")} GB`;
-    if (n >= 1e6) return `${Math.round(n / 1e6)} MB`;
-    if (n >= 1e3) return `${Math.round(n / 1e3)} kB`;
+    const KB = 1024, MB = KB * 1024, GB = MB * 1024;
+    if (n >= GB) return `${(n / GB).toFixed(1).replace(".", ",")} GB`;
+    if (n >= MB) return `${Math.round(n / MB)} MB`;
+    if (n >= KB) return `${Math.round(n / KB)} kB`;
     return `${n} B`;
   }
 
@@ -127,7 +129,31 @@ const AutoShort = (() => {
     }));
     loadEpisodes();
     loadPlaylists();
+    loadDeleted();
     checkDisk();
+  }
+
+  // Deleted single episodes (tombstones, bổ sung HUMAN LEAD 2026-09-27): collapsed, "Xóa khỏi lịch sử".
+  async function loadDeleted() {
+    const box = $("#deleted-box");
+    let data;
+    try { data = await api("/api/deleted"); } catch (_) { return; }
+    box.hidden = !data.episodes.length;
+    $("#deleted-count").textContent = data.episodes.length;
+    $("#deleted").replaceChildren(...data.episodes.map((t) => {
+      const btn = el("button", { class: "btn small", type: "button", text: "Xóa khỏi lịch sử" });
+      btn.addEventListener("click", async () => {
+        if (!confirm(`Xóa "${t.title || t.episode_id}" khỏi lịch sử? (Chỉ xóa dòng ghi nhớ này.)`)) return;
+        btn.disabled = true;
+        try { await api(`/api/deleted/${encodeURIComponent(t.episode_id)}`, { method: "DELETE" }); loadDeleted(); }
+        catch (e) { btn.disabled = false; alert(e.message); }
+      });
+      return el("li", { class: "deleted-item" },
+        el("span", { class: "ep-name clamp2", text: t.title || t.episode_id }),
+        el("span", { class: "ep-state muted", text: `${t.episode_id} · ${t.complete ? "✔ Xong · " : "chưa xong · "}` +
+          `${t.shorts} Short, đã đăng ${t.published}/${t.shorts} · xóa lúc ${fmtTime(t.deleted_at)}` }),
+        btn);
+    }));
   }
 
   async function loadPlaylists() {
@@ -449,7 +475,8 @@ const AutoShort = (() => {
         el("span", { class: "muted small", text: fmtSeconds(s.duration) })),
       el("div", { class: "title-row" },
         el("p", { class: "short-title", text: title.text || "(không có tiêu đề)" }),
-        title.text ? copyTitleButton(title.text) : null),
+        s.copy_text ? copyTitleButton(s.copy_text) : null),
+      s.hashtags && s.hashtags.length ? el("p", { class: "hashtags small muted", text: s.hashtags.join(" ") }) : null,
       s.pending_title ? el("p", { class: "pending small", text: s.pending_title.text
         ? `Tiêu đề mới (${TITLE_SOURCE_LABELS[s.pending_title.origin] || s.pending_title.origin}), chưa render: ${s.pending_title.text}`
         : "Sẽ bỏ qua ở lần render tới (không có tiêu đề)" }) : null,
@@ -723,6 +750,15 @@ const AutoShort = (() => {
     checkDisk();
   }
 
+  function recButtons(r) {
+    return el("div", { class: "rec-actions" }, ...r.actions.map((a) => {
+      const btn = el("button", { class: "btn small" + (a.action === "delete" ? " danger" : ""), type: "button",
+        text: `Làm: ${ACTION_LABELS[a.action]} (giải phóng ${fmtBytes(a.frees)})` });
+      btn.addEventListener("click", () => runAction(r, a, btn));
+      return btn;
+    }));
+  }
+
   async function loadStorage() {
     let d;
     try { d = await api("/api/storage"); } catch (e) {
@@ -732,8 +768,9 @@ const AutoShort = (() => {
     $("#disks").replaceChildren(...d.disks.map((k) => {
       const pct = k.total ? Math.round((k.used / k.total) * 100) : 0;
       return el("div", { class: "disk" + (d.warn ? " low" : "") },
-        el("div", { class: "disk-line", text: `Ổ chứa ${k.label === "work" ? "work/" : "output/"}: đã dùng ${fmtBytes(k.used)} / ${fmtBytes(k.total)} (${pct} %), còn trống ${fmtBytes(k.free)}` }),
-        el("div", { class: "bar" }, el("div", { class: "bar-used", style: `width:${pct}%` })));
+        el("div", { class: "disk-line", text: `Ổ chứa ${k.label === "work" ? "work/" : "output/"}` }),
+        el("div", { class: "bar" }, el("div", { class: "bar-used", style: `width:${pct}%` })),
+        el("div", { class: "disk-nums small", text: `Đã dùng ${fmtBytes(k.used)} / ${fmtBytes(k.total)} (${pct} %) · còn trống ${fmtBytes(k.free)}` }));
     }));
     const t = d.totals;
     $("#storage-meta").textContent = `Các tập: ${fmtBytes(t.episodes)} (video nguồn ${fmtBytes(t.source)}, Short ${fmtBytes(t.shorts)}, khác ${fmtBytes(t.other)}). ` +
@@ -744,24 +781,31 @@ const AutoShort = (() => {
       recs.replaceChildren(el("li", { class: "muted", text: "Không có gợi ý nào." }));
     } else {
       recs.replaceChildren(...d.recommendations.map((r) => el("li", { class: "rec" },
-        el("a", { href: "/episodes/" + encodeURIComponent(r.episode_id), class: "ep-name", text: r.title || r.episode_id }),
+        el("a", { href: "/episodes/" + encodeURIComponent(r.episode_id), class: "ep-name clamp2", text: r.title || r.episode_id }),
         el("span", { class: "muted small", text: `${r.episode_id} · ${recReason(r)}` }),
-        el("div", { class: "rec-actions" }, ...r.actions.map((a) => {
-          const btn = el("button", { class: "btn small" + (a.action === "delete" ? " danger" : ""), type: "button",
-            text: `Làm: ${ACTION_LABELS[a.action]} (giải phóng ${fmtBytes(a.frees)})` });
-          btn.addEventListener("click", () => runAction(r, a, btn));
-          return btn;
-        })))));
+        recButtons(r))));
     }
+    const recOf = {};
+    for (const r of d.recommendations) recOf[r.episode_id] = r;
+    const epLink = (e) => (e.state === "orphan" ? el("span", { class: "clamp2", text: e.id })
+      : el("a", { class: "clamp2", href: "/episodes/" + encodeURIComponent(e.id), text: e.title || e.id }));
+    const src = (e) => (e.source_kind === "local" ? "(file local)" : fmtBytes(e.source));
+    // Desktop: table; ≤ 640 px: one card per episode (CSS shows one of the two).
     $("#ep-rows").replaceChildren(...d.episodes.map((e) => el("tr", {},
-      el("td", {}, e.state === "orphan" ? el("span", { text: e.id })
-        : el("a", { href: "/episodes/" + encodeURIComponent(e.id), text: e.title || e.id })),
+      el("td", {}, epLink(e)),
       el("td", { text: STATE_LABELS[e.state] || e.state }),
-      el("td", { class: "num", text: e.source_kind === "local" ? "(file local)" : fmtBytes(e.source) }),
+      el("td", { class: "num", text: src(e) }),
       el("td", { class: "num", text: fmtBytes(e.shorts_bytes) }),
       el("td", { class: "num", text: fmtBytes(e.other) }),
       el("td", { class: "num", text: fmtBytes(e.total) }),
-      el("td", { class: "num", text: e.shorts ? `${e.published}/${e.shorts}` : "–" }))));
+      el("td", { class: "num", text: e.shorts ? `${e.published}/${e.shorts}` : "–" }),
+      el("td", {}, recOf[e.id] ? recButtons(recOf[e.id]) : null))));
+    $("#ep-cards").replaceChildren(...d.episodes.map((e) => el("li", { class: "ep-card" },
+      el("div", { class: "ep-card-head" }, epLink(e), el("span", { class: "badge state-" + e.state, text: STATE_LABELS[e.state] || e.state })),
+      el("div", { class: "ep-card-total", text: fmtBytes(e.total) }),
+      el("div", { class: "small muted", text: `Nguồn ${src(e)} · Short ${fmtBytes(e.shorts_bytes)} · Khác ${fmtBytes(e.other)}` }),
+      el("div", { class: "small", text: e.shorts ? `Đã đăng ${e.published}/${e.shorts}` + (e.complete ? " · Xong" : "") : "Chưa có Short" }),
+      recOf[e.id] ? recButtons(recOf[e.id]) : null)));
     $("#caches").replaceChildren(...d.caches.map((c) => el("li", { text: `${c.name} (${c.path}): ` +
       (c.exists ? fmtBytes(c.bytes) : "chưa có thư mục (đặt [transcript.whisper] models_dir tuyệt đối nếu model nằm chỗ khác)") })));
   }
@@ -770,7 +814,7 @@ const AutoShort = (() => {
 
   const PL_STATE = {
     new: "chưa xử lý", queued: "đang chờ", processing: "đang xử lý", failed: "lỗi", rendered: "đã dựng Short",
-    incomplete: "dở dang", complete: "Xong", unavailable: "không khả dụng",
+    incomplete: "dở dang", complete: "Xong", unavailable: "không khả dụng", deleted: "Đã xóa dữ liệu",
   };
   let playlistId = null;
   let plFilter = "all";
@@ -823,6 +867,9 @@ const AutoShort = (() => {
   }
 
   async function processEntry(e, btn) {
+    if (e.action === "reprocess" && !confirm(`Xử lý lại "${e.title || e.video_id}"?\n\n` +
+      "Dữ liệu tập này đã bị xóa: sẽ tải lại video (≈ 700 MB) và chạy lại từ đầu (≈ 25 phút); " +
+      "AI có thể chọn đoạn / tiêu đề khác lần trước.")) return;
     btn.disabled = true;
     try {
       await submitUrl(`https://youtu.be/${e.video_id}`, null, null, "video");
@@ -834,6 +881,10 @@ const AutoShort = (() => {
   }
 
   function entryState(e) {
+    if (e.state === "deleted") {
+      const base = e.complete ? "✔ Xong (đã xóa dữ liệu)" : "Đã xóa dữ liệu (chưa xong)";
+      return `${base} · ${e.shorts} Short, đã đăng ${e.published}/${e.shorts}`;
+    }
     let text = PL_STATE[e.state] || e.state;
     if ((e.state === "processing" || e.state === "failed") && e.stage) text += `: ${STAGE_LABELS[e.stage] || e.stage}`;
     if (e.state === "queued" && e.job && e.job.status === "queued") text = "đang chờ trong hàng";
@@ -858,12 +909,12 @@ const AutoShort = (() => {
     $("#pl-entries").replaceChildren(...d.entries.map((e) => {
       if (e.state === "queued" || e.state === "processing") busy = true;
       const title = e.title || e.video_id || "(không rõ)";
-      const head = e.state === "new" || e.state === "unavailable" || !e.video_id ? el("span", { class: "ep-name", text: title })
+      const head = e.state === "new" || e.state === "unavailable" || e.state === "deleted" || !e.video_id ? el("span", { class: "ep-name", text: title })
         : el("a", { class: "ep-name", href: "/episodes/" + encodeURIComponent(e.video_id), text: title });
       const actions = el("div", { class: "rec-actions" });
-      if (e.available && e.video_id && (e.state === "new" || e.state === "failed" || e.state === "incomplete")) {
-        const b = el("button", { class: "btn small" + (e.state === "new" ? " primary" : ""), type: "button",
-          text: e.state === "new" ? "Xử lý" : "Chạy tiếp" });
+      if (e.action) {
+        const b = el("button", { class: "btn small" + (e.action === "process" ? " primary" : ""), type: "button",
+          text: { process: "Xử lý", resume: "Chạy tiếp", reprocess: "Xử lý lại" }[e.action] });
         b.addEventListener("click", () => processEntry(e, b));
         actions.append(b);
       }

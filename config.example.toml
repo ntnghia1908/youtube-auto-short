@@ -144,3 +144,6 @@ threads = 0                          # ffmpeg/x264 threads; 0 = automatic
 host = "0.0.0.0"                     # listen on the LAN; "127.0.0.1" = this machine only
 port = 8080
 session_days = 30                    # login cookie lifetime (days)
+# Hashtags added after the title by the "Copy" button (after #<series>; "#" optional; spaces / punctuation dropped;
+# dropped from the end when title + tags exceed 100 characters).
+hashtags = ["TịnhKhông", "LờiPhậtDạy", "TịnhĐộ", "NiệmPhật"]

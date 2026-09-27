@@ -72,6 +72,8 @@ Implementation tham chiếu: `src/auto_short/web/` (`app.py` app factory + route
 - `/episodes/<id>`: tên, kênh, thời lượng; trạng thái job; 6 stage (`chờ`, `đang chạy`, `xong`, `lỗi` + message, `cần chạy lại`) + thời gian hoặc "bỏ qua (đã có)"; nhật ký (mở sẵn khi đang chạy / lỗi); nút "Chạy tiếp / chạy lại" (gửi lại `source_url`, ẩn khi có job đang chạy); nút "Xóa tập này" (CP8.5, W8); lưới Short; nút "Tải tất cả (.zip)" (P3); bộ lọc Tất cả / Chưa đăng / Đã đăng + "Đã đăng x/y" + "Hiện Short đã xóa (n)" (CP8.5).
 - Mỗi Short: `<video controls preload="metadata" playsinline>` (tua bằng Range), mã clip, nhãn nguồn title trong file (`AI` / `sửa tay` / `phương án AI khác`), thời lượng, title, "Tiêu đề mới … chưa render" khi title lần render tới khác file (vd render lỗi), nút "Tải về".
 - **Sửa đổi CP8.7 — nút "Copy" tiêu đề (bổ sung HUMAN LEAD 2026-09-27):** ngay cạnh title mỗi Short (khi có title), copy đúng title trong file (`render_manifest.json` `title`), báo "Đã copy" 1,5 s; lý do: app YouTube trên điện thoại không điền title từ tên file / metadata MP4. Site HTTP trong LAN không phải secure context: dùng `navigator.clipboard.writeText` chỉ khi `window.isSecureContext`; còn lại (hoặc khi nó lỗi) `<textarea>` tạm (readonly, contenteditable cho iOS, ngoài màn hình, cỡ chữ 16 px tránh iOS phóng to) + `focus` + `select()` + `setSelectionRange(0, len)` + `document.execCommand("copy")` trong handler bấm; trả `false` / lỗi → hiện ô chứa title đã chọn sẵn + "Giữ vào ô để copy". Không tự copy khi tải về.
+- **Sửa đổi CP8.7 — hashtag (bổ sung HUMAN LEAD 2026-09-27):** nút Copy copy `copy_text` do server tính = `<title trong file> <hashtags>`; hashtags = `#<series>` (`titles.json` `header.fields.series`, không có → bỏ) rồi `[web] hashtags` (mặc định `["TịnhKhông", "LờiPhậtDạy", "TịnhĐộ", "NiệmPhật"]`, thứ tự giữ nguyên); mỗi hashtag = `#` + các ký tự chữ / số của chuỗi (NFC, giữ dấu tiếng Việt, bỏ khoảng trắng / dấu câu / `#` đầu), vd "Thập Thiện Nghiệp Đạo Kinh" → `#ThậpThiệnNghiệpĐạoKinh`; bỏ trùng không phân biệt hoa thường; cả chuỗi ≤ 100 ký tự (giới hạn title YouTube): bỏ hashtag từ cuối tới khi vừa, không bao giờ cắt title. Dòng hashtag (nhỏ, xám) hiện dưới title. `[web] hashtags` là config thực thi, không vào hash stage nào.
+- **Sửa đổi CP8.7 — màn hình ≤ 640 px (bổ sung HUMAN LEAD 2026-09-27):** tab Bộ nhớ: bảng từng tập (màn hình rộng, thêm cột "Gợi ý" với nút hành động) đổi thành thẻ — title tối đa 2 dòng (…), nhãn trạng thái, tổng dung lượng chữ lớn, dòng "Nguồn … · Short … · Khác …", "Đã đăng x/y", nút gợi ý rộng hết thẻ; gợi ý dạng thẻ, nút rộng hết; thanh ổ đĩa rộng hết, số liệu dòng riêng. Mọi nút ≥ 40 px, không cuộn ngang; áp cho trang bộ kinh (nút xuống dòng riêng), trang chủ (Bộ kinh / Tập lẻ / Đã xóa). Dung lượng hiển thị theo đơn vị 1024 (MB; GB 1 chữ số thập phân), vd 678 949 583 B = 648 MB.
 - Sửa title (`.title-edit`, chỉ khi `editable`): nút "Sửa tiêu đề" mở ô nhập (giá trị = title sẽ render) + bộ đếm `n/<max_title_chars>` (đỏ khi vượt), dropdown phương án AI khác (chọn → điền ô nhập; lưu gửi `alternative: n` nếu ô nhập còn đúng chữ đó, sửa thêm → `set`), xem trước (gọi preview sau 350 ms ngừng gõ: dòng hiển thị trên nền vàng + cỡ chữ, hoặc lỗi 422), "Lưu & render lại" (bật khi xem trước hợp lệ và không có job), "Khôi phục title AI" (khi có override). Khi episode có job: nút lưu tắt + ghi chú "Đang có job chạy — đợi xong để lưu"; Short đang render lại có viền + nhãn "đang render…" trên video.
 - Mỗi thẻ Short chỉ dựng lại (thay tại chỗ) khi trạng thái của chính nó đổi (sha256, title, override, title chờ, đang render); danh sách clip đổi mới dựng lại cả lưới → poll không dừng video đang xem hay xóa chữ đang gõ ở thẻ khác; Short render xong tự thay bằng video mới (`video_url` đổi theo sha256).
 
@@ -95,8 +97,10 @@ Mọi route cần cookie (W2). JSON UTF-8.
 | `GET /api/storage` | CP8.6 S1, S2, S4 (W9): `{computed_at, disks: [{label, path, total, used, free}], free, warn, block, warn_bytes, warn_ratio, block_bytes, episodes: [{id, title, state, source_kind, source, shorts_bytes, other, total, shorts, published, render_finished_at, last_activity, archived_at}], totals: {source, shorts, other, episodes}, caches: [{name, path, bytes}], recommendations: [{episode_id, title, rule, age_days?, actions: [{action: archive\|delete, frees}]}], old_days}`; cache ≤ 30 s |
 | `GET /api/storage/status` | CP8.6 S4: `{disks, free, warn, block, warn_bytes, warn_ratio, block_bytes}` (không cache) |
 | `GET /storage` | CP8.6: trang "Bộ nhớ" |
-| `GET /api/playlists` | CP8.7: `{playlists: [{id, title, count, fetched_at, processed, complete, doing}]}` |
-| `GET /api/playlists/{pid}` | CP8.7: `{id, title, url, fetched_at, count, counts: {all, todo, doing, done}, entries: [{index, video_id, title, duration, episode, available, state, stage, error, shorts, published, archived, group, job}]}`; 404 |
+| `GET /api/playlists` | CP8.7: `{playlists: [{id, title, count, fetched_at, processed, complete, doing, deleted}]}` |
+| `GET /api/deleted` | CP8.7: `{episodes: [bia mộ W8]}` — tập lẻ đã xóa (không thuộc bộ kinh đã lưu, không có workspace), mới nhất trước |
+| `DELETE /api/deleted/{id}` | CP8.7: 200 `{removed}` (chỉ bia mộ); 404 |
+| `GET /api/playlists/{pid}` | CP8.7: `{id, title, url, fetched_at, count, counts: {all, todo, doing, done}, entries: [{index, video_id, title, duration, episode, available, state, stage, error, shorts, published, archived, complete, deleted_at, group, action, job}]}`; 404 |
 | `POST /api/playlists/{pid}/refresh` | CP8.7: 200 `{playlist_id, count, added: [video_id]}`; 404; 502 |
 | `DELETE /api/playlists/{pid}` | CP8.7: 200 `{deleted}` (chỉ bản ghi danh sách); 404 |
 | `GET /playlists/{pid}` | CP8.7: trang bộ kinh |
@@ -132,6 +136,7 @@ Quyết định: `docs/tasks/CP8.5-web-review.md` X1–X4, P1–P4. Hàm thuần
 - Nguồn local nằm ngoài workspace (CP2 D4) không bao giờ bị xóa: chỉ hai thư mục trên bị `rmtree`, `rmtree` không đi theo symlink. `<workspace.dir>/.web_secret` giữ nguyên.
 - Kiểm "không có job" + xóa nằm trong lock gửi URL / ghi review (W4) → 409 khi có job đang chạy/đợi. Xóa xong: job cũ của tập bị quên trong bộ nhớ (`JobRunner.forget`) → `GET /api/episodes/{id}` 404, tập biến mất khỏi danh sách. Gửi lại URL = chạy lại từ đầu.
 - UI: nút "Xóa tập này" (ẩn khi không có manifest, tắt khi có job) → `confirm` ghi tên tập + id + "KHÔNG khôi phục được" → về `/`.
+- **Sửa đổi CP8.7 — bia mộ (bổ sung HUMAN LEAD 2026-09-27):** `delete_episode` (mọi đường: trang tập, nút "Làm" tab Bộ nhớ) trước khi xóa ghi `<workspace.dir>/_deleted/<episode_id>.json` (atomic; tên bắt đầu `_` không là episode id) khi workspace có manifest: `{"schema_version": 1, "episode_id", "title" (metadata), "source_url" (YouTube: `https://youtu.be/<id>`), "deleted_at", "shorts" (Short rendered, không tính đã xóa), "published" (đã tick đúng file hiện tại), "complete" (Xong L4 lúc xóa), "header": {"series", "episode"}}`. Không tự xóa. Bị bỏ qua khi có workspace cùng id (tập được xử lý lại; file bia mộ giữ nguyên, workspace thắng). Tập lẻ đã xóa (không thuộc bộ kinh đã lưu, không có workspace): mục thu gọn "Đã xóa (n)" trên trang chủ (title, id, Xong / chưa xong, Short, đã đăng, lúc xóa) + "Xóa khỏi lịch sử" (`DELETE /api/deleted/{id}` → chỉ xóa bia mộ; `GET /api/deleted` → `{episodes: [bia mộ]}`). Tập archived vẫn có workspace nên không bị ảnh hưởng.
 
 ### Đã đăng (publish.json)
 
@@ -204,11 +209,11 @@ Quyết định: `docs/tasks/CP8.7-playlist.md` L1–L5, P1–P4. Code: `auto_sh
 
 ### Trạng thái tập trong bộ kinh
 
-`state`: `new` (chưa có workspace) · `queued` / `processing` (job đang đợi / chạy, `stage` = stage hiện tại; hoặc stage `running` trong manifest) · `failed` (stage `failed` trong manifest, hoặc job cuối `failed` / `interrupted` — `error` = message của job / stage, vd lỗi YouTube 403) · `rendered` (render `done`, chưa Xong) · `incomplete` (dở dang, không job) · `complete` ("Xong") · `unavailable`. Kèm `shorts`, `published` (đã tick, tính cả bản cũ), `archived`. Nhóm lọc: `todo` = Chưa xử lý (`new`), `doing` = Đang làm (`queued`, `processing`, `failed`, `rendered`, `incomplete`), `done` = Xong; `unavailable` chỉ ở "Tất cả".
+`state`: `new` (chưa có workspace, không bia mộ) · `deleted` (không có workspace, có bia mộ `_deleted/<id>.json`: "✔ Xong (đã xóa dữ liệu)" khi `complete`, không thì "Đã xóa dữ liệu (chưa xong)"; `shorts` / `published` / `complete` / `deleted_at` từ bia mộ; nhóm `done` khi `complete`, không thì `todo`) · `queued` / `processing` (job đang đợi / chạy, `stage` = stage hiện tại; hoặc stage `running` trong manifest) · `failed` (stage `failed` trong manifest, hoặc job cuối `failed` / `interrupted` — `error` = message của job / stage, vd lỗi YouTube 403) · `rendered` (render `done`, chưa Xong) · `incomplete` (dở dang, không job) · `complete` ("Xong") · `unavailable`. Kèm `shorts`, `published` (đã tick, tính cả bản cũ), `archived`. Nhóm lọc: `todo` = Chưa xử lý (`new`), `doing` = Đang làm (`queued`, `processing`, `failed`, `rendered`, `incomplete`), `done` = Xong; `unavailable` chỉ ở "Tất cả".
 
 ### Xử lý tập (L3)
 
-Nút "Xử lý" (tập `new`) / "Chạy tiếp" (`failed`, `incomplete`) = `POST /api/episodes {url: "https://youtu.be/<video_id>", mode: "video"}`: đúng luồng tập lẻ (W4: preflight Ollama, không job trùng, 409 archived, 507 ổ < 3 GB), header lấy từ title video (CP6). Bấm nhiều tập → xếp hàng FIFO (W5). Tập đã xử lý xong → pipeline skip từng stage (CP8 E3).
+Mỗi tập có `action`: `process` ("Xử lý", `new`), `resume` ("Chạy tiếp", `failed`, `incomplete`), `reprocess` ("Xử lý lại", `deleted`: hộp xác nhận — tải lại video, chạy lại từ đầu, AI có thể chọn khác), `null`. Tóm tắt bộ kinh thêm `deleted` (số tập đã xóa dữ liệu; vẫn tính vào `processed`, `complete` khi Xong). Nút = `POST /api/episodes {url: "https://youtu.be/<video_id>", mode: "video"}`: đúng luồng tập lẻ (W4: preflight Ollama, không job trùng, 409 archived, 507 ổ < 3 GB), header lấy từ title video (CP6). Bấm nhiều tập → xếp hàng FIFO (W5). Tập đã xử lý xong → pipeline skip từng stage (CP8 E3).
 
 ### "Xong" (L4, suy ra, không lưu)
 
@@ -227,6 +232,7 @@ Tập **Xong** ⇔ stage `render` `done` **và** mọi Short `rendered` trong `r
 | `host` | `"0.0.0.0"` | `"127.0.0.1"` = chỉ máy này |
 | `port` | `8080` | 1–65535 |
 | `session_days` | `30` | 1–365, tuổi cookie đăng nhập |
+| `hashtags` | `["TịnhKhông", "LờiPhậtDạy", "TịnhĐộ", "NiệmPhật"]` | CP8.7: hashtag sau `#<series>` khi Copy title (W6) |
 
 Execution-only: không stage nào dùng, không vào config hash.
 
@@ -329,4 +335,5 @@ Dung lượng trống của ổ thật không tăng trong lần thử vì `sourc
 - CP8.6: chưa có CLI cho dọn nguồn; `auto-short run`/`ingest`/`render` trên tập archived báo lỗi, muốn chạy lại phải xóa workspace.
 - CP8.7: liệt kê playlist gọi YouTube trong request (≈ 2 s cho 149 tập); luồng phụ quá 60 s bị bỏ (chạy nốt nền, không ghi). Không có CLI cho bộ kinh. Một tập nằm trong nhiều bộ kinh hiện ở mọi bộ kinh đó.
 - CP8.7: tick khi tải về dựa trên yêu cầu tới server, không biết trình duyệt có lưu xong file hay không (tải hỏng vẫn tính đã tải); bấm "Tải về" rồi hủy cũng tick.
+- CP8.7: bia mộ không tự xóa (vài trăm byte / tập); "Xử lý lại" không xóa bia mộ cũ (bị bỏ qua khi có workspace). Ngưỡng cảnh báo ổ (W9) tính theo 10⁹ byte còn hiển thị theo 1024 (10 GB ≈ 9,3 GB trên UI).
 - CP8.7: trạng thái `failed` từ job chỉ còn trong bộ nhớ (restart server → trạng thái đọc lại từ manifest).

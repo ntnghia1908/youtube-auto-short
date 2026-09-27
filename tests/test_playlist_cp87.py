@@ -121,7 +121,7 @@ def test_import_playlist_lists_without_downloading(tcfg):
         assert d["counts"] == {"all": 4, "todo": 3, "doing": 0, "done": 0}
         assert c.get("/api/playlists").json()["playlists"] == [
             {"id": PL, "title": _info()["title"], "count": 4, "fetched_at": doc["fetched_at"], "processed": 0,
-             "complete": 0, "doing": 0}]
+             "complete": 0, "doing": 0, "deleted": 0}]
         # the same playlist again: stored one, no new listing
         r = c.post("/api/episodes", json={"url": f"https://www.youtube.com/playlist?list={PL}"})
         assert r.status_code == 200 and r.json()["created"] is False and len(lister.calls) == 1
@@ -342,8 +342,134 @@ def test_copy_title_button_served(tcfg):
     with client(tcfg) as c:
         _login(c)
         js = c.get("/static/app.js").text
-        assert "copyTitleButton(title.text)" in js and 'text: "Copy"' in js and "Đã copy" in js
+        assert "copyTitleButton(s.copy_text)" in js and 'text: "Copy"' in js and "Đã copy" in js
         assert "window.isSecureContext && navigator.clipboard" in js
         assert 'document.execCommand("copy")' in js and "setSelectionRange(0, text.length)" in js
         assert "copy-fallback" in js and "Giữ vào ô để copy" in js
         assert ".copy-fallback" in c.get("/static/style.css").text
+
+
+# --- bổ sung HUMAN LEAD 2026-09-27: tombstones (A), copy text with hashtags (B) ------------------------------
+
+from auto_short.review.names import copy_text, hashtag, hashtags  # noqa: E402
+
+
+@pytest.mark.parametrize("text, tag", [("Thập Thiện Nghiệp Đạo Kinh", "#ThậpThiệnNghiệpĐạoKinh"),
+                                       ("#TịnhKhông", "#TịnhKhông"), ("Lời Phật dạy!", "#LờiPhậtdạy"),
+                                       ("  ", None), (None, None), ("A-B_C 1", "#ABC1")])
+def test_hashtag(text, tag):
+    assert hashtag(text) == tag
+
+
+def test_copy_text_dedup_and_100_chars():
+    tags = ("TịnhKhông", "LờiPhậtDạy", "TịnhĐộ")
+    assert hashtags("Tịnh Độ", tags) == ["#TịnhĐộ", "#TịnhKhông", "#LờiPhậtDạy"]  # series first, dedup casefold
+    assert hashtags(None, ("a", "A", "", "b")) == ["#a", "#b"]
+    text, kept = copy_text("Đánh mắng trẻ là có tội không?", "Thập Thiện Nghiệp Đạo Kinh", tags)
+    assert text == "Đánh mắng trẻ là có tội không? #ThậpThiệnNghiệpĐạoKinh #TịnhKhông #LờiPhậtDạy #TịnhĐộ"
+    assert len(text) <= 100 and len(kept) == 4
+    title = "x" * 60
+    text, kept = copy_text(title, "Thập Thiện Nghiệp Đạo Kinh", tags)
+    assert len(text) <= 100 and text.startswith(title + " ") and kept == ["#ThậpThiệnNghiệpĐạoKinh", "#TịnhKhông"]
+    long = "y" * 99
+    assert copy_text(long, "S", tags) == (long, [])  # the title is never cut
+    assert copy_text("z" * 120, None, tags) == ("z" * 120, [])
+
+
+def test_copy_text_in_short_view_and_config(tcfg):
+    from dataclasses import replace
+    from auto_short.config import WebConfig, from_dict
+    assert from_dict({"web": {"hashtags": ["A", "B"]}}).web.hashtags == ("A", "B")
+    assert from_dict({}).web.hashtags == ("TịnhKhông", "LờiPhậtDạy", "TịnhĐộ", "NiệmPhật")
+    text, kept = copy_text("Đánh mắng trẻ là có tội không?", "Thập Thiện Nghiệp Đạo Kinh", from_dict({}).web.hashtags)
+    assert kept == ["#ThậpThiệnNghiệpĐạoKinh", "#TịnhKhông", "#LờiPhậtDạy", "#TịnhĐộ", "#NiệmPhật"] and len(text) == 95
+    with pytest.raises(Exception):
+        from_dict({"web": {"hashtags": "A"}})
+    eid = VIDS[1]
+    write_episode(tcfg, eid, titles={"k01": "Đánh mắng trẻ là có tội không?", "k02": "Tiêu đề"})
+    (Path(tcfg.workspace.dir) / eid / "titles.json").write_text(json.dumps(
+        {"header": {"fields": {"series": "Thập Thiện Nghiệp Đạo Kinh", "episode": "29"}}}), encoding="utf-8")
+    cfg = replace(tcfg, web=WebConfig(hashtags=("TịnhKhông", "thậpthiệnnghiệpđạokinh")))
+    with client(cfg) as c:
+        _login(c)
+        k01 = c.get(f"/api/episodes/{eid}").json()["shorts"][0]
+        assert k01["copy_text"] == "Đánh mắng trẻ là có tội không? #ThậpThiệnNghiệpĐạoKinh #TịnhKhông"
+        assert k01["hashtags"] == ["#ThậpThiệnNghiệpĐạoKinh", "#TịnhKhông"]
+        js = c.get("/static/app.js").text
+        assert "copyTitleButton(s.copy_text)" in js and 's.hashtags.join(" ")' in js
+
+
+def _playlist_with(c, vids):
+    c.app.state.playlists.root.mkdir(parents=True, exist_ok=True)
+    doc = {"schema_version": 1, "playlist_id": PL, "title": "Bộ kinh", "url": "u", "fetched_at": "2026-09-27T00:00:00Z",
+           "entries": [{"index": n, "video_id": v, "title": f"tập {n}", "duration": 1.0, "episode": str(n),
+                        "available": True} for n, v in enumerate(vids, 1)]}
+    (c.app.state.playlists.root / f"{PL}.json").write_text(json.dumps(doc), encoding="utf-8")
+
+
+def test_tombstone_on_delete_playlist_stats_and_reprocess(tcfg):
+    done_id, todo_id = VIDS[0], VIDS[1]
+    write_episode(tcfg, done_id, title="Tập xong")
+    write_episode(tcfg, todo_id, title="Tập chưa xong")
+    (Path(tcfg.workspace.dir) / done_id / "titles.json").write_text(json.dumps(
+        {"header": {"fields": {"series": "Thập Thiện", "episode": "28"}}}), encoding="utf-8")
+    with client(tcfg) as c:
+        _login(c)
+        _playlist_with(c, [done_id, todo_id, VIDS[2]])
+        c.get(f"/files/{done_id}/shorts.zip")  # download = published -> Xong
+        c.post(f"/api/episodes/{todo_id}/shorts/k01/published", json={"value": True})
+        # delete via the storage "Làm" path (recommendation for the Xong episode) and via the episode page
+        recs = c.get("/api/storage").json()["recommendations"]
+        assert [r["episode_id"] for r in recs] == [done_id]
+        assert c.delete(f"/api/episodes/{done_id}").status_code == 200
+        assert c.delete(f"/api/episodes/{todo_id}").status_code == 200
+        tomb = json.loads((Path(tcfg.workspace.dir) / "_deleted" / f"{done_id}.json").read_text())
+        assert list(tomb) == ["schema_version", "episode_id", "title", "source_url", "deleted_at", "shorts",
+                              "published", "complete", "header"]
+        assert (tomb["title"], tomb["source_url"], tomb["shorts"], tomb["published"], tomb["complete"]) == \
+            ("Tập xong", f"https://youtu.be/{done_id}", 2, 2, True)
+        assert tomb["header"] == {"series": "Thập Thiện", "episode": "28"}
+        t2 = json.loads((Path(tcfg.workspace.dir) / "_deleted" / f"{todo_id}.json").read_text())
+        assert (t2["published"], t2["complete"], t2["header"]) == (1, False, {"series": None, "episode": None})
+        d = c.get(f"/api/playlists/{PL}").json()
+        e = {x["video_id"]: x for x in d["entries"]}
+        assert (e[done_id]["state"], e[done_id]["group"], e[done_id]["action"], e[done_id]["shorts"],
+                e[done_id]["published"]) == ("deleted", "done", "reprocess", 2, 2)
+        assert (e[todo_id]["state"], e[todo_id]["group"], e[todo_id]["complete"]) == ("deleted", "todo", False)
+        assert e[VIDS[2]]["action"] == "process"
+        assert d["counts"] == {"all": 3, "todo": 2, "doing": 0, "done": 1}
+        s = c.get("/api/playlists").json()["playlists"][0]
+        assert (s["processed"], s["complete"], s["deleted"]) == (2, 1, 2)
+        # in a playlist -> not in the home "Đã xóa" list
+        assert c.get("/api/deleted").json()["episodes"] == []
+        js = c.get("/static/app.js").text
+        assert 'e.action === "reprocess" && !confirm(' in js and "Xử lý lại" in js
+        # processing again: the new workspace wins, the tombstone is ignored (kept on disk)
+        write_episode(tcfg, done_id)
+        c.app.state.playlists.invalidate()
+        e = {x["video_id"]: x for x in c.get(f"/api/playlists/{PL}").json()["entries"]}
+        assert e[done_id]["state"] == "rendered"
+        assert (Path(tcfg.workspace.dir) / "_deleted" / f"{done_id}.json").is_file()
+
+
+def test_deleted_single_episodes_on_home(tcfg):
+    write_episode(tcfg, VIDS[3], title="Tập lẻ đã xóa")
+    with client(tcfg) as c:
+        _login(c)
+        assert c.delete(f"/api/episodes/{VIDS[3]}").status_code == 200
+        items = c.get("/api/deleted").json()["episodes"]
+        assert [(t["episode_id"], t["title"], t["complete"]) for t in items] == [(VIDS[3], "Tập lẻ đã xóa", False)]
+        assert 'id="deleted-box"' in c.get("/").text
+        assert c.get("/api/episodes").json()["episodes"] == []
+        assert c.delete("/api/deleted/..%2Fx").status_code == 404
+        assert c.delete(f"/api/deleted/{VIDS[3]}").status_code == 200
+        assert c.get("/api/deleted").json()["episodes"] == []
+        assert c.delete(f"/api/deleted/{VIDS[3]}").status_code == 404
+
+
+def test_storage_page_responsive_markup(tcfg):
+    with client(tcfg) as c:
+        _login(c)
+        assert 'id="ep-cards"' in c.get("/storage").text
+        css = c.get("/static/style.css").text
+        assert "@media (max-width: 640px)" in css and "min-height: 40px" in css and ".ep-card" in css

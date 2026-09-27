@@ -12,6 +12,7 @@ from pathlib import Path
 
 from ..config import Config
 from ..pipeline import PIPELINE_STAGES
+from ..review.names import copy_text
 from ..review import (ReviewError, download_name, episode_complete, episode_label, list_titles, publish_status,
                       read_archive, zip_name)
 from ..review.publish import PUBLISH_NAME, read_publish
@@ -76,6 +77,21 @@ def _source_url(manifest: dict) -> str | None:
         return None
 
 
+def _copy(title: str | None, series: str | None, tags: tuple[str, ...]) -> dict:
+    if not title:
+        return {"copy_text": None, "hashtags": []}
+    text, kept = copy_text(title, series, tags)
+    return {"copy_text": text, "hashtags": kept}
+
+
+def _series(config: Config, episode_id: str) -> str | None:
+    """titles.json ``header.fields.series`` (for the ``#<series>`` hashtag)."""
+    doc = _read_json(Path(config.workspace.dir) / episode_id / "titles.json") or {}
+    fields = (doc.get("header") or {}).get("fields") or {}
+    value = fields.get("series") if isinstance(fields, dict) else None
+    return value if isinstance(value, str) else None
+
+
 def _label(config: Config, episode_id: str) -> str:
     """``<episode>`` of the download names: titles.json ``header.fields.episode``, else the episode id (X1)."""
     doc = _read_json(Path(config.workspace.dir) / episode_id / "titles.json") or {}
@@ -114,7 +130,8 @@ def is_complete(config: Config, episode_id: str, manifest: dict, doc: dict | Non
 
 
 def _short_view(episode_id: str, short: dict, titles: dict | None, *, name: str | None = None,
-                published: dict | None = None) -> dict | None:
+                published: dict | None = None, series: str | None = None,
+                tags: tuple[str, ...] = ()) -> dict | None:
     clip_id = short.get("clip_id")
     if not isinstance(clip_id, str) or not valid_clip_id(clip_id):
         return None
@@ -135,6 +152,8 @@ def _short_view(episode_id: str, short: dict, titles: dict | None, *, name: str 
         "video_url": f"{base}?v={sha[:12]}" if rendered else None,
         "download_url": f"{base}?download=1" if rendered else None,
         "download_name": name if rendered else None,
+        # CP8.7 (bổ sung HUMAN LEAD): what the "Copy" button copies: title in the file + hashtags, ≤ 100 chars
+        **_copy(short.get("title"), series, tags),
         # CP8.5 X2: ``deleted`` = the last render skipped it as rejected; ``rejected`` = review.json says deleted
         # (differs from ``deleted`` while the render job runs).
         "deleted": short.get("status") == "skipped" and short.get("skip_reason") == "rejected",
@@ -180,8 +199,10 @@ def episode_view(config: Config, episode_id: str) -> dict | None:
     titles, ignored, titles_error = _titles(config, episode_id) if doc else ({}, [], None)
     names = _names(config, episode_id, doc) if doc else {}
     published, publish_error = _publish(config, episode_id, doc) if doc else ({}, None)
+    series, tags = _series(config, episode_id), tuple(config.web.hashtags)
     shorts = [v for v in (_short_view(episode_id, s, titles.get(s.get("clip_id")) if not titles_error else None,
-                                      name=names.get(s.get("clip_id")), published=published.get(s.get("clip_id")))
+                                      name=names.get(s.get("clip_id")), published=published.get(s.get("clip_id")),
+                                      series=series, tags=tags)
                           for s in (doc or {}).get("shorts", []) if isinstance(s, dict)) if v]
     rendered = sum(1 for s in shorts if s["status"] == "rendered")
     return {
