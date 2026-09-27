@@ -176,6 +176,7 @@ class RenderConfig:
     crf: int = 22  # P4 amended by HUMAN LEAD 2026-09-27 (was 18)
     preset: str = "medium"
     audio_bitrate: str = "192k"
+    dissolve: float = 0.15  # s, video dissolve at silence-trim junctions; 0 = hard cut (CP8.1 V1)
     # Execution-only settings (not part of the config hash):
     output_dir: Path = Path("output")
     threads: int = 0  # 0 = ffmpeg/x264 default
@@ -450,6 +451,7 @@ def _render(data: dict) -> RenderConfig:
         crf=_int(re_, "crf", d.crf, w, lo=0, hi=51),
         preset=preset,
         audio_bitrate=bitrate,
+        dissolve=num("dissolve", 0, 1),
         output_dir=Path(_str(re_, "output_dir", str(d.output_dir), w)),
         threads=_int(re_, "threads", d.threads, w, lo=0, hi=256),
     )

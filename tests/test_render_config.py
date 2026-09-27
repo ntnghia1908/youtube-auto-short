@@ -15,7 +15,8 @@ def test_example_config_render_defaults():
 
 def test_render_config_parsing():
     cfg = from_dict({"render": {"crf": 20, "preset": "slow", "title_font_size": 0.08, "output_dir": "/tmp/o",
-                                "threads": 4, "audio_bitrate": "160k"}}).render
+                                "threads": 4, "audio_bitrate": "160k", "dissolve": 0}}).render
+    assert cfg.dissolve == 0.0
     assert (cfg.crf, cfg.preset, cfg.title_font_size, cfg.threads, cfg.audio_bitrate) == \
         (20, "slow", 0.08, 4, "160k")
     assert cfg.output_dir == Path("/tmp/o")
@@ -25,6 +26,7 @@ def test_render_config_parsing():
     {"title_source": "review"}, {"font_file": "/etc/f.ttf"}, {"font_file": "../x.ttf"}, {"preset": "fastest"},
     {"crf": 60}, {"crf": 1.5}, {"audio_bitrate": "192"}, {"line_spacing": 3}, {"min_font_scale": 0},
     {"header_panel_width": 1.5}, {"threads": -1}, {"output_dir": ""},
+    {"dissolve": -0.1}, {"dissolve": 2}, {"dissolve": "0.15"},
 ])
 def test_render_config_invalid(data):
     with pytest.raises(ConfigError, match="render"):
@@ -34,3 +36,4 @@ def test_render_config_invalid(data):
 def test_render_encode_defaults():
     cfg = RenderConfig()
     assert (cfg.crf, cfg.preset, cfg.audio_bitrate) == (22, "medium", "192k")  # P4 as amended 2026-09-27
+    assert cfg.dissolve == 0.15  # CP8.1 V1/P2: on by default

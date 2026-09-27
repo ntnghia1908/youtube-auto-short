@@ -1,6 +1,7 @@
 """Render stage (CP7): titling done -> ``<output_dir>/<episode_id>/shorts/<clip_id>.mp4`` + ``render_manifest.json``.
 
-Canonical contract: docs/decisions/CP7-render-contract.md.
+Canonical contract: docs/decisions/CP7-render-contract.md; title overrides (``review.json``) and per-Short reuse
+(``render_key``): docs/decisions/CP8.2-title-override-contract.md.
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ from ..workspace import (
     run_stage,
     validate_episode_id,
 )
+from ..review import logic as review_logic
 from . import plan
 from .text import MAX_LINES, Font, TextError, TextFit, baselines, fit_header, fit_title, nfc
 
@@ -40,9 +42,10 @@ METADATA_NAME = "metadata.json"
 CANDIDATES_NAME = "candidates.json"
 CLIPS_NAME = "clips.json"
 TITLES_NAME = "titles.json"
+REVIEW_NAME = review_logic.REVIEW_NAME
 RENDER_MANIFEST_NAME = "render_manifest.json"
 SHORTS_DIR = "shorts"
-TITLED = "titled"
+TITLE_ORIGINS = (review_logic.AI, review_logic.MANUAL, review_logic.ALTERNATIVE)
 RENDERED, SKIPPED = "rendered", "skipped"
 PACKAGE_DIR = Path(__file__).resolve().parent
 
@@ -63,6 +66,8 @@ class RenderResult:
     ran: bool  # False when skipped as up to date
     rendered: int | None = None
     clips: int | None = None
+    encoded: int | None = None  # Shorts encoded by this run (CP8.2 T5)
+    reused: int | None = None  # Shorts reused unchanged from the previous render (CP8.2 T5)
 
 
 Runner = Callable[[list[str]], subprocess.CompletedProcess]
@@ -77,6 +82,15 @@ def _run(cmd: list[str]) -> subprocess.CompletedProcess:
 
 def font_path(cfg: RenderConfig) -> Path:
     return PACKAGE_DIR / cfg.font_file
+
+
+def fit_clip_title(font: Font, title: str, cfg: RenderConfig, geo: plan.Geometry) -> TextFit:
+    """R5 title fit of one clip (display lines, font size, panel height); raises TextError. Shared by the
+    render and the manual-title preview (CP8.2 T2)."""
+    return fit_title(font, nfc(title), size0=plan.px(cfg.title_font_size), line_spacing=cfg.line_spacing,
+                     inner_width=geo.title_w - 2 * cfg.panel_padding_x * plan.WIDTH, panel_height=geo.title_h,
+                     max_panel_height=geo.title_max_h, padding_y=cfg.panel_padding_y * plan.WIDTH,
+                     min_font_scale=cfg.min_font_scale)
 
 
 def used_config(cfg: RenderConfig, font_sha256: str) -> dict:
@@ -130,8 +144,10 @@ def _rate(stream: dict) -> Fraction:
     raise RenderError("cannot determine the source frame rate")
 
 
-def verify_output(path: Path, fps: Fraction, planned: float, run: Runner) -> None:
-    """R9: 1080x1920 h264 yuv420p at ``fps``, aac 48 kHz stereo, video and audio within 0.1 s of ``planned``."""
+def verify_output(path: Path, fps: Fraction, planned_frames: int, run: Runner) -> None:
+    """R9: 1080x1920 h264 yuv420p at ``fps``, aac 48 kHz stereo, video and audio within 0.1 s of the planned
+    length; CP8.1 V5: exactly ``planned_frames`` video frames."""
+    planned = planned_frames / float(fps)
     info = probe_media(path, run)
     v, a = info["video"], info["audio"]
     problems = []
@@ -147,6 +163,8 @@ def verify_output(path: Path, fps: Fraction, planned: float, run: Runner) -> Non
         vd = float(v.get("duration") or 0)
         if abs(vd - planned) > DURATION_TOLERANCE:
             problems.append(f"video duration {vd:.3f} s != {planned:.3f} s")
+        if str(v.get("nb_frames")) != str(planned_frames):
+            problems.append(f"video frames {v.get('nb_frames')} != {planned_frames}")
     if a is None:
         problems.append("no audio stream")
     else:
@@ -166,7 +184,8 @@ def verify_output(path: Path, fps: Fraction, planned: float, run: Runner) -> Non
 @dataclass
 class ClipPlan:
     clip: dict
-    entry: dict  # titles.json entry
+    text: str | None  # title rendered (T4: override > AI title); None = untitled without override
+    origin: str | None  # ai | manual | alternative
     segments: list[tuple[int, int]]
     title: TextFit | None
     layout: plan.Layout | None
@@ -188,13 +207,12 @@ def check_inputs(clips_doc: dict, titles_doc: dict, cand_doc: dict) -> None:
         raise RenderError("titles.json header must have 1-3 non-empty lines; re-run 'auto-short titling'")
 
 
-def plan_clips(clips_doc: dict, titles_doc: dict, cand_doc: dict, *, font: Font, cfg: RenderConfig,
-               geo: plan.Geometry, src_w: int, src_h: int) -> list[ClipPlan]:
+def plan_clips(clips_doc: dict, titles: list[review_logic.ResolvedTitle], cand_doc: dict, *, font: Font,
+               cfg: RenderConfig, geo: plan.Geometry, src_w: int, src_h: int) -> list[ClipPlan]:
+    """``titles``: the title of each clip after overrides (T4), in clips.json order."""
     trims = {c["id"]: c.get("trims", []) for c in cand_doc.get("candidates", [])}
-    inner_w = geo.title_w - 2 * cfg.panel_padding_x * plan.WIDTH
-    size0 = plan.px(cfg.title_font_size)
     out = []
-    for clip, entry in zip(clips_doc["clips"], titles_doc["titles"]):
+    for clip, rt in zip(clips_doc["clips"], titles):
         if clip["candidate_id"] not in trims:
             raise RenderError(f"clip {clip['id']}: candidate {clip['candidate_id']} not in candidates.json")
         try:
@@ -203,16 +221,26 @@ def plan_clips(clips_doc: dict, titles_doc: dict, cand_doc: dict, *, font: Font,
         except plan.PlanError as exc:
             raise RenderError(str(exc)) from exc
         fit = lay = None
-        if entry.get("status") == TITLED:
+        if rt.title is not None:
             try:
-                fit = fit_title(font, nfc(entry["title"]), size0=size0, line_spacing=cfg.line_spacing,
-                                inner_width=inner_w, panel_height=geo.title_h, max_panel_height=geo.title_max_h,
-                                padding_y=cfg.panel_padding_y * plan.WIDTH, min_font_scale=cfg.min_font_scale)
+                fit = fit_clip_title(font, rt.title, cfg, geo)
             except TextError as exc:
                 raise RenderError(f"clip {clip['id']}: {exc}") from exc
             lay = plan.layout(geo, fit.panel_height, src_w, src_h)
-        out.append(ClipPlan(clip, entry, segs, fit, lay))
+        out.append(ClipPlan(clip, rt.title, rt.origin, segs, fit, lay))
     return out
+
+
+def render_key(*, cfg_hash: str, font_sha: str, source_sha: str, fps: Fraction, segments: list[list[float]],
+               dissolves: list[dict], layout: dict, header: TextFit, title: TextFit) -> str:
+    """T5: sha256 (canonical JSON) of everything that decides a Short's bytes: plan version, render config
+    hash, font and source sha256, fps, segments, dissolve plan, layout and the displayed header/title text
+    (lines + font size; content, never temp file paths)."""
+    return _sha({"plan_version": plan.RENDER_PLAN_VERSION, "render_config_hash": cfg_hash, "font_sha256": font_sha,
+                 "source_sha256": source_sha, "fps": plan.fps_text(fps), "segments": segments,
+                 "dissolves": dissolves, "layout": layout,
+                 "header": {"display_lines": header.lines, "font_size": header.font_size},
+                 "title": {"display_lines": title.lines, "font_size": title.font_size}})
 
 
 def _write_lines(tmp: Path, tag: str, lines: list[str], bases: list[int]) -> list[plan.TextLine]:
@@ -226,8 +254,18 @@ def _write_lines(tmp: Path, tag: str, lines: list[str], bases: list[int]) -> lis
 
 # --- validation (R9) ---------------------------------------------------------------------------------------------
 
-def validate_render(doc: dict, clips_doc: dict, cand_doc: dict, out_dir: Path) -> None:
+def validate_render(doc: dict, clips_doc: dict, cand_doc: dict, out_dir: Path, *,
+                    staged: dict[str, Path] | None = None, removing: frozenset[Path] = frozenset()) -> None:
+    """R9 on the state after commit: ``staged`` maps the ``file`` of a Short encoded by this run to the .part
+    holding it; ``removing`` = previous output files the commit deletes (T5)."""
+    staged = staged or {}
+
+    def exists_after(rel: str) -> bool:
+        p = out_dir / rel
+        return rel in staged or (p.exists() and p.resolve() not in removing)
+
     clips = clips_doc["clips"]
+    fps = Fraction(doc["encode"]["fps"])
     shorts = doc["shorts"]
     if [(s["clip_id"], s["candidate_id"]) for s in shorts] != [(c["id"], c["candidate_id"]) for c in clips]:
         raise RenderError("render_manifest shorts do not match clips.json (ids/order)")
@@ -239,13 +277,21 @@ def validate_render(doc: dict, clips_doc: dict, cand_doc: dict, out_dir: Path) -
         if s["segments"] != segs or s["duration"] != c["duration"]:
             raise RenderError(f"clip {s['clip_id']}: segments do not match R3")
         if s["status"] == RENDERED:
-            path = out_dir / s["file"]
+            planned = plan.dissolves(plan.kept_segments(c["source_start"], c["source_end"], trims[c["candidate_id"]]),
+                                     fps, doc["encode"]["dissolve"])
+            if s["dissolves"] != planned:
+                raise RenderError(f"clip {s['clip_id']}: dissolves do not match the plan")
+            path = staged.get(s["file"], out_dir / s["file"])
             if not path.is_file() or hashing.sha256_file(path) != s["sha256"]:
                 raise RenderError(f"clip {s['clip_id']}: {s['file']} missing or sha256 mismatch")
             if not 1 <= len(s["title_display_lines"]) <= MAX_LINES:
                 raise RenderError(f"clip {s['clip_id']}: title has {len(s['title_display_lines'])} display lines")
+            if s["title_origin"] not in TITLE_ORIGINS or not isinstance(s["render_key"], str) \
+                    or len(s["render_key"]) != 64:
+                raise RenderError(f"clip {s['clip_id']}: invalid title_origin/render_key")
         elif s["status"] == SKIPPED:
-            if s["file"] is not None or (out_dir / SHORTS_DIR / f"{s['clip_id']}.mp4").exists():
+            if s["file"] is not None or s["dissolves"] is not None or s["render_key"] is not None \
+                    or exists_after(f"{SHORTS_DIR}/{s['clip_id']}.mp4"):
                 raise RenderError(f"clip {s['clip_id']}: skipped clip has a file")
         else:
             raise RenderError(f"clip {s['clip_id']}: invalid status {s['status']!r}")
@@ -256,7 +302,7 @@ def validate_render(doc: dict, clips_doc: dict, cand_doc: dict, out_dir: Path) -
         raise RenderError("render_manifest stats are inconsistent")
 
 
-# --- output cleanup (R8) -----------------------------------------------------------------------------------------
+# --- output cleanup (R8, CP8.2 T5) -------------------------------------------------------------------------------
 
 def previous_outputs(out_dir: Path, artifacts: list[str]) -> list[Path]:
     """Files written by an earlier render of this episode: the stage's recorded artifacts and the files named
@@ -282,15 +328,47 @@ def previous_outputs(out_dir: Path, artifacts: list[str]) -> list[Path]:
     return found
 
 
+def previous_shorts(out_dir: Path, episode_id: str) -> dict[str, dict]:
+    """``rendered`` entries of the existing render_manifest.json by clip id (T5 reuse candidates); an unreadable
+    or foreign manifest gives none."""
+    try:
+        old = json.loads((out_dir / RENDER_MANIFEST_NAME).read_text(encoding="utf-8"))
+        if old.get("episode_id") != episode_id:
+            return {}
+        return {s["clip_id"]: s for s in old.get("shorts", [])
+                if isinstance(s, dict) and s.get("status") == RENDERED and isinstance(s.get("clip_id"), str)}
+    except (OSError, ValueError, TypeError, AttributeError):
+        return {}
+
+
+def reusable(prev: dict | None, key: str, rel: str, out_dir: Path) -> bool:
+    """T5: the previous Short has the same render_key and its file is present with the recorded sha256."""
+    if not prev or prev.get("render_key") != key or prev.get("file") != rel:
+        return False
+    path = out_dir / rel
+    return path.is_file() and hashing.sha256_file(path) == prev.get("sha256")
+
+
 def _remove(paths: list[Path]) -> None:
     for p in paths:
         if p.is_file() or p.is_symlink():
             p.unlink()
 
 
+@dataclass
+class _RunFiles:
+    """Files touched by one render run, so a failure deletes only what this run wrote (T5)."""
+
+    staged: dict[str, Path]  # file (relative to out_dir) -> .part encoded by this run, not yet committed
+    committed: list[Path]  # finals moved into place by the commit
+    committing: bool = False
+
+
 # --- stage -------------------------------------------------------------------------------------------------------
 
 def run_render(episode_id: str, config: Config, *, force: bool = False, run: Runner | None = None) -> RenderResult:
+    """Render the episode's Shorts (CP7), applying ``review.json`` title overrides and reusing every Short whose
+    render_key is unchanged (CP8.2 T4/T5); ``force`` re-runs the stage and encodes every Short."""
     cfg = config.render
     runner = run or _run
     try:
@@ -304,7 +382,7 @@ def run_render(episode_id: str, config: Config, *, force: bool = False, run: Run
     prior = list((manifest["stages"].get(STAGE) or {}).get("artifacts", []))
 
     def fail(msg: str) -> RenderError:
-        _remove(previous_outputs(out_dir, prior))
+        # T5: nothing was written by this run; the previous render (if any) stays as it was.
         record_failure(ws, manifest, STAGE, msg)
         return RenderError(msg)
 
@@ -324,21 +402,28 @@ def run_render(episode_id: str, config: Config, *, force: bool = False, run: Run
         media_fp = hashing.fingerprint(media, ws.source_fingerprint(manifest))
     except OSError as exc:
         raise fail(f"cannot read source media {media}: {exc}") from exc
-    inputs = [{"path": ws.relpath(p), "sha256": hashing.sha256_file(p)} for p in paths.values()]
+    review_path = ws.dir / REVIEW_NAME
+    input_paths = list(paths.values()) + ([review_path] if review_path.is_file() else [])
+    inputs = [{"path": ws.relpath(p), "sha256": hashing.sha256_file(p)} for p in input_paths]
     inputs.append({"path": ws.relpath(media), "sha256": media_fp.sha256})
     cfg_hash = hashing.config_hash(used_config(cfg, font_sha))
     outcome: dict = {}
 
     def action() -> list[str]:
-        written: list[Path] = []
-        _remove(previous_outputs(out_dir, prior))
+        files = _RunFiles({}, [])
         try:
-            doc = _render_all(ws, cfg, fpath, font_sha, media, media_fp.sha256, cfg_hash, paths, out_dir,
-                              runner, written)
+            doc = _render_all(ws, cfg, fpath, font_sha, media, media_fp.sha256, cfg_hash, paths, review_path,
+                              out_dir, runner, force=force, old_outputs=previous_outputs(out_dir, prior),
+                              files=files)
         except BaseException:
-            _remove(written + [out_dir / RENDER_MANIFEST_NAME])
+            # Only files of this run; once the commit has started the previous manifest no longer
+            # describes the files on disk, so it goes too.
+            _remove(list(files.staged.values()) + files.committed
+                    + ([out_dir / RENDER_MANIFEST_NAME] if files.committing else []))
             raise
-        outcome.update(rendered=doc["stats"]["rendered"], clips=doc["stats"]["clips"])
+        st = doc["stats"]
+        outcome.update(rendered=st["rendered"], clips=st["clips"], encoded=len(files.staged),
+                       reused=st["rendered"] - len(files.staged))
         return [str(out_dir / RENDER_MANIFEST_NAME)] + [str(out_dir / s["file"]) for s in doc["shorts"]
                                                          if s["status"] == RENDERED]
 
@@ -347,15 +432,23 @@ def run_render(episode_id: str, config: Config, *, force: bool = False, run: Run
     except StageError as exc:
         raise RenderError(str(exc)) from exc
     return RenderResult(ws.episode_id, out_dir / RENDER_MANIFEST_NAME, ran, outcome.get("rendered"),
-                        outcome.get("clips"))
+                        outcome.get("clips"), outcome.get("encoded"), outcome.get("reused"))
 
 
 def _render_all(ws: Workspace, cfg: RenderConfig, fpath: Path, font_sha: str, media: Path, source_sha: str,
-                cfg_hash: str, paths: dict[str, Path], out_dir: Path, run: Runner, written: list[Path]) -> dict:
+                cfg_hash: str, paths: dict[str, Path], review_path: Path, out_dir: Path, run: Runner, *,
+                force: bool, old_outputs: list[Path], files: _RunFiles) -> dict:
     clips_doc = _read_json(paths[CLIPS_NAME], "selection")
     titles_doc = _read_json(paths[TITLES_NAME], "titling")
     cand_doc = _read_json(paths[CANDIDATES_NAME], "analysis")
     check_inputs(clips_doc, titles_doc, cand_doc)
+    try:
+        review = review_logic.read_review(review_path, ws.episode_id)
+    except review_logic.ReviewError as exc:
+        raise RenderError(f"{exc}; fix it or reset the override with 'auto-short title … --reset'") from exc
+    resolved, warnings = review_logic.resolve_titles(titles_doc["titles"], review)
+    for w in warnings:
+        log.warning("%s: WARNING: %s", STAGE, w)
 
     font = Font(fpath)
     try:
@@ -376,15 +469,16 @@ def _render_all(ws: Workspace, cfg: RenderConfig, fpath: Path, font_sha: str, me
                             min_font_scale=cfg.min_font_scale)
     except TextError as exc:
         raise RenderError(str(exc)) from exc
-    plans = plan_clips(clips_doc, titles_doc, cand_doc, font=font, cfg=cfg, geo=geo, src_w=src_w, src_h=src_h)
+    plans = plan_clips(clips_doc, resolved, cand_doc, font=font, cfg=cfg, geo=geo, src_w=src_w, src_h=src_h)
     base_layout = plan.layout(geo, geo.title_h, src_w, src_h)
 
-    log.info("%s: font %s (%s), fps %s, source %dx%d", STAGE, font.family, cfg.font_file, plan.fps_text(fps),
-             src_w, src_h)
+    log.info("%s: font %s (%s), fps %s, source %dx%d, dissolve %g s (%d frames)", STAGE, font.family,
+             cfg.font_file, plan.fps_text(fps), src_w, src_h, cfg.dissolve, 2 * plan.dissolve_half(cfg.dissolve, fps))
     log.info("%s: layout header %s, video %s crop %s, title %s (max h %d)", STAGE, base_layout.header,
              base_layout.video, base_layout.crop, base_layout.title, geo.title_max_h)
     log.info("%s: header %s (%d px)", STAGE, " / ".join(header.lines), header.font_size)
 
+    previous = {} if force else previous_shorts(out_dir, ws.episode_id)
     shorts_dir = out_dir / SHORTS_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
     shorts = []
@@ -395,29 +489,43 @@ def _render_all(ws: Workspace, cfg: RenderConfig, fpath: Path, font_sha: str, me
                                                                  size=header.font_size, pitch=header.line_pitch,
                                                                  panel_height=geo.header_h))
         for cp in plans:
-            clip, entry = cp.clip, cp.entry
+            clip = cp.clip
             record = {"clip_id": clip["id"], "candidate_id": clip["candidate_id"], "status": SKIPPED,
-                      "skip_reason": None, "file": None, "sha256": None, "title": entry.get("title"),
+                      "skip_reason": None, "file": None, "sha256": None, "title": cp.text,
                       "title_display_lines": None, "title_font_size": None, "layout": None,
                       "source_start": clip["source_start"], "source_end": clip["source_end"],
-                      "segments": plan.segments_seconds(cp.segments), "duration": clip["duration"]}
+                      "segments": plan.segments_seconds(cp.segments), "duration": clip["duration"],
+                      "dissolves": None, "title_origin": cp.origin, "render_key": None}
             if cp.title is None:
                 record["skip_reason"] = "untitled"
                 log.warning("%s: WARNING: clip %s skipped: untitled (no approved title)", STAGE, clip["id"])
                 shorts.append(record)
                 continue
             fit, lay = cp.title, cp.layout
+            dissolves = plan.dissolves(cp.segments, fps, cfg.dissolve)
+            key = render_key(cfg_hash=cfg_hash, font_sha=font_sha, source_sha=source_sha, fps=fps,
+                             segments=record["segments"], dissolves=dissolves, layout=lay.as_dict(), header=header,
+                             title=fit)
+            rel = f"{SHORTS_DIR}/{clip['id']}.mp4"
+            record.update(status=RENDERED, file=rel, title_display_lines=fit.lines, title_font_size=fit.font_size,
+                          layout=lay.as_dict(), dissolves=dissolves, render_key=key)
+            shorts.append(record)
+            if reusable(previous.get(clip["id"]), key, rel, out_dir):
+                record["sha256"] = previous[clip["id"]]["sha256"]
+                log.info("%s: clip %s: reuse (render_key unchanged): %s (%s)", STAGE, clip["id"],
+                         " / ".join(fit.lines), cp.origin)
+                continue
             t_lines = _write_lines(tmp, f"t{clip['id']}_", fit.lines,
                                    baselines(len(fit.lines), font=font, size=fit.font_size, pitch=fit.line_pitch,
                                              panel_height=fit.panel_height))
             script = tmp / f"{clip['id']}.filter"
             script.write_text(plan.filter_graph(segments=cp.segments, fps=fps, lay=lay, font_file=fpath,
                                                 header_lines=h_lines, header_size=header.font_size,
-                                                title_lines=t_lines, title_size=fit.font_size), encoding="utf-8")
+                                                title_lines=t_lines, title_size=fit.font_size,
+                                                dissolve=cfg.dissolve), encoding="utf-8")
             shorts_dir.mkdir(exist_ok=True)
-            final = shorts_dir / f"{clip['id']}.mp4"
             part = shorts_dir / f".{clip['id']}.mp4.part"
-            written += [part, final]
+            files.staged[rel] = part
             cmd = plan.ffmpeg_command(ffmpeg="ffmpeg", source=media, output=part, graph_script=script,
                                       segments=cp.segments, fps=fps, crf=cfg.crf, preset=cfg.preset,
                                       audio_bitrate=cfg.audio_bitrate, threads=cfg.threads)
@@ -426,14 +534,11 @@ def _render_all(ws: Workspace, cfg: RenderConfig, fpath: Path, font_sha: str, me
             if proc.returncode != 0 or not part.is_file():
                 raise RenderError(f"clip {clip['id']}: ffmpeg failed: "
                                   f"{_last_line(proc.stderr) or f'exit {proc.returncode}'}")
-            planned = plan.planned_video_seconds(cp.segments, fps)
-            verify_output(part, fps, planned, run)
-            os.replace(part, final)
-            record.update(status=RENDERED, file=f"{SHORTS_DIR}/{final.name}", sha256=hashing.sha256_file(final),
-                          title_display_lines=fit.lines, title_font_size=fit.font_size, layout=lay.as_dict())
-            shorts.append(record)
-            log.info("%s: clip %s: %s (%d px, panel %d px), %d segment(s), %.3f s, rendered in %.1f s", STAGE,
-                     clip["id"], " / ".join(fit.lines), fit.font_size, fit.panel_height, len(cp.segments),
+            verify_output(part, fps, plan.planned_frames(cp.segments, fps), run)
+            record["sha256"] = hashing.sha256_file(part)
+            log.info("%s: clip %s: %s (%d px, panel %d px, %s), %d segment(s), %d dissolve(s), %.3f s, "
+                     "rendered in %.1f s", STAGE, clip["id"], " / ".join(fit.lines), fit.font_size,
+                     fit.panel_height, cp.origin, len(cp.segments), sum(1 for d in dissolves if d["frames"]),
                      clip["duration"], time.monotonic() - t0)
 
     rendered = [s for s in shorts if s["status"] == RENDERED]
@@ -448,17 +553,30 @@ def _render_all(ws: Workspace, cfg: RenderConfig, fpath: Path, font_sha: str, me
                    "panel_color": plan.PANEL_COLOR, **base},
         "encode": {"vcodec": plan.VCODEC, "crf": cfg.crf, "preset": cfg.preset, "pix_fmt": plan.PIX_FMT,
                    "fps": plan.fps_text(fps), "acodec": plan.ACODEC, "sample_rate": plan.SAMPLE_RATE,
-                   "channels": plan.CHANNELS, "audio_bitrate": cfg.audio_bitrate},
+                   "channels": plan.CHANNELS, "audio_bitrate": cfg.audio_bitrate, "dissolve": cfg.dissolve},
         "header": {"lines": header_lines, "display_lines": header.lines, "font_size": header.font_size},
         "stats": {"clips": len(shorts), "rendered": len(rendered), "skipped": len(shorts) - len(rendered),
                   "seconds": round(sum(s["duration"] for s in rendered), 3)},
         "shorts": shorts,
     }
-    validate_render(doc, clips_doc, cand_doc, out_dir)
-    atomic_write_json(out_dir / RENDER_MANIFEST_NAME, doc)
+    # T5 cleanup: previous files that are neither reused nor replaced by this run's Shorts.
+    manifest_path = out_dir / RENDER_MANIFEST_NAME
+    keep = {(out_dir / s["file"]).resolve() for s in rendered} | {manifest_path.resolve()}
+    removing = [p for p in old_outputs if p.resolve() not in keep]
+    validate_render(doc, clips_doc, cand_doc, out_dir, staged=files.staged,
+                    removing=frozenset(p.resolve() for p in removing))
+
+    files.committing = True
+    for rel, part in files.staged.items():
+        os.replace(part, out_dir / rel)
+        files.committed.append(out_dir / rel)
+    _remove(removing)
+    atomic_write_json(manifest_path, doc)
+
     st = doc["stats"]
-    log.info("%s: rendered %d/%d clips, %.1f s of Shorts in %.1f s", STAGE, st["rendered"], st["clips"],
-             st["seconds"], time.monotonic() - t_all)
+    encoded = len(files.staged)
+    log.info("%s: rendered %d/%d clips (%d encoded, %d reused), %.1f s of Shorts in %.1f s", STAGE, st["rendered"],
+             st["clips"], encoded, st["rendered"] - encoded, st["seconds"], time.monotonic() - t_all)
     if st["skipped"]:
         log.warning("%s: WARNING: %d clip(s) skipped: %s", STAGE, st["skipped"],
                     ", ".join(f"{s['clip_id']} ({s['skip_reason']})" for s in shorts if s["status"] == SKIPPED))
