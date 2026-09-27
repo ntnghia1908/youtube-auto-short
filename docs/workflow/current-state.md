@@ -12,14 +12,14 @@ CP7 — Short Composition / Renderer (`docs/tasks/CP7-render.md`): APPROVED 2026
 
 ## Next proposed action
 
-1. IMPLEMENTER render ảnh so sánh font; HUMAN LEAD chốt font (P2).
+1. IMPLEMENTER phase 2: implement stage render (font Be Vietnam Pro Regular đã chốt).
 2. Hoàn tất implement + verification → review → READY.
 
 Đây là PROPOSED, không authorize implementation tiếp theo.
 
 ## Open decisions
 
-- CP7 P2: chọn font sau ảnh so sánh.
+- Không.
 
 ## Blockers
 
