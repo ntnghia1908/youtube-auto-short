@@ -447,7 +447,9 @@ const AutoShort = (() => {
         el("span", { class: "clip-id", text: s.clip_id }),
         title.origin ? el("span", { class: "badge " + title.origin, text: TITLE_SOURCE_LABELS[title.origin] || title.origin }) : null,
         el("span", { class: "muted small", text: fmtSeconds(s.duration) })),
-      el("p", { class: "short-title", text: title.text || "(không có tiêu đề)" }),
+      el("div", { class: "title-row" },
+        el("p", { class: "short-title", text: title.text || "(không có tiêu đề)" }),
+        title.text ? copyTitleButton(title.text) : null),
       s.pending_title ? el("p", { class: "pending small", text: s.pending_title.text
         ? `Tiêu đề mới (${TITLE_SOURCE_LABELS[s.pending_title.origin] || s.pending_title.origin}), chưa render: ${s.pending_title.text}`
         : "Sẽ bỏ qua ở lần render tới (không có tiêu đề)" }) : null,
@@ -458,6 +460,64 @@ const AutoShort = (() => {
       s.editable && !s.deleted && !archived ? titleEditor(s) : el("div", { class: "title-edit", hidden: true }));
     card.append(body);
     return card;
+  }
+
+  // CP8.7 (bổ sung HUMAN LEAD): copy the title in the file, to paste into the YouTube app. The site is plain HTTP
+  // on the LAN (no secure context -> no navigator.clipboard on most phones): fall back to a selected textarea +
+  // execCommand("copy") inside the click (user gesture); if that fails too, show the title selected to long-press.
+  function legacyCopy(text) {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.contentEditable = "true"; // iOS Safari only selects editable content
+    ta.style.position = "fixed";
+    ta.style.top = "0";
+    ta.style.left = "-9999px";
+    ta.style.fontSize = "16px"; // no zoom on iOS
+    document.body.append(ta);
+    let ok = false;
+    try {
+      ta.focus();
+      ta.select();
+      ta.setSelectionRange(0, text.length);
+      ok = document.execCommand("copy");
+    } catch (_) { ok = false; }
+    ta.remove();
+    return ok;
+  }
+
+  async function copyText(text) {
+    if (window.isSecureContext && navigator.clipboard && navigator.clipboard.writeText) {
+      try { await navigator.clipboard.writeText(text); return true; } catch (_) { /* fall back */ }
+    }
+    return legacyCopy(text);
+  }
+
+  function copyTitleButton(text) {
+    const wrap = el("span", { class: "copy-wrap" });
+    const btn = el("button", { class: "btn small copy-btn", type: "button", text: "Copy", title: "Copy tiêu đề" });
+    const note = el("span", { class: "copy-note small", hidden: true });
+    btn.addEventListener("click", async () => {
+      const ok = await copyText(text);
+      wrap.querySelectorAll(".copy-fallback").forEach((n) => n.remove());
+      if (ok) {
+        note.textContent = "Đã copy";
+        note.hidden = false;
+        setTimeout(() => { note.hidden = true; }, 1500);
+        return;
+      }
+      // Could not copy: show the title selected so the user can long-press -> Copy.
+      const box = el("input", { class: "copy-fallback", type: "text", value: text, readonly: true,
+        "aria-label": "Tiêu đề (giữ để copy)" });
+      wrap.append(box);
+      box.focus();
+      box.select();
+      box.setSelectionRange(0, text.length);
+      note.textContent = "Giữ vào ô để copy";
+      note.hidden = false;
+    });
+    wrap.append(btn, note);
+    return wrap;
   }
 
   // CP8.7: a download ticks "Đã đăng" server-side; show it on the next refresh.

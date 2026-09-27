@@ -30,6 +30,7 @@ Người dùng dán URL playlist (một bộ kinh) → web liệt kê mọi tậ
   - Tests (yt-dlp giả), chạy thật với playlist 149 tập ở trên (liệt kê, xử lý 1 tập đã có sẵn → skip nhanh, tick xong), HUMAN LEAD thử.
   - Docs: CP8.3 record (W3 nhận playlist, bộ kinh, API, state), README, contract Result; roadmap CP9 (ghi phần batch đã kéo lên).
   - Bổ sung HUMAN LEAD 2026-09-27 ("Nếu bấm tải xuống thì tự tick đã đăng"): tải một Short (`?download=1`, nút "Tải về") tick "Đã đăng" Short đó với `sha256` của file, phía server, trước khi gửi file (idempotent, tải tiếp bằng `Range` không ảnh hưởng); "Tải tất cả" (zip) tick mọi Short trong zip; phát video không tick; bỏ tick vẫn được (chỉ tải lại mới tick lại); tập archived vẫn tick; "Xong" và gợi ý dọn CP8.6 theo đó. Rule: `docs/decisions/CP8.3-web-contract.md` W8.
+  - Bổ sung HUMAN LEAD 2026-09-27 (nút Copy tiêu đề): nút "Copy" ngay cạnh tiêu đề mỗi Short trên trang tập, copy đúng title trong file hiện tại (`render_manifest.json` `title`), báo "Đã copy" — vì app YouTube trên điện thoại không lấy title từ tên file / metadata MP4. Site là HTTP thường trong LAN (không secure context): `navigator.clipboard` chỉ khi `window.isSecureContext`, còn lại `<textarea>` tạm + `select()` + `execCommand("copy")` trong lúc bấm; thất bại → hiện ô chứa title đã chọn sẵn để giữ-copy. Không tự copy khi tải. Rule: `docs/decisions/CP8.3-web-contract.md` W6.
 - Out of scope:
   - Tự động xử lý cả playlist / hẹn giờ (người dùng bấm từng tập — đúng yêu cầu tiết kiệm bộ nhớ).
   - Upload YouTube (CP8.4); playlist không phải YouTube; channel URL (chỉ playlist).
@@ -90,5 +91,6 @@ Tất cả required verification phải chạy và PASS trước READY.
   - Mục "Tập lẻ" chỉ hiện tập không thuộc bộ kinh đã lưu nào; bộ lọc danh sách tập (CP8.5) đổi "Đã đăng hết" thành "Xong" (bản cũ không tính).
   - `sha256` tick khi tải = `sha256` trong `render_manifest.json` (không băm lại file mỗi lần tải).
   - Model Whisper (finding CP8.6): giữ đúng ngữ nghĩa stage transcript (tương đối theo thư mục làm việc của server), hiện đường dẫn tuyệt đối + "chưa có thư mục"; server live cần `[transcript.whisper] models_dir` tuyệt đối trong config của nó (vd `/home/ntnghia/youtube-auto-short/models`) — việc cấu hình, không sửa ở CP8.7.
+- Nút Copy tiêu đề (bổ sung HUMAN LEAD, commit follow-up): kiểm bằng test JS/CSS được phục vụ; hành vi copy trên điện thoại thật (Android Chrome, iOS Safari qua HTTP) kiểm ở manual gate.
 - Known limitations: xem `docs/decisions/CP8.3-web-contract.md` § Giới hạn đã biết (CP8.7). Chưa kiểm UI trên trình duyệt thật (manual gate HUMAN LEAD).
 - PR: gộp chung PR CP8–CP8.6 (P4); chưa push.

@@ -334,3 +334,16 @@ def test_models_dir_shown_absolute(tcfg, tmp_path, monkeypatch):
         _login(c)
         cache = c.get("/api/storage").json()["caches"][0]
         assert cache == {"name": "Model Whisper", "path": str(tmp_path / "models"), "bytes": 10, "exists": True}
+
+
+def test_copy_title_button_served(tcfg):
+    """Bổ sung HUMAN LEAD 2026-09-27: "Copy" next to each Short's title (clipboard API only in a secure context,
+    else textarea + execCommand("copy"), else a selected box). Real phones: manual gate."""
+    with client(tcfg) as c:
+        _login(c)
+        js = c.get("/static/app.js").text
+        assert "copyTitleButton(title.text)" in js and 'text: "Copy"' in js and "Đã copy" in js
+        assert "window.isSecureContext && navigator.clipboard" in js
+        assert 'document.execCommand("copy")' in js and "setSelectionRange(0, text.length)" in js
+        assert "copy-fallback" in js and "Giữ vào ô để copy" in js
+        assert ".copy-fallback" in c.get("/static/style.css").text

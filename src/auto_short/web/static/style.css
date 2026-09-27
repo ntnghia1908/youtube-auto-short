@@ -117,6 +117,12 @@ summary { cursor: pointer; color: var(--muted); }
 .pl-entry.failed .pl-state { color: var(--err); }
 .pl-entry.processing .pl-state, .pl-entry.queued .pl-state { color: var(--busy); font-weight: 600; }
 .pl-entry.unavailable { opacity: .55; }
+.title-row { display: flex; gap: .4rem; align-items: flex-start; flex-wrap: wrap; }
+.title-row .short-title { flex: 1 1 8rem; }
+.copy-wrap { display: inline-flex; flex-wrap: wrap; gap: .3rem; align-items: center; }
+.copy-note { color: var(--ok); font-weight: 600; }
+.copy-note[hidden] { display: none; }
+.copy-fallback { width: 100%; font-size: 16px; padding: .35rem; }
 @media (max-width: 520px) {
   .shorts-grid { grid-template-columns: 1fr 1fr; gap: .5rem; }
   .row { grid-template-columns: 1fr; }
