@@ -9,7 +9,7 @@
 - Execution profile: dual-agent
 - Human Lead: HUMAN LEAD
 - Base commit / branch: `0a61637` (`main` sau merge CL1.1, PR #12) / `feature/cl1.2-lesson`, worktree `../youtube-auto-short-cl1` (nhánh cũ `feature/cl1-chinese-learning` không dùng)
-- Human Lead approval: accepted 2026-09-27 — "HUMAN LEAD APPROVES CL1.2 ONLY"; G6 (model) chốt sau khi HUMAN LEAD đọc mẫu 20 dòng thật
+- Human Lead approval: accepted 2026-09-27 — "HUMAN LEAD APPROVES CL1.2 ONLY"; G6 (model) chốt sau khi HUMAN LEAD đọc mẫu 20 dòng thật; integration approved 2026-09-27 (G6A, G6B, CL1.3 vẫn chưa duyệt)
 - Implementation authorized: YES
 
 Lifecycle: `DRAFT → APPROVED → IN_PROGRESS → READY`. DONE suy ra từ Git sau khi merge.
@@ -103,4 +103,4 @@ Task chạm CLI công khai (thêm stage) và schema artifact mới; **không** c
   - Một dòng lỗi làm cả stage `lesson` `failed` (không có `lesson.json` một phần — đúng C7).
   - Pinyin do LLM: không kiểm thanh/âm (C7; `pypinyin` là proposal riêng).
   - Số đo thời gian trên GPU dùng chung, chỉ tham khảo.
-- PR:
+- PR: https://github.com/ntnghia1908/youtube-auto-short/pull/15 (rebase lên `main` `9c2085d`; #14 sửa framework-check của roadmap trước đó)
