@@ -113,14 +113,17 @@ def test_episode_sizes_states(tcfg, episode):
 def _row(eid, **kw):
     base = {"id": eid, "title": None, "state": "done", "source_kind": "youtube", "source": 650 * 10**6,
             "shorts_bytes": 250 * 10**6, "other": 3 * 10**6, "total": 903 * 10**6, "shorts": 20, "published": 0,
-            "render_finished_at": NOW - DAY, "last_activity": NOW - DAY, "archived_at": None}
+            "render_finished_at": NOW - DAY, "last_activity": NOW - DAY, "archived_at": None,
+            "complete": False}
     return {**base, **kw}
 
 
 def test_recommendations_rules_and_priority():
     rows = [
-        _row("allPub", published=20, render_finished_at=NOW - 30 * DAY),  # rule 1 wins over rule 2
-        _row("allPubArchived", published=20, state="archived", source=0, total=253 * 10**6),
+        _row("allPub", published=20, complete=True, render_finished_at=NOW - 30 * DAY),  # rule 1 wins over 2
+        _row("allPubArchived", published=20, complete=True, state="archived", source=0, total=253 * 10**6),
+        # CP8.7: every Short ticked but one is "đã đăng bản cũ" -> not Xong -> no rule 1 (render is recent)
+        _row("staleTick", published=20, complete=False),
         _row("old8", render_finished_at=NOW - 8 * DAY),
         _row("new6", render_finished_at=NOW - 6 * DAY),
         _row("oldLocal", source_kind="local", source=0, render_finished_at=NOW - 30 * DAY),
@@ -128,7 +131,7 @@ def test_recommendations_rules_and_priority():
         _row("failed8", state="failed", shorts=0, render_finished_at=None, last_activity=NOW - 8 * DAY),
         _row("incomplete9", state="incomplete", shorts=0, render_finished_at=None, last_activity=NOW - 9 * DAY),
         _row("failed2", state="failed", shorts=0, render_finished_at=None, last_activity=NOW - 2 * DAY),
-        _row("busy", state="processing", published=20, last_activity=NOW - 30 * DAY),
+        _row("busy", state="processing", published=20, complete=True, last_activity=NOW - 30 * DAY),
         _row("orph", state="orphan", source_kind=None, source=0, shorts=0, last_activity=NOW - 30 * DAY),
     ]
     recs = {r["episode_id"]: r for r in recommend(rows, NOW)}
@@ -254,7 +257,7 @@ def test_storage_api_and_page(tcfg, episode):
         assert d["disks"][0]["free"] == 50 * GB and d["warn"] is False and d["block"] is False
         assert d["episodes"][0]["id"] == EID and d["episodes"][0]["source"] == SOURCE_BYTES
         assert d["caches"] == [{"name": "Model Whisper", "path": str(tcfg.transcript.whisper.models_dir),
-                                "bytes": 1234}]
+                                "bytes": 1234, "exists": True}]
         assert d["recommendations"] == []  # rendered "now", nothing published
         for clip in ("k01", "k02"):
             c.post(f"{BASE}/{clip}/published", json={"value": True})

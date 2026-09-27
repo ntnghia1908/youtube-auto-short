@@ -1,4 +1,4 @@
-/* Auto Short web UI (CP8.3, CP8.5, CP8.6) — mobile first. */
+/* Auto Short web UI (CP8.3, CP8.5–CP8.7) — mobile first. */
 :root {
   --bg: #f4f4f2; --card: #fff; --text: #1d1d1b; --muted: #6b6b66; --accent: #d4a800; --accent-bg: #fedb00;
   --ok: #1f7a3a; --err: #b3261e; --busy: #8a6d00; --border: #deded8; --radius: 10px;
@@ -108,6 +108,15 @@ summary { cursor: pointer; color: var(--muted); }
 .storage-table { width: 100%; border-collapse: collapse; font-size: .9rem; }
 .storage-table th, .storage-table td { padding: .35rem .4rem; border-bottom: 1px solid var(--border); text-align: left; }
 .storage-table td.num { text-align: right; white-space: nowrap; }
+.pl-list { list-style: none; padding: 0; margin: 0; }
+.pl-entry { display: flex; gap: .5rem; align-items: flex-start; padding: .5rem .2rem; border-top: 1px solid var(--border); }
+.pl-entry[hidden] { display: none; }
+.pl-index { min-width: 2.2rem; text-align: right; }
+.pl-body { flex: 1; display: grid; gap: .1rem; min-width: 0; }
+.pl-entry.complete .pl-state { color: var(--ok); font-weight: 700; }
+.pl-entry.failed .pl-state { color: var(--err); }
+.pl-entry.processing .pl-state, .pl-entry.queued .pl-state { color: var(--busy); font-weight: 600; }
+.pl-entry.unavailable { opacity: .55; }
 @media (max-width: 520px) {
   .shorts-grid { grid-template-columns: 1fr 1fr; gap: .5rem; }
   .row { grid-template-columns: 1fr; }

@@ -14,6 +14,7 @@ import zipfile
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 from urllib.parse import parse_qs, quote
 
 from fastapi import FastAPI, Request
@@ -25,13 +26,15 @@ from ..config import Config
 from ..pipeline import PIPELINE_STAGES, PreflightError, ollama_preflight, run_pipeline
 from ..render import run_render
 from ..review import (ArchivedError, EpisodeNotFound, ReviewError, TitlePreview, archive_source, content_disposition,
+                      mark_downloaded,
                       delete_episode, is_archived, preview_title, reject_archived_clip, reject_clip, reset_title,
                       restore_clip, set_alternative, set_published, set_title)
 from . import episodes as ep
 from .auth import COOKIE_NAME, SessionSigner, load_or_create_secret
 from .storage import StorageCache
 from .jobs import KIND_PIPELINE, KIND_RENDER, JobRunner, pipeline_target, render_target
-from .urls import UrlError, parse_youtube_url
+from .playlists import LIST_TIMEOUT, PlaylistError, PlaylistStore, ytdlp_list
+from .urls import ASK, PLAYLIST, UrlError, canonical_url, classify_url, valid_playlist_id
 
 log = logging.getLogger("auto_short")
 
@@ -47,6 +50,8 @@ class SubmitIn(BaseModel):
     url: str = Field(max_length=2000)
     series: str | None = Field(default=None, max_length=MAX_FIELD)
     episode: str | None = Field(default=None, max_length=MAX_FIELD)
+    # CP8.7 L2: for ``watch?v=…&list=…`` the user chooses the single video or the whole playlist
+    mode: Literal["video", "playlist"] | None = None
 
 
 class PreviewIn(BaseModel):
@@ -134,12 +139,15 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                preflight: Callable[[Config], None] | None = ollama_preflight,
                pipeline: Callable = run_pipeline, render: Callable = run_render,
                secret: bytes | None = None, disk_usage: Callable = shutil.disk_usage,
-               clock: Callable[[], float] = time.time) -> FastAPI:
+               clock: Callable[[], float] = time.time, playlist_lister: Callable = ytdlp_list,
+               playlist_timeout: float = LIST_TIMEOUT) -> FastAPI:
     """``preflight`` / ``pipeline`` / ``render`` are injectable for tests (defaults: CP8 ``ollama_preflight`` /
     ``run_pipeline``, CP7/CP8.2 ``run_render``); so are ``disk_usage`` (``shutil.disk_usage``) and ``clock`` (epoch
-    seconds, ages of the storage recommendations) for CP8.6."""
+    seconds, ages of the storage recommendations) for CP8.6; ``playlist_lister`` (yt-dlp flat listing) and
+    ``playlist_timeout`` for CP8.7."""
     runner = runner or JobRunner()
     storage = StorageCache(config, disk_usage=disk_usage, clock=clock)
+    playlists = PlaylistStore(config, lister=playlist_lister, timeout=playlist_timeout)
     # Serialises "no active job for the episode?" + review.json write + job submit (W5: no title write while a
     # pipeline / render job of the episode is queued or running).
     submit_lock = threading.Lock()
@@ -158,6 +166,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     app = FastAPI(title="auto-short web", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.state.runner = runner
     app.state.storage = storage
+    app.state.playlists = playlists
     app.state.signer = signer
 
     @app.middleware("http")
@@ -253,19 +262,29 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                 items.insert(0, {"id": job.episode_id, "title": None, "stages_done": 0,
                                  "stages_total": len(PIPELINE_STAGES), "running": None, "failed": None,
                                  "shorts": 0})
+        in_playlists = playlists.video_ids()
         for item in items:
             job = runner.latest(item["id"])
             item["job"] = job.to_dict(logs=False) if job else None
             item.setdefault("published", 0)
+            item.setdefault("complete", False)
             item["publish_group"] = ep.publish_group(item)
+            item["in_playlist"] = item["id"] in in_playlists  # CP8.7: home page "Tập lẻ" = not in a bộ kinh
         return {"episodes": items}
 
     @app.post("/api/episodes")
     def api_submit(body: SubmitIn):
         try:
-            video_id, url = parse_youtube_url(body.url)
+            parsed = classify_url(body.url)
         except UrlError as exc:
             return JSONResponse({"detail": str(exc)}, status_code=422)
+        if parsed.kind == ASK and body.mode is None:  # CP8.7 L2: the UI asks "tập lẻ" or "cả bộ kinh"
+            return JSONResponse({"kind": ASK, "video_id": parsed.video_id, "playlist_id": parsed.playlist_id})
+        if parsed.kind == PLAYLIST or (parsed.kind == ASK and body.mode == "playlist"):
+            return _import_playlist(parsed.playlist_id)
+        if body.mode == "playlist":
+            return JSONResponse({"detail": "URL không có playlist"}, status_code=422)
+        video_id, url = parsed.video_id, canonical_url(parsed.video_id)
         series, episode = _clean(body.series), _clean(body.episode)
         current = runner.latest(video_id)
         if current is not None and current.active:
@@ -284,8 +303,76 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             job, created = runner.submit(video_id, KIND_PIPELINE,
                                          pipeline_target(url, config, series=series, episode=episode,
                                                          pipeline=pipeline, preflight=preflight))
-        return JSONResponse({"created": created, "episode_id": video_id, "job": _job_view(job)},
+        playlists.invalidate(video_id)
+        return JSONResponse({"kind": "video", "created": created, "episode_id": video_id, "job": _job_view(job)},
                             status_code=202 if created else 200)
+
+    # --- playlists (CP8.7) ---------------------------------------------------------------------------
+
+    def _import_playlist(playlist_id: str) -> JSONResponse:
+        try:
+            doc, created = playlists.add(playlist_id)
+        except PlaylistError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=502)
+        log.info("web: playlist %s %s (%d entries)", playlist_id, "imported" if created else "already stored",
+                 len(doc["entries"]))
+        return JSONResponse({"kind": PLAYLIST, "created": created, "playlist_id": playlist_id,
+                             "title": doc.get("title"), "count": len(doc["entries"])},
+                            status_code=201 if created else 200)
+
+    def _jobs_by_episode() -> dict[str, dict]:
+        out = {}
+        for job in runner.jobs():
+            latest = runner.latest(job.episode_id)
+            if latest is job:
+                out[job.episode_id] = job.to_dict(logs=False)
+        return out
+
+    def _playlist_or_404(playlist_id: str):
+        if not valid_playlist_id(playlist_id):
+            return None
+        try:
+            return playlists.load(playlist_id)
+        except PlaylistError:
+            return None
+
+    @app.get("/playlists/{playlist_id}")
+    async def playlist_page(playlist_id: str):
+        if not valid_playlist_id(playlist_id):
+            return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
+        return FileResponse(STATIC_DIR / "playlist.html", headers={"Cache-Control": "no-cache"})
+
+    @app.get("/api/playlists")
+    def api_playlists():
+        jobs = _jobs_by_episode()
+        return {"playlists": [playlists.summary(d, jobs) for d in playlists.all()]}
+
+    @app.get("/api/playlists/{playlist_id}")
+    def api_playlist(playlist_id: str):
+        doc = _playlist_or_404(playlist_id)
+        if doc is None:
+            return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
+        return playlists.view(doc, _jobs_by_episode())
+
+    @app.post("/api/playlists/{playlist_id}/refresh")
+    def api_playlist_refresh(playlist_id: str):
+        if _playlist_or_404(playlist_id) is None:
+            return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
+        try:
+            doc, added = playlists.refresh(playlist_id)
+        except PlaylistError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=502)
+        except FileNotFoundError:
+            return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
+        return {"playlist_id": playlist_id, "count": len(doc["entries"]), "added": added}
+
+    @app.delete("/api/playlists/{playlist_id}")
+    def api_playlist_delete(playlist_id: str):
+        """Only the stored list; processed episodes stay (L1)."""
+        if not valid_playlist_id(playlist_id) or not playlists.remove(playlist_id):
+            return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
+        log.info("web: playlist %s removed (episodes kept)", playlist_id)
+        return {"deleted": playlist_id}
 
     @app.get("/api/episodes/{episode_id}")
     def api_episode(episode_id: str):
@@ -392,9 +479,12 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             return bad
         with publish_lock:
             try:
-                return set_published(episode_id, config, clip_id, body.value)
+                result = set_published(episode_id, config, clip_id, body.value)
             except ReviewError as exc:
                 return JSONResponse({"detail": str(exc)}, status_code=422)
+        playlists.invalidate(episode_id)
+        storage.invalidate()
+        return result
 
     @app.delete("/api/episodes/{episode_id}")
     def api_episode_delete(episode_id: str):
@@ -416,6 +506,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                 return JSONResponse({"detail": f"không xóa được: {exc}"}, status_code=500)
             runner.forget(episode_id)
             storage.invalidate()
+            playlists.invalidate(episode_id)
         log.warning("web: deleted episode %s (%s)", episode_id, ", ".join(str(p) for p in removed))
         return {"deleted": episode_id}
 
@@ -456,6 +547,20 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                     result.freed)
         return {"archived": episode_id, "changed": result.changed, "freed": result.freed, "removed": result.removed}
 
+    def _mark_downloaded(episode_id: str, clip_ids: list[str]) -> None:
+        """CP8.7 (bổ sung HUMAN LEAD 2026-09-27): a download ticks "Đã đăng" (current file); never blocks it."""
+        with publish_lock:
+            try:
+                changed = mark_downloaded(episode_id, config, clip_ids)
+            except (ReviewError, OSError) as exc:
+                log.warning("web: download of %s [%s]: not marked as published: %s", ",".join(clip_ids),
+                            episode_id, exc)
+                return
+        if changed:
+            playlists.invalidate(episode_id)
+            storage.invalidate()
+            log.info("web: download marked %s [%s] as published", ",".join(changed), episode_id)
+
     # --- files -------------------------------------------------------------------------------------
 
     @app.get("/files/{episode_id}/{name}")
@@ -466,6 +571,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             items = ep.short_files(config, episode_id)
             if not items:
                 return JSONResponse({"detail": "chưa có Short nào"}, status_code=404)
+            _mark_downloaded(episode_id, [clip for clip, _path, _name in items])
             return StreamingResponse(
                 _zip_stream(items), media_type="application/zip",
                 headers={"Content-Disposition": content_disposition(ep.zip_download_name(config, episode_id)),
@@ -480,6 +586,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         headers = {"Cache-Control": "private, no-cache"}
         if download is not None:
             headers["Content-Disposition"] = content_disposition(download_name)
+            _mark_downloaded(episode_id, [clip_id])  # plain playback (no download=1) never ticks
         return FileResponse(path, media_type="video/mp4", headers=headers)
 
     return app

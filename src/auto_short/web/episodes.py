@@ -12,7 +12,8 @@ from pathlib import Path
 
 from ..config import Config
 from ..pipeline import PIPELINE_STAGES
-from ..review import ReviewError, download_name, episode_label, list_titles, publish_status, read_archive, zip_name
+from ..review import (ReviewError, download_name, episode_complete, episode_label, list_titles, publish_status,
+                      read_archive, zip_name)
 from ..review.publish import PUBLISH_NAME, read_publish
 from ..workspace import DONE, PENDING, Workspace, WorkspaceError, iter_manifests, validate_episode_id
 from .urls import UrlError, parse_youtube_url
@@ -98,6 +99,18 @@ def _publish(config: Config, episode_id: str, doc: dict) -> tuple[dict[str, dict
     except ReviewError as exc:
         return {}, str(exc)
     return publish_status(pub, [s for s in doc.get("shorts") or [] if isinstance(s, dict)]), None
+
+
+def is_complete(config: Config, episode_id: str, manifest: dict, doc: dict | None) -> bool:
+    """CP8.7 L4 "Xong" of an episode (derived): render done + every rendered Short ticked for its current file."""
+    render_status = ((manifest.get("stages") or {}).get("render") or {}).get("status")
+    if doc is None:
+        return False
+    try:
+        pub = read_publish(Path(config.workspace.dir) / episode_id / PUBLISH_NAME, episode_id)
+    except ReviewError:
+        return False
+    return episode_complete(render_status, doc.get("shorts") or [], pub)
 
 
 def _short_view(episode_id: str, short: dict, titles: dict | None, *, name: str | None = None,
@@ -192,6 +205,7 @@ def episode_view(config: Config, episode_id: str) -> dict | None:
         "titles_ignored": ignored,
         # CP8.6 S3: source video cleaned up -> view / download / tick / delete Short only
         "archived": _archived_view(ws.dir),
+        "complete": is_complete(config, episode_id, manifest, doc),  # CP8.7 L4 "Xong"
     }
 
 
@@ -228,6 +242,7 @@ def list_episodes(config: Config) -> list[dict]:
             "published": sum(1 for s in doc["shorts"] if s.get("status") == "rendered"
                              and pub.get(s.get("clip_id"), {}).get("published")) if doc else 0,
             "archived": read_archive(ws.dir) is not None,  # CP8.6
+            "complete": is_complete(config, ws.episode_id, manifest, doc),  # CP8.7 L4 "Xong"
             "_mtime": mtime,
         })
     items.sort(key=lambda x: x.pop("_mtime"), reverse=True)
@@ -282,15 +297,16 @@ TODO, ALL_PUBLISHED = "todo", "done"  # list filter groups (CP8.5 X4, bổ sung 
 
 def publish_group(item: dict) -> str | None:
     """Episode list filter "Còn Short chưa đăng" (``todo``) / "Đã đăng hết" (``done``) from a list item with its
-    ``job``: y = rendered (non-deleted) Shorts, x = ticked among them. y > 0: ``done`` when x = y, else ``todo``.
-    y = 0: ``todo`` only while work is pending (a job queued/running or the pipeline not finished: some stage not
-    ``done``, incl. failed / interrupted), else None (finished without Shorts: every Short deleted or none titled
-    -> only under "Tất cả")."""
-    y, x = item.get("shorts") or 0, item.get("published") or 0
-    if y:
-        return ALL_PUBLISHED if x >= y else TODO
+    ``job``. CP8.7: ``done`` = the derived "Xong" (L4, ``complete``: render done and every rendered Short ticked
+    for its current file — "đã đăng bản cũ" does not count; no Short left counts). Otherwise ``todo`` when the
+    episode has rendered Shorts or work is pending (a job queued/running or the pipeline not finished: some
+    stage not ``done``, incl. failed / interrupted), else None (only under "Tất cả")."""
     job = item.get("job") or {}
     active = job.get("status") in ("queued", "running")
+    if item.get("complete") and not active:
+        return ALL_PUBLISHED
+    if item.get("shorts"):
+        return TODO
     finished = item.get("stages_done") == item.get("stages_total") and not item.get("failed") \
         and not item.get("running")
     return TODO if active or not finished else None

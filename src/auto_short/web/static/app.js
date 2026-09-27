@@ -85,26 +85,31 @@ const AutoShort = (() => {
       el("a", { href: "/storage", text: "tab Bộ nhớ" }), document.createTextNode("."));
   }
 
-  async function submitUrl(url, series, episode) {
+  async function submitUrl(url, series, episode, mode) {
     return api("/api/episodes", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url, series: series || null, episode: episode || null }),
+      body: JSON.stringify({ url, series: series || null, episode: episode || null, mode: mode || null }),
     });
+  }
+
+  function gotoResult(data) {
+    if (data.kind === "playlist") location.href = "/playlists/" + encodeURIComponent(data.playlist_id);
+    else location.href = "/episodes/" + encodeURIComponent(data.episode_id);
   }
 
   // --- index page -------------------------------------------------------------------------------
 
   function initIndex() {
     const form = $("#submit-form"), btn = $("#submit-btn"), err = $("#submit-error");
-    form.addEventListener("submit", async (ev) => {
-      ev.preventDefault();
+    async function send(mode) {
       err.hidden = true;
       btn.disabled = true;
-      btn.textContent = "Đang kiểm tra…";
+      btn.textContent = mode === "playlist" || /[?&]list=/.test($("#url").value) ? "Đang lấy danh sách…" : "Đang kiểm tra…";
       try {
-        const data = await submitUrl($("#url").value, $("#series").value.trim(), $("#episode").value.trim());
-        location.href = "/episodes/" + encodeURIComponent(data.episode_id);
+        const data = await submitUrl($("#url").value, $("#series").value.trim(), $("#episode").value.trim(), mode);
+        if (data.kind === "ask") { $("#ask-box").hidden = false; return; }
+        gotoResult(data);
       } catch (e) {
         err.textContent = e.message;
         err.hidden = false;
@@ -112,13 +117,35 @@ const AutoShort = (() => {
         btn.disabled = false;
         btn.textContent = "Bắt đầu";
       }
-    });
+    }
+    form.addEventListener("submit", (ev) => { ev.preventDefault(); $("#ask-box").hidden = true; send(null); });
+    $("#ask-video").addEventListener("click", () => { $("#ask-box").hidden = true; send("video"); });
+    $("#ask-playlist").addEventListener("click", () => { $("#ask-box").hidden = true; send("playlist"); });
     document.querySelectorAll("#ep-filters [data-filter]").forEach((b) => b.addEventListener("click", () => {
       epFilter = b.dataset.filter;
       applyEpisodeFilter();
     }));
     loadEpisodes();
+    loadPlaylists();
     checkDisk();
+  }
+
+  async function loadPlaylists() {
+    const list = $("#playlists");
+    let data;
+    try { data = await api("/api/playlists"); } catch (e) {
+      list.replaceChildren(el("li", { class: "error", text: e.message }));
+      return;
+    }
+    if (!data.playlists.length) {
+      list.replaceChildren(el("li", { class: "muted", text: "Chưa có bộ kinh nào — dán link playlist ở trên." }));
+      return;
+    }
+    list.replaceChildren(...data.playlists.map((p) => el("li", {},
+      el("a", { href: "/playlists/" + encodeURIComponent(p.id) },
+        el("span", { class: "ep-name", text: p.title || p.id }),
+        el("span", { class: "ep-state muted", text: `${p.count} tập · đã xử lý ${p.processed} · Xong ${p.complete}` +
+          (p.doing ? ` · đang làm ${p.doing}` : "") })))));
   }
 
   // Episode list filter (CP8.5 X4): publish_group from the API ("todo" | "done" | null).
@@ -145,21 +172,21 @@ const AutoShort = (() => {
       list.replaceChildren(el("li", { class: "error", text: e.message }));
       return;
     }
-    episodeItems = data.episodes;
-    if (!data.episodes.length) {
-      list.replaceChildren(el("li", { class: "muted", text: "Chưa có video nào." }));
+    episodeItems = data.episodes.filter((e) => !e.in_playlist); // CP8.7: episodes of a bộ kinh are on its page
+    if (!episodeItems.length) {
+      list.replaceChildren(el("li", { class: "muted", text: "Chưa có tập lẻ nào." }));
       applyEpisodeFilter();
       return;
     }
     let active = false;
-    list.replaceChildren(...data.episodes.map((e) => {
+    list.replaceChildren(...episodeItems.map((e) => {
       let state;
       if (jobActive(e.job)) {
         active = true;
         state = e.job.status === "queued" ? "đang đợi" : `đang chạy: ${STAGE_LABELS[e.job.stage] || e.job.stage || ""}`;
       } else if (e.failed) state = `lỗi ở ${STAGE_LABELS[e.failed] || e.failed}`;
       else if (e.running) state = `dừng giữa chừng ở ${STAGE_LABELS[e.running] || e.running}`;
-      else if (e.stages_done === e.stages_total) state = `${e.shorts} Shorts · đã đăng ${e.published || 0}/${e.shorts}` + (e.archived ? " · đã dọn video nguồn" : "");
+      else if (e.stages_done === e.stages_total) state = (e.complete ? "Xong · " : "") + `${e.shorts} Shorts · đã đăng ${e.published || 0}/${e.shorts}` + (e.archived ? " · đã dọn video nguồn" : "");
       else state = `${e.stages_done}/${e.stages_total} bước`;
       return el("li", { "data-group": e.publish_group || "none" },
         el("a", { href: "/episodes/" + encodeURIComponent(e.id) },
@@ -247,6 +274,7 @@ const AutoShort = (() => {
     document.title = `${d.title || d.id} — Auto Short`;
     $("#ep-title").textContent = d.title || d.id;
     const meta = [d.id];
+    if (d.complete) meta.unshift("✔ Xong (đã đăng hết)");
     if (d.channel) meta.push(d.channel);
     if (d.duration) meta.push(fmtSeconds(d.duration));
     $("#ep-meta").textContent = meta.join(" · ");
@@ -353,6 +381,7 @@ const AutoShort = (() => {
     const zip = $("#zip");
     zip.hidden = !d.zip_url;
     if (d.zip_url) { zip.href = d.zip_url; zip.setAttribute("download", d.zip_name || ""); }
+    if (!zip.dataset.bound) { zip.dataset.bound = "1"; zip.addEventListener("click", () => setTimeout(refreshEpisode, 2000)); }
     $("#header-lines").textContent = d.header ? "Header: " + d.header.join(" / ") : "";
     const notes = [];
     if (d.shorts.length && d.render_status !== "done") {
@@ -424,11 +453,18 @@ const AutoShort = (() => {
         : "Sẽ bỏ qua ở lần render tới (không có tiêu đề)" }) : null,
       s.status === "rendered" || s.published ? publishBox(s) : null,
       el("div", { class: "short-actions" },
-        s.download_url ? el("a", { class: "btn", href: s.download_url, download: s.download_name || "", text: "Tải về" }) : null,
+        s.download_url ? downloadLink(s) : null,
         s.editable && !(archived && s.deleted) ? deleteButton(s) : null),
       s.editable && !s.deleted && !archived ? titleEditor(s) : el("div", { class: "title-edit", hidden: true }));
     card.append(body);
     return card;
+  }
+
+  // CP8.7: a download ticks "Đã đăng" server-side; show it on the next refresh.
+  function downloadLink(s) {
+    const a = el("a", { class: "btn", href: s.download_url, download: s.download_name || "", text: "Tải về" });
+    a.addEventListener("click", () => setTimeout(refreshEpisode, 1500));
+    return a;
   }
 
   // "Đã đăng" (X4): user state only, no job, allowed while a job runs; updated in place (no card rebuild).
@@ -666,8 +702,122 @@ const AutoShort = (() => {
       el("td", { class: "num", text: fmtBytes(e.other) }),
       el("td", { class: "num", text: fmtBytes(e.total) }),
       el("td", { class: "num", text: e.shorts ? `${e.published}/${e.shorts}` : "–" }))));
-    $("#caches").replaceChildren(...d.caches.map((c) => el("li", { text: `${c.name} (${c.path}): ${fmtBytes(c.bytes)}` })));
+    $("#caches").replaceChildren(...d.caches.map((c) => el("li", { text: `${c.name} (${c.path}): ` +
+      (c.exists ? fmtBytes(c.bytes) : "chưa có thư mục (đặt [transcript.whisper] models_dir tuyệt đối nếu model nằm chỗ khác)") })));
   }
 
-  return { initIndex, initEpisode, initStorage };
+  // --- playlist page (CP8.7) --------------------------------------------------------------------
+
+  const PL_STATE = {
+    new: "chưa xử lý", queued: "đang chờ", processing: "đang xử lý", failed: "lỗi", rendered: "đã dựng Short",
+    incomplete: "dở dang", complete: "Xong", unavailable: "không khả dụng",
+  };
+  let playlistId = null;
+  let plFilter = "all";
+  let plTimer = null;
+
+  function initPlaylist() {
+    playlistId = decodeURIComponent(location.pathname.split("/").filter(Boolean)[1] || "");
+    document.querySelectorAll("#pl-filters [data-filter]").forEach((b) => b.addEventListener("click", () => {
+      plFilter = b.dataset.filter;
+      applyPlFilter();
+    }));
+    $("#pl-refresh").addEventListener("click", refreshPlaylist);
+    $("#pl-delete").addEventListener("click", deletePlaylist);
+    loadPlaylist();
+    checkDisk();
+  }
+
+  function plMessage(text, cls) {
+    const m = $("#pl-msg");
+    m.textContent = text;
+    m.className = "small " + (cls || "");
+    m.hidden = !text;
+  }
+
+  async function refreshPlaylist() {
+    const b = $("#pl-refresh");
+    b.disabled = true;
+    plMessage("Đang lấy lại danh sách từ YouTube…", "muted");
+    try {
+      const r = await api(`/api/playlists/${encodeURIComponent(playlistId)}/refresh`, { method: "POST" });
+      plMessage(r.added.length ? `Thêm ${r.added.length} tập mới (tổng ${r.count}).` : `Không có tập mới (tổng ${r.count}).`, "ok");
+      loadPlaylist();
+    } catch (e) { plMessage(e.message, "error"); }
+    b.disabled = false;
+  }
+
+  async function deletePlaylist() {
+    if (!confirm("Xóa bộ kinh này khỏi danh sách?\n\nChỉ xóa danh sách tập; các tập đã xử lý (Short, video) vẫn giữ nguyên ở mục Tập lẻ.")) return;
+    try {
+      await api(`/api/playlists/${encodeURIComponent(playlistId)}`, { method: "DELETE" });
+      location.href = "/";
+    } catch (e) { plMessage(e.message, "error"); }
+  }
+
+  function applyPlFilter() {
+    document.querySelectorAll("#pl-filters [data-filter]").forEach((b) => b.classList.toggle("active", b.dataset.filter === plFilter));
+    document.querySelectorAll("#pl-entries li[data-group]").forEach((li) => {
+      li.hidden = plFilter !== "all" && li.dataset.group !== plFilter;
+    });
+  }
+
+  async function processEntry(e, btn) {
+    btn.disabled = true;
+    try {
+      await submitUrl(`https://youtu.be/${e.video_id}`, null, null, "video");
+      loadPlaylist();
+    } catch (err) {
+      btn.disabled = false;
+      alert(err.message);
+    }
+  }
+
+  function entryState(e) {
+    let text = PL_STATE[e.state] || e.state;
+    if ((e.state === "processing" || e.state === "failed") && e.stage) text += `: ${STAGE_LABELS[e.stage] || e.stage}`;
+    if (e.state === "queued" && e.job && e.job.status === "queued") text = "đang chờ trong hàng";
+    if (e.shorts || e.state === "rendered" || e.state === "complete") text += ` · ${e.shorts} Short, đã đăng ${e.published}/${e.shorts}`;
+    if (e.archived) text += " · đã dọn nguồn";
+    return text;
+  }
+
+  async function loadPlaylist() {
+    clearTimeout(plTimer);
+    let d;
+    try { d = await api(`/api/playlists/${encodeURIComponent(playlistId)}`); } catch (e) {
+      $("#pl-title").textContent = e.message;
+      return;
+    }
+    document.title = `${d.title || d.id} — Auto Short`;
+    $("#pl-title").textContent = d.title || d.id;
+    $("#pl-meta").replaceChildren(document.createTextNode(`${d.count} tập · lấy danh sách lúc ${fmtTime(d.fetched_at)} · `),
+      el("a", { href: d.url, target: "_blank", rel: "noopener", text: "mở trên YouTube" }));
+    document.querySelectorAll("#pl-filters [data-filter]").forEach((b) => { b.querySelector(".n").textContent = d.counts[b.dataset.filter]; });
+    let busy = false;
+    $("#pl-entries").replaceChildren(...d.entries.map((e) => {
+      if (e.state === "queued" || e.state === "processing") busy = true;
+      const title = e.title || e.video_id || "(không rõ)";
+      const head = e.state === "new" || e.state === "unavailable" || !e.video_id ? el("span", { class: "ep-name", text: title })
+        : el("a", { class: "ep-name", href: "/episodes/" + encodeURIComponent(e.video_id), text: title });
+      const actions = el("div", { class: "rec-actions" });
+      if (e.available && e.video_id && (e.state === "new" || e.state === "failed" || e.state === "incomplete")) {
+        const b = el("button", { class: "btn small" + (e.state === "new" ? " primary" : ""), type: "button",
+          text: e.state === "new" ? "Xử lý" : "Chạy tiếp" });
+        b.addEventListener("click", () => processEntry(e, b));
+        actions.append(b);
+      }
+      return el("li", { class: "pl-entry " + e.state, "data-group": e.group || "none" },
+        el("span", { class: "pl-index muted", text: `${e.index}.` }),
+        el("div", { class: "pl-body" }, head,
+          el("span", { class: "muted small", text: [e.episode ? `tập ${e.episode}` : null, e.duration ? fmtSeconds(e.duration) : null].filter(Boolean).join(" · ") }),
+          el("span", { class: "pl-state small", text: entryState(e) }),
+          e.state === "failed" && e.error ? el("span", { class: "error small", text: e.error }) : null),
+        actions);
+    }));
+    applyPlFilter();
+    if (busy) plTimer = setTimeout(loadPlaylist, POLL_MS * 2);
+  }
+
+  return { initIndex, initEpisode, initStorage, initPlaylist };
 })();

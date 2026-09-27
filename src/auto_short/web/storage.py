@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..config import Config
-from ..review import ReviewError, publish_status, read_archive
+from ..review import ReviewError, episode_complete, publish_status, read_archive
 from ..review.archive import source_files
 from ..review.publish import PUBLISH_NAME, read_publish
 from ..workspace import DONE, iter_manifests
@@ -126,8 +126,10 @@ def episode_sizes(config: Config, active: set[str] | None = None) -> list[dict]:
         try:
             pub = read_publish(ws.dir / PUBLISH_NAME, eid)
             status = publish_status(pub, rendered)
+            complete = rm is not None and episode_complete((stages.get("render") or {}).get("status"),
+                                                           rm.get("shorts") or [], pub)
         except ReviewError:
-            status = {}
+            status, complete = {}, False
         published = sum(1 for s in rendered if status.get(s.get("clip_id"), {}).get("published"))
         if eid in active or "running" in statuses:
             state = PROCESSING
@@ -148,7 +150,7 @@ def episode_sizes(config: Config, active: set[str] | None = None) -> list[dict]:
             "id": eid, "title": meta.get("title"), "state": state,
             "source_kind": (manifest.get("source") or {}).get("kind"),
             "source": source, "shorts_bytes": shorts, "other": work_total - source, "total": work_total + shorts,
-            "shorts": len(rendered), "published": published,
+            "shorts": len(rendered), "published": published, "complete": complete,
             "render_finished_at": parse_time((stages.get("render") or {}).get("finished_at"))
             if (stages.get("render") or {}).get("status") == DONE else None,
             "last_activity": _last_activity(manifest, mtime),
@@ -161,6 +163,7 @@ def episode_sizes(config: Config, active: set[str] | None = None) -> list[dict]:
             size = tree_size(entry)
             rows.append({"id": entry.name, "title": None, "state": ORPHAN, "source_kind": None, "source": 0,
                          "shorts_bytes": size, "other": 0, "total": size, "shorts": 0, "published": 0,
+                         "complete": False,
                          "render_finished_at": None, "last_activity": entry.stat().st_mtime, "archived_at": None})
     rows.sort(key=lambda r: (-r["total"], r["id"]))
     return rows
@@ -170,7 +173,8 @@ def recommend(rows: list[dict], now: float, *, old_days: int = OLD_DAYS) -> list
     """S2 (priority order; one recommendation per episode, the first rule that applies; episodes with a job are
     skipped). Each action names the bytes it frees:
 
-    1. every rendered Short ticked "Đã đăng" -> ``delete`` (all) and, while the source is there, ``archive``;
+    1. the episode is "Xong" (CP8.7 L4, ``complete``: render done, every rendered Short ticked for its current
+       file; no Short left counts) -> ``delete`` (all) and, while the source is there, ``archive``;
     2. render done more than ``old_days`` ago and the source video still there -> ``archive``;
     3. failed / unfinished with no activity for ``old_days`` -> ``delete``.
     """
@@ -180,7 +184,7 @@ def recommend(rows: list[dict], now: float, *, old_days: int = OLD_DAYS) -> list
         if r["state"] in (PROCESSING, ORPHAN):
             continue
         can_archive = r["state"] == DONE_STATE and r["source_kind"] == "youtube" and r["source"] > 0
-        if r["shorts"] and r["published"] >= r["shorts"]:
+        if r.get("complete"):
             actions = [{"action": "delete", "frees": r["total"]}]
             if can_archive:
                 actions.insert(0, {"action": "archive", "frees": r["source"]})
@@ -197,7 +201,9 @@ def recommend(rows: list[dict], now: float, *, old_days: int = OLD_DAYS) -> list
 
 
 def _models_dir(config: Config) -> Path:
-    return Path(config.transcript.whisper.models_dir)
+    """The folder the transcript stage uses (``faster-whisper`` ``download_root``): a relative ``models_dir``
+    is relative to the server's working directory, exactly like the stage; shown absolute."""
+    return Path(config.transcript.whisper.models_dir).absolute()
 
 
 class StorageCache:
@@ -233,7 +239,8 @@ class StorageCache:
             "episodes": rows,
             "totals": {"source": sum(r["source"] for r in rows), "shorts": sum(r["shorts_bytes"] for r in rows),
                        "other": sum(r["other"] for r in rows), "episodes": sum(r["total"] for r in rows)},
-            "caches": [{"name": "Model Whisper", "path": str(models), "bytes": tree_size(models)}],
+            "caches": [{"name": "Model Whisper", "path": str(models), "bytes": tree_size(models),
+                        "exists": models.is_dir()}],
             "recommendations": recommend(rows, now),
             "old_days": OLD_DAYS,
         }

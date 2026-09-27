@@ -126,30 +126,48 @@ def load_published(episode_id: str, config: Config) -> list[dict]:
     return list(read_publish(ws.dir / PUBLISH_NAME, ws.episode_id)["published"])
 
 
+def _render_shorts(ws: Workspace, rm_path: Path) -> list[dict]:
+    try:
+        rm = json.loads(rm_path.read_text(encoding="utf-8"))
+        return [s for s in rm["shorts"] if isinstance(s, dict)] if rm.get("episode_id") == ws.episode_id else []
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        return []
+
+
+def _tickable(short: dict | None) -> bool:
+    return short is not None and short.get("status") == "rendered" and isinstance(short.get("sha256"), str) \
+        and isinstance(short.get("candidate_id"), str)
+
+
+def _tick(doc: dict, order: list[str], short: dict, at: str) -> dict:
+    """Tick ``short``; already ticked for the same candidate and file (sha256) -> unchanged (keeps ``at``)."""
+    old = next((e for e in doc["published"] if e["clip_id"] == short["clip_id"]), None)
+    if old is not None and old["candidate_id"] == short["candidate_id"] and old["sha256"] == short["sha256"]:
+        return doc
+    return with_published(doc, order, clip_id=short["clip_id"], candidate_id=short["candidate_id"],
+                          sha256=short["sha256"], at=at)
+
+
 def set_published(episode_id: str, config: Config, clip_id: str, value: bool, *, at: str | None = None) -> dict:
     """Tick (``value`` True) or untick the Short ``clip_id``. A tick records the ``candidate_id`` and ``sha256`` of
-    the Short in the last committed ``render_manifest.json`` and needs a rendered file; unticking always works.
-    Returns the new status ``{"clip_id", "published", "stale", "at"}``. Never touches review.json / render."""
+    the Short in the last committed ``render_manifest.json`` and needs a rendered file; ticking again the same
+    file changes nothing (CP8.7: idempotent, keeps ``at``), a new file (re-render) replaces the tick; unticking
+    always works. Returns the new status ``{"clip_id", "published", "stale", "at"}``. Never touches review.json
+    / render."""
     if not isinstance(value, bool):
         raise ReviewError("value must be true or false")
     ws, rm_path = _paths(episode_id, config)
     if ws.load_manifest() is None:
         raise ReviewError(f"no episode {episode_id!r}")
-    try:
-        rm = json.loads(rm_path.read_text(encoding="utf-8"))
-        shorts = [s for s in rm["shorts"] if isinstance(s, dict)] if rm.get("episode_id") == ws.episode_id else []
-    except (OSError, ValueError, TypeError, KeyError, AttributeError):
-        shorts = []
+    shorts = _render_shorts(ws, rm_path)
     order = [s.get("clip_id") for s in shorts]
     short = next((s for s in shorts if s.get("clip_id") == clip_id), None)
     path = ws.dir / PUBLISH_NAME
     doc = read_publish(path, ws.episode_id)
     if value:
-        if short is None or short.get("status") != "rendered" or not isinstance(short.get("sha256"), str) \
-                or not isinstance(short.get("candidate_id"), str):
+        if not _tickable(short):
             raise ReviewError(f"Short {clip_id} has no rendered file to mark as published")
-        new = with_published(doc, order, clip_id=clip_id, candidate_id=short["candidate_id"],
-                             sha256=short["sha256"], at=at or utc_now())
+        new = _tick(doc, order, short, at or utc_now())
     else:
         new, removed = without_published(doc, order, clip_id)
         if not removed:
@@ -158,3 +176,43 @@ def set_published(episode_id: str, config: Config, clip_id: str, value: bool, *,
         atomic_write_json(path, new)
     status = publish_status(new, [short] if short is not None else [])
     return {"clip_id": clip_id, **status.get(clip_id, {"published": False, "stale": False, "at": None})}
+
+
+def mark_downloaded(episode_id: str, config: Config, clip_ids: list[str], *, at: str | None = None) -> list[str]:
+    """CP8.7 (bổ sung HUMAN LEAD 2026-09-27): a download ticks "Đã đăng" — every ``clip_ids`` Short that is
+    rendered in the last committed render gets the tick with its current ``sha256`` (one atomic write; Shorts
+    already ticked for this file unchanged). Returns the clip ids newly ticked / re-ticked."""
+    ws, rm_path = _paths(episode_id, config)
+    shorts = {s.get("clip_id"): s for s in _render_shorts(ws, rm_path)}
+    order = list(shorts)
+    path = ws.dir / PUBLISH_NAME
+    doc = new = read_publish(path, ws.episode_id)
+    changed = []
+    now = at or utc_now()
+    for cid in clip_ids:
+        short = shorts.get(cid)
+        if not _tickable(short):
+            continue
+        after = _tick(new, order, short, now)
+        if after is not new:
+            changed.append(cid)
+        new = after
+    if new != doc:
+        atomic_write_json(path, new)
+    return changed
+
+
+def episode_complete(render_status: str | None, shorts: list[dict], doc: dict) -> bool:
+    """CP8.7 L4 "Xong" (derived, never stored): render ``done`` and every ``rendered`` Short (deleted Shorts are
+    ``skipped``) ticked for the same ``(clip_id, candidate_id)`` **and** the current file (``sha256``; "đã đăng
+    bản cũ" does not count). No rendered Short left (all deleted) -> Xong once the render is done."""
+    if render_status != "done":
+        return False
+    ticks = {e["clip_id"]: e for e in doc["published"]}
+    for s in shorts:
+        if not isinstance(s, dict) or s.get("status") != "rendered":
+            continue
+        t = ticks.get(s.get("clip_id"))
+        if t is None or t["candidate_id"] != s.get("candidate_id") or t["sha256"] != s.get("sha256"):
+            return False
+    return True

@@ -161,7 +161,10 @@ def test_published_tick_persists_filters_and_is_not_a_render_input(tcfg, episode
 
 
 @pytest.mark.parametrize("item, group", [
-    ({"shorts": 3, "published": 3, "stages_done": 6, "stages_total": 6}, "done"),
+    # CP8.7: "done" = the derived Xong (L4, ``complete``), not only x = y
+    ({"shorts": 3, "published": 3, "complete": True, "stages_done": 6, "stages_total": 6}, "done"),
+    ({"shorts": 3, "published": 3, "complete": False, "stages_done": 6, "stages_total": 6}, "todo"),
+    ({"shorts": 0, "published": 0, "complete": True, "stages_done": 6, "stages_total": 6}, "done"),
     ({"shorts": 3, "published": 1, "stages_done": 6, "stages_total": 6}, "todo"),
     ({"shorts": 0, "published": 0, "stages_done": 6, "stages_total": 6, "job": None}, None),
     ({"shorts": 0, "published": 0, "stages_done": 2, "stages_total": 6, "failed": "selection"}, "todo"),
