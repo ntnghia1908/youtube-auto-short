@@ -11,7 +11,7 @@
 
 Khi ACCEPTED, file này là **canonical owner** của: ứng dụng Chinese Learning (input, namespace `work/_learning/`, stage learning, chọn phụ đề tiếng Trung, cửa sổ 5 phút, AI enrichment, schema `lesson.json`, route/API/trang learning, tiến độ phía client) và của **quy ước host/application** tối thiểu ở C1 (G11). Nơi khác chỉ trỏ tới đây. Auto Short (CP1–CP8.7) **không đổi behavior**; mọi điểm chạm code chung liệt kê ở C3 và đi qua gate tương ứng.
 
-Implementation: `src/auto_short/learning/` — CL1.1 *implemented* (C4 workspace/ownership, C5, C6, C9 stage `subtitle` + `media` và `run_stage(downstream)`, C10 phần lấy clip, C12 lệnh `learn`; `[learning]` `window_seconds`, `min_han_ratio`, `media_format`). Còn *planned*: C7 AI enrichment, C8 `lesson.json`/stage `lesson`, C10 phục vụ clip, C11 web/job, xóa bài học.
+Implementation: `src/auto_short/learning/` — CL1.1 *implemented* (C4 workspace/ownership, C5, C6, C9 stage `subtitle` + `media` và `run_stage(downstream)`, C10 phần lấy clip, C12 lệnh `learn`; `[learning]` `window_seconds`, `min_han_ratio`, `media_format`). CL1.2 *implemented* (C7 AI enrichment + preflight riêng, C8 `lesson.json`, C9 stage `lesson`; `[learning]` key C7; chi tiết cục bộ: `docs/tasks/CL1.2-ai-enrichment-lesson.md`). Model G6 **chưa chốt**. Còn *planned*: C10 phục vụ clip, C11 web/job, xóa bài học.
 
 ## C0. Dữ kiện từ repository (base `eab3134`, 2026-09-27)
 
@@ -259,6 +259,31 @@ IMPLEMENTER, 2026-09-27, yt-dlp `2026.08.19`, ffmpeg hệ thống, `python -m au
 - Clip **lớn hơn** bytes tải vì `force_keyframes_at_cuts` khiến yt-dlp/ffmpeg mã hóa lại cả đoạn sang H.264 (libx264 mặc định): nguồn AV1 1.35 Mbit/s của `qcqQbMj4s-w` thành clip 3.4 Mbit/s (126 MB / 5 phút). Hệ quả: so sánh đúng cho AC12 là bytes tải với phần cửa sổ của nguồn, không phải với kích thước clip. Clip H.264 phát được trong mọi trình duyệt (AV1 thì không chắc). Dung lượng/tốc độ mã hóa là việc của CL1.3 (C10 "cần đo ở CL1.3"); CL1.1 không đổi C10.
 - **C5 (G4):** số đo không bác bỏ rule → giữ nguyên. Chưa gặp track ASR tiếng Trung gốc (`kind=asr`, không `tlang`) trên video nào; nhánh auto mới chỉ được kiểm bằng test giả. Track auto `zh*` không có json3 trên video có manual zh (URL không có `tlang`) — bị bỏ qua đúng rule "không json3".
 
-### CL1.2, CL1.3
+### CL1.2
+
+IMPLEMENTER, 2026-09-27, `python -m auto_short learn https://youtu.be/<id> --config <tmp>` (code CL1.2, prompt `v1`, `think = false`, `temperature = 0`, `seed = 42`, `num_ctx = 8192`, `batch_lines = 20`, `retries = 2`, backoff 5 s/15 s), Ollama `http://127.0.0.1:11437` trên máy dev (GPU dùng chung với session khác — số đo mang tính tham khảo). Workspace = bản sao (`cp -a`) của workspace CL1.1 cho từng model → `subtitle`, `media` đều `skipped (up to date)`, không tải lại; chỉ `lesson` chạy. Hai model chạy lần lượt (14b cả 3 video, rồi 30b cả 3 video). Thời gian batch = `duration_s` trong `lesson_log.json` (tổng các lần thử của batch); tổng = wall-clock cả lệnh.
+
+| Model | Video (dòng / chữ Hán) | Batch | Tổng lệnh | Batch: mean / max (batch 20 dòng: mean) | Retry | Kết quả |
+|---|---|---|---|---|---|---|
+| `qwen3:14b` | `gnCXffOg7T8` (84 / 583) | 5 | 56.9 s | 11.3 / 15.6 s (13.5 s) | 0 | done |
+| `qwen3:14b` | `DVRy3l9ojq4` (70 / 1011) | 4 | 66.9 s | 16.6 / 20.0 s (19.2 s) | 0 | done |
+| `qwen3:14b` | `qcqQbMj4s-w` (98 / 719) | 5 | 62.8 s | 12.3 / 12.5 s (12.3 s) | 0 | done |
+| `qwen3:30b` | `gnCXffOg7T8` (84 / 583) | 5 | 29.1 s | 5.8 / 11.2 s (6.9 s) | 0 | done |
+| `qwen3:30b` | `DVRy3l9ojq4` (70 / 1011) | 4 | 58.5 s | 9.5 / 12.0 s (8.7 s) | 2 | **failed**: `batch 4 (s00061..s00070): s00062: pinyin contains Han character '害' (after 3 attempts)` |
+| `qwen3:30b` | `qcqQbMj4s-w` (98 / 719) | 5 | 26.1 s | 5.0 / 5.2 s (5.1 s) | 0 | done |
+
+- Batch đầu của mỗi model trên video đầu tiên (`gnCXffOg7T8`) gồm thời gian nạp model (14b 15.6 s, 30b 11.2 s so với ≈ 13 s / ≈ 6 s các batch sau). `qwen3:30b` (MoE, ~3B tham số active) nhanh hơn `qwen3:14b` ≈ 2–2.4× trên cùng batch.
+- **Retry không cứu được lỗi nội dung với sampling cố định:** ở lần `30b` lỗi, cả 3 lần thử trả về gần như cùng chuỗi (`qǐng bùyào害怕. shuō cuò le, …` cho `请不要害怕。说错了，真的没关系。`) vì `temperature = 0` + `seed` cố định → retry chỉ có ích cho lỗi mạng/timeout. Behavior đúng hợp đồng (stage `failed`, không có `lesson.json`, `lesson_log.json` giữ 3 request/response + lý do). Đổi chiến lược retry (đổi seed/temperature khi retry, sửa từng dòng, v.v.) là quyết định riêng — chưa làm.
+- Validation (C7) chỉ bắt được Hán/chữ ngoài Latin, dòng rỗng, lệch `id`; **không** bắt sai thanh, sai âm, thiếu dấu thanh (vd. 14b `Suo yi` không dấu cho 所以 vẫn qua).
+- Mẫu 20 dòng liên tiếp (`qcqQbMj4s-w` s00001–s00020, batch 1 của cả hai model, không chọn lọc) kèm nhận xét từng lỗi: gửi riêng cho HUMAN LEAD (file ngoài repo, scratchpad của session CL1.2: `cl12-sample-20.md`).
+- Nhận xét IMPLEMENTER (chỉ là quan sát; **không** phải quyết định G6):
+  - Pinyin — cả hai model đều có lỗi âm/thanh ở mức một người học sẽ bị dạy sai. `14b` (qcqQbMj4s-w, 98 dòng): 这样 `hànyàng`, 菜单 `cānkuǎn` (2 lần), 终于 `Zōngxīng`, 一会儿 `Yīhuì rì`, 看着 `kàizhe`, 热闹 `rènzhào`, 刷卡 `chuākǎ`, 稍后再见 `shāoxiān hòu jiàn`, 所以 `Suo yi` (không dấu); gnCXffOg7T8: 面包 `miàntuō`, 好吧 `Bàihǎo`. `30b`: 棉花糖 `mǐ huā táng`, 午饭 `wǔ shí`, 抓紧 `zhuānjǐn`, 拜拜 `bái bái`, 谢谢 `xièxiè`, 刚刚 → `gāngcái` (đổi sang 刚才); cả hai sai 贩卖机 (14b `mài fàn jī`, 30b `mài fā jī`). Đếm thô trên qcqQbMj4s-w: 14b ≈ 11 dòng có lỗi âm rõ, 30b ≈ 7.
+  - Đa âm: phần lớn đúng ở cả hai (了 le, 还 hái, 的 de, 觉 trong 感觉 jué); một lỗi chọn âm thấy được: 写得 14b `xiě dé` (30b `xiě de` đúng). Lỗi chủ yếu là âm sai hẳn (ảo giác), không phải chọn sai âm đọc.
+  - Biến điệu 一/不 (prompt yêu cầu): không nhất quán ở cả hai (`yīqǐ`, `yīxià`, `bù shì` lẫn `búcuò`, `bú tài`).
+  - Tách từ / viết hoa: `14b` viết liền theo từ (`xiànzài`, `chūmén`) đúng prompt nhưng viết hoa đầu câu không nhất quán giữa các batch; `30b` thường tách từng âm tiết (`xiàn zài`) trên video vlog, nhưng viết liền theo từ trên video HSK — không nhất quán giữa video/batch.
+  - Nghĩa tiếng Việt: cả hai nhìn chung đúng ý, tự nhiên cho câu ngắn. Lỗi: 14b quy đổi 五块钱 → "Năm nghìn đồng" (sai tiền tệ; 30b "Năm tệ" đúng), 14b 车站 → "trạm xe buýt" trong ngữ cảnh tàu điện, 14b bỏ 出口; 30b 有点贵 → "Gần đắt" (sai), 30b 再见 → "chào" (nhạt). Dòng tiếng Nhật lẫn trong phụ đề (`就輪投げ扔圈圈`) → cả hai sinh Pinyin vô nghĩa cho 輪投げ.
+- **Model chưa được chấp nhận.** G6 chốt sau khi HUMAN LEAD đọc mẫu 20 dòng; mặc định `[learning] model = "qwen3:14b"` chỉ là đề xuất ban đầu của C7.
+
+### CL1.3
 
 Chưa có.

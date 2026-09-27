@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -86,8 +86,21 @@ Task chạm CLI công khai (thêm stage) và schema artifact mới; **không** c
 ## Result
 
 - Main changes:
+  - Mới `src/auto_short/learning/prompt.py` (prompt `v1`, `OUTPUT_SCHEMA`, `prompt_sha256` = system prompt + schema, `batch_payload` = đúng `[{"id","zh"}]`), `enrich.py` (`validate_batch`, `enrich` với retry/backoff/sleep injectable, `EnrichmentError` mang log), `lesson.py` (stage `lesson`: `used_config`, `inputs`, `produce`, `lesson.json` C8, `lesson_log.json`), `preflight.py` (`learning_preflight`, `LearningPreflightError`, stdlib `urllib`, không import `pipeline.py`).
+  - `learning/run.py`: `subtitle → media → lesson`; `prompt_version` kiểm trước mọi stage; preflight (injectable, mặc định `learning_preflight`) gọi ngay trước `lesson` chỉ khi `--force` hoặc `check_up_to_date` ≠ None; `client`/`sleep` injectable; lỗi `lesson` → xóa `lesson.json` + `lesson_log.json`, rồi ghi `lesson_log.json` của lần lỗi **sau** `record_failure` (không nằm trong `artifacts`). `learning/cli.py`, `learning/__init__.py`: docstring (dòng `lesson` in qua `on_stage` sẵn có).
+  - `config.py` + `config.example.toml`: key C7 trong `[learning]` (additive, mặc định như quyết định cục bộ; execution-only: `ollama_host`, `timeout`, `retries`, `retry_backoff`).
+  - Docs: CL1 contract dòng Implementation + § Đo thực tế / CL1.2.
 - Tests:
+  - Mới `tests/test_learning_enrich.py` (41) + `tests/test_learning_lesson.py` (30): payload chỉ `id`+`zh`; AI đổi `id`/`zh`/`start`/`end` → giữ giá trị subtitle, `lines_sha256` tính lại độc lập; thiếu/thừa/trùng `id`, `pinyin` rỗng, `vi` rỗng, Hán (cả Ext A) / chữ ngoài Latin trong `pinyin`; retry rồi thành công (log mọi lần thử + lý do, backoff 5/15); hết retry → `failed`, error nêu batch + lý do, không `lesson.json`, `lesson_log.json` còn đủ; `ChatError`; Ctrl-C; byte-identical qua `--force`; `media` sha thật / `null`; skip; đổi `model`/`think`/`temperature`/`seed`/`num_ctx`/`batch_lines`/`prompt_version`/prompt text → chạy lại; `ollama_host`/`timeout`/`retries`/`retry_backoff` → skip; `subtitle` chạy lại → `lesson` stale + chạy lại, `media` không; clip đổi → `lesson` chạy lại; preflight không tới được / thiếu model / `:latest` / env `OLLAMA_HOST` / không gọi khi skip / không gọi `chat` khi lỗi; media lỗi → không chạy lesson; CLI dòng `lesson` + exit 1 khi preflight lỗi; config `[learning]` mặc định/giá trị/không hợp lệ + `config.example.toml`.
+  - Ngoại lệ AC7 (hẹp): `tests/learning_helpers.py` thêm `FakeChat`, `FakePreflight`, fixture autouse `no_real_ollama` (thay `OllamaClient`/`learning_preflight` mặc định của `learning.run`); `tests/test_learning_cli.py`, `test_learning_subtitle.py`, `test_learning_media.py` chỉ import fixture đó và thêm dòng/file/stage `lesson` vào giá trị mong đợi; trong `test_rerun_and_stale_rules` lần `--force` cuối inject preflight lỗi để trạng thái `stale` của `lesson` vẫn quan sát được (assertion giữ nguyên). Không xóa/nới assertion nào.
+  - `pytest -q tests/test_learning_lesson.py tests/test_learning_enrich.py`: 71 passed. `pytest -q`: 738 passed (1 warning có sẵn). `node scripts/framework-check.mjs`: PASS. `git diff 0a61637 -- src/auto_short/pipeline.py src/auto_short/ingest src/auto_short/transcript src/auto_short/selection src/auto_short/web src/auto_short/workspace.py pyproject.toml`: rỗng.
+  - Đo thật (G6): CL1 contract § Đo thực tế / CL1.2 — `qwen3:14b` 3/3 video done (57–67 s/video, batch 20 dòng ≈ 12–19 s), `qwen3:30b` 2/3 done (26–29 s/video, batch ≈ 5–7 s), 1 failed (Hán trong Pinyin, lặp lại y hệt ở cả 3 lần thử).
 - Review:
 - Important findings / decisions:
+  - Retry với `temperature = 0` + `seed` cố định tái tạo cùng output → chỉ cứu lỗi mạng/timeout, không cứu lỗi nội dung (đo thật: 30b `DVRy3l9ojq4` failed dù 2 retry). Đổi chiến lược retry là quyết định riêng, chưa làm.
+  - Cả hai model sai Pinyin ở mức đáng kể (âm sai hẳn, thiếu dấu, biến điệu 一/不 không nhất quán); validation C7 không phát hiện được loại lỗi này. Model G6 **chưa chốt** — chờ HUMAN LEAD đọc mẫu 20 dòng.
 - Known limitations:
+  - Một dòng lỗi làm cả stage `lesson` `failed` (không có `lesson.json` một phần — đúng C7).
+  - Pinyin do LLM: không kiểm thanh/âm (C7; `pypinyin` là proposal riêng).
+  - Số đo thời gian trên GPU dùng chung, chỉ tham khảo.
 - PR:
