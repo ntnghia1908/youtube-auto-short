@@ -152,6 +152,36 @@ class TitlingConfig:
 
 
 @dataclass(frozen=True)
+class RenderConfig:
+    """Short composition / renderer (docs/decisions/CP7-render-contract.md). Ratios are fractions of the
+    frame width W = 1080 (CP1 §4); defaults measured from the reference image."""
+
+    title_source: str = "titles"  # P1: AI titles from titles.json (auto-approve until CP9 review)
+    font_file: str = "fonts/BeVietnamPro-Regular.ttf"  # inside the auto_short.render package (P2)
+    header_panel_width: float = 0.79
+    header_panel_height: float = 0.27
+    video_height: float = 1.12
+    title_panel_width: float = 0.81
+    title_panel_height: float = 0.27  # minimum; grows for a 3rd title line (P3)
+    gap_header_video: float = 0.005
+    gap_video_title: float = 0.01
+    panel_radius: float = 0.055
+    min_frame_margin: float = 0.02  # -> max title panel height (content block stays inside the frame)
+    header_font_size: float = 0.062  # 67 px: x-height 0.0330 W with Be Vietnam Pro
+    title_font_size: float = 0.0815  # 88 px: x-height 0.0434 W with Be Vietnam Pro
+    line_spacing: float = 1.05  # baseline pitch / font size
+    panel_padding_x: float = 0.03
+    panel_padding_y: float = 0.035
+    min_font_scale: float = 0.6
+    crf: int = 18
+    preset: str = "medium"
+    audio_bitrate: str = "192k"
+    # Execution-only settings (not part of the config hash):
+    output_dir: Path = Path("output")
+    threads: int = 0  # 0 = ffmpeg/x264 default
+
+
+@dataclass(frozen=True)
 class Config:
     workspace: WorkspaceConfig = field(default_factory=WorkspaceConfig)
     ingest: IngestConfig = field(default_factory=IngestConfig)
@@ -159,6 +189,7 @@ class Config:
     analysis: AnalysisConfig = field(default_factory=AnalysisConfig)
     selection: SelectionConfig = field(default_factory=SelectionConfig)
     titling: TitlingConfig = field(default_factory=TitlingConfig)
+    render: RenderConfig = field(default_factory=RenderConfig)
 
 
 def _section(data: dict, name: str) -> dict:
@@ -364,6 +395,56 @@ def _titling(data: dict) -> TitlingConfig:
     return cfg
 
 
+TITLE_SOURCES = ("titles",)  # CP9 adds "review"
+X264_PRESETS = ("ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow",
+                "placebo")
+
+
+def _render(data: dict) -> RenderConfig:
+    re_ = _section(data, "render")
+    d, w = RenderConfig(), "render"
+
+    def num(key: str, lo: float, hi: float) -> float:
+        return _number(re_, key, getattr(d, key), w, lo=lo, hi=hi)
+
+    title_source = _str(re_, "title_source", d.title_source, w)
+    if title_source not in TITLE_SOURCES:
+        raise ConfigError(f"{w}.title_source must be one of: {', '.join(TITLE_SOURCES)}")
+    font_file = _str(re_, "font_file", d.font_file, w)
+    if Path(font_file).is_absolute() or ".." in Path(font_file).parts:
+        raise ConfigError(f"{w}.font_file must be a path inside the auto_short.render package (e.g. {d.font_file})")
+    preset = _str(re_, "preset", d.preset, w)
+    if preset not in X264_PRESETS:
+        raise ConfigError(f"{w}.preset must be one of: {', '.join(X264_PRESETS)}")
+    bitrate = _str(re_, "audio_bitrate", d.audio_bitrate, w)
+    if not re.fullmatch(r"[1-9][0-9]{1,3}k", bitrate):
+        raise ConfigError(f"{w}.audio_bitrate must look like '192k'")
+    return RenderConfig(
+        title_source=title_source,
+        font_file=font_file,
+        header_panel_width=num("header_panel_width", 0.1, 1),
+        header_panel_height=num("header_panel_height", 0.05, 1),
+        video_height=num("video_height", 0.1, 1.7),
+        title_panel_width=num("title_panel_width", 0.1, 1),
+        title_panel_height=num("title_panel_height", 0.05, 1),
+        gap_header_video=num("gap_header_video", 0, 0.2),
+        gap_video_title=num("gap_video_title", 0, 0.2),
+        panel_radius=num("panel_radius", 0, 0.2),
+        min_frame_margin=num("min_frame_margin", 0, 0.2),
+        header_font_size=num("header_font_size", 0.01, 0.2),
+        title_font_size=num("title_font_size", 0.01, 0.2),
+        line_spacing=num("line_spacing", 0.8, 2),
+        panel_padding_x=num("panel_padding_x", 0, 0.2),
+        panel_padding_y=num("panel_padding_y", 0, 0.2),
+        min_font_scale=num("min_font_scale", 0.1, 1),
+        crf=_int(re_, "crf", d.crf, w, lo=0, hi=51),
+        preset=preset,
+        audio_bitrate=bitrate,
+        output_dir=Path(_str(re_, "output_dir", str(d.output_dir), w)),
+        threads=_int(re_, "threads", d.threads, w, lo=0, hi=256),
+    )
+
+
 def from_dict(data: dict) -> Config:
     ws = _section(data, "workspace")
     ing = _section(data, "ingest")
@@ -383,6 +464,7 @@ def from_dict(data: dict) -> Config:
         analysis=_analysis(data),
         selection=_selection(data),
         titling=_titling(data),
+        render=_render(data),
     )
 
 

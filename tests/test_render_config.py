@@ -1,0 +1,31 @@
+"""[render] config parsing (CP7)."""
+
+from pathlib import Path
+
+import pytest
+
+from auto_short import config as config_mod
+from auto_short.config import ConfigError, RenderConfig, from_dict
+
+
+def test_example_config_render_defaults():
+    cfg = config_mod.load(Path(__file__).parents[1] / "config.example.toml")
+    assert cfg.render == RenderConfig()
+
+
+def test_render_config_parsing():
+    cfg = from_dict({"render": {"crf": 20, "preset": "slow", "title_font_size": 0.08, "output_dir": "/tmp/o",
+                                "threads": 4, "audio_bitrate": "160k"}}).render
+    assert (cfg.crf, cfg.preset, cfg.title_font_size, cfg.threads, cfg.audio_bitrate) == \
+        (20, "slow", 0.08, 4, "160k")
+    assert cfg.output_dir == Path("/tmp/o")
+
+
+@pytest.mark.parametrize("data", [
+    {"title_source": "review"}, {"font_file": "/etc/f.ttf"}, {"font_file": "../x.ttf"}, {"preset": "fastest"},
+    {"crf": 60}, {"crf": 1.5}, {"audio_bitrate": "192"}, {"line_spacing": 3}, {"min_font_scale": 0},
+    {"header_panel_width": 1.5}, {"threads": -1}, {"output_dir": ""},
+])
+def test_render_config_invalid(data):
+    with pytest.raises(ConfigError, match="render"):
+        from_dict({"render": data})

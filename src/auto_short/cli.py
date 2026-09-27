@@ -10,6 +10,7 @@ from pathlib import Path
 from . import config as config_mod
 from .analysis import AnalysisError, run_analysis
 from .ingest import IngestError, run_ingest
+from .render import RenderError, run_render
 from .selection import SelectionError, run_selection
 from .titling import TitlingError, run_titling
 from .transcript import TranscriptError, run_transcript
@@ -52,6 +53,11 @@ def _build_parser() -> argparse.ArgumentParser:
     ti.add_argument("--force", action="store_true", help="re-run even if up to date")
     ti.add_argument("--config", type=Path, help="config TOML (default: ./config.toml if present)")
 
+    r = sub.add_parser("render", help="compose each titled clip into a 1080x1920 Short -> output/<id>/shorts/")
+    r.add_argument("episode_id")
+    r.add_argument("--force", action="store_true", help="re-run even if up to date")
+    r.add_argument("--config", type=Path, help="config TOML (default: ./config.toml if present)")
+
     s = sub.add_parser("status", help="show stage status of an episode")
     s.add_argument("episode_id")
     s.add_argument("--config", type=Path, help="config TOML (default: ./config.toml if present)")
@@ -89,6 +95,13 @@ def _cmd_titling(args: argparse.Namespace, cfg: config_mod.Config) -> int:
     result = run_titling(args.episode_id, cfg, force=args.force, speaker=args.speaker, series=args.series,
                          episode=args.episode)
     state = f"titled ({result.titled}/{result.clips} clips)" if result.ran else "skipped (up to date)"
+    print(f"{result.episode_id}\t{state}\t{result.path}")
+    return 0
+
+
+def _cmd_render(args: argparse.Namespace, cfg: config_mod.Config) -> int:
+    result = run_render(args.episode_id, cfg, force=args.force)
+    state = f"rendered ({result.rendered}/{result.clips} clips)" if result.ran else "skipped (up to date)"
     print(f"{result.episode_id}\t{state}\t{result.path}")
     return 0
 
@@ -145,8 +158,10 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_selection(args, cfg)
         if args.command == "titling":
             return _cmd_titling(args, cfg)
+        if args.command == "render":
+            return _cmd_render(args, cfg)
         return _cmd_status(args, cfg)
     except (config_mod.ConfigError, IngestError, TranscriptError, AnalysisError, SelectionError,
-            TitlingError, WorkspaceError) as exc:
+            TitlingError, RenderError, WorkspaceError) as exc:
         print(f"auto-short: error: {exc}", file=sys.stderr)
         return 1
