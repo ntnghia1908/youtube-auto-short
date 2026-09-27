@@ -14,7 +14,7 @@ Chinese Learning (CL1, bản đồ: `docs/tasks/CL1-roadmap.md`): CL1.1 MERGED (
 
 Web chạy cho HUMAN LEAD trong tmux `youtube:web` từ worktree `../youtube-auto-short-web` (detached, ghim `fe6c3de`, `PYTHONPATH=<worktree>/src`, `--config` của repo chính → `work/`, `output/`, `models/` repo chính); mật khẩu chỉ qua env của pane, không lưu.
 
-Còn lại cục bộ (HUMAN LEAD quyết dọn): worktree `../youtube-auto-short-hashtags` (CP8.8, đã merge), nhánh `wip/playlist-hashtags`.
+Còn lại cục bộ: nhánh `wip/playlist-hashtags` (code dở, chưa review; HUMAN LEAD giữ để tham khảo).
 
 ## Next proposed action
 
