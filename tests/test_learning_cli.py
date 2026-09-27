@@ -5,9 +5,11 @@ import shutil
 
 import pytest
 from learning_helpers import URL, VIDEO_ID, FakeClipDownloader, FakeLister, make_clip, track, tree
+from learning_helpers import no_real_ollama  # noqa: F401  (autouse: no test reaches a real Ollama)
 
 from auto_short import learning
 from auto_short.cli import main
+from auto_short.learning.preflight import LearningPreflightError
 from auto_short.workspace import Workspace, atomic_write_json, iter_manifests
 
 
@@ -56,19 +58,21 @@ def _ws_dir(tmp_path):
 def test_learn_prints_stages_then_done(tmp_path, capsys, fakes):
     code, out, err = _learn(capsys, URL, "--config", _config(tmp_path))
     assert code == 0
-    assert out == [f"{VIDEO_ID}\tsubtitle\tran", f"{VIDEO_ID}\tmedia\tran", f"{VIDEO_ID}\tdone\t{_ws_dir(tmp_path)}"]
+    assert out == [f"{VIDEO_ID}\tsubtitle\tran", f"{VIDEO_ID}\tmedia\tran", f"{VIDEO_ID}\tlesson\tran",
+                   f"{VIDEO_ID}\tdone\t{_ws_dir(tmp_path)}"]
     assert "subtitle: selected manual zh-Hans" in err
     assert sorted(p.name for p in _ws_dir(tmp_path).iterdir()) == [
-        "clip.mp4", "manifest.json", "media.json", "source.json", "subtitle.json3"]
+        "clip.mp4", "lesson.json", "lesson_log.json", "manifest.json", "media.json", "source.json", "subtitle.json3"]
 
 
-def test_rerun_and_stale_rules(tmp_path, capsys, fakes):
+def test_rerun_and_stale_rules(tmp_path, capsys, fakes, no_real_ollama):
     cfg = _config(tmp_path)
     assert _learn(capsys, URL, "--config", cfg)[0] == 0
 
-    code, out, err = _learn(capsys, URL, "--config", cfg)  # unchanged -> both skipped
-    assert code == 0 and out[:2] == [f"{VIDEO_ID}\tsubtitle\tskipped (up to date)",
-                                     f"{VIDEO_ID}\tmedia\tskipped (up to date)"]
+    code, out, err = _learn(capsys, URL, "--config", cfg)  # unchanged -> all skipped
+    assert code == 0 and out[:3] == [f"{VIDEO_ID}\tsubtitle\tskipped (up to date)",
+                                     f"{VIDEO_ID}\tmedia\tskipped (up to date)",
+                                     f"{VIDEO_ID}\tlesson\tskipped (up to date)"]
     assert "subtitle: skip (up to date)" in err and "media: skip (up to date)" in err
     assert len(fakes["downloads"]) == 1 and len(fakes["lister"].downloads) == 1
 
@@ -91,6 +95,8 @@ def test_rerun_and_stale_rules(tmp_path, capsys, fakes):
     manifest["stages"]["lesson"] = {"status": "done", "artifacts": [], "inputs": [], "config_hash": "x",
                                     "started_at": None, "finished_at": None, "error": None}
     ws.save_manifest(manifest)
+    # the preflight refuses, so 'lesson' does not run again and its stale status stays observable
+    no_real_ollama["preflight"].fail = LearningPreflightError("cannot reach Ollama at http://fake")
     code, out, err = _learn(capsys, URL, "--config", cfg, "--force")
     assert out[:2] == [f"{VIDEO_ID}\tsubtitle\tran", f"{VIDEO_ID}\tmedia\tran"]
     stages = ws.load_manifest()["stages"]

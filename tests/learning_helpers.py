@@ -1,4 +1,5 @@
-"""Shared helpers for Chinese Learning tests: fake track lister, fake clip downloader, json3 builder."""
+"""Shared helpers for Chinese Learning tests: fake track lister, fake clip downloader, json3 builder,
+fake Ollama chat client and preflight (no test reaches a real Ollama)."""
 
 from __future__ import annotations
 
@@ -7,8 +8,11 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from auto_short.config import Config, IngestConfig, LearningConfig, WorkspaceConfig
 from auto_short.learning.media import ClipDownload
+from auto_short.selection.client import ChatResult
 from auto_short.learning.tracks import Listing, Track
 
 FIXTURES = Path(__file__).parent / "fixtures" / "learning"
@@ -104,3 +108,61 @@ def learning_config(tmp_path: Path, **learning) -> Config:
 def tree(root: Path) -> dict[str, bytes]:
     """Every file under ``root`` (relative path -> bytes)."""
     return {p.relative_to(root).as_posix(): p.read_bytes() for p in sorted(root.rglob("*")) if p.is_file()}
+
+
+def fake_enrichment(zh: str) -> tuple[str, str]:
+    """Deterministic (pinyin, vi) for a line: Latin only, derived from the text length."""
+    return f"pin yin {len(zh)}", f"nghĩa {len(zh)}"
+
+
+class FakeChat:
+    """Deterministic ``ChatClient``: echoes every submitted id with :func:`fake_enrichment`.
+
+    ``script``: optional list of per-call overrides, consumed in order; each is a response string,
+    a ``ChatError`` (raised) or a callable ``(items) -> str``. Afterwards the default answer is used.
+    """
+
+    def __init__(self, script=None):
+        self.script = list(script or [])
+        self.calls: list[dict] = []
+
+    @staticmethod
+    def default(items: list[dict]) -> str:
+        return json.dumps({"lines": [{"id": it["id"], "pinyin": fake_enrichment(it["zh"])[0],
+                                      "vi": fake_enrichment(it["zh"])[1]} for it in items]}, ensure_ascii=False)
+
+    def chat(self, *, model, messages, format, options, think):
+        self.calls.append({"model": model, "messages": messages, "format": format, "options": options,
+                           "think": think})
+        items = json.loads(messages[-1]["content"])
+        step = self.script.pop(0) if self.script else None
+        if isinstance(step, BaseException):
+            raise step
+        if callable(step):
+            return ChatResult(content=step(items))
+        return ChatResult(content=self.default(items) if step is None else step)
+
+
+class FakePreflight:
+    """Records calls; raises ``fail`` when set."""
+
+    def __init__(self, fail: BaseException | None = None):
+        self.fail = fail
+        self.calls = 0
+
+    def __call__(self, config) -> None:
+        self.calls += 1
+        if self.fail is not None:
+            raise self.fail
+
+
+@pytest.fixture(autouse=True)
+def no_real_ollama(monkeypatch):
+    """Default Ollama client and preflight of ``learning.run`` replaced by fakes (import into a test module
+    to make it autouse there); tests may still inject their own ``client``/``preflight``."""
+    from auto_short.learning import run as learning_run
+
+    state = {"chat": FakeChat(), "preflight": FakePreflight()}
+    monkeypatch.setattr(learning_run, "OllamaClient", lambda *a, **kw: state["chat"])
+    monkeypatch.setattr(learning_run, "learning_preflight", state["preflight"])
+    return state
