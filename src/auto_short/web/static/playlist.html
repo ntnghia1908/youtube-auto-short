@@ -24,6 +24,28 @@
     </div>
   </section>
   <section class="card">
+    <details id="ht-box">
+      <summary>Hashtag khi Copy tiêu đề (<span id="ht-state">mặc định</span>)</summary>
+      <p class="muted small">Danh sách đầy đủ, theo thứ tự, cho mọi tập của bộ kinh này. Tổng tiêu đề + hashtag ≤ 100 ký tự: hashtag cuối bị bỏ khi quá dài.</p>
+      <ul id="ht-chips" class="ht-chips"></ul>
+      <div class="ht-add">
+        <input id="ht-input" type="text" maxlength="100" autocomplete="off" placeholder="Thêm hashtag, vd Tịnh Độ Tông" aria-label="Hashtag mới">
+        <button id="ht-add" class="btn small" type="button">Thêm</button>
+      </div>
+      <p id="ht-norm" class="muted small" hidden></p>
+      <div class="ht-preview">
+        <p class="small muted" id="ht-preview-label">Xem trước:</p>
+        <p id="ht-preview" class="ht-preview-text"></p>
+        <p id="ht-dropped" class="small error" hidden></p>
+      </div>
+      <div class="edit-actions">
+        <button id="ht-save" class="btn primary small" type="button">Lưu</button>
+        <button id="ht-reset" class="btn small" type="button">Khôi phục mặc định</button>
+        <span id="ht-msg" class="small" hidden></span>
+      </div>
+    </details>
+  </section>
+  <section class="card">
     <div id="pl-filters" class="filters">
       <button class="btn small" type="button" data-filter="all">Tất cả (<span class="n">0</span>)</button>
       <button class="btn small" type="button" data-filter="todo">Chưa xử lý (<span class="n">0</span>)</button>

@@ -8,15 +8,17 @@ Chỉ ghi operational state không suy ra được từ Git, task contract hoặ
 
 ## Current focus
 
-Chuỗi CP8 → CP8.1 → CP8.2 → CP8.3 → CP8.5 → CP8.6 → CP8.7: READY (manual test HUMAN LEAD 2026-09-27 đạt), push chung một PR từ `feature/cp8.7-playlist` (HUMAN LEAD). CP8.4 upload YouTube: planned, chưa lên lịch.
+CP8–CP8.7 đã merge (PR #10, `main` = `eab3134`). CP8.8 hashtag riêng từng bộ kinh: READY (manual test HUMAN LEAD cho đạt 2026-09-27), PR chờ merge (`docs/tasks/CP8.8-playlist-hashtags.md`), worktree `../youtube-auto-short-hashtags`, nhánh `feature/cp8.8-playlist-hashtags`; code dở tham khảo ở nhánh local `wip/playlist-hashtags`. CP8.4 upload YouTube: planned, chưa lên lịch.
 
-Web đang chạy cho HUMAN LEAD từ worktree `../youtube-auto-short-web` (checkout tách của `feature/cp8.7-playlist`), config local trỏ `work/`, `output/`, `models/` của repo chính; mật khẩu chỉ qua env, không lưu.
+Web chạy cho HUMAN LEAD trong tmux `youtube:web` từ worktree `../youtube-auto-short-web` (detached, ghim `eab3134`, `PYTHONPATH=<worktree>/src`, `--config` của repo chính → `work/`, `output/`, `models/` repo chính); mật khẩu chỉ qua env của pane, không lưu.
+
+Session song song hướng CL1: worktree `../youtube-auto-short-cl1`, nhánh `feature/cl1-chinese-learning` — không sửa từ session khác.
 
 ## Next proposed action
 
-1. HUMAN LEAD merge PR của chuỗi CP8–CP8.7.
-2. Sau merge: chạy web từ repo chính (`pip install -e ".[dev,web]"`, `AUTO_SHORT_WEB_PASSWORD=… auto-short web`), dọn các worktree tạm.
-3. Việc kế tiếp HUMAN LEAD chọn: sửa hashtag theo bộ kinh (backlog, code dở ở nhánh local `wip/playlist-hashtags`), CP8.4 upload YouTube, CP9, CP10.
+1. HUMAN LEAD merge PR CP8.8.
+2. Sau merge CP8.8: đưa worktree web lên commit mới và khởi động lại web; dọn worktree `../youtube-auto-short-hashtags`, nhánh `wip/playlist-hashtags` (HUMAN LEAD quyết).
+3. Việc kế tiếp HUMAN LEAD chọn: CP8.4 upload YouTube, CP9, CP10.
 
 Đây là PROPOSED, không authorize implementation tiếp theo.
 

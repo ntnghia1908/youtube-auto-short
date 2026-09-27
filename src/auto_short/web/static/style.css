@@ -135,7 +135,16 @@ summary { cursor: pointer; color: var(--muted); }
 .deleted-box summary { padding: .5rem 0; }
 .deleted-item { display: grid; gap: .2rem; padding: .5rem .2rem; }
 .pl-entry.deleted .pl-state { color: var(--muted); }
+.ht-chips { list-style: none; padding: 0; margin: .4rem 0; display: grid; gap: .3rem; }
+.ht-chip { display: flex; align-items: center; gap: .3rem; }
+.ht-tag { flex: 1; min-width: 0; font-weight: 600; word-break: break-word; }
+.ht-add { display: flex; gap: .4rem; }
+.ht-add input { flex: 1; min-width: 0; }
+.ht-preview-text { margin: 0; padding: .5rem; background: #f7f7f5; border-radius: 6px; word-break: break-word; }
 @media (max-width: 640px) {
+  .ht-chip .btn { min-width: 40px; }
+  .ht-add { flex-wrap: wrap; }
+  .ht-add .btn { flex: 1 1 100%; }
   .table-wrap { display: none; }
   .ep-cards { display: grid; gap: .5rem; }
   .btn { min-height: 40px; }

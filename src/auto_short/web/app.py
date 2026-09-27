@@ -62,6 +62,10 @@ class PublishedIn(BaseModel):
     value: StrictBool  # JSON true / false only
 
 
+class HashtagsIn(BaseModel):
+    hashtags: list[str] = Field(max_length=100)
+
+
 class TitleIn(BaseModel):
     """Exactly one action: ``set`` (manual text), ``alternative`` (1-based AI alternative) or ``reset: true``."""
 
@@ -380,6 +384,42 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
         return {"playlist_id": playlist_id, "count": len(doc["entries"]), "added": added}
 
+    @app.put("/api/playlists/{playlist_id}/hashtags")
+    def api_playlist_hashtags(playlist_id: str, body: HashtagsIn):
+        """Per-bộ kinh hashtags (full ordered list); no job, allowed while jobs run."""
+        if _playlist_or_404(playlist_id) is None:
+            return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
+        try:
+            doc = playlists.set_hashtags(playlist_id, body.hashtags)
+        except PlaylistError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=422)
+        except FileNotFoundError:
+            return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
+        tags, custom = playlists.effective_hashtags(doc)
+        return {"playlist_id": playlist_id, "hashtags": tags, "hashtags_custom": custom}
+
+    @app.delete("/api/playlists/{playlist_id}/hashtags")
+    def api_playlist_hashtags_reset(playlist_id: str):
+        if _playlist_or_404(playlist_id) is None:
+            return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
+        try:
+            doc = playlists.set_hashtags(playlist_id, None)
+        except FileNotFoundError:
+            return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
+        tags, custom = playlists.effective_hashtags(doc)
+        return {"playlist_id": playlist_id, "hashtags": tags, "hashtags_custom": custom}
+
+    @app.post("/api/playlists/{playlist_id}/hashtags/preview")
+    def api_playlist_hashtags_preview(playlist_id: str, body: HashtagsIn):
+        """Copy text of the playlist's longest processed title (or a 60-char sample) with these tags."""
+        doc = _playlist_or_404(playlist_id)
+        if doc is None:
+            return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
+        try:
+            return playlists.preview(doc, body.hashtags)
+        except PlaylistError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=422)
+
     @app.delete("/api/playlists/{playlist_id}")
     def api_playlist_delete(playlist_id: str):
         """Only the stored list; processed episodes stay (L1)."""
@@ -392,7 +432,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     def api_episode(episode_id: str):
         if not ep.valid_episode_id(episode_id):
             return JSONResponse({"detail": "không có episode này"}, status_code=404)
-        view = ep.episode_view(config, episode_id)
+        view = ep.episode_view(config, episode_id, hashtags=playlists.hashtags_for(episode_id))
         job = runner.latest(episode_id)
         if view is None:
             if job is None:

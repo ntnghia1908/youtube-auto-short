@@ -827,6 +827,7 @@ const AutoShort = (() => {
       applyPlFilter();
     }));
     $("#pl-refresh").addEventListener("click", refreshPlaylist);
+    initHashtags();
     $("#pl-delete").addEventListener("click", deletePlaylist);
     loadPlaylist();
     checkDisk();
@@ -866,6 +867,99 @@ const AutoShort = (() => {
     });
   }
 
+  // Per-bộ kinh hashtags (bổ sung HUMAN LEAD 2026-09-27): chips in order, add / remove / move, preview.
+  let htTags = null; // working list, without "#"
+  let htTimer = null;
+
+  function htMessage(text, cls) {
+    const m = $("#ht-msg");
+    m.textContent = text;
+    m.className = "small " + (cls || "");
+    m.hidden = !text;
+  }
+
+  function htNormalize(text) { // mirror of review.names.hashtag (the server re-checks)
+    const body = [...(text || "").normalize("NFC")].filter((c) => /[\p{L}\p{N}]/u.test(c)).join("");
+    return body || null;
+  }
+
+  function htRender() {
+    const ul = $("#ht-chips");
+    ul.replaceChildren(...htTags.map((t, i) => {
+      const up = el("button", { class: "btn small", type: "button", text: "↑", "aria-label": "Lên", disabled: i === 0 });
+      const down = el("button", { class: "btn small", type: "button", text: "↓", "aria-label": "Xuống", disabled: i === htTags.length - 1 });
+      const rm = el("button", { class: "btn small danger", type: "button", text: "✕", "aria-label": `Bỏ #${t}` });
+      up.addEventListener("click", () => { [htTags[i - 1], htTags[i]] = [htTags[i], htTags[i - 1]]; htChanged(); });
+      down.addEventListener("click", () => { [htTags[i + 1], htTags[i]] = [htTags[i], htTags[i + 1]]; htChanged(); });
+      rm.addEventListener("click", () => { htTags.splice(i, 1); htChanged(); });
+      return el("li", { class: "ht-chip" }, el("span", { class: "ht-tag", text: `#${t}` }), up, down, rm);
+    }));
+    if (!htTags.length) ul.replaceChildren(el("li", { class: "muted small", text: "(không có hashtag)" }));
+  }
+
+  function htChanged() {
+    htRender();
+    clearTimeout(htTimer);
+    htTimer = setTimeout(htPreview, 250);
+  }
+
+  async function htPreview() {
+    try {
+      const p = await api(`/api/playlists/${encodeURIComponent(playlistId)}/hashtags/preview`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ hashtags: htTags }) });
+      $("#ht-preview-label").textContent = p.title_is_real ? `Xem trước (tiêu đề dài nhất của bộ kinh, ${p.chars}/${p.max_chars} ký tự):`
+        : `Xem trước (tiêu đề mẫu 60 ký tự, ${p.chars}/${p.max_chars} ký tự):`;
+      $("#ht-preview").textContent = p.copy_text;
+      const dr = $("#ht-dropped");
+      dr.hidden = !p.dropped.length;
+      dr.textContent = p.dropped.length ? `Bị bỏ vì quá 100 ký tự: ${p.dropped.join(" ")}` : "";
+    } catch (e) { $("#ht-preview").textContent = e.message; }
+  }
+
+  function initHashtags() {
+    const input = $("#ht-input");
+    input.addEventListener("input", () => {
+      const n = htNormalize(input.value);
+      $("#ht-norm").hidden = !input.value.trim();
+      $("#ht-norm").textContent = n ? `Sẽ thêm: #${n}` : "Không có chữ / số nào";
+    });
+    const add = () => {
+      const n = htNormalize(input.value);
+      if (!n) { htMessage("Hashtag rỗng", "error"); return; }
+      if (htTags.some((t) => t.toLowerCase() === n.toLowerCase())) { htMessage(`#${n} đã có`, "error"); return; }
+      if (htTags.length >= 15) { htMessage("Tối đa 15 hashtag", "error"); return; }
+      htTags.push(n);
+      input.value = "";
+      $("#ht-norm").hidden = true;
+      htMessage("", "");
+      htChanged();
+    };
+    $("#ht-add").addEventListener("click", add);
+    input.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); add(); } });
+    $("#ht-save").addEventListener("click", async () => {
+      try {
+        const r = await api(`/api/playlists/${encodeURIComponent(playlistId)}/hashtags`, {
+          method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ hashtags: htTags }) });
+        htLoad(r);
+        htMessage("Đã lưu", "ok");
+      } catch (e) { htMessage(e.message, "error"); }
+    });
+    $("#ht-reset").addEventListener("click", async () => {
+      if (!confirm("Khôi phục hashtag mặc định (#bộ kinh + danh sách chung)?")) return;
+      try {
+        const r = await api(`/api/playlists/${encodeURIComponent(playlistId)}/hashtags`, { method: "DELETE" });
+        htLoad(r);
+        htMessage("Đã khôi phục mặc định", "ok");
+      } catch (e) { htMessage(e.message, "error"); }
+    });
+  }
+
+  function htLoad(d) {
+    htTags = d.hashtags.map((t) => t.replace(/^#/, ""));
+    $("#ht-state").textContent = d.hashtags_custom ? "riêng bộ kinh này" : "mặc định";
+    htChanged();
+  }
+
   async function processEntry(e, btn) {
     if (e.action === "reprocess" && !confirm(`Xử lý lại "${e.title || e.video_id}"?\n\n` +
       "Dữ liệu tập này đã bị xóa: sẽ tải lại video (≈ 700 MB) và chạy lại từ đầu (≈ 25 phút); " +
@@ -902,6 +996,7 @@ const AutoShort = (() => {
     }
     document.title = `${d.title || d.id} — Auto Short`;
     $("#pl-title").textContent = d.title || d.id;
+    if (htTags === null) htLoad(d); // not while the user edits
     $("#pl-meta").replaceChildren(document.createTextNode(`${d.count} tập · lấy danh sách lúc ${fmtTime(d.fetched_at)} · `),
       el("a", { href: d.url, target: "_blank", rel: "noopener", text: "mở trên YouTube" }));
     document.querySelectorAll("#pl-filters [data-filter]").forEach((b) => { b.querySelector(".n").textContent = d.counts[b.dataset.filter]; });

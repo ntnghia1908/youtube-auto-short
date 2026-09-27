@@ -23,6 +23,7 @@ from pathlib import Path
 
 from ..config import Config
 from ..review import ReviewError, episode_complete, publish_status, read_archive, read_publish, read_tombstone
+from ..review.names import MAX_COPY_CHARS, copy_text, hashtag, hashtags
 from ..review.publish import PUBLISH_NAME
 from ..workspace import DONE, Workspace, WorkspaceError, atomic_write_json
 from . import episodes as ep
@@ -55,8 +56,39 @@ def group_of(state: str, complete: bool) -> str | None:
 Lister = Callable[[str, Config], dict]  # (playlist url, config) -> yt-dlp flat info {"id", "title", "entries"}
 
 
+MAX_HASHTAGS = 15
+SAMPLE_TITLE = "Tiêu đề mẫu dài sáu mươi ký tự để xem trước hashtag trên YouTube"[:60]
+
+
 class PlaylistError(Exception):
     """Listing failed or the stored document is invalid (user-facing message)."""
+
+
+def normalize_hashtags(values: object) -> list[str]:
+    """Per-playlist hashtag list (bổ sung HUMAN LEAD 2026-09-27): each value -> the ``hashtag()`` form, stored
+    without ``#``; empty, duplicate (case-insensitive) or more than 15 tags -> PlaylistError (422)."""
+    if not isinstance(values, list) or not all(isinstance(v, str) for v in values):
+        raise PlaylistError("hashtags phải là danh sách chuỗi")
+    out, seen = [], set()
+    for raw in values:
+        tag = hashtag(raw)
+        if tag is None:
+            raise PlaylistError(f"hashtag rỗng sau khi bỏ khoảng trắng / dấu câu: {raw!r}")
+        if tag.casefold() in seen:
+            raise PlaylistError(f"hashtag trùng: {tag}")
+        seen.add(tag.casefold())
+        out.append(tag[1:])
+    if len(out) > MAX_HASHTAGS:
+        raise PlaylistError(f"tối đa {MAX_HASHTAGS} hashtag")
+    return out
+
+
+def custom_hashtags(doc: dict) -> list[str] | None:
+    """The playlist's stored hashtag list (H1), or None (default) when absent or not a list of strings."""
+    tags = doc.get("hashtags")
+    if isinstance(tags, list) and all(isinstance(t, str) for t in tags):
+        return list(tags)
+    return None
 
 
 def ytdlp_list(url: str, config: Config) -> dict:
@@ -205,8 +237,69 @@ class PlaylistStore:
         before = {e.get("video_id") for e in old["entries"]}
         added = [e["video_id"] for e in doc["entries"] if e.get("video_id") and e["video_id"] not in before]
         with self._lock:
+            # the user's hashtags survive "Cập nhật danh sách" (H5); re-read under the lock: saved during the fetch
+            current = self.load(playlist_id)
+            if current is not None and "hashtags" in current:
+                doc["hashtags"] = current["hashtags"]
             atomic_write_json(self.path(playlist_id), doc)
         return doc, added
+
+    # --- hashtags (bổ sung HUMAN LEAD 2026-09-27) -----------------------------------------------------
+
+    def set_hashtags(self, playlist_id: str, values: list[str] | None) -> dict:
+        """Store the playlist's full ordered hashtag list (``None`` = back to the default: field removed)."""
+        tags = normalize_hashtags(values) if values is not None else None
+        with self._lock:
+            doc = self.load(playlist_id)
+            if doc is None:
+                raise FileNotFoundError(playlist_id)
+            doc.pop("hashtags", None)
+            if tags is not None:
+                doc["hashtags"] = tags
+            atomic_write_json(self.path(playlist_id), doc)
+        return doc
+
+    def hashtags_for(self, video_id: str) -> list[str] | None:
+        """Custom hashtags of the first stored playlist (by playlist id) listing ``video_id`` that has a custom
+        list (H4); None -> default (#<series> + ``[web] hashtags``)."""
+        for doc in self.all():
+            tags = custom_hashtags(doc)
+            if tags is not None and any(e.get("video_id") == video_id for e in doc["entries"]):
+                return tags
+        return None
+
+    def effective_hashtags(self, doc: dict) -> tuple[list[str], bool]:
+        """(tags with ``#``, custom?) of a playlist: custom list, else ``#<series>`` of its first processed episode
+        + ``[web] hashtags``."""
+        tags = custom_hashtags(doc)
+        if tags is not None:
+            return [f"#{t}" for t in tags], True
+        series = None
+        for e in doc["entries"]:
+            if e.get("video_id"):
+                series = ep._series(self._config, e["video_id"])
+                if series:
+                    break
+        return hashtags(series, tuple(self._config.web.hashtags)), False
+
+    def sample_title(self, doc: dict) -> tuple[str, bool]:
+        """Longest title in the files of the playlist's processed episodes, else a 60-char sample."""
+        best = ""
+        for e in doc["entries"]:
+            rm = ep._render_manifest(self._config, e["video_id"]) if e.get("video_id") else None
+            for s in (rm or {}).get("shorts", []):
+                t = s.get("title") if isinstance(s, dict) and s.get("status") == "rendered" else None
+                if isinstance(t, str) and len(t) > len(best):
+                    best = t
+        return (best, True) if best else (SAMPLE_TITLE, False)
+
+    def preview(self, doc: dict, values: list[str] | None) -> dict:
+        tags = [f"#{t}" for t in normalize_hashtags(values)] if values is not None \
+            else self.effective_hashtags(doc)[0]
+        title, real = self.sample_title(doc)
+        text, kept = copy_text(title, None, [t[1:] for t in tags])
+        return {"hashtags": tags, "title": title, "title_is_real": real, "copy_text": text, "chars": len(text),
+                "max_chars": MAX_COPY_CHARS, "dropped": tags[len(kept):]}
 
     def remove(self, playlist_id: str) -> bool:
         """"Xóa bộ kinh": only the stored list; processed episodes stay."""
@@ -253,9 +346,10 @@ class PlaylistStore:
             if st["group"]:
                 counts[st["group"]] += 1
             entries.append({**e, **st})
+        tags, custom = self.effective_hashtags(doc)
         return {"id": doc["playlist_id"], "title": doc.get("title"), "url": doc.get("url"),
                 "fetched_at": doc.get("fetched_at"), "count": len(doc["entries"]), "entries": entries,
-                "counts": counts}
+                "counts": counts, "hashtags": tags, "hashtags_custom": custom}
 
     def summary(self, doc: dict, jobs: dict[str, dict]) -> dict:
         v = self.view(doc, jobs)

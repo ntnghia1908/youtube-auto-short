@@ -115,7 +115,8 @@ về") or the zip ticks it. Xong episodes are suggested for clean-up in the stor
 (`work/_deleted/<id>.json`) so a bộ kinh still counts it ("✔ Xong (đã xóa dữ liệu)", "Xử lý lại" asks first);
 deleted single episodes are listed under "Đã xóa" on the home page ("Xóa khỏi lịch sử" drops the record). The
 "Copy" button next to a Short's title copies the title plus hashtags (`#<series>` + `[web] hashtags`), kept within
-YouTube's 100-character title limit.
+YouTube's 100-character title limit. A bộ kinh page can set its own ordered hashtag list (CP8.8, "Hashtag khi Copy
+tiêu đề": add / remove / reorder, preview, "Khôi phục mặc định"), used for every episode of that bộ kinh.
 
 Storage tab (CP8.6, "Bộ nhớ" in the top bar, `/storage`): free / used space of the drive holding `work/` and
 `output/`, the size of every episode (source video / Shorts / other) and of the Whisper models, and clean-up
