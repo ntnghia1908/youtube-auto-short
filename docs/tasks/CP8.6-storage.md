@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: IN_PROGRESS
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -81,7 +81,7 @@ Thêm thao tác xóa dữ liệu → manual test là gate.
   - UI: trang `storage.html` (thanh ổ, gợi ý + nút "Làm" có xác nhận, bảng từng tập, cache model), link "Bộ nhớ" + banner đỏ trên mọi trang, ghi chú / ẩn chức năng trên tập archived.
   - Docs: CP8.3 record W4, W7, W9 + số đo + giới hạn; pointer ở CP2 D4, CP7 R10, CP8.2 (hàm dùng chung); project profile; README.
 - Tests: `pytest -q` 563 passed (mới `tests/test_storage_cp86.py` 19: kích thước so `du -sb`, trạng thái, 3 luật gợi ý + ưu tiên với "now" giả, ngưỡng cảnh báo / chặn với disk usage giả, cache 30 s, dọn nguồn + chặn review/render/ingest, nguồn local / render chưa xong, xóa Short trên tập archived, route + 409 + 507). `node scripts/framework-check.mjs` PASS. Chạy thật trên bản sao scratch (hardlink) của tập 29 + `rbjfCfFq3Dk` + 2 workspace giả, server `127.0.0.1:8081`: AC1 (lệch `du -sb` 0 %), AC2 (luật 1 và 3), AC3 (giải phóng 678 949 583 B ≈ 648 MiB, 20 Short sha256 không đổi và tải được, 5 thao tác → 409 đúng thông báo, nguồn local không bị xóa) — số đo ở `docs/decisions/CP8.3-web-contract.md` § CP8.6. Thư mục chính: 26 sha256 (mp4, manifest, video nguồn tập 29, file input local) không đổi trước/sau.
-- Review: chờ ORCHESTRATOR.
+- Review: ORCHESTRATOR review ACCEPTED (2026-09-27), không finding chặn. Chấp nhận các lựa chọn khi implement: cờ `archive.json`; xóa Short trên tập đã dọn nguồn sửa thẳng `render_manifest.json` (không khôi phục được); chặn thêm `ingest`/`render` ở CLI cho tập đã dọn (nhất quán rule S3, ghi CP2 D4 / CP7 R10); ngưỡng là hằng số. Chờ manual test HUMAN LEAD.
 - Important findings / decisions:
   - Cờ archived = file `work/<id>/archive.json` (không dùng `publish.json`: đây là trạng thái pipeline). File hỏng vẫn coi là archived.
   - Xóa Short trên tập archived phải bỏ qua stage render (không có nguồn): ghi `review.json` + sửa trực tiếp `render_manifest.json` (entry `skipped`/`rejected`, stats) + xóa mp4; không khôi phục được.
