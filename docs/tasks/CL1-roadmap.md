@@ -1,5 +1,35 @@
 # CL1 Roadmap — Chinese Learning
 
+## Status / Approval
+
+- Status: APPROVED
+- Type: DOC
+- Change class: S1
+- Owner: HUMAN LEAD
+- Execution profile: single-agent
+- Human Lead: HUMAN LEAD
+- Base commit / branch: `0a61637` / `docs/cl1-roadmap` (merged, PR #13)
+- Human Lead approval: accepted 2026-09-27 (merge PR #13) — roadmap là bản đồ thực thi, không phải approval implementation
+- Implementation authorized: NO
+
+Roadmap, không phải task contract thực thi: mỗi bước (CL1.x, G6A, G6B) cần task contract riêng được approve.
+
+## Goal
+
+Thứ tự gate và bước thực thi CL1 sau CL1.1 — xem § Product objective, § Gate order.
+
+## Scope
+
+Các gate G6A/G6B, CL1.3 (+ C10), CL1.4 và phần ngoài scope — xem § Scope guard.
+
+## Acceptance Criteria
+
+Theo từng task contract của từng bước; acceptance G6A ở § G6A.
+
+## Required verification
+
+Theo từng task contract của từng bước.
+
 ## Status
 
 - Main baseline: `0a61637` (CL1.1 merged, PR #12).
