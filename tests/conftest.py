@@ -1,10 +1,11 @@
 import shutil
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from auto_short.config import Config, IngestConfig, WorkspaceConfig
+from auto_short.config import Config, IngestConfig, RenderConfig, WorkspaceConfig
 
 
 def make_video(path: Path, seconds: int = 2, freq: int = 440) -> Path:
@@ -40,13 +41,18 @@ def video(tmp_path, _video_template) -> Path:
 
 @pytest.fixture
 def cfg(tmp_path) -> Config:
-    return Config(workspace=WorkspaceConfig(dir=tmp_path / "work"), ingest=IngestConfig())
+    return Config(workspace=WorkspaceConfig(dir=tmp_path / "work"), ingest=IngestConfig(),
+                  render=replace(RenderConfig(), output_dir=tmp_path / "output"))
 
 
 @pytest.fixture
 def config_file(tmp_path) -> Path:
     p = tmp_path / "config.toml"
-    p.write_text(f'[workspace]\ndir = "{(tmp_path / "work").as_posix()}"\n', encoding="utf-8")
+    p.write_text(
+        f'[workspace]\ndir = "{(tmp_path / "work").as_posix()}"\n'
+        f'[render]\noutput_dir = "{(tmp_path / "output").as_posix()}"\n',
+        encoding="utf-8",
+    )
     return p
 
 
