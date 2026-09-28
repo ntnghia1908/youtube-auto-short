@@ -308,11 +308,18 @@ const AutoShort = (() => {
 
   let lastData = null;
 
+  // CP8.9 A2.3: a khai thị episode says "video" where a Short episode says "Short".
+  function noun() { return lastData && lastData.kind === "khaithi" ? "video" : "Short"; }
+  function stageLabel(stage) {
+    if (stage === "render" && lastData && lastData.kind === "khaithi") return "Dựng video khai thị";
+    return STAGE_LABELS[stage] || stage || "";
+  }
+
   async function deleteEpisode() {
     const d = lastData || {};
     const name = d.title || episodeId;
     const ok = confirm(`Xóa toàn bộ tập "${name}" (${episodeId})?\n\n` +
-      "Sẽ xóa video nguồn đã tải, mọi Short và dữ liệu xử lý của tập này. " +
+      `Sẽ xóa video nguồn đã tải, mọi ${noun()} và dữ liệu xử lý của tập này. ` +
       "KHÔNG khôi phục được. (Gửi lại link sau đó = chạy lại từ đầu, AI có thể chọn clip / tiêu đề khác.)");
     if (!ok) return;
     const btn = $("#delete-episode");
@@ -399,6 +406,7 @@ const AutoShort = (() => {
   }
 
   function renderEpisode(d) {
+    lastData = d; // noun() / stageLabel() read the kind
     document.title = `${d.title || d.id} — Auto Short`;
     $("#ep-title").textContent = d.title || d.id;
     const meta = [d.id];
@@ -414,7 +422,7 @@ const AutoShort = (() => {
     if (job) for (const s of job.stages) timings[s.stage] = s;
     if (jobActive(job)) {
       if (job.status === "queued") setJobStatus(`Đang đợi trong hàng (vị trí ${job.queue_position || "?"})`, "busy");
-      else setJobStatus(`Đang chạy: ${STAGE_LABELS[job.stage] || job.stage || "…"} (bắt đầu ${fmtTime(job.started_at)})`, "busy");
+      else setJobStatus(`Đang chạy: ${stageLabel(job.stage) || "…"} (bắt đầu ${fmtTime(job.started_at)})`, "busy");
     } else if (job && job.status === "done") setJobStatus(`Xong: ${job.summary || ""} (${fmtTime(job.finished_at)})`, "ok");
     else if (job && job.status === "failed") setJobStatus(`Lỗi: ${job.error}`, "error");
     else if (job && job.status === "interrupted") setJobStatus(`Bị ngắt (${job.error}). Bấm chạy tiếp để tiếp tục.`, "error");
@@ -427,7 +435,7 @@ const AutoShort = (() => {
       const t = timings[s.stage];
       const extra = t ? (t.ran ? fmtSeconds(t.seconds) : "bỏ qua (đã có)") : "";
       return el("li", { class: "stage " + status },
-        el("span", { class: "stage-name", text: STAGE_LABELS[s.stage] || s.stage }),
+        el("span", { class: "stage-name", text: stageLabel(s.stage) }),
         el("span", { class: "stage-status", text: STATUS_LABELS[status] || status }),
         extra ? el("span", { class: "stage-time muted", text: extra }) : null,
         s.error && status === "failed" ? el("div", { class: "stage-error", text: s.error }) : null);
@@ -445,8 +453,8 @@ const AutoShort = (() => {
     an.hidden = !archived;
     if (archived) {
       an.textContent = `Đã dọn video nguồn${d.archived.freed ? ` (giải phóng ${fmtBytes(d.archived.freed)})` : ""}` +
-        `${d.archived.at ? `, ${fmtTime(d.archived.at)}` : ""}: chỉ xem / tải / đánh dấu đã đăng / xóa Short. ` +
-        "Muốn sửa tiêu đề hay khôi phục Short thì xóa tập rồi chạy lại.";
+        `${d.archived.at ? `, ${fmtTime(d.archived.at)}` : ""}: chỉ xem / tải / đánh dấu đã đăng / xóa ${noun()}. ` +
+        `Muốn sửa tiêu đề hay khôi phục ${noun()} thì xóa tập rồi chạy lại.`;
     }
     const rb = $("#resubmit");
     rb.hidden = !d.source_url || jobActive(job) || archived;
@@ -491,7 +499,7 @@ const AutoShort = (() => {
     const deleted = shorts.filter((s) => s.deleted).length;
     const sd = $("#show-deleted");
     sd.hidden = !deleted;
-    sd.textContent = showDeleted ? `Ẩn Short đã xóa (${deleted})` : `Hiện Short đã xóa (${deleted})`;
+    sd.textContent = showDeleted ? `Ẩn ${noun()} đã xóa (${deleted})` : `Hiện ${noun()} đã xóa (${deleted})`;
     for (const s of shorts) {
       const entry = cards.get(s.clip_id);
       if (!entry) continue;
@@ -515,7 +523,7 @@ const AutoShort = (() => {
     $("#header-lines").textContent = d.header ? "Header: " + d.header.join(" / ") : "";
     const notes = [];
     if (d.shorts.length && d.render_status !== "done") {
-      notes.push(`Đang hiển thị bản dựng trước (bước Dựng Short: ${STATUS_LABELS[d.render_status] || d.render_status}).`);
+      notes.push(`Đang hiển thị bản dựng trước (bước ${stageLabel("render")}: ${STATUS_LABELS[d.render_status] || d.render_status}).`);
     }
     if (d.titles_error) notes.push(`Chưa sửa title được: ${d.titles_error}`);
     if (d.publish_error) notes.push(`Không đọc được trạng thái "Đã đăng": ${d.publish_error}`);
@@ -526,7 +534,7 @@ const AutoShort = (() => {
     const grid = $("#shorts");
     if (!d.shorts.length) {
       cards.clear();
-      grid.replaceChildren(el("p", { class: "muted", text: "Chưa có Short (bước Dựng Short chưa xong)." }));
+      grid.replaceChildren(el("p", { class: "muted", text: `Chưa có ${noun()} (bước ${stageLabel("render")} chưa xong).` }));
       return;
     }
     const ids = d.shorts.map((s) => s.clip_id);
@@ -698,11 +706,11 @@ const AutoShort = (() => {
   function deleteButton(s) {
     const restore = s.deleted;
     const btn = el("button", { class: "btn small needs-idle" + (restore ? "" : " danger"), type: "button",
-      text: restore ? "Khôi phục" : "Xóa Short" });
+      text: restore ? "Khôi phục" : `Xóa ${noun()}` });
     btn.disabled = editsLocked;
     btn.addEventListener("click", async () => {
       const title = (s.title && s.title.text) || s.clip_id;
-      if (!restore && !confirm(`Xóa Short ${s.clip_id} "${title}"?\n\nFile video bị xóa ngay để tiết kiệm bộ nhớ; ` +
+      if (!restore && !confirm(`Xóa ${noun()} ${s.clip_id} "${title}"?\n\nFile video bị xóa ngay để tiết kiệm bộ nhớ; ` +
         (archived ? "tập đã dọn video nguồn nên KHÔNG khôi phục được." :
           "có thể khôi phục sau (dựng lại khoảng 16–40 giây, giữ tiêu đề)."))) return;
       btn.disabled = true;
@@ -921,15 +929,57 @@ const AutoShort = (() => {
     incomplete: "dở dang", complete: "Xong", unavailable: "không khả dụng", deleted: "Đã xóa dữ liệu",
   };
   let playlistId = null;
-  let plFilter = "all";
+  let plFilter = "doing"; // CP8.9 A2.1: "Đang làm" by default; the user's choice is remembered
   let plTimer = null;
+  let plDefaultsApplied = false;
+
+  // localStorage wrapped: private mode / disabled storage must never break the page.
+  function store(key, value) {
+    try {
+      if (value === undefined) return localStorage.getItem(key);
+      localStorage.setItem(key, value);
+    } catch (_) { /* ignore */ }
+    return null;
+  }
+
+  // CP8.9 A2.2: what "Xử lý" / "Xử lý lại" create (Short / khai thị + minutes), remembered by the browser.
+  function plKinds() {
+    const kinds = [...document.querySelectorAll('#pl-kinds input[name="pl-kind"]:checked')].map((b) => b.value);
+    const opts = { kinds };
+    if (kinds.includes("khaithi")) Object.assign(opts, ktMinutes("#pl-kt-min", "#pl-kt-max"));
+    return opts;
+  }
+
+  function initPlKinds() {
+    let saved = null;
+    try { saved = JSON.parse(store("autoShort.plKinds") || "null"); } catch (_) { saved = null; }
+    if (saved && Array.isArray(saved.kinds)) {
+      document.querySelectorAll('#pl-kinds input[name="pl-kind"]').forEach((b) => { b.checked = saved.kinds.includes(b.value); });
+      if (saved.min) $("#pl-kt-min").value = saved.min;
+      if (saved.max) $("#pl-kt-max").value = saved.max;
+    }
+    const changed = (ev) => {
+      const o = plKinds();
+      if (ev) store("autoShort.plKinds", JSON.stringify({ kinds: o.kinds, min: $("#pl-kt-min").value, max: $("#pl-kt-max").value }));
+      $("#pl-kt-minutes").hidden = !o.kinds.includes("khaithi");
+      $("#pl-kinds-note").hidden = o.kinds.length > 0;
+      document.querySelectorAll("#pl-entries button[data-action='process'], #pl-entries button[data-action='reprocess']")
+        .forEach((b) => { b.disabled = !o.kinds.length; });
+    };
+    document.querySelectorAll("#pl-kinds input").forEach((i) => i.addEventListener("change", changed));
+    changed();
+  }
 
   function initPlaylist() {
     playlistId = decodeURIComponent(location.pathname.split("/").filter(Boolean)[1] || "");
+    const savedFilter = store("autoShort.plFilter");
+    if (["all", "todo", "doing", "done"].includes(savedFilter)) plFilter = savedFilter;
     document.querySelectorAll("#pl-filters [data-filter]").forEach((b) => b.addEventListener("click", () => {
       plFilter = b.dataset.filter;
+      store("autoShort.plFilter", plFilter);
       applyPlFilter();
     }));
+    initPlKinds();
     $("#pl-refresh").addEventListener("click", refreshPlaylist);
     initHashtags();
     $("#pl-delete").addEventListener("click", deletePlaylist);
@@ -1068,11 +1118,12 @@ const AutoShort = (() => {
     if (e.action === "reprocess" && !confirm(`Xử lý lại "${e.title || e.video_id}"?\n\n` +
       "Dữ liệu tập này đã bị xóa: sẽ tải lại video (≈ 700 MB) và chạy lại từ đầu (≈ 25 phút); " +
       "AI có thể chọn đoạn / tiêu đề khác lần trước.")) return;
+    // CP8.9 A2.2: "Xử lý" / "Xử lý lại" follow the kind bar; A1.2: "Chạy tiếp" -> only the unfinished ones
+    const opts = e.action === "resume" ? (e.resume_kinds ? { kinds: e.resume_kinds } : null) : plKinds();
+    if (opts && !opts.kinds.length) return;
     btn.disabled = true;
     try {
-      // CP8.9 A1.2: "Xử lý" / "Xử lý lại" -> Short + khai thị (no kinds); "Chạy tiếp" -> only the unfinished ones
-      await submitUrl(`https://youtu.be/${e.video_id}`, null, null, "video",
-        e.action === "resume" && e.resume_kinds ? { kinds: e.resume_kinds } : null);
+      await submitUrl(`https://youtu.be/${e.video_id}`, null, null, "video", opts);
       loadPlaylist();
     } catch (err) {
       btn.disabled = false;
@@ -1091,7 +1142,7 @@ const AutoShort = (() => {
     if (e.shorts || e.state === "rendered" || e.state === "complete") text += ` · ${e.shorts} Short, đã đăng ${e.published}/${e.shorts}`;
     if (e.khaithi_state) { // CP8.9 A1.4: the khai thị videos of the same video, counted separately
       text += e.khaithi_videos || e.khaithi_state === "rendered" || e.khaithi_state === "complete"
-        ? ` · ${e.khaithi_videos} khai thị, đã đăng ${e.khaithi_published}/${e.khaithi_videos}`
+        ? ` · ${e.khaithi_videos} video khai thị, đã đăng ${e.khaithi_published}/${e.khaithi_videos}`
         : ` · khai thị: ${PL_STATE[e.khaithi_state] || e.khaithi_state}`;
     }
     if (e.archived) text += " · đã dọn nguồn";
@@ -1108,6 +1159,16 @@ const AutoShort = (() => {
     document.title = `${d.title || d.id} — Auto Short`;
     $("#pl-title").textContent = d.title || d.id;
     if (htTags === null) htLoad(d); // not while the user edits
+    const kd = d.khaithi_defaults; // A2.2: server defaults unless the browser remembers the user's minutes
+    if (kd && !plDefaultsApplied) {
+      plDefaultsApplied = true;
+      let saved = null;
+      try { saved = JSON.parse(store("autoShort.plKinds") || "null"); } catch (_) { saved = null; }
+      for (const [sel, v] of [["#pl-kt-min", kd.min_minutes], ["#pl-kt-max", kd.max_minutes]]) {
+        $(sel).max = kd.max_minutes_limit;
+        if (!saved || !saved.min) $(sel).value = v;
+      }
+    }
     $("#pl-meta").replaceChildren(document.createTextNode(`${d.count} tập · lấy danh sách lúc ${fmtTime(d.fetched_at)} · `),
       el("a", { href: d.url, target: "_blank", rel: "noopener", text: "mở trên YouTube" }));
     document.querySelectorAll("#pl-filters [data-filter]").forEach((b) => { b.querySelector(".n").textContent = d.counts[b.dataset.filter]; });
@@ -1120,7 +1181,8 @@ const AutoShort = (() => {
       const actions = el("div", { class: "rec-actions" });
       if (e.action) {
         const b = el("button", { class: "btn small" + (e.action === "process" ? " primary" : ""), type: "button",
-          text: { process: "Xử lý", resume: "Chạy tiếp", reprocess: "Xử lý lại" }[e.action] });
+          "data-action": e.action, text: { process: "Xử lý", resume: "Chạy tiếp", reprocess: "Xử lý lại" }[e.action] });
+        if (e.action !== "resume" && !plKinds().kinds.length) b.disabled = true;
         b.addEventListener("click", () => processEntry(e, b));
         actions.append(b);
       }

@@ -369,3 +369,33 @@ def test_playlist_resume_sends_unfinished_kinds(tcfg, tmp_path):
                                           "kinds": e["resume_kinds"]})
         assert r.status_code == 202 and [x["episode_id"] for x in r.json()["episodes"]] == [KT]
         assert c.app.state.runner.wait_idle(10)
+
+
+# --- A2 bộ kinh page (AC14) ---------------------------------------------------------------------------------------
+
+def test_playlist_kind_bar_defaults_and_page(tcfg, tmp_path):
+    from dataclasses import replace
+    make_short(tcfg, tmp_path)
+    _playlist(tcfg)
+    cfg = replace(tcfg, khaithi=replace(tcfg.khaithi, default_min_minutes=3, default_max_minutes=9))
+    with client(cfg) as c:
+        _login(c)
+        v = c.get(f"/api/playlists/{PL}").json()
+        assert v["khaithi_defaults"] == {"min_minutes": 3, "max_minutes": 9, "max_minutes_limit": 15}
+        page = c.get(f"/playlists/{PL}").text
+        assert 'id="pl-kinds"' in page and 'value="short" checked' in page and 'value="khaithi" checked' in page
+        js = c.get("/static/app.js").text
+        assert 'let plFilter = "doing"' in js and "autoShort.plFilter" in js and "autoShort.plKinds" in js
+        # "Xử lý" with the kind bar = Short only -> one job, no khai thị episode
+        r = c.post("/api/episodes", json={"url": f"https://youtu.be/{EID}", "mode": "video", "kinds": ["short"]})
+        assert [e["kind"] for e in r.json()["episodes"]] == ["short"]
+        assert c.app.state.runner.wait_idle(10)
+        assert not (Path(cfg.workspace.dir) / KT).exists()
+
+
+def test_khaithi_labels_in_ui_script(tcfg):
+    with client(tcfg) as c:
+        _login(c)
+        js = c.get("/static/app.js").text
+        assert "`Xóa ${noun()}`" in js and "Hiện ${noun()} đã xóa" in js and '"Dựng video khai thị"' in js
+        assert '"Xóa Short"' not in js

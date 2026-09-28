@@ -173,3 +173,5 @@ label.inline input { width: auto; }
 .row.even { grid-template-columns: 1fr 1fr; }
 .kind-label { display: inline-block; font-size: .75rem; padding: .05rem .45rem; border-radius: 999px; background: #e3ecff; color: #1d3f8a; font-weight: 600; }
 .episode-list a.sub-episode { padding: 0 .2rem .6rem 1rem; }
+.inline-minutes { display: inline-flex; align-items: center; gap: .25rem; font-size: .9rem; }
+.inline-minutes input { width: 4.2rem; padding: .35rem .4rem; }

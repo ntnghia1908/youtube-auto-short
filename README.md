@@ -125,8 +125,11 @@ complete teaching each, length within a chosen minute range after silence trimmi
 transcript, hardlinked / copied, nothing re-downloaded); a Short episode page has "Tạo video khai thị". Downloads
 are named `Tập<episode>_KT<NN>_<title>.mp4` / `Tập<episode>_KhaiThị.zip`; titles, delete / restore, "Đã đăng",
 archive and delete work as for Shorts. In a bộ kinh an episode with khai thị videos is "Xong" only when both its
-Shorts and its khai thị videos are published. Changing the minutes of an existing khai thị episode asks first,
-then re-runs it from analysis. CLI:
+Shorts and its khai thị videos are published; a bộ kinh page opens on "Đang làm" and has a bar choosing what
+"Xử lý" creates (Short / khai thị + minutes, remembered by the browser). For khai thị episodes, caption labels such
+as `[âm nhạc]` of at most 5 s count as pauses rather than breaks, so one video can run across them
+(`[khaithi] soft_label_max_seconds`; Shorts are unchanged). Changing the minutes of an existing khai thị episode
+asks first, then re-runs it from analysis. CLI:
 
 ```bash
 auto-short run https://youtu.be/rbjfCfFq3Dk --khai-thi --min-minutes 5 --max-minutes 10   # episode rbjfCfFq3Dk.kt

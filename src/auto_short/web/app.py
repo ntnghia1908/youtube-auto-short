@@ -439,7 +439,11 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         doc = _playlist_or_404(playlist_id)
         if doc is None:
             return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
-        return playlists.view(doc, _jobs_by_episode())
+        view = playlists.view(doc, _jobs_by_episode())
+        kc = config.khaithi  # CP8.9 A2.2: defaults of the kind bar ("Khai thị [min]–[max] phút")
+        view["khaithi_defaults"] = {"min_minutes": kc.default_min_minutes, "max_minutes": kc.default_max_minutes,
+                                    "max_minutes_limit": kc.max_minutes_limit}
+        return view
 
     @app.post("/api/playlists/{playlist_id}/refresh")
     def api_playlist_refresh(playlist_id: str):
