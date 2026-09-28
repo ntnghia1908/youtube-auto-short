@@ -8,11 +8,12 @@ import sys
 from pathlib import Path
 
 from . import config as config_mod
+from . import khaithi
 from .analysis import AnalysisError, run_analysis
-from .ingest import IngestError, run_ingest
+from .ingest import IngestError, derived_episode_id, run_ingest
 from .learning.cli import cmd_learn
-from .pipeline import (PIPELINE_STAGES, PipelineInterrupted, PipelineResult, PreflightError, ollama_preflight,
-                       run_pipeline)
+from .pipeline import (PIPELINE_STAGES, PipelineError, PipelineInterrupted, PipelineResult, PreflightError,
+                       ollama_preflight, run_pipeline)
 from .render import RenderError, run_render
 from .review import ReviewError, TitlePreview, list_titles, reset_title, set_alternative, set_title
 from .selection import SelectionError, run_selection
@@ -74,6 +75,14 @@ def _build_parser() -> argparse.ArgumentParser:
                    help=f"re-run STAGE even if up to date (later stages follow as stale); "
                         f"one of: {', '.join(PIPELINE_STAGES)}")
     u.add_argument("--no-preflight", action="store_true", help="skip the Ollama host/model check")
+    u.add_argument("--khai-thi", action="store_true",
+                   help="make khai thi videos (longer, one complete teaching each) in episode <id>.kt instead of "
+                        "Shorts; with --episode-id X the episode is X.kt")
+    u.add_argument("--min-minutes", type=int, metavar="N",
+                   help="khai thi: minimum length in minutes after silence trimming (default: [khaithi] "
+                        "default_min_minutes, 5)")
+    u.add_argument("--max-minutes", type=int, metavar="M",
+                   help="khai thi: maximum length in minutes (default: [khaithi] default_max_minutes, 10)")
     u.add_argument("--config", type=Path, help="config TOML (default: ./config.toml if present)")
 
     w = sub.add_parser("web", help="web UI on the LAN (password from env AUTO_SHORT_WEB_PASSWORD; needs the "
@@ -165,15 +174,40 @@ def _print_summary(result: PipelineResult, stopped: str | None = None) -> None:
     log.info("  %-11s %-5s %9.1f s", "total", "", sum(r.seconds for r in result.stages))
 
 
+def _khaithi_episode(args: argparse.Namespace, cfg: config_mod.Config) -> str | None:
+    """CP8.9 K6: validate the minutes and write / update ``<base_id>.kt/khaithi.json``; returns the episode id
+    (None without ``--khai-thi``). Raises KhaithiError / IngestError before any stage."""
+    if not args.khai_thi:
+        if args.min_minutes is not None or args.max_minutes is not None:
+            raise khaithi.KhaithiError("--min-minutes / --max-minutes need --khai-thi")
+        return None
+    lo = args.min_minutes if args.min_minutes is not None else cfg.khaithi.default_min_minutes
+    hi = args.max_minutes if args.max_minutes is not None else cfg.khaithi.default_max_minutes
+    khaithi.check_minutes(lo, hi, cfg.khaithi.max_minutes_limit)
+    base_id = args.episode_id or derived_episode_id(args.source, cfg)
+    episode_id, changed = khaithi.prepare(cfg, base_id, lo, hi)
+    log.info("run: khai thi %d-%d minutes -> episode %s (%s)", lo, hi, episode_id,
+             f"{khaithi.KHAITHI_NAME} written" if changed else "parameters unchanged")
+    return episode_id
+
+
 def _cmd_run(args: argparse.Namespace, cfg: config_mod.Config) -> int:
     try:
-        result = run_pipeline(args.source, cfg, episode_id=args.episode_id, subtitle=args.subtitle,
+        kt_episode = _khaithi_episode(args, cfg)
+    except khaithi.KhaithiError as exc:
+        print(f"auto-short: error: {exc}", file=sys.stderr)
+        return 1
+    try:
+        result = run_pipeline(args.source, cfg, episode_id=kt_episode or args.episode_id, subtitle=args.subtitle,
                               speaker=args.speaker, series=args.series, episode=args.episode,
                               force_from=args.force_from,
                               preflight=None if args.no_preflight else ollama_preflight,
                               on_stage=lambda run: print(stage_line(run.stage, run.result), flush=True))
     except PreflightError as exc:
         print(f"auto-short: error: ollama preflight: {exc}", file=sys.stderr)
+        return 1
+    except PipelineError as exc:
+        print(f"auto-short: error: {exc}", file=sys.stderr)
         return 1
     except PipelineInterrupted as exc:
         _print_summary(exc.result, exc.stage)
@@ -237,6 +271,8 @@ def _cmd_status(args: argparse.Namespace, cfg: config_mod.Config) -> int:
     print(f"source:    {src.get('kind')} {src.get('uri')}")
     if src.get("sha256"):
         print(f"           sha256 {src['sha256']}  size {src.get('size')}")
+    kt = khaithi.read(ws.dir, cfg.khaithi.max_minutes_limit)  # CP8.9 K6; a broken file is an error
+    print(f"kind:      khai thi {kt.label} minutes (base episode {kt.base_episode_id})" if kt else "kind:      short")
     print("stages:")
     for name in STAGES:
         entry = manifest["stages"].get(name) or {}
@@ -316,6 +352,6 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_learn(args, cfg)
         return _cmd_status(args, cfg)
     except (config_mod.ConfigError, IngestError, TranscriptError, AnalysisError, SelectionError,
-            TitlingError, RenderError, ReviewError, WorkspaceError) as exc:
+            TitlingError, RenderError, ReviewError, WorkspaceError, khaithi.KhaithiError) as exc:
         print(f"auto-short: error: {exc}", file=sys.stderr)
         return 1

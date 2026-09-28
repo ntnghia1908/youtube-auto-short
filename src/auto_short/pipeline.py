@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from . import khaithi
 from .analysis import AnalysisError, run_analysis
 from .config import Config
 from .ingest import IngestError, run_ingest
@@ -25,6 +26,7 @@ from .selection import SelectionError, run_selection
 from .selection.client import resolve_host
 from .titling import TitlingError, run_titling
 from .transcript import TranscriptError, run_transcript
+from .workspace import WorkspaceError, validate_episode_id
 
 log = logging.getLogger("auto_short")
 
@@ -183,6 +185,14 @@ def run_pipeline(
     stage that finished."""
     if force_from is not None and force_from not in PIPELINE_STAGES:
         raise PipelineError(f"unknown stage {force_from!r} (one of: {', '.join(PIPELINE_STAGES)})")
+    if episode_id is not None:  # CP8.9 K1: a broken khaithi.json stops the run before any stage
+        try:
+            khaithi.read(Path(config.workspace.dir) / validate_episode_id(episode_id),
+                         config.khaithi.max_minutes_limit)
+        except khaithi.KhaithiError as exc:
+            raise PipelineError(str(exc)) from exc
+        except WorkspaceError:
+            pass  # invalid id: reported by ingest
     deps = deps or StageDeps()
     result = PipelineResult(episode_id=episode_id)
 
