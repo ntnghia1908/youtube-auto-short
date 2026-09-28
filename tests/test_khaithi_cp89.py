@@ -56,10 +56,11 @@ def _snapshot(d: Path) -> dict:
 def test_config_defaults_and_example():
     kc = Config().khaithi
     assert (kc.default_min_minutes, kc.default_max_minutes, kc.max_minutes_limit, kc.prompt_version,
-            kc.window_words_per_minute) == (4, 7, 15, "kt1", 400)
+            kc.window_words_per_minute, kc.soft_label_max_seconds) == (4, 7, 15, "kt2", 400, 5.0)
     data = tomllib.loads((ROOT / "config.example.toml").read_text(encoding="utf-8"))
     assert data["khaithi"] == {"default_min_minutes": 4, "default_max_minutes": 7, "max_minutes_limit": 15,
-                               "prompt_version": "kt1", "window_words_per_minute": 400}
+                               "prompt_version": "kt2", "window_words_per_minute": 400,
+                               "soft_label_max_seconds": 5.0}
     assert from_dict(data).khaithi == kc
 
 
@@ -146,13 +147,15 @@ def test_effective_config():
     e = khaithi.effective_config(c, KhaiThi(BASE, 5, 10))
     assert (e.analysis.min_duration, e.analysis.max_duration, e.analysis.target_min, e.analysis.target_max) == \
         (300.0, 600.0, 300.0, 600.0)
-    assert replace(e.analysis, min_duration=30.0, max_duration=180.0, target_min=60.0, target_max=90.0) == c.analysis
+    assert e.analysis.soft_label_max_seconds == 5.0
+    assert replace(e.analysis, min_duration=30.0, max_duration=180.0, target_min=60.0, target_max=90.0,
+                   soft_label_max_seconds=None) == c.analysis
     assert (e.selection.prompt_version, e.selection.max_window_words, e.selection.duration_minutes) == \
-        ("kt1", 4000, (5, 10))
+        ("kt2", 4000, (5, 10))
     assert khaithi.effective_config(c, KhaiThi(BASE, 2, 5)).selection.max_window_words == 2500  # max(2500, 2000)
     used = selection_used(e)
-    assert used["selection.duration_minutes"] == [5, 10] and used["selection.prompt_version"] == "kt1"
-    assert used["selection.prompt_sha256"] == prompt_sha256("kt1")
+    assert used["selection.duration_minutes"] == [5, 10] and used["selection.prompt_version"] == "kt2"
+    assert used["selection.prompt_sha256"] == prompt_sha256("kt2")
     assert "selection.duration_minutes" not in selection_used(c)
     # K2: [analysis] durations of a Short do not reach a khai thị episode, and vice versa
     c2 = replace(c, analysis=replace(c.analysis, min_duration=20.0, max_duration=200.0))
@@ -262,8 +265,8 @@ def test_selection_khaithi(tmp_path):
     clips = json.loads(res.path.read_text(encoding="utf-8"))
     log_doc = json.loads((ws.dir / "selection_log.json").read_text(encoding="utf-8"))
     assert len(clips["clips"]) == 1 and all(120 <= c["duration"] <= 300 for c in clips["clips"])
-    assert clips["prompt_version"] == log_doc["prompt_version"] == "kt1"
-    assert clips["prompt_sha256"] == prompt_sha256("kt1")
+    assert clips["prompt_version"] == log_doc["prompt_version"] == "kt2"
+    assert clips["prompt_sha256"] == prompt_sha256("kt2")
     assert clips["params"]["max_window_words"] == 2500  # max(2500, 400 x 5)
     assert "Thời lượng bắt buộc 2–5 phút (120–300 giây)" in log_doc["system_prompt"]
     assert client.calls[0]["messages"][0]["content"] == log_doc["system_prompt"]
@@ -578,7 +581,7 @@ def test_run_khaithi_end_to_end(long_lecture, tmp_path, monkeypatch, capsys):
     assert cand["candidates"] and all(60 <= c["duration"] <= 120 for c in cand["candidates"])
     assert cand["params"]["min_duration"] == 60.0 and cand["params"]["max_duration"] == 120.0
     assert len(clips["clips"]) == 2 and all(60 <= c["duration"] <= 120 for c in clips["clips"])
-    assert slog["prompt_version"] == "kt1" and "1–2 phút (60–120 giây)" in slog["system_prompt"]
+    assert slog["prompt_version"] == "kt2" and "1–2 phút (60–120 giây)" in slog["system_prompt"]
     assert (kt_dir / "transcript.json").read_bytes() == (base_dir / "transcript.json").read_bytes()
     assert _snapshot(base_dir) == before
     assert (sel.calls, len(renders)) == (1, 1)
@@ -599,3 +602,74 @@ def test_run_khaithi_end_to_end(long_lecture, tmp_path, monkeypatch, capsys):
     assert khaithi.read(kt_dir, 15) == KhaiThi(base_id, 1, 3)
     assert cli.main(["status", kt_id, "--config", str(config)]) == 0
     assert "kind:      khai thi 1–3 minutes" in capsys.readouterr().out
+
+
+# --- A3.1 short labels are no hard break (khai thị only; AC13) --------------------------------------------------
+
+def _labelled_lecture():
+    """12 units of 30 s speech with 4 s aligned silences. A 2.5 s ``[âm nhạc]`` label sits inside the silence
+    after u0003; a 6 s label inside the 7 s silence after u0007; a 12 s silence after u0010."""
+    segments, silences, t, n = [], [], 5.0, 1
+    for k in range(1, 13):
+        segments.append(seg(n, t, t + 30.0, " ".join(["học"] * 60))); n += 1
+        gap = 12.0 if k == 10 else 7.0 if k == 7 else 4.0
+        silences.append((t + 30.0, t + 30.0 + gap))
+        if k == 3:
+            segments.append(seg(n, t + 30.5, t + 33.0, kind="non_speech")); n += 1
+        if k == 7:
+            segments.append(seg(n, t + 30.5, t + 36.5, kind="non_speech")); n += 1
+        t += 30.0 + gap
+    return segments, silences, round(t + 5.0, 3)
+
+
+def _breaks(cand_doc):
+    return [(u["id"], u["break_after"]["kind"]) for u in cand_doc["units"] if u["break_after"]["kind"] != "silence"]
+
+
+def test_soft_label_only_for_khaithi():
+    from selection_helpers import transcript_doc
+    from auto_short.analysis.stage import analyze
+    segments, silences, duration = _labelled_lecture()
+    meta = {"duration": duration, "source": {"sha256": "ab" * 32}}
+    base = replace(Config().analysis, outro_window=5.0, min_duration=60.0, max_duration=180.0, target_min=60.0,
+                   target_max=180.0)
+    cfg = Config(analysis=base)
+    kt_cfg = khaithi.effective_config(cfg, KhaiThi(BASE, 1, 3))
+    assert kt_cfg.analysis.soft_label_max_seconds == 5.0
+    _, _, short_doc = analyze("x", transcript_doc(segments), meta, [], silences, cfg.analysis)
+    _, _, kt_doc = analyze("x.kt", transcript_doc(segments), meta, [], silences, kt_cfg.analysis)
+    # Short: every label is a hard break (unchanged); khai thị: the 2.5 s label is a silence cut
+    assert _breaks(short_doc) == [("u0003", "hard_break"), ("u0007", "hard_break"), ("u0010", "hard_break"),
+                                  ("u0012", "content_edge")]
+    assert _breaks(kt_doc) == [("u0007", "hard_break"), ("u0010", "hard_break"), ("u0012", "content_edge")]
+    spans = lambda doc, a, b: any(c["unit_ids"][0] <= a and c["unit_ids"][1] >= b for c in doc["candidates"])
+    assert spans(kt_doc, "u0003", "u0004") and not spans(short_doc, "u0003", "u0004")
+    assert not spans(kt_doc, "u0007", "u0008") and not spans(kt_doc, "u0010", "u0011")
+    assert "soft_label_max_seconds" not in short_doc["params"] and kt_doc["params"]["soft_label_max_seconds"] == 5.0
+    # the label's silence is trimmed like any pause: candidate duration counts at most max_pause of it
+    c = next(c for c in kt_doc["candidates"] if c["unit_ids"] == ["u0003", "u0004"])
+    assert c["duration"] == pytest.approx(30.0 + 1.0 + 30.0 + 0.6, abs=0.01)
+    # the threshold is in the khai thị analysis hash
+    kt6 = replace(kt_cfg, analysis=replace(kt_cfg.analysis, soft_label_max_seconds=6.0))
+    assert config_hash(analysis_used(kt6)) != config_hash(analysis_used(kt_cfg))
+    _, _, kt6_doc = analyze("x.kt", transcript_doc(segments), meta, [], silences, kt6.analysis)
+    assert _breaks(kt6_doc) == [("u0010", "hard_break"), ("u0012", "content_edge")]
+
+
+def test_soft_label_config():
+    assert from_dict({"khaithi": {"soft_label_max_seconds": 0}}).khaithi.soft_label_max_seconds == 0.0
+    with pytest.raises(ConfigError, match="khaithi.soft_label_max_seconds"):
+        from_dict({"khaithi": {"soft_label_max_seconds": -1}})
+
+
+# --- A3.2 prompt kt2 --------------------------------------------------------------------------------------------
+
+def test_prompt_kt2_default_and_kt1_unchanged():
+    assert prompt_sha256("kt1") == "86ed007703a24622cd6365891ab8c87584e453fb0b7f1b1d3a89c90f5493fb47"  # pre-A3
+    words = Config().selection.head_cut_words
+    kt1, kt2 = system_prompt("kt1", words, (4, 7)), system_prompt("kt2", words, (4, 7))
+    assert "ĐỀ XUẤT MỌI ĐOẠN ĐẠT YÊU CẦU" in kt2 and "KHÔNG chồng lấn" in kt2 and "Tối đa 12 đề xuất." in kt2
+    assert "ưu tiên đoạn tốt nhất" in kt1 and "ưu tiên đoạn tốt nhất" not in kt2
+    assert "Thà không đề xuất còn hơn đề xuất đoạn cụt ý" in kt2 and "4–7 phút (240–420 giây)" in kt2
+    assert prompt_sha256("kt2") != prompt_sha256("kt1")
+    assert Config().khaithi.prompt_version == "kt2"

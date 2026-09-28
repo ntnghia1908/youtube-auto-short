@@ -85,6 +85,9 @@ class AnalysisConfig:
     intro_window: float = 60.0
     intro_min_silence: float = 1.0
     outro_window: float = 180.0
+    # CP8.9 A3.1: a non_speech label no longer than this is not a hard break (A4 a). Never read from [analysis];
+    # set only by ``khaithi.effective_config`` for a khai thị episode (None = Short: not in the hash / params).
+    soft_label_max_seconds: float | None = None
 
 
 # B11: pure connectors cut from the start of a clip (docs/decisions/CP5-selection-contract.md).
@@ -204,8 +207,9 @@ class KhaithiConfig:
     default_min_minutes: int = 4
     default_max_minutes: int = 7
     max_minutes_limit: int = 15
-    prompt_version: str = "kt1"
+    prompt_version: str = "kt2"  # A3.2 (kt1 before)
     window_words_per_minute: int = 400
+    soft_label_max_seconds: float = 5.0  # A3.1: shorter non_speech labels are no hard break (khai thị only)
 
 
 @dataclass(frozen=True)
@@ -547,6 +551,7 @@ def _khaithi(data: dict) -> KhaithiConfig:
         max_minutes_limit=limit,
         prompt_version=_str(kt, "prompt_version", d.prompt_version, w),
         window_words_per_minute=_int(kt, "window_words_per_minute", d.window_words_per_minute, w, lo=1),
+        soft_label_max_seconds=_number(kt, "soft_label_max_seconds", d.soft_label_max_seconds, w, lo=0, hi=60),
     )
     if not cfg.default_min_minutes < cfg.default_max_minutes:
         raise ConfigError(f"{w}.default_min_minutes must be < {w}.default_max_minutes")

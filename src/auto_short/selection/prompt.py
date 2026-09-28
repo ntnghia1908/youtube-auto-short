@@ -205,6 +205,22 @@ Trả lời đúng JSON {"clips": [...]}. Không có đoạn phù hợp thì tr�
 
 PROMPTS["kt1"] = (SYSTEM_PROMPT_KT1, USER_TEMPLATE_V2)
 
+# kt2 (CP8.9 A3.2, HUMAN LEAD 2026-09-28, after kt1 gave exactly one proposal per window): kt1 with the
+# "overlap allowed / best first" rule replaced by "propose every good passage, non-overlapping if possible".
+_KT1_PROPOSALS_RULE = ("- Các đề xuất được phép chồng lấn nhau; hệ thống sẽ tự chọn. Tối đa 12 đề xuất, ưu tiên "
+                       "đoạn tốt nhất.")
+_KT2_PROPOSALS_RULE = """\
+- ĐỀ XUẤT MỌI ĐOẠN ĐẠT YÊU CẦU trong danh sách, không chỉ một đoạn tốt nhất: đọc hết danh sách từ đầu đến cuối; \
+một danh sách dài thường chứa nhiều lời khai thị trọn ý nối tiếp nhau — hãy đề xuất từng lời khai thị đó.
+- Các đề xuất nên KHÔNG chồng lấn nhau nếu có thể (đoạn sau bắt đầu từ unit sau last_unit của đoạn trước), để \
+dùng được nhiều video; chỉ chồng lấn khi không có cách chia nào khác mà vẫn trọn ý. Hệ thống sẽ tự chọn trong \
+các đề xuất.
+- Không dừng ở một đề xuất khi phần còn lại của danh sách vẫn đủ dài cho đoạn khác. Tối đa 12 đề xuất."""
+assert _KT1_PROPOSALS_RULE in SYSTEM_PROMPT_KT1
+SYSTEM_PROMPT_KT2 = SYSTEM_PROMPT_KT1.replace(_KT1_PROPOSALS_RULE, _KT2_PROPOSALS_RULE)
+
+PROMPTS["kt2"] = (SYSTEM_PROMPT_KT2, USER_TEMPLATE_V2)
+
 # Property order is the generation order: judge (topic/reason/flags) before the score.
 RESPONSE_SCHEMA = {
     "type": "object",

@@ -132,12 +132,13 @@ def write(ws_dir: Path, kt: KhaiThi) -> bool:
 
 def effective_config(config: Config, kt: KhaiThi | None) -> Config:
     """The config analysis / selection use for an episode: unchanged for a Short (``kt`` None); for a khai thị
-    episode ``[analysis]`` durations = the minutes (K2), ``[khaithi] prompt_version`` with the minutes (K3) and the
-    larger window (K4). Every other key keeps its ``[analysis]`` / ``[selection]`` value."""
+    episode ``[analysis]`` durations = the minutes (K2) and short labels are no hard break (A3.1),
+    ``[khaithi] prompt_version`` with the minutes (K3) and the larger window (K4). Every other key keeps its ``[analysis]`` / ``[selection]`` value."""
     if kt is None:
         return config
     lo, hi = 60.0 * kt.min_minutes, 60.0 * kt.max_minutes
-    analysis = replace(config.analysis, min_duration=lo, max_duration=hi, target_min=lo, target_max=hi)
+    analysis = replace(config.analysis, min_duration=lo, max_duration=hi, target_min=lo, target_max=hi,
+                       soft_label_max_seconds=config.khaithi.soft_label_max_seconds)  # A3.1
     sel = config.selection
     selection = replace(sel, prompt_version=config.khaithi.prompt_version,
                         max_window_words=max(sel.max_window_words,

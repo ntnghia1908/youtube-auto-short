@@ -61,7 +61,8 @@ class AnalysisResult:
 
 def used_config(config: Config) -> dict:
     """Every ``[analysis]`` key (A11); for a khai thị episode ``config`` is the effective config (CP8.9 K2)."""
-    return {f"analysis.{k}": v for k, v in asdict(config.analysis).items()}
+    return {f"analysis.{k}": v for k, v in asdict(config.analysis).items()
+            if not (k == "soft_label_max_seconds" and v is None)}  # CP8.9 A3.1: khai thị only
 
 
 def _sha(doc: dict) -> str:
@@ -114,13 +115,16 @@ def analyze(episode_id: str, transcript: dict, metadata: dict, changes: list[flo
     candidates = generate_candidates(units, silences, changes, shots["shots"], cfg)
     validate(candidates, units, window, silences, changes, shots["shots"], cfg)
 
+    params = {k: getattr(cfg, k) for k in PARAM_KEYS}
+    if cfg.soft_label_max_seconds is not None:  # CP8.9 A3.1 (khai thị only; a Short's params are unchanged)
+        params["soft_label_max_seconds"] = cfg.soft_label_max_seconds
     cand_doc = {
         "schema_version": SCHEMA_VERSION,
         "episode_id": episode_id,
         "transcript_sha256": transcript["transcript_sha256"],
         "shots_sha256": _sha(shots),
         "silences_sha256": _sha(sil_doc),
-        "params": {k: getattr(cfg, k) for k in PARAM_KEYS},
+        "params": params,
         "content": {"start": window.start, "end": window.end,
                     "start_reason": window.start_reason, "end_reason": window.end_reason},
         "stats": {
