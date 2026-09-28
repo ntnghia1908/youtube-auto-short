@@ -72,6 +72,10 @@ class HashtagsIn(BaseModel):
     hashtags: list[str] = Field(max_length=100)
 
 
+class SeriesIn(BaseModel):
+    series: Any = None  # CP8.11 D7: checked by the store (string, 1-100 chars after normalization) -> 422
+
+
 class TitleIn(BaseModel):
     """Exactly one action: ``set`` (manual text), ``alternative`` (1-based AI alternative) or ``reset: true``."""
 
@@ -481,6 +485,31 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
         tags, custom = playlists.effective_hashtags(doc)
         return {"playlist_id": playlist_id, "hashtags": tags, "hashtags_custom": custom}
+
+    def _series_response(playlist_id: str, value) -> JSONResponse | dict:
+        if _playlist_or_404(playlist_id) is None:
+            return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
+        try:
+            doc = playlists.set_series(playlist_id, value)
+        except PlaylistError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=422)
+        except FileNotFoundError:
+            return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
+        series = playlists.series_view(doc)["series"]
+        log.info("web: playlist %s series %s", playlist_id, repr(series) if series else "removed")
+        return {"playlist_id": playlist_id, "series": series, "series_custom": series is not None}
+
+    @app.put("/api/playlists/{playlist_id}/series")
+    def api_playlist_series(playlist_id: str, body: SeriesIn):
+        """CP8.11 D7: "Tên bộ kinh" (header fallback when no title pattern matches); no job, allowed while jobs
+        run."""
+        if body.series is None:
+            return JSONResponse({"detail": "tên bộ kinh phải là chuỗi"}, status_code=422)
+        return _series_response(playlist_id, body.series)
+
+    @app.delete("/api/playlists/{playlist_id}/series")
+    def api_playlist_series_reset(playlist_id: str):
+        return _series_response(playlist_id, None)
 
     @app.post("/api/playlists/{playlist_id}/hashtags/preview")
     def api_playlist_hashtags_preview(playlist_id: str, body: HashtagsIn):

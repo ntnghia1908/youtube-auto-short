@@ -982,6 +982,7 @@ const AutoShort = (() => {
     initPlKinds();
     $("#pl-refresh").addEventListener("click", refreshPlaylist);
     initHashtags();
+    initSeries();
     $("#pl-delete").addEventListener("click", deletePlaylist);
     loadPlaylist();
     checkDisk();
@@ -1114,6 +1115,60 @@ const AutoShort = (() => {
     htChanged();
   }
 
+  // "Tên bộ kinh" (CP8.11 D5, D7): header fallback for episodes whose video title no pattern recognizes.
+  let srEditing = false; // the input differs from the saved name: the poll must not overwrite it
+  let srLoaded = false;
+
+  function srMessage(text, cls) {
+    const m = $("#sr-msg");
+    m.textContent = text;
+    m.className = "small " + (cls || "");
+    m.hidden = !text;
+  }
+
+  function srLoad(d, force) {
+    const input = $("#sr-input");
+    $("#sr-state").textContent = d.series ? "đã đặt" : "tự nhận từ tiêu đề";
+    if (d.series_suggested !== undefined) input.placeholder = d.series_suggested || "Tên bộ kinh";
+    if (d.unrecognized !== undefined) {
+      $("#sr-unrecognized").textContent = d.unrecognized;
+      if (!srLoaded && d.unrecognized > 0 && !d.series) $("#sr-box").open = true;
+    }
+    $("#sr-reset").disabled = !d.series;
+    if (force || !srEditing) {
+      input.value = d.series || "";
+      input.dataset.saved = d.series || "";
+      srEditing = false;
+    }
+    srLoaded = true;
+  }
+
+  function initSeries() {
+    const input = $("#sr-input");
+    input.addEventListener("input", () => { srEditing = input.value !== (input.dataset.saved || ""); });
+    const save = async () => {
+      const value = input.value.normalize("NFC").split(/\s+/).filter(Boolean).join(" ");
+      if (!value) { srMessage("Tên bộ kinh rỗng — dùng \"Bỏ tên\" để bỏ", "error"); return; }
+      try {
+        const r = await api(`/api/playlists/${encodeURIComponent(playlistId)}/series`, {
+          method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ series: value }) });
+        srLoad(r, true);
+        srMessage("Đã lưu", "ok");
+      } catch (e) { srMessage(e.message, "error"); }
+    };
+    $("#sr-save").addEventListener("click", save);
+    input.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); save(); } });
+    $("#sr-reset").addEventListener("click", async () => {
+      if (!confirm("Bỏ tên bộ kinh?\n\nTập mà tiêu đề video không nhận ra tên bộ kinh sẽ không tạo được tiêu đề; " +
+        "tập đã xử lý bằng tên này sẽ tạo lại tiêu đề AI ở lần chạy sau.")) return;
+      try {
+        const r = await api(`/api/playlists/${encodeURIComponent(playlistId)}/series`, { method: "DELETE" });
+        srLoad(r, true);
+        srMessage("Đã bỏ tên", "ok");
+      } catch (e) { srMessage(e.message, "error"); }
+    });
+  }
+
   async function processEntry(e, btn) {
     if (e.action === "reprocess" && !confirm(`Xử lý lại "${e.title || e.video_id}"?\n\n` +
       "Dữ liệu tập này đã bị xóa: sẽ tải lại video (≈ 700 MB) và chạy lại từ đầu (≈ 25 phút); " +
@@ -1159,6 +1214,7 @@ const AutoShort = (() => {
     document.title = `${d.title || d.id} — Auto Short`;
     $("#pl-title").textContent = d.title || d.id;
     if (htTags === null) htLoad(d); // not while the user edits
+    srLoad(d);
     const kd = d.khaithi_defaults; // A2.2: server defaults unless the browser remembers the user's minutes
     if (kd && !plDefaultsApplied) {
       plDefaultsApplied = true;

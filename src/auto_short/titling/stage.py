@@ -40,6 +40,7 @@ from .logic import (
     validate_options,
     validate_titles,
 )
+from .playlist import playlist_header
 from .prompt import RESPONSE_SCHEMA, prompt_sha256, prompt_texts, render_user_prompt, system_prompt
 
 log = logging.getLogger("auto_short")
@@ -241,8 +242,11 @@ def run_titling(episode_id: str, config: Config, *, force: bool = False, speaker
 
     try:
         metadata = _read_json(meta_path, "ingest")
+        youtube = metadata.get("youtube")
+        video_id = youtube.get("id") if isinstance(youtube, dict) else None  # a .kt episode: its base video
         header = resolve_header(cfg.header, metadata.get("title"),
-                                {"speaker": speaker, "series": series, "episode": episode})
+                                {"speaker": speaker, "series": series, "episode": episode},
+                                playlist=lambda: playlist_header(config.workspace.dir, video_id))
     except TitlingError as exc:
         raise fail(str(exc)) from exc
 
