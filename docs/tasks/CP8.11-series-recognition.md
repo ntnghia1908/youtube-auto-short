@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: CHANGE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -101,8 +101,28 @@ Không chạm database, security model hay public API. Manual test sau automated
 ## Result
 
 - Main changes:
+  - `config.py`: `DEFAULT_TITLE_PATTERNS` (pattern CP6 gốc đứng đầu + pattern D2), `TitlingHeaderConfig.title_patterns`; parser nhận `title_patterns` (list) hoặc `title_pattern` (chuỗi, `""` = tắt), cả hai → lỗi; phần tử sai kiểu / rỗng / regex hỏng → lỗi nêu chỉ số.
+  - `titling/logic.py`: `match_title(patterns, title)` (khớp đầu tiên thắng, một match cho mọi group); `resolve_header(..., playlist=callable)` CLI > config > pattern > bộ kinh (callable chỉ được gọi khi không pattern nào khớp); message lỗi nêu `title_patterns` + gợi ý "Tên bộ kinh".
+  - `titling/playlist.py` (mới, core): `normalize_series`, `stored_series`, `playlist_header(workspace_dir, video_id)` (chỉ đọc, không lock, không import web); `PLAYLISTS_DIR` chuyển về đây, `web/playlists.py` import lại.
+  - `titling/stage.py`: truyền lookup theo `metadata.youtube.id` (tập `.kt` = video nguồn). `used_config` / hash không đổi.
+  - `web/playlists.py`: `episode_number` + `title_series` dùng danh sách; `set_series` (atomic dưới lock); refresh giữ `hashtags` + `series` (thứ tự key `…, entries, hashtags, series`); view thêm `series`, `series_suggested`, `unrecognized`.
+  - `web/app.py`: `PUT` / `DELETE /api/playlists/{pid}/series`. UI trang bộ kinh: khung "Tên bộ kinh" (placeholder gợi ý, số tập không nhận dạng, Lưu, Bỏ tên + xác nhận, poll không ghi đè ô đang sửa, ≤ 640 px nút rộng hết).
+  - `config.example.toml`, `README.md`; docs: CP6 G2 / G7 / config (+ "Sửa đổi CP8.11"), CP8.3 W7 + W10, `AUTO_SHORT_CHECKPOINT_PLAN.md` (CP8.11), project-profile.
 - Tests:
-- Review:
+  - `conda run -n auto-short python -m pytest -q` → **854 passed** (base 822 + 32 mới: `tests/test_series_cp811.py`, `tests/test_web_series_cp811.py`; fixture `tests/fixtures/cp811_titles.json` = 208 title thật của hai bộ kinh đã lưu, kèm kết quả `resolve_header` của code `7e347a3`). AC1, AC2 (80/80 title khớp pattern cũ y hệt `main`; 128/128 title dạng mới → `Thái Thượng Cảm Ứng Thiên (tập N)`), AC4–AC8.
+  - Test cũ duy nhất sửa: `tests/test_titling_logic.py` dòng `replace(H, title_pattern="")` → `replace(H, title_patterns=())` (đổi tên trường dataclass theo contract; cùng ý nghĩa "pattern tắt").
+  - `node scripts/framework-check.mjs` → PASS (AC10).
+  - AC3 hash (scratch, chỉ đọc `work/` repo chính, config repo chính): 12/12 tập có titling `done` (8 Short + 4 `.kt`) → `config_hash` code `main` = code mới = hash trong manifest (output hai lần chạy giống byte); `header.lines` = `titles.json` đã lưu 12/12.
+  - AC3 run (bản sao scratch, mp4 hardlink, json copy; `OLLAMA_HOST=http://127.0.0.1:9` đóng + `--no-preflight` ⇒ mọi lời gọi Ollama sẽ lỗi): `run https://youtu.be/7axON1RpRjo` → 6/6 stage skip, exit 0, `done (11/12 Shorts)`; `run https://youtu.be/X8ao0_7ufto --khai-thi` → 6/6 stage skip, `done (5/5 Shorts)`.
+  - AC9 (bản sao scratch `c_6QuBGFzY4.kt`, Ollama `127.0.0.1:11437`, preflight ok): titling `done`, header `HT.Tịnh Không | Thái Thượng Cảm Ứng Thiên (tập 11)` (sources series/episode `metadata`), 4/4 clip titled (4 lần gọi, 14.6 s); render chạy tiếp → `done (4/4 Shorts)` (477.7 s), exit 0.
+- Review: chưa (chờ ORCHESTRATOR / HUMAN LEAD).
 - Important findings / decisions:
+  - Ngoài scope (có sẵn ở `7e347a3`, không do CP8.11): 4 tập `.kt` làm trước commit `c76d55e` (CP8.9 A3.1) có `analysis` stale theo code hiện tại — `7axON1RpRjo.kt`, `7w4nSj3PguI.kt`, `W2d-xS4ttTw.kt`, `c_6QuBGFzY4.kt` (so hash analysis: code `main` và code mới cho cùng kết quả; `X8ao0_7ufto.kt` và mọi tập Short không stale). Hệ quả: "Chạy tiếp" `c_6QuBGFzY4.kt` (manual test mục 1) sẽ chạy lại analysis + selection (AI chọn lại đoạn), không chỉ titling — AC9 cũng vậy (analysis 95.5 s, selection 248.1 s). Chạy lại 3 tập `.kt` còn lại cũng sẽ làm lại analysis → selection → titling → render.
+  - `PUT …/series` body `{series: null}` / `{}` → 422 (không coi là xóa; xóa dùng `DELETE`).
+  - `series` trong file hỏng (không phải chuỗi / rỗng / > 100 ký tự sau chuẩn hóa) = chưa đặt (cả web lẫn titling).
+  - Khung "Tên bộ kinh" tự mở lần tải đầu khi có tập không nhận dạng và chưa đặt tên.
 - Known limitations:
-- PR:
+  - UI (lưu / bỏ tên / placeholder / poll không ghi đè) chỉ kiểm bằng test markup + JS tĩnh và API; chưa kiểm trên trình duyệt / điện thoại (manual test checklist).
+  - `episode` của entry bộ kinh đã lưu trước CP8.11 vẫn `null` tới khi "Cập nhật danh sách" (D4: không tự ghi lại file); nguồn "Tên bộ kinh" khi đó dùng `index`.
+  - Nguồn local (không `metadata.youtube.id`) không dùng được "Tên bộ kinh".
+- PR: chưa (push / PR sau READY + HUMAN LEAD approval).
