@@ -8,7 +8,7 @@ Chỉ ghi operational state không suy ra được từ Git, task contract hoặ
 
 ## Current focus
 
-Auto Short: CP8–CP8.8 đã merge (CP8.8 hashtag bộ kinh: PR #11, `fe6c3de`). CP8.4 upload YouTube: planned, chưa lên lịch.
+Auto Short: CP8–CP8.8 đã merge (CP8.8 hashtag bộ kinh: PR #11, `fe6c3de`). CP8.4 upload YouTube: BỎ QUA (HUMAN LEAD 2026-09-27, `AUTO_SHORT_CHECKPOINT_PLAN.md`); Short vẫn tải về và đăng tay.
 
 Chinese Learning (CL1, bản đồ: `docs/tasks/CL1-roadmap.md`): CL1.1 MERGED (PR #12); CL1.2 MERGED (PR #15, `38d828f`). G6A (Pinyin authority) và G6B (model dịch): PENDING HUMAN LEAD DECISION — chưa chọn model. CL1.3: PENDING G6A/G6B + C10. CL1.4: PENDING CL1.3.
 
@@ -20,7 +20,7 @@ Còn lại cục bộ: nhánh `wip/playlist-hashtags` (code dở, chưa review; 
 
 1. G6A — thí nghiệm + khuyến nghị chiến lược Pinyin authority (task contract riêng, từ `origin/main` sạch); không đổi production Pinyin trước khi HUMAN LEAD duyệt.
 2. Sau G6A: G6B → CL1.3 (+ C10) → CL1.4 theo roadmap.
-3. Auto Short tiếp theo do HUMAN LEAD chọn: CP8.4 upload YouTube, CP9, CP10.
+3. Auto Short tiếp theo do HUMAN LEAD chọn: CP9, CP10.
 
 Đây là PROPOSED, không authorize implementation tiếp theo.
 

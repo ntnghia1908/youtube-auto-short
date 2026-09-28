@@ -370,9 +370,11 @@ Scope:
 
 ---
 
-## CP8.4 — YouTube Upload (planned, not scheduled)
+## CP8.4 — YouTube Upload (skipped)
 
 > HUMAN LEAD 2026-09-27: wanted if feasible; otherwise Shorts are downloaded and uploaded by hand. Amends CP1 §2 when opened.
+>
+> **Skipped — HUMAN LEAD 2026-09-27.** Not implemented; Shorts stay downloaded and uploaded by hand (CP8.5 workflow). The notes below are kept for reference only; reopening needs a new HUMAN LEAD decision.
 
 Upload a reviewed Short to the user's own channel from the web (YouTube Data API v3, OAuth). Prerequisites and constraints are decided in its task contract: Google Cloud OAuth client created by the user, token storage (security gate), Google API dependency, daily upload quota, and API-uploaded videos from an unaudited project being locked to private.
 
