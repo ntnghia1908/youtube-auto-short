@@ -12,7 +12,7 @@ import socket
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -164,6 +164,22 @@ def _render_counts(result: PipelineResult, render_result: Any) -> None:
     result.rendered, result.clips = rendered, clips
 
 
+def _check_stages(stages: Sequence[str] | None) -> tuple[str, ...]:
+    if stages is None:
+        return PIPELINE_STAGES
+    if isinstance(stages, str):
+        stages = [stages]
+    stages = tuple(stages)
+    unknown = [s for s in stages if s not in PIPELINE_STAGES]
+    if unknown:
+        raise PipelineError(f"unknown stage {unknown[0]!r} (one of: {', '.join(PIPELINE_STAGES)})")
+    ordered = tuple(s for s in PIPELINE_STAGES if s in stages)
+    if not stages or ordered != stages:
+        raise PipelineError(f"stages must be a non-empty subset of {', '.join(PIPELINE_STAGES)} in that order, "
+                            f"without duplicates (got {', '.join(stages) or 'none'})")
+    return ordered
+
+
 def run_pipeline(
     target: str,
     config: Config,
@@ -177,14 +193,20 @@ def run_pipeline(
     preflight: Callable[[Config], None] | None = ollama_preflight,
     deps: StageDeps | None = None,
     on_stage: Callable[[StageRun], None] | None = None,
+    stages: Sequence[str] | None = None,
 ) -> PipelineResult:
     """Run the stages in order (E2). The stage ``force_from`` runs with ``force=True``; later stages re-run
     because they are stale (E5). Stops at the first stage error: the returned result has ``failed_stage`` and
-    ``error`` (E4). ``preflight`` (None = skip) runs before ingest and raises :class:`PreflightError` (E8).
-    Ctrl-C raises :class:`PipelineInterrupted` naming the running stage. ``on_stage`` is called after each
-    stage that finished."""
+    ``error`` (E4). ``preflight`` (None = skip) runs before the first stage and raises :class:`PreflightError`
+    (E8). Ctrl-C raises :class:`PipelineInterrupted` naming the running stage. ``on_stage`` is called after each
+    stage that finished. ``stages`` (None = all six; CP8.10 web lanes): a non-empty subset of
+    :data:`PIPELINE_STAGES` in pipeline order; without ``ingest`` the ``episode_id`` is required (the stages read
+    the existing workspace). Each stage still skips when up to date (CP2 D6)."""
     if force_from is not None and force_from not in PIPELINE_STAGES:
         raise PipelineError(f"unknown stage {force_from!r} (one of: {', '.join(PIPELINE_STAGES)})")
+    run_stages = _check_stages(stages)
+    if "ingest" not in run_stages and episode_id is None:
+        raise PipelineError("episode_id is required when the ingest stage is not run")
     if episode_id is not None:  # CP8.9 K1: a broken khaithi.json stops the run before any stage
         try:
             khaithi.read(Path(config.workspace.dir) / validate_episode_id(episode_id),
@@ -200,9 +222,10 @@ def run_pipeline(
     try:
         if preflight is not None:
             preflight(config)
-        log.info("run: stage review is not run; AI titles are auto-approved ([render] title_source = %r)",
-                 config.render.title_source)
-        for stage in PIPELINE_STAGES:
+        if "render" in run_stages:
+            log.info("run: stage review is not run; AI titles are auto-approved ([render] title_source = %r)",
+                     config.render.title_source)
+        for stage in run_stages:
             current = stage
             runner = deps.runners.get(stage) or _DEFAULT_RUNNERS[stage]
             force = stage == force_from
