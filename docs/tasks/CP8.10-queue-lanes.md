@@ -110,6 +110,7 @@ Chạm public API contract (trường job mới) và đổi job model — manual
     - Chậm đi khi chạy chồng (so với chạy riêng bằng CLI `--force` trên cùng workspace scratch sau khi tắt server): render khai thị 838,2 s (chồng Whisper tập 2) vs 700,9 s riêng → +20 %; analysis tập 3 69,8 s (chồng render tập 2) vs 61,5 s riêng → +13 %; render tập 2 276,8 s (chồng 79 s ingest / analysis tập 3) vs 274,2 s → +1 %; analysis khai thị 143,1 s (chồng selection, GPU ở Ollama) ≈ analysis tập 1 chạy riêng 143,4 s → không chậm. Whisper tập 2 0,565 s / giây audio (chồng render khai thị 838 s) vs tập 1 chạy riêng 0,471 → ≈ +20 % (audio khác nhau, chỉ tham khảo). Load average cao nhất 33,5 / 48 CPU.
     - `GET` trong lúc đợi (14:17:50): `/api/episodes/4oOZz2CBz3g.kt` và `/api/episodes` → `{"status": "running", "lane": "ai", "waiting": true, "queue_position": 1, "stage": "selection"}`; tập 3 lúc đầu `{"status": "queued", "lane": null, "queue_position": 3}` rồi 2, 1 (hàng `prepare`).
     - K5 thật: khai thị ingest 1,3 s (hardlink), transcript 0,02 s (copy), không tải lại.
+    - Mật khẩu: server nhận qua env; script poll đọc từ file scratch quyền 600 (`realrun/.pw`, đã xóa sau khi chạy).
     - Tắt server (SIGINT) khi không có job: thoát sạch. Cổng 8080 / worktree web không bị đụng. `work/` repo chính: danh sách `sha256sum` 256 file trước / sau giống hệt (sha256 của danh sách `7db5f3a7…61bd` cả hai lần).
 - Review: chưa (chờ ORCHESTRATOR).
 - Important findings / decisions:
