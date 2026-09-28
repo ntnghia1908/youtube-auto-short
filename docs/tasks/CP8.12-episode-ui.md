@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: CHANGE
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -92,13 +92,13 @@ Tất cả required verification phải chạy và PASS trước READY.
 
 Task không chạm database, security model hay public API contract → manual test sau automated verification là điểm danh (HUMAN LEAD, trên điện thoại).
 
-- [ ] Trang tập Short có khai thị: thanh [Shorts | Khai thị] ở đầu, Shorts tô đậm; bấm Khai thị → sang trang khai thị, Khai thị tô đậm; bấm Shorts → quay lại.
-- [ ] Cuộn xuống lưới Short: thanh vẫn ghim ở đầu màn hình, bấm được bằng ngón tay.
-- [ ] Trang tập Short chưa có khai thị: nút Khai thị mờ; bấm → mở khung "Tạo video khai thị", nhập phút được.
-- [ ] Tập đã xong: khung các bước đóng, một dòng "Xong: …"; bấm mở / đóng được, không tự bật lại sau vài giây.
-- [ ] Gửi "Chạy tiếp / chạy lại" hoặc tập đang chạy / lỗi: khung các bước tự mở, dòng trạng thái cập nhật.
-- [ ] Trang khai thị của video đã xóa tập Short (dữ liệu scratch): bấm Shorts → thông báo trên trang, không sang trang lỗi. Mở `/episodes/<id không tồn tại>` → thông báo "Tập này không còn" + link trang chủ.
-- [ ] Máy tính: như trên, không vỡ bố cục.
+- [x] Trang tập Short có khai thị: thanh [Shorts | Khai thị] ở đầu, Shorts tô đậm; bấm Khai thị → sang trang khai thị, Khai thị tô đậm; bấm Shorts → quay lại.
+- [x] Cuộn xuống lưới Short: thanh vẫn ghim ở đầu màn hình, bấm được bằng ngón tay.
+- [x] Trang tập Short chưa có khai thị: nút Khai thị mờ; bấm → mở khung "Tạo video khai thị", nhập phút được.
+- [x] Tập đã xong: khung các bước đóng, một dòng "Xong: …"; bấm mở / đóng được, không tự bật lại sau vài giây.
+- [x] Gửi "Chạy tiếp / chạy lại" hoặc tập đang chạy / lỗi: khung các bước tự mở, dòng trạng thái cập nhật.
+- [x] Trang khai thị của video đã xóa tập Short (dữ liệu scratch): bấm Shorts → thông báo trên trang, không sang trang lỗi. Mở `/episodes/<id không tồn tại>` → thông báo "Tập này không còn" + link trang chủ.
+- [x] Máy tính: như trên, không vỡ bố cục.
 
 ## Result
 
@@ -111,7 +111,7 @@ Task không chạm database, security model hay public API contract → manual t
 - Tests:
   - `tests/test_web_episode_ui_cp812.py` (7 test: HTML AC1, JS AC2/3/5/6 tĩnh, CSS AC4, dữ liệu API cho thanh, Short bị xóa / id không tồn tại; A1: HTML / JS tĩnh, dữ liệu `state` / `khaithi_state` khi job khai thị đang chạy). Toàn suite: `875 passed`.
   - Web scratch (port 8093, `work/` / `output/` tạm, không đụng repo chính / web 8080): chạy `app.js` được phục vụ trong Node với DOM giả tối thiểu (không có trình duyệt headless / jsdom trên máy, không cài thêm) — kiểm AC2, AC3 (có `source_url`), AC5 (theo cạnh, qua chuỗi trạng thái job giả; và job thật của pipeline giả bị chặn ở bước Phụ đề: khung mở + dòng "Đang tải trước: Phụ đề …", xong → khung đóng + "Xong: …"), AC6. A1: server scratch với pipeline giả chặn ở bước Phụ đề, bộ kinh 4 tập, một job khai thị đang chạy → "Đang xử lý (1)" chỉ hiện tập đó, "Đang làm (3)" giữ nguyên, lựa chọn lưu / nạp lại `running`; job xong → "Đang xử lý (0)", dòng "Không có tập nào đang xử lý", hết poll 5 s. **Chưa kiểm bằng trình duyệt thật ở 360 px / ≥ 1024 px** (sticky, không cuộn ngang, vùng bấm) — cần HUMAN LEAD / Tech Lead xem ở manual test.
-- Review: ORCHESTRATOR đọc diff `c1de0a9` (HTML / JS / CSS / test / docs) theo U1–U4, A1: không thấy lỗi; chạy lại `tests/test_web_episode_ui_cp812.py` + `tests/test_web_khaithi_cp89.py` → 32 passed. Chờ manual test AC4.
+- Review: ORCHESTRATOR đọc diff `c1de0a9` (HTML / JS / CSS / test / docs) theo U1–U4, A1: không thấy lỗi; chạy lại `tests/test_web_episode_ui_cp812.py` + `tests/test_web_khaithi_cp89.py` → 32 passed. Manual test HUMAN LEAD 2026-09-28 (web scratch 8093, điện thoại + máy tính): đạt, gồm AC4.
 - Important findings / decisions:
   - Tập Short chưa có khai thị: nút "Khai thị" là `<button>` mờ có `title` "Chưa có video khai thị — bấm để tạo"; trang khai thị không có `base_episode_id`: nút "Shorts" disabled, `title` "Không rõ tập Short của video này".
   - Trong lúc kiểm U4 đang chạy, nút "Shorts" hiển thị là link (lạc quan); lỗi mạng / lỗi khác giữ link.
