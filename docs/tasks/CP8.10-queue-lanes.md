@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: IN_PROGRESS
 - Type: CHANGE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -85,8 +85,40 @@ Chạm public API contract (trường job mới) và đổi job model — manual
 ## Result
 
 - Main changes:
+  - `pipeline.py`: `run_pipeline(…, stages=None)` — tập con khác rỗng của `PIPELINE_STAGES`, đúng thứ tự, không trùng (sai → `PipelineError`, không stage nào chạy); không có `ingest` thì bắt buộc `episode_id`; preflight chạy trước stage đầu của tập con; dòng log "review is not run" chỉ khi có `render`. CLI không đổi.
+  - `config.py`: `[web] queue_mode` = `"lanes"` (mặc định) | `"serial"`, giá trị khác → `ConfigError`; execution-only.
+  - `web/jobs.py`: `JobRunner(mode)` — 3 làn `prepare` / `ai` / `render` (`LANE_STAGES`), mỗi làn một thread + `deque` FIFO, một `Condition` chung; job đi theo `Step` (lane, callable), xong làn → cuối hàng làn kế (`waiting = true`, `stage` = stage đầu làn kế); `PREFETCH_LIMIT = 2`; `PipelineTarget` (gọi trực tiếp = chế độ serial, `lane_steps()` = 3 bước làn; làn sau dùng episode id ingest trả về; `disk_blocked` kiểm W9 ngay trước ingest; preflight đầu làn `ai`); job `render` / callable thường = một bước ở làn `render` / `prepare`; log handler theo thread ident → làn → job; `stop()` inject `KeyboardInterrupt` vào mọi thread làn đang chạy job + SIGINT tiến trình con, join tổng ≤ timeout, job đang đợi giữa hai làn → `interrupted` (`"interrupted while waiting for <lane>"`); `wait_idle` gồm mọi làn + job đợi giữa làn. Job thêm `lane`, `waiting`; `queue_position` theo hàng của làn.
+  - `web/storage.py`: `BLOCK_MESSAGE` (message 507 W9, dùng chung) + `StorageCache.block_message()`. `web/app.py`: `JobRunner(config.web.queue_mode)`, truyền `disk_blocked`; `queue_position` cũng có trong `job` của `GET /api/episodes` và entry bộ kinh.
+  - `web/static/app.js`: nhãn "đang tải trước" (làn `prepare` chạy), "đợi GPU (vị trí n)", "đợi render (vị trí n)" ở trang tập (dòng trạng thái job; stage kế hiện "đang đợi" thay vì "đang chạy" khi job đợi giữa làn), danh sách tập lẻ, trang bộ kinh (Short trước, khai thị ghi "khai thị …").
+  - Docs: CP8.3 W4 (preflight đầu làn `ai`), W5 viết lại, W7 (`lane`, `waiting`, `queue_position`), bảng `[web]`, Giới hạn đã biết; CP8 E7 (`stages`); `AUTO_SHORT_CHECKPOINT_PLAN.md` CP8.10; `config.example.toml`; project-profile (module map web); `current-state.md`.
 - Tests:
-- Review:
+  - `PYTHONPATH=<worktree>/src conda run -n auto-short python -m pytest -q` → **868 passed** (base `0e66a68`: 854 passed; +14 trong `tests/test_web_lanes_cp810.py`). Lưu ý: bản editable install của env trỏ repo chính, nên phải đặt `PYTHONPATH` tới `src` của worktree.
+  - AC1 `test_lanes_overlap_fifo_and_render_job`, `test_plain_callable_pipeline_job_runs_in_prepare`; AC2 `test_prefetch_limit`, `test_disk_block_before_ingest_fails_without_download`, `test_disk_block_rechecked_in_prepare_lane`; AC3 `test_khaithi_ingest_after_short_transcript_reuses_download` (ingest thật + downloader giả: gọi 1 lần, hardlink); AC4 `test_waiting_between_lanes_is_active`; AC5 `test_errors_end_job_in_their_lane`; AC6 `test_stop_interrupts_every_lane` (3 làn chạy + 1 job đợi); AC7 `test_serial_mode_one_job_at_a_time`, `test_serial_preflight_failure_runs_no_stage`, `test_queue_mode_config_and_app`; `stages`: `test_run_pipeline_stages_argument`; AC8 `test_lanes_artifacts_identical_to_serial` (stage thật, Ollama giả, ffmpeg thật: manifest (bỏ `started_at` / `finished_at`, path output chuẩn hóa) + sha256 mọi file `work/<id>/` và `output/<id>/` giống hệt serial).
+  - AC9: không sửa test cũ nào; mọi test web cũ chạy ở chế độ `lanes` (mặc định) và pass. Test mới + `test_web_jobs.py` chạy lặp 15 lần: 15/15 pass.
+  - `node scripts/framework-check.mjs` → PASS (exit 0).
+  - Chạy thật (web scratch `127.0.0.1:8095`, worktree `src`, config bản sao với `work/` / `output/` trong thư mục tạm, `models/` repo chính chỉ đọc, Ollama `127.0.0.1:11437`, mật khẩu qua env; `queue_mode = "lanes"`): bộ kinh "Thái Thượng Cảm Ứng Thiên" tập 1 (Short + khai thị), tập 2, tập 3 (chỉ Short), gửi cùng lúc 13:43:26. Tập 3 lần đầu lỗi `ingest: … HTTP Error 403: Forbidden` sau 2 s (YouTube; job khác không ảnh hưởng), gửi lại 14:58:07 → xong.
+
+    | Tập (thời lượng) | ingest | transcript | analysis | selection | titling | render | tổng stage | Short |
+    |---|---|---|---|---|---|---|---|---|
+    | `4oOZz2CBz3g` tập 1 (61:12) | 46,5 | 1728,3 (Whisper CPU) | 143,4 | 250,0 | 20,0 | 229,6 | 2417,9 | 7 |
+    | `4oOZz2CBz3g.kt` | 1,3 (K5 hardlink) | 0,02 (K5 copy) | 143,1 | 206,5 | 20,6 | 838,2 | 1209,7 | 6 |
+    | `Irmcm5Ep478` tập 2 (54:55) | 71,3 | 1862,1 (Whisper CPU) | 57,8 | 203,1 | 27,1 | 276,8 | 2498,2 | 10 |
+    | `E4QhRRXFbIM` tập 3 (56:41), lần 2 | 55,0 | 2,3 (phụ đề YouTube) | 69,8 | 168,4 | 27,8 | 251,1 | 574,5 | 10 |
+
+    - Tổng thời gian stage (= chạy nối tiếp) 6700 s (111,7 phút); wall time 13:43:26 → 15:07:42 = 5056 s (84,3 phút), gồm cả 7 phút tập 3 lỗi 403 chờ gửi lại → nhanh hơn 1644 s (≈ 25 %). Làn `prepare` là nút cổ chai (Whisper CPU ~29–31 phút / tập khi YouTube caption bị loại).
+    - Thời gian theo số làn chạy đồng thời (snapshot 2 s): chỉ `prepare` 2763 s; `prepare`+`ai` 273 s; cả 3 làn 228 s; `prepare`+`render` 919 s; chỉ `ai` 425 s; chỉ `render` 448 s → ≥ 2 làn chồng nhau 1420 s (28 % wall). Cửa sổ chính: 14:15:24–14:17:50 analysis khai thị ∥ selection tập 1; 14:19:55–14:23:45 Whisper tập 2 ∥ AI khai thị ∥ render tập 1; 14:23:45–14:37:43 Whisper tập 2 ∥ render khai thị; 14:58:08–14:59:27 prepare tập 3 ∥ render tập 2.
+    - Chậm đi khi chạy chồng (so với chạy riêng bằng CLI `--force` trên cùng workspace scratch sau khi tắt server): render khai thị 838,2 s (chồng Whisper tập 2) vs 700,9 s riêng → +20 %; analysis tập 3 69,8 s (chồng render tập 2) vs 61,5 s riêng → +13 %; render tập 2 276,8 s (chồng 79 s ingest / analysis tập 3) vs 274,2 s → +1 %; analysis khai thị 143,1 s (chồng selection, GPU ở Ollama) ≈ analysis tập 1 chạy riêng 143,4 s → không chậm. Whisper tập 2 0,565 s / giây audio (chồng render khai thị 838 s) vs tập 1 chạy riêng 0,471 → ≈ +20 % (audio khác nhau, chỉ tham khảo). Load average cao nhất 33,5 / 48 CPU.
+    - `GET` trong lúc đợi (14:17:50): `/api/episodes/4oOZz2CBz3g.kt` và `/api/episodes` → `{"status": "running", "lane": "ai", "waiting": true, "queue_position": 1, "stage": "selection"}`; tập 3 lúc đầu `{"status": "queued", "lane": null, "queue_position": 3}` rồi 2, 1 (hàng `prepare`).
+    - K5 thật: khai thị ingest 1,3 s (hardlink), transcript 0,02 s (copy), không tải lại.
+    - Tắt server (SIGINT) khi không có job: thoát sạch. Cổng 8080 / worktree web không bị đụng. `work/` repo chính: danh sách `sha256sum` 256 file trước / sau giống hệt (sha256 của danh sách `7db5f3a7…61bd` cả hai lần).
+- Review: chưa (chờ ORCHESTRATOR).
 - Important findings / decisions:
+  - Race tìm thấy khi test: làn `ai` lấy job khỏi hàng làm hàng ngắn lại nhưng không `notify` → làn `prepare` có thể ngủ mãi dù dưới giới hạn tải trước; đã sửa (`notify_all` sau khi lấy job) + `test_prefetch_limit` bắt được.
+  - Quyết định nhỏ khi implement (trong boundary Q0–Q8, cần ORCHESTRATOR xác nhận): `queue_position` thêm vào `job` của `GET /api/episodes` và entry bộ kinh (additive, để nhãn "đợi GPU (vị trí n)"); job đợi giữa làn khi tắt server → `interrupted` (`"interrupted while waiting for <lane>"`), job `queued` giữ `queued` như cũ; kiểm ổ W9 chạy ở đầu làn `prepare` cả khi ingest sẽ skip; chế độ `serial` không kiểm lại ổ (giữ đúng hành vi cũ); `stages` là tập con đúng thứ tự (không bắt buộc liền nhau), `force_from` ngoài `stages` không có tác dụng; callable job thường ở chế độ lanes = một bước (làn `render` cho job `render`, còn lại làn `prepare`).
+  - Ngoài scope (có sẵn trước CP8.10): fixture `cfg` trong `tests/conftest.py` để `render.output_dir` mặc định `output` (tương đối) nên `tests/test_web_jobs.py::test_pipeline_target_success_and_failure` ghi `output/abcdefghijk/` vào thư mục đang chạy pytest — chạy `pytest` trong checkout chính sẽ ghi vào `output/` thật (gitignored). Chưa sửa (ngoài scope); test mới của CP8.10 dùng `output_dir` tạm.
 - Known limitations:
-- PR:
+  - Whisper ở máy này chạy CPU (`device = "cpu"`, int8) trong làn `prepare`: làn này là nút cổ chai khi YouTube caption bị loại, và tranh CPU với render của tập khác (+20 % đo được). Hai job GPU không bao giờ chạy song song (Ollama chỉ ở làn `ai`).
+  - Hàng đợi / làn chỉ trong bộ nhớ (restart mất); không có ưu tiên job sửa title (Q3); tải trước tối đa 2 tập đợi AI + 1 tập đang chuẩn bị chiếm thêm dung lượng ổ trước khi render.
+  - Trong khoảnh khắc kết thúc job, `status` có thể đã `done` trong khi `lane` chưa về `null` (một lần poll).
+  - UI (nhãn làn) chỉ kiểm bằng API + `node --check`; chưa kiểm trên trình duyệt / điện thoại (manual test checklist). Tắt server khi nhiều làn đang chạy chỉ kiểm bằng test (AC6), chưa trên server thật.
+- PR: chưa (push / PR sau READY + HUMAN LEAD approval).

@@ -18,7 +18,7 @@ Web chạy cho HUMAN LEAD trong tmux `youtube:web` từ worktree `../youtube-aut
 
 1. G6A — thí nghiệm + khuyến nghị chiến lược Pinyin authority (task contract riêng, từ `origin/main` sạch); không đổi production Pinyin trước khi HUMAN LEAD duyệt.
 2. Sau G6A: G6B → CL1.3 (+ C10) → CL1.4 theo roadmap.
-3. Auto Short tiếp theo (PROPOSED): CP8.10 tối ưu hàng đợi (task contract riêng, decision gate CP8.3 W5); sau đó CP9, CP10.
+3. Auto Short: CP8.10 hàng đợi theo làn (`docs/tasks/CP8.10-queue-lanes.md`) đã implement + verify trên branch `feature/cp8.10-queue-lanes` (worktree `../youtube-auto-short-cp810`), chờ review ORCHESTRATOR → READY → manual test HUMAN LEAD; web 8080 vẫn ghim `716e858` (chưa có làn). Sau đó CP9, CP10.
 
 Đây là PROPOSED, không authorize implementation tiếp theo.
 
