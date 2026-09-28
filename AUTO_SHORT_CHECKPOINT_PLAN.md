@@ -399,6 +399,22 @@ Per bộ kinh hashtag list on the web (full ordered list replacing `#<series>` +
 
 ---
 
+## CP8.9 — Khai thị Videos (custom length)
+
+> HUMAN LEAD 2026-09-28 (`docs/tasks/CP8.9-khai-thi.md`, amendment A1). Contract: `docs/decisions/CP8.9-khai-thi-contract.md`.
+
+Besides Shorts, the same video yields longer "khai thị" videos (same 9:16 template, one complete teaching each, length in a chosen minute range, default 4–7 min) in a separate episode `<id>.kt` that reuses the Short episode's download and transcript. Web: "Xử lý" makes both; a bộ kinh episode is "Xong" when both are published. CLI: `run --khai-thi`.
+
+---
+
+## CP8.10 — Queue Optimisation (planned)
+
+> Planned, HUMAN LEAD 2026-09-28 (CP8.9 amendment A2.4). Not part of CP8.9; needs its own task contract and decision gate (changes the job model, `docs/decisions/CP8.3-web-contract.md` W5).
+
+Download the video + captions ahead for jobs waiting in the queue, and let the AI stages (GPU) of one video overlap with the render (CPU) of another, instead of running one whole pipeline at a time.
+
+---
+
 ## CP9 — Human Review + Batch Processing
 
 > Re-plan HUMAN LEAD 2026-09-27: phần batch mức playlist (bộ kinh: liệt kê, bấm xử lý từng tập, xếp hàng, trạng thái "Xong" suy ra khi đăng hết) kéo lên CP8.7 (`docs/tasks/CP8.7-playlist.md`, `docs/decisions/CP8.3-web-contract.md` W10). CP9 còn: tự xử lý hàng loạt, approval state, failed-item isolation đầy đủ.

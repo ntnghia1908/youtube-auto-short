@@ -41,7 +41,9 @@ from .logic import (
     unit_durations,
     validate_clips,
 )
-from .prompt import RESPONSE_SCHEMA, prompt_sha256, prompt_texts, render_user_prompt, system_prompt
+from ..khaithi import KhaithiError, load_effective
+from .prompt import (RESPONSE_SCHEMA, has_duration_placeholders, prompt_sha256, prompt_texts, render_user_prompt,
+                     system_prompt)
 
 log = logging.getLogger("auto_short")
 
@@ -77,6 +79,8 @@ def used_config(config: Config) -> dict:
         used["selection.prompt_sha256"] = prompt_sha256(cfg.prompt_version)
     except ValueError:
         used["selection.prompt_sha256"] = None
+    if cfg.duration_minutes is not None:  # CP8.9 K3: values filled into the khai thị prompt (Short: key absent)
+        used["selection.duration_minutes"] = list(cfg.duration_minutes)
     return used
 
 
@@ -151,7 +155,7 @@ def select(episode_id: str, cand_doc: dict, metadata: dict, silences_doc: dict, 
            cfg: SelectionConfig, client: ChatClient,
            sleep: Callable[[float], None] = time.sleep) -> tuple[dict, dict]:
     """Stage body without I/O: inputs -> (clips document, selection log document)."""
-    system = system_prompt(cfg.prompt_version, cfg.head_cut_words)
+    system = system_prompt(cfg.prompt_version, cfg.head_cut_words, cfg.duration_minutes)
     p_sha = prompt_sha256(cfg.prompt_version)
     cands_sha = _sha(cand_doc)
     if _sha(silences_doc) != cand_doc.get("silences_sha256"):
@@ -252,6 +256,23 @@ def run_selection(episode_id: str, config: Config, *, force: bool = False,
         raise SelectionError(str(exc)) from exc
     if manifest is None:
         raise SelectionError(f"no manifest for episode {episode_id!r} in {ws.dir}; run 'auto-short ingest' first")
+    try:  # CP8.9 K3/K4: a khai thị episode uses [khaithi] prompt_version, its minutes and a larger window
+        config, kt = load_effective(config, ws.dir)
+    except KhaithiError as exc:
+        raise SelectionError(str(exc)) from exc
+    cfg = config.selection
+    key = "khaithi.prompt_version" if kt is not None else "selection.prompt_version"
+    try:
+        khaithi_prompt = has_duration_placeholders(cfg.prompt_version)
+    except ValueError as exc:
+        raise SelectionError(f"{key}: {exc}") from exc
+    if khaithi_prompt != (kt is not None):
+        raise SelectionError(f"{key}: prompt {cfg.prompt_version!r} is " +
+                             ("a khai thi prompt (khai thi episodes only)" if khaithi_prompt else
+                              "not a khai thi prompt (use a prompt with the duration placeholders, e.g. kt1)"))
+    if kt is not None:
+        log.info("%s: khai thi %s minutes: prompt %s, max_window_words %d", STAGE, kt.label, cfg.prompt_version,
+                 cfg.max_window_words)
 
     analysis_entry = manifest["stages"].get("analysis") or {}
     meta_path, cand_path, sil_path = ws.dir / METADATA_NAME, ws.dir / CANDIDATES_NAME, ws.dir / SILENCES_NAME

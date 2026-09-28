@@ -145,6 +145,8 @@ Dùng `run_stage` của CP2 nguyên trạng:
 
 Xem `config.example.toml`: `scene_threshold`, `scale_width`, `silence_noise_db`, `silence_min` (detection) và 13 tham số ghi vào `params` (A10). Ràng buộc: `min_duration ≤ max_duration`, `target_min ≤ target_max`, `min_boundary_silence ≤ hard_break_silence`.
 
+Sửa đổi CP8.9 (HUMAN LEAD 2026-09-28): tập khai thị thay `min_duration`, `max_duration`, `target_min`, `target_max` bằng giá trị hiệu lực từ phút của nó (vào `params` và `config_hash`); các key khác giữ `[analysis]`. Canonical: `docs/decisions/CP8.9-khai-thi-contract.md` K2.
+
 ## Đo thực tế (2026-09-26, video test `rbjfCfFq3Dk`, VM 48 CPU không GPU)
 
 | Hạng mục | Kết quả |

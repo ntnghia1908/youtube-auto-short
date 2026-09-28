@@ -158,8 +158,8 @@ def test_title_write_refused_while_job_active(tcfg, episode):
         d = c.get(f"/api/episodes/{EID}").json()
         assert d["job"]["status"] in ("queued", "running")
         assert [s["rendering"] for s in d["shorts"]] == [True, False]
-        # resubmitting the URL while the render job runs -> the same job, no pipeline job
-        r = c.post("/api/episodes", json={"url": f"https://youtu.be/{EID}"})
+        # resubmitting the URL (Short) while the render job runs -> the same job, no pipeline job
+        r = c.post("/api/episodes", json={"url": f"https://youtu.be/{EID}", "kinds": ["short"]})
         assert r.status_code == 200 and r.json()["created"] is False and r.json()["job"]["kind"] == "render"
         # preview stays available
         assert c.post(f"{BASE}/k02/title/preview", json={"text": "Mỗi suy nghĩ"}).status_code == 200

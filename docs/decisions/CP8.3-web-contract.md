@@ -40,6 +40,7 @@ Implementation tham chiếu: `src/auto_short/web/` (`app.py` app factory + route
 - Bỏ mọi tham số khác (`si`, `t`, `feature`, `list`, `index`, …) và chuẩn hóa thành `https://youtu.be/<ID>`; episode id = video id (CP2 D3). Domain khác / không có id / quá 2000 ký tự → 422 với message tiếng Việt.
 - **Sửa đổi CP8.7 (L2)** (trước đó: `watch?v=ID&list=…` = một video, `playlist?list=…` → 422): `youtube.com/playlist?list=<id>` → bộ kinh (W10); `watch?v=ID&list=<id>` → hỏi (`{kind: "ask"}`), gửi lại với `mode: "video"` (tập lẻ) hoặc `"playlist"` (cả bộ kinh). `list` là Mix (`RD…`), Xem sau (`WL`), Đã thích (`LL`, `LM`) → `playlist?list=` 422; cạnh một video (`watch?v=…&list=RD…`) → coi là video. Playlist id `[A-Za-z0-9_-]{10,64}`, đúng một `list`.
 - Không nhận đường dẫn file local từ web (CLI vẫn nhận).
+- **Sửa đổi CP8.9 (HUMAN LEAD 2026-09-28, A1):** link một video tạo Short và / hoặc video khai thị (`kinds`, mặc định cả hai; phút khai thị). Canonical: `docs/decisions/CP8.9-khai-thi-contract.md` K7.
 - Form có ô tuỳ chọn `series` / `episode` (≤ 100 ký tự, trim, rỗng = không đặt) truyền thẳng vào titling (CP6 G2, như `--series` / `--episode`).
 
 ## W4. Luồng xử lý
@@ -81,6 +82,8 @@ Implementation tham chiếu: `src/auto_short/web/` (`app.py` app factory + route
 ## W7. API và file
 
 Mọi route cần cookie (W2). JSON UTF-8.
+
+**Sửa đổi CP8.9 (HUMAN LEAD 2026-09-28):** `POST /api/episodes` nhận thêm `kinds`, `min_minutes`, `max_minutes` và trả thêm `episodes: […]`; `GET /api/episodes`, `GET /api/episodes/{id}` thêm `kind`, `min_minutes`, `max_minutes`, `base_episode_id`, `khaithi_episode_id`; entry bộ kinh thêm trạng thái khai thị. Canonical: `docs/decisions/CP8.9-khai-thi-contract.md` K7, K8.
 
 | Route | Kết quả |
 |---|---|
@@ -127,6 +130,7 @@ Quyết định: `docs/tasks/CP8.5-web-review.md` X1–X4, P1–P4. Hàm thuần
 - Short: `Tập<episode>_S<NN>_<title>.mp4`. `<episode>` = `titles.json` `header.fields.episode` (vd `29`), không có → `<episode_id>` (vd `TậptHtxw6ykUmM_S01_…`). `<NN>` = vị trí clip trong `render_manifest.json` `shorts` (= thứ tự `clips.json`, CP7 R9; Short đã xóa vẫn giữ chỗ nên số không dịch), hai chữ số, ba chữ số khi ≥ 100 clip. `<title>` = `title` trong `render_manifest.json` (title trong file).
 - Làm sạch (cả `<episode>` và `<title>`): NFC; bỏ `/ \ : * ? " < > |` và ký tự điều khiển / định dạng (Unicode `Cc`, `Cf`; tab, xuống dòng → khoảng trắng); gộp khoảng trắng liên tiếp thành một, bỏ hai đầu; **giữ** khoảng trắng và dấu tiếng Việt. `<title>` cắt ≤ 150 byte UTF-8 ở ranh giới từ (một từ dài hơn → cắt ở ranh giới ký tự). Title rỗng sau khi làm sạch → `Tập<episode>_S<NN>.mp4`.
 - Zip: `Tập<episode>_Shorts.zip`, entry cùng quy tắc (Short đã xóa không có trong zip).
+- Sửa đổi CP8.9: tập khai thị dùng `Tập<episode>_KT<NN>_<title>.mp4` / `Tập<episode>_KhaiThị.zip` (`docs/decisions/CP8.9-khai-thi-contract.md` K8).
 - `Content-Disposition: attachment; filename="<ASCII>"; filename*=UTF-8''<percent-encoded>` (RFC 6266 + RFC 5987): ASCII = bỏ dấu (NFKD, `đ` → `d`), bỏ ký tự ngoài ASCII (rỗng → `download`). File trên đĩa không đổi tên (`shorts/<clip_id>.mp4`). UI đặt thuộc tính `download` của link = tên này.
 
 ### Xóa / khôi phục một Short
@@ -219,6 +223,8 @@ Quyết định: `docs/tasks/CP8.7-playlist.md` L1–L5, P1–P4. Code: `auto_sh
 ### Xử lý tập (L3)
 
 Mỗi tập có `action`: `process` ("Xử lý", `new`), `resume` ("Chạy tiếp", `failed`, `incomplete`), `reprocess` ("Xử lý lại", `deleted`: hộp xác nhận — tải lại video, chạy lại từ đầu, AI có thể chọn khác), `null`. Tóm tắt bộ kinh thêm `deleted` (số tập đã xóa dữ liệu; vẫn tính vào `processed`, `complete` khi Xong). Nút = `POST /api/episodes {url: "https://youtu.be/<video_id>", mode: "video"}`: đúng luồng tập lẻ (W4: preflight Ollama, không job trùng, 409 archived, 507 ổ < 3 GB), header lấy từ title video (CP6). Bấm nhiều tập → xếp hàng FIFO (W5). Tập đã xử lý xong → pipeline skip từng stage (CP8 E3).
+
+**Sửa đổi CP8.9 (HUMAN LEAD 2026-09-28, A1.2, A1.4):** tập có khai thị `work/<video_id>.kt/` → trạng thái dòng tập gộp Short + khai thị, "Xong" cần cả hai Xong, "Chạy tiếp" gửi `kinds` của phần chưa xong, "Xử lý" / "Xử lý lại" tạo cả hai. Canonical: `docs/decisions/CP8.9-khai-thi-contract.md` K8.
 
 ### "Xong" (L4, suy ra, không lưu)
 

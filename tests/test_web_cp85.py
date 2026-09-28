@@ -226,7 +226,8 @@ def test_delete_episode(tcfg, episode, tmp_path):
 def test_delete_episode_after_pipeline_job_forgets_it(tcfg):
     with client(tcfg) as c:
         _login(c)
-        assert c.post("/api/episodes", json={"url": "https://youtu.be/abcdefghijk"}).status_code == 202
+        assert c.post("/api/episodes", json={"url": "https://youtu.be/abcdefghijk", "kinds": ["short"]}
+                      ).status_code == 202
         assert c.app.state.runner.wait_idle(5)
         assert c.get("/api/episodes/abcdefghijk").json()["job"]["status"] == "done"
         assert c.delete("/api/episodes/abcdefghijk").status_code == 200

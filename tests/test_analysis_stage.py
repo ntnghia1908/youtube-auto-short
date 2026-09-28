@@ -84,7 +84,9 @@ def test_run_writes_three_artifacts_with_schema(cfg):
         {"path": "source.mp4", "sha256": sha256_file(ws.dir / "source.mp4")},
     ]
     assert entry["config_hash"] == config_hash(used_config(cfg))
-    assert set(used_config(cfg)) == {f"analysis.{k}" for k in cfg.analysis.__dataclass_fields__}
+    # every [analysis] key; soft_label_max_seconds is not an [analysis] key (CP8.9 A3.1: khai thị only, None here)
+    assert set(used_config(cfg)) == {f"analysis.{k}" for k in cfg.analysis.__dataclass_fields__
+                                     if k != "soft_label_max_seconds"}
 
 
 def test_no_shot_change_gives_one_shot(cfg):

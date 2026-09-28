@@ -85,6 +85,9 @@ class AnalysisConfig:
     intro_window: float = 60.0
     intro_min_silence: float = 1.0
     outro_window: float = 180.0
+    # CP8.9 A3.1: a non_speech label no longer than this is not a hard break (A4 a). Never read from [analysis];
+    # set only by ``khaithi.effective_config`` for a khai thị episode (None = Short: not in the hash / params).
+    soft_label_max_seconds: float | None = None
 
 
 # B11: pure connectors cut from the start of a clip (docs/decisions/CP5-selection-contract.md).
@@ -112,6 +115,9 @@ class SelectionConfig:
     ollama_host: str = "http://127.0.0.1:11437"
     timeout: float = 600.0
     retry_backoff: tuple[float, ...] = (5.0, 15.0)  # wait before attempt 2, 3 (last value repeats)
+    # CP8.9 K3: (min, max) minutes filled into a khai thị prompt; never read from TOML, set only by
+    # ``khaithi.effective_config`` for a khai thị episode (None = Short: not in the config hash).
+    duration_minutes: tuple[int, int] | None = None
 
 
 # G2: header fields and template (docs/decisions/CP6-titling-contract.md).
@@ -194,6 +200,19 @@ class WebConfig:
 
 
 @dataclass(frozen=True)
+class KhaithiConfig:
+    """Khai thị videos (docs/decisions/CP8.9-khai-thi-contract.md K9). Only the effective values derived from
+    these (K2-K4) enter the config hash; the defaults and the limit are execution-only."""
+
+    default_min_minutes: int = 4
+    default_max_minutes: int = 7
+    max_minutes_limit: int = 15
+    prompt_version: str = "kt2"  # A3.2 (kt1 before)
+    window_words_per_minute: int = 400
+    soft_label_max_seconds: float = 5.0  # A3.1: shorter non_speech labels are no hard break (khai thị only)
+
+
+@dataclass(frozen=True)
 class LearningConfig:
     """Chinese Learning application (docs/decisions/CL1-chinese-learning-contract.md C6, C7, C10)."""
 
@@ -226,6 +245,7 @@ class Config:
     render: RenderConfig = field(default_factory=RenderConfig)
     web: WebConfig = field(default_factory=WebConfig)
     learning: LearningConfig = field(default_factory=LearningConfig)
+    khaithi: KhaithiConfig = field(default_factory=KhaithiConfig)
 
 
 def _section(data: dict, name: str) -> dict:
@@ -518,6 +538,26 @@ def _learning(data: dict) -> LearningConfig:
     )
 
 
+KHAITHI_MAX_MINUTES = 15  # CP8.9: videos longer than 15 minutes are out of scope
+
+
+def _khaithi(data: dict) -> KhaithiConfig:
+    kt = _section(data, "khaithi")
+    d, w = KhaithiConfig(), "khaithi"
+    limit = _int(kt, "max_minutes_limit", d.max_minutes_limit, w, lo=2, hi=KHAITHI_MAX_MINUTES)
+    cfg = KhaithiConfig(
+        default_min_minutes=_int(kt, "default_min_minutes", d.default_min_minutes, w, lo=1, hi=limit - 1),
+        default_max_minutes=_int(kt, "default_max_minutes", d.default_max_minutes, w, lo=2, hi=limit),
+        max_minutes_limit=limit,
+        prompt_version=_str(kt, "prompt_version", d.prompt_version, w),
+        window_words_per_minute=_int(kt, "window_words_per_minute", d.window_words_per_minute, w, lo=1),
+        soft_label_max_seconds=_number(kt, "soft_label_max_seconds", d.soft_label_max_seconds, w, lo=0, hi=60),
+    )
+    if not cfg.default_min_minutes < cfg.default_max_minutes:
+        raise ConfigError(f"{w}.default_min_minutes must be < {w}.default_max_minutes")
+    return cfg
+
+
 def _hashtags(section: dict, default: tuple[str, ...]) -> tuple[str, ...]:
     value = section.get("hashtags", list(default))
     if not isinstance(value, list) or not all(isinstance(x, str) for x in value):
@@ -547,6 +587,7 @@ def from_dict(data: dict) -> Config:
         render=_render(data),
         web=_web(data),
         learning=_learning(data),
+        khaithi=_khaithi(data),
     )
 
 

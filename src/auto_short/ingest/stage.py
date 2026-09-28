@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from .. import hashing
+from .. import hashing, khaithi
 from ..config import Config
 from ..workspace import (
     StageError,
@@ -111,6 +113,19 @@ def _fingerprint_local(spec: SourceSpec, cache: list[hashing.FileFingerprint]) -
         raise IngestError(f"cannot read source file {path}: {exc}") from exc
 
 
+def derived_episode_id(target: str, config: Config) -> str:
+    """The CP2 D3 episode id ``run_ingest`` derives for ``target`` without ``--episode-id`` (a local file is
+    hashed, using the workspace hash cache); CP8.9 K6 appends ``.kt`` to it."""
+    try:
+        spec = classify(target)
+    except SourceError as exc:
+        raise IngestError(str(exc)) from exc
+    if spec.kind == YOUTUBE:
+        return spec.youtube_id
+    fp = _fingerprint_local(spec, _cached_fingerprints(config.workspace.dir))
+    return local_episode_id(spec.path, fp.sha256)
+
+
 def run_ingest(
     target: str,
     config: Config,
@@ -141,6 +156,10 @@ def run_ingest(
         manifest = ws.load_manifest()
     except WorkspaceError as exc:
         raise IngestError(str(exc)) from exc
+    try:  # CP8.9 K5: a khai thị episode reuses the source video of its base episode when possible
+        kt = khaithi.read(ws.dir, config.khaithi.max_minutes_limit)
+    except khaithi.KhaithiError as exc:
+        raise IngestError(str(exc)) from exc
     if manifest is not None:
         from ..review.archive import is_archived
         if is_archived(ws.dir):  # CP8.6 S3: never re-download / re-run an archived episode
@@ -166,6 +185,9 @@ def run_ingest(
     def action() -> list[str]:
         if spec.kind == LOCAL:
             return _ingest_local(ws, manifest, spec, fp)
+        base = reusable_source(root, kt.base_episode_id, spec, config) if kt is not None else None
+        if base is not None:
+            return _ingest_reused(ws, manifest, spec, base)
         return _ingest_youtube(ws, manifest, spec, config, downloader)
 
     try:
@@ -185,6 +207,94 @@ def _ingest_local(ws: Workspace, manifest: dict, spec: SourceSpec, fp: hashing.F
     atomic_write_json(ws.dir / METADATA_NAME, _metadata(ws, source, media, None))
     manifest["source"] = source
     return [METADATA_NAME]
+
+
+@dataclass(frozen=True)
+class ReusableSource:
+    """The downloaded source of a base episode that a khai thị episode may reuse (CP8.9 K5)."""
+
+    episode_id: str
+    path: Path  # work/<base_id>/source.<ext>
+    sha256: str
+    metadata: dict  # work/<base_id>/metadata.json
+
+
+def reusable_source(root: Path, base_id: str, spec: SourceSpec, config: Config) -> ReusableSource | None:
+    """K5: the base episode's YouTube download when its ingest is ``done`` for the same video id and the same
+    ``[ingest] youtube_format``, it is not archived and the file still matches the manifest sha256; else None
+    (the caller downloads as CP2 D4). Reads only: nothing in ``work/<base_id>/`` is written."""
+    from ..review.archive import is_archived
+
+    def no(reason: str) -> None:
+        log.info("ingest: base episode %s not reused (%s); downloading", base_id, reason)
+        return None
+
+    try:
+        base = Workspace(root, validate_episode_id(base_id))
+        manifest = base.load_manifest()
+    except WorkspaceError as exc:
+        return no(str(exc))
+    if manifest is None:
+        return no("no workspace")
+    if is_archived(base.dir):
+        return no("archived")
+    src = manifest.get("source") or {}
+    if src.get("kind") != YOUTUBE or youtube_video_id(src.get("uri") or "") != spec.youtube_id:
+        return no("another source")
+    entry = (manifest.get("stages") or {}).get(STAGE) or {}
+    if entry.get("status") != "done":
+        return no(f"ingest {entry.get('status', 'pending')}")
+    if entry.get("config_hash") != hashing.config_hash(_used_config(spec, config)):
+        return no("another [ingest] youtube_format")
+    rel = src.get("path")
+    if not isinstance(rel, str) or Path(rel).is_absolute() or ".." in Path(rel).parts:
+        return no("source not inside the workspace")
+    path = base.dir / rel
+    try:
+        meta = json.loads((base.dir / METADATA_NAME).read_text(encoding="utf-8"))
+        sha = hashing.sha256_file(path) if path.is_file() else None
+    except (OSError, ValueError) as exc:
+        return no(f"cannot read: {exc}")
+    if sha is None:
+        return no("source file missing")
+    if sha != src.get("sha256"):
+        return no("source sha256 differs from its manifest")
+    if not isinstance(meta, dict) or not isinstance(meta.get("youtube"), dict):
+        return no("metadata.json has no YouTube info")
+    return ReusableSource(base_id, path, sha, meta)
+
+
+def _ingest_reused(ws: Workspace, manifest: dict, spec: SourceSpec, base: ReusableSource) -> list[str]:
+    """K5: hardlink (error -> copy) the base download to ``source.<ext>`` instead of downloading; the metadata
+    keeps the base's YouTube info. The downloader is never called."""
+    final = ws.dir / f"source{base.path.suffix}"
+    try:
+        for old in ws.dir.glob("source.*"):
+            old.unlink()
+        try:
+            os.link(base.path, final)
+            how = "hardlink"
+        except OSError as exc:
+            log.info("ingest: hardlink failed (%s); copying", exc)
+            shutil.copyfile(base.path, final)
+            how = "copy"
+        if how == "hardlink":  # same inode as the file just hashed: no second full read
+            st = final.stat()
+            fp = hashing.FileFingerprint(final.resolve(), st.st_size, st.st_mtime_ns, base.sha256)
+        else:
+            fp = hashing.fingerprint(final)
+        if fp.sha256 != base.sha256:
+            raise IngestError(f"reused source {final} does not match the base sha256")
+        media = probe_mod.probe(final)
+        source = _source_entry(ws, spec, fp)
+        atomic_write_json(ws.dir / METADATA_NAME, _metadata(ws, source, media, base.metadata["youtube"]))
+        manifest["source"] = source
+        log.info("ingest: reused the source of %s (%s, no download)", base.episode_id, how)
+        return [final.name, METADATA_NAME]
+    except BaseException:
+        final.unlink(missing_ok=True)
+        (ws.dir / METADATA_NAME).unlink(missing_ok=True)
+        raise
 
 
 def _ingest_youtube(ws: Workspace, manifest: dict, spec: SourceSpec, config: Config,

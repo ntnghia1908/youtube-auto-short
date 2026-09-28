@@ -20,6 +20,15 @@
       <label for="url">Link video hoặc playlist (bộ kinh) YouTube</label>
       <input id="url" name="url" type="url" inputmode="url" required
              placeholder="https://youtu.be/… hoặc https://www.youtube.com/playlist?list=…">
+      <div class="kind-box">
+        <label class="inline"><input type="checkbox" name="kind" value="short" checked> Short</label>
+        <label class="inline"><input type="checkbox" name="kind" value="khaithi" checked> Khai thị (video dài)</label>
+      </div>
+      <div id="kt-minutes" class="row even">
+        <div><label for="kt-min">Khai thị dài từ (phút)</label><input id="kt-min" type="number" min="1" max="15" step="1" value="4" inputmode="numeric"></div>
+        <div><label for="kt-max">Đến (phút)</label><input id="kt-max" type="number" min="1" max="15" step="1" value="7" inputmode="numeric"></div>
+      </div>
+      <p class="muted small">Với link một video: tạo Short và / hoặc video khai thị (Short chạy trước). Link playlist: lưu bộ kinh, các ô này không áp dụng.</p>
       <details>
         <summary>Tuỳ chọn header (khi tên video không theo mẫu “… tập N”)</summary>
         <div class="row">

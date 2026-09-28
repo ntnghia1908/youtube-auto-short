@@ -148,6 +148,21 @@ session_days = 30                    # login cookie lifetime (days)
 # dropped from the end when title + tags exceed 100 characters).
 hashtags = ["TịnhKhông", "LờiPhậtDạy", "TịnhĐộ", "NiệmPhật"]
 
+[khaithi]
+# Khai thị videos: `auto-short run <url> --khai-thi --min-minutes N --max-minutes M` / web "Khai thị"
+# (docs/decisions/CP8.9-khai-thi-contract.md). Same 9:16 template as a Short, one complete teaching per video,
+# length in [min, max] minutes after silence trimming, in the separate episode <id>.kt.
+# Execution-only: the defaults and the limit (only the effective values below reach the config hash).
+default_min_minutes = 4
+default_max_minutes = 7
+max_minutes_limit = 15               # at most 15 (longer videos are out of scope)
+# Effective for a khai thị episode (config hash of selection): prompt and window size
+prompt_version = "kt2"               # selection prompt of khai thị episodes (text in selection/prompt.py; kt1 kept)
+window_words_per_minute = 400        # window = max([selection] max_window_words, this x max minutes)
+# Effective for a khai thị episode (config hash of analysis): a caption label such as [âm nhạc] no longer than this
+# (seconds) is a pause, not a hard break, so a khai thị video may run across it (Shorts are unchanged)
+soft_label_max_seconds = 5.0
+
 [learning]
 # Chinese Learning: `auto-short learn <url>` (docs/decisions/CL1-chinese-learning-contract.md).
 # Artifacts go to <workspace dir>/_learning/<video id>/.

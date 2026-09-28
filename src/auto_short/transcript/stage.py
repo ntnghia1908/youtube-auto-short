@@ -12,7 +12,7 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from .. import hashing
+from .. import hashing, khaithi
 from ..config import Config
 from ..workspace import (
     DONE,
@@ -149,6 +149,55 @@ def _remove_outputs(ws: Workspace) -> None:
     shutil.rmtree(ws.dir / RAW_DIR, ignore_errors=True)
 
 
+def _reuse_transcript(ws: Workspace, root: Path, base_id: str, media_sha256: str, inputs: list[dict],
+                      cfg_hash: str) -> tuple[list[str], dict] | None:
+    """CP8.9 K5: when the base episode's transcript is ``done`` for the same source sha256 (and the same subtitle
+    input) with the same transcript ``used_config``, copy ``transcript.json`` and its raw artifact byte for byte
+    into ``ws`` and return (artifacts, transcript document); else None. Reads only in ``work/<base_id>/``."""
+
+    def no(reason: str) -> None:
+        log.info("%s: base episode %s not reused (%s)", STAGE, base_id, reason)
+        return None
+
+    try:
+        base = Workspace(root, validate_episode_id(base_id))
+        manifest = base.load_manifest()
+    except WorkspaceError as exc:
+        return no(str(exc))
+    if manifest is None:
+        return no("no workspace")
+    entry = (manifest.get("stages") or {}).get(STAGE) or {}
+    if entry.get("status") != DONE:
+        return no(f"transcript {entry.get('status', 'pending')}")
+    if entry.get("config_hash") != cfg_hash:
+        return no("another [transcript] config")
+    if (entry.get("inputs") or [])[1:] != inputs[1:]:
+        return no("another subtitle input")
+    artifacts = entry.get("artifacts") or []
+    if TRANSCRIPT_NAME not in artifacts or \
+            any(Path(a).is_absolute() or ".." in Path(a).parts or not (base.dir / a).is_file() for a in artifacts):
+        return no("artifact missing")
+    try:
+        base_meta = json.loads((base.dir / METADATA_NAME).read_text(encoding="utf-8"))
+        data = {a: (base.dir / a).read_bytes() for a in artifacts}
+        doc = json.loads(data[TRANSCRIPT_NAME])
+    except (OSError, ValueError) as exc:
+        return no(f"cannot read: {exc}")
+    if not isinstance(base_meta, dict) or (base_meta.get("source") or {}).get("sha256") != media_sha256 or \
+            not isinstance(doc, dict) or doc.get("media_sha256") != media_sha256:
+        return no("another source video")
+    try:
+        _remove_outputs(ws)
+        for rel, blob in data.items():
+            atomic_write_bytes(ws.dir / rel, blob)
+    except BaseException:
+        _remove_outputs(ws)
+        raise
+    log.info("%s: reused the transcript of %s (%s/%s; no provider called)", STAGE, base_id, doc.get("source"),
+             doc.get("method"))
+    return list(artifacts), doc
+
+
 def run_transcript(
     episode_id: str,
     config: Config,
@@ -165,6 +214,10 @@ def run_transcript(
         raise TranscriptError(str(exc)) from exc
     if manifest is None:
         raise TranscriptError(f"no manifest for episode {episode_id!r} in {ws.dir}; run 'auto-short ingest' first")
+    try:
+        kt = khaithi.read(ws.dir, config.khaithi.max_minutes_limit)
+    except khaithi.KhaithiError as exc:
+        raise TranscriptError(str(exc)) from exc
 
     ingest = manifest["stages"].get("ingest") or {}
     meta_path = ws.dir / METADATA_NAME
@@ -206,6 +259,13 @@ def run_transcript(
     outcome: dict = {}
 
     def action() -> list[str]:
+        if kt is not None:  # CP8.9 K5: copy the base episode's transcript instead of calling any provider
+            reused = _reuse_transcript(ws, Path(config.workspace.dir), kt.base_episode_id, media_sha256, inputs,
+                                       cfg_hash)
+            if reused is not None:
+                artifacts, doc = reused
+                outcome.update(source=doc.get("source"), method=doc.get("method"))
+                return artifacts
         attempts: list[dict] = []
         accepted = None
         for name in ORDER:  # fixed order; first accepted wins, later providers not called

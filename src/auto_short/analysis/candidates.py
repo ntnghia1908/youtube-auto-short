@@ -103,8 +103,13 @@ def find_cut_points(segments: list[dict], silences: list[tuple[float, float]], w
     tol = _ms(cfg.align_tolerance)
     starts = sorted(_ms(s["start"]) for s in segments if s["kind"] == SPEECH)
     regions: list[Cut] = []
+    # CP8.9 A3.1 (khai thị only): a label no longer than soft_label_max_seconds is a pause, not a hard break;
+    # its audio silence (if any) is judged by the silence rules below.
+    soft = _ms(cfg.soft_label_max_seconds) if cfg.soft_label_max_seconds is not None else None
     for s in segments:
         a, b = _ms(s["start"]), _ms(s["end"])
+        if s["kind"] == NON_SPEECH and soft is not None and b - a <= soft:
+            continue
         if s["kind"] == NON_SPEECH and cs <= a < ce:
             regions.append(Cut(HARD_BREAK, a, min(b, ce), None, exact=False))
     for a_s, b_s in silences:

@@ -42,12 +42,14 @@ Mỗi mục §1–§11 dưới đây là quyết định cuối. Thay đổi b�
   - 1080×1920 (9:16), H.264 (yuv420p), AAC 48 kHz, 30 fps (hoặc giữ fps nguồn nếu ≤ 30);
   - kèm `render_manifest.json` (clip, title, source hash, render config hash).
 - Không tự upload YouTube (ngoài scope; nếu cần là quyết định riêng sau CP12).
+- Sửa đổi HUMAN LEAD 2026-09-28 (CP8.9): thêm loại output **khai thị** — video 9:16 cùng template, dài theo khoảng phút, trong tập riêng `<episode_id>.kt` (`output/<episode_id>.kt/`). Canonical: `docs/decisions/CP8.9-khai-thi-contract.md` K1.
 
 ## 3. Short duration policy
 
 - Tối thiểu 30 s / mục tiêu 60–90 s / tối đa 180 s.
 - Không cắt giữa câu.
 - Sửa đổi HUMAN LEAD 2026-09-26 (chốt CP4): các mức 30 / 60–90 / 180 s tính trên **thời lượng Short thực tế** sau khi rút khoảng lặng (§5), không phải thời lượng đoạn nguồn.
+- Sửa đổi HUMAN LEAD 2026-09-28 (CP8.9): các mức trên chỉ áp cho Short; tập khai thị dùng khoảng min–max phút do người dùng chọn (cùng cách tính sau rút khoảng lặng): `docs/decisions/CP8.9-khai-thi-contract.md` K2.
 
 ## 4. Composition 9:16
 

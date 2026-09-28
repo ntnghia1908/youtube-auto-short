@@ -61,8 +61,8 @@ def fake_pipeline(calls: list, *, fail_stage: str | None = None, gate=None):
                 raise TranscriptError(f"{stage} boom")
             if stage == "transcript" and gate is not None:
                 assert gate.wait(10)
-            if stage == "ingest":
-                eid = target_or_id.rsplit("/", 1)[-1]
+            if stage == "ingest":  # CP8.9: a khai thị job passes its episode id (<video_id>.kt)
+                eid = kw.get("episode_id") or target_or_id.rsplit("/", 1)[-1]
                 return SimpleNamespace(episode_id=eid, ran=True, workspace=Path(config.workspace.dir) / eid)
             if stage == "render":
                 write_episode(config, target_or_id)

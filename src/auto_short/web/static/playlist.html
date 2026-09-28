@@ -46,6 +46,15 @@
     </details>
   </section>
   <section class="card">
+    <div id="pl-kinds" class="kind-box">
+      <span class="small">Khi bấm Xử lý tạo:</span>
+      <label class="inline"><input type="checkbox" name="pl-kind" value="short" checked> Short</label>
+      <label class="inline"><input type="checkbox" name="pl-kind" value="khaithi" checked> Khai thị</label>
+      <span id="pl-kt-minutes" class="inline-minutes">
+        <input id="pl-kt-min" type="number" min="1" max="15" step="1" value="4" inputmode="numeric" aria-label="Khai thị dài từ (phút)">–<input id="pl-kt-max" type="number" min="1" max="15" step="1" value="7" inputmode="numeric" aria-label="Khai thị dài đến (phút)"> phút
+      </span>
+      <span id="pl-kinds-note" class="small error" hidden>Chọn ít nhất một loại.</span>
+    </div>
     <div id="pl-filters" class="filters">
       <button class="btn small" type="button" data-filter="all">Tất cả (<span class="n">0</span>)</button>
       <button class="btn small" type="button" data-filter="todo">Chưa xử lý (<span class="n">0</span>)</button>

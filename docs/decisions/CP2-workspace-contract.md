@@ -33,6 +33,7 @@ Implementation tham chiếu: `src/auto_short/workspace.py`, `src/auto_short/hash
 - YouTube: video id 11 ký tự (vd `rbjfCfFq3Dk`).
 - File local: `<slug tên file>-<12 hex đầu sha256>` (vd `rbjfcffq3dk-7271326dbe93`). Slug: bỏ dấu tiếng Việt (`đ→d`), lowercase, ký tự khác `[a-z0-9]` thành `-`, tối đa 48 ký tự, rỗng → `video`.
 - `--episode-id` ghi đè. ID hợp lệ: `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`.
+- Sửa đổi CP8.9 (HUMAN LEAD 2026-09-28): tập khai thị của một nguồn có id `<id ở trên>.kt`; loại tập xác định bởi `work/<id>/khaithi.json`, không bởi hậu tố. Canonical: `docs/decisions/CP8.9-khai-thi-contract.md` K1, K5 (dùng lại nguồn / transcript của tập gốc).
 - Một workspace thuộc một nguồn: dùng lại workspace cho nguồn khác loại hoặc video YouTube khác → lỗi. Nguồn local đổi path/nội dung dưới cùng ID là "input changed" → chạy lại.
 
 ## D4. Source handling
