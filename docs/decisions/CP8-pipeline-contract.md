@@ -3,7 +3,7 @@
 | Metadata | Value |
 |---|---|
 | Status | ACCEPTED |
-| Accepted by | — (E1–E8, P1–P4 duyệt cùng APPROVE TASK 2026-09-27; P4 sửa: có preflight Ollama; review ACCEPTED) |
+| Accepted by | — (E1–E8, P1–P4 duyệt cùng APPROVE TASK 2026-09-27; P4 sửa: có preflight Ollama; review ACCEPTED). Sửa đổi HUMAN LEAD 2026-09-28 (CP8.10, `docs/tasks/CP8.10-queue-lanes.md`): E7 tham số `stages` |
 | Checkpoint | CP8 (S2) |
 | Roadmap | `AUTO_SHORT_CHECKPOINT_PLAN.md` §4 CP8 |
 | Task contract | `docs/tasks/CP8-pipeline.md` |
@@ -48,9 +48,10 @@ Implementation tham chiếu: `src/auto_short/pipeline.py` (`run_pipeline`, `olla
 
 ## E7. Code
 
-- `run_pipeline(target, config, *, episode_id, subtitle, speaker, series, episode, force_from, preflight, deps, on_stage) -> PipelineResult` trong `src/auto_short/pipeline.py`: gọi lần lượt `run_<stage>` hiện có, không sửa `workspace.run_stage` hay module stage.
+- `run_pipeline(target, config, *, episode_id, subtitle, speaker, series, episode, force_from, preflight, deps, on_stage, stages) -> PipelineResult` trong `src/auto_short/pipeline.py`: gọi lần lượt `run_<stage>` hiện có, không sửa `workspace.run_stage` hay module stage.
 - `PipelineResult`: `episode_id`, `stages` (mỗi stage: tên, `ran`, giây, `…Result` của stage), `failed_stage` + `error` (E4), `rendered` / `clips` / `output_dir`. Lỗi stage trả về trong kết quả (không raise); preflight lỗi raise `PreflightError`; Ctrl-C raise `PipelineInterrupted` (subclass `KeyboardInterrupt`, mang tên stage đang chạy + kết quả tới lúc đó).
 - `preflight` = hàm kiểm trước ingest (mặc định `ollama_preflight`; `None` = bỏ qua). `deps` (`StageDeps`) = dependency injectable của stage (downloader, caption fetcher, Whisper backend, analyzer, client Ollama selection/titling, runner render) và thay hàm `run_<stage>` cho test. `on_stage` = callback sau mỗi stage xong (CLI in dòng stdout; web dùng để báo tiến độ).
+- **Sửa đổi CP8.10:** `stages` (mặc định `None` = cả 6 stage) = tập con khác rỗng của thứ tự E2, đúng thứ tự, không trùng (sai → `PipelineError`, không stage nào chạy); không có `ingest` thì bắt buộc `episode_id` (stage đọc workspace có sẵn). `preflight` chạy trước stage đầu tiên của tập con. Chỉ web dùng (làn prepare / ai / render: `docs/decisions/CP8.3-web-contract.md` W5); CLI `run` không đổi.
 - CLI chỉ parse + in.
 
 ## E8. Preflight Ollama

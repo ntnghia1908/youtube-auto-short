@@ -3,10 +3,10 @@
 | Metadata | Value |
 |---|---|
 | Status | ACCEPTED |
-| Accepted by | — (W1–W7, P1–P4 duyệt cùng APPROVE TASK 2026-09-27; phase A review ACCEPTED 2026-09-27; phase B review ACCEPTED; manual test HUMAN LEAD đạt 2026-09-27). Sửa đổi HUMAN LEAD 2026-09-27 (CP8.5, APPROVE TASK X1–X4, P1–P4 + bổ sung lọc danh sách tập): W6, W7, W8. Sửa đổi HUMAN LEAD 2026-09-27 (CP8.6, APPROVE TASK S1–S4, P1 7 ngày, P2 10 GB / 3 GB): W4, W7, W9. Sửa đổi HUMAN LEAD 2026-09-27 (CP8.7, APPROVE TASK L1–L5, P2 "Xong" tự động + bổ sung tải về = đã đăng): W3, W7, W8, W9, W10. Sửa đổi HUMAN LEAD 2026-09-27 (CP8.8, APPROVE TASK H1–H7, P1–P3): W6, W7, W10. Sửa đổi HUMAN LEAD 2026-09-28 (CP8.11, APPROVE D1–D7): W7, W10 |
+| Accepted by | — (W1–W7, P1–P4 duyệt cùng APPROVE TASK 2026-09-27; phase A review ACCEPTED 2026-09-27; phase B review ACCEPTED; manual test HUMAN LEAD đạt 2026-09-27). Sửa đổi HUMAN LEAD 2026-09-27 (CP8.5, APPROVE TASK X1–X4, P1–P4 + bổ sung lọc danh sách tập): W6, W7, W8. Sửa đổi HUMAN LEAD 2026-09-27 (CP8.6, APPROVE TASK S1–S4, P1 7 ngày, P2 10 GB / 3 GB): W4, W7, W9. Sửa đổi HUMAN LEAD 2026-09-27 (CP8.7, APPROVE TASK L1–L5, P2 "Xong" tự động + bổ sung tải về = đã đăng): W3, W7, W8, W9, W10. Sửa đổi HUMAN LEAD 2026-09-27 (CP8.8, APPROVE TASK H1–H7, P1–P3): W6, W7, W10. Sửa đổi HUMAN LEAD 2026-09-28 (CP8.11, APPROVE D1–D7): W7, W10. Sửa đổi HUMAN LEAD 2026-09-28 (CP8.10, APPROVE Q1–Q4 + Q0, Q5–Q8): W4, W5, W7, config `[web]` |
 | Checkpoint | CP8.3 (S2) |
 | Roadmap | `AUTO_SHORT_CHECKPOINT_PLAN.md` §4 CP8.3 |
-| Task contract | `docs/tasks/CP8.3-web.md`; sửa đổi CP8.5: `docs/tasks/CP8.5-web-review.md`; sửa đổi CP8.6: `docs/tasks/CP8.6-storage.md`; sửa đổi CP8.7: `docs/tasks/CP8.7-playlist.md`; sửa đổi CP8.8: `docs/tasks/CP8.8-playlist-hashtags.md`; sửa đổi CP8.11: `docs/tasks/CP8.11-series-recognition.md` |
+| Task contract | `docs/tasks/CP8.3-web.md`; sửa đổi CP8.5: `docs/tasks/CP8.5-web-review.md`; sửa đổi CP8.6: `docs/tasks/CP8.6-storage.md`; sửa đổi CP8.7: `docs/tasks/CP8.7-playlist.md`; sửa đổi CP8.8: `docs/tasks/CP8.8-playlist-hashtags.md`; sửa đổi CP8.11: `docs/tasks/CP8.11-series-recognition.md`; sửa đổi CP8.10: `docs/tasks/CP8.10-queue-lanes.md` |
 | Builds on | `docs/decisions/CP8-pipeline-contract.md` (run, preflight, resume); `docs/decisions/CP7-render-contract.md` (`render_manifest.json`); `docs/decisions/CP8.2-title-override-contract.md` (hàm dùng chung `auto_short.review`, `render_key` + tái dùng từng Short); `docs/decisions/CP2-workspace-contract.md` (manifest, stage status); CP1 §10 (dependency) |
 
 File này là **canonical owner** của web boundary: lệnh `auto-short web`, config `[web]`, auth (mật khẩu + cookie phiên), input URL từ web, job model, API JSON, route phục vụ file và UI; từ CP8.5 cả tên file tải về, xóa tập và artifact `publish.json` (W8); từ CP8.6 tab Bộ nhớ, dọn video nguồn và luật episode *archived* (`archive.json`, W9); từ CP8.7 bộ kinh (playlist), trạng thái "Xong" suy ra và tải về = đã đăng (W10). Nơi khác chỉ trỏ tới đây. Web không đổi contract stage CP2–CP8.2: pipeline chạy qua `run_pipeline` / `ollama_preflight` (CP8 E7, E8); sửa title qua hàm dùng chung của `auto_short.review` + `run_render` (CP8.2). Thay đổi cần decision gate mới với HUMAN LEAD.
@@ -46,7 +46,7 @@ Implementation tham chiếu: `src/auto_short/web/` (`app.py` app factory + route
 ## W4. Luồng xử lý
 
 - `POST /api/episodes`: parse URL (lỗi → 422, không job) → nếu episode đã có job `queued`/`running` → 200 `created: false` + job đó (không preflight, không job mới) → episode archived → 409 (CP8.6 W9) → ổ còn < 3 GB → 507 (CP8.6 W9) → preflight Ollama (CP8 E8) ngay trong request (lỗi → 503 `ollama preflight: <lý do>`, không job) → tạo job pipeline → 202 `created: true`.
-- Job pipeline gọi `run_pipeline(url, config, series, episode, preflight=ollama_preflight, on_stage=…)`: preflight chạy lại khi job bắt đầu (job có thể đã đợi trong hàng). Kết quả: `done` + `summary` `"<rendered>/<clips> Shorts"`; lỗi stage → `failed`, `error = "<stage>: <message>"` (CP8 E4); lỗi preflight → `failed`, `error = "ollama preflight: …"`.
+- Job pipeline gọi `run_pipeline(url, config, series, episode, preflight=ollama_preflight, on_stage=…)`: preflight chạy lại khi job bắt đầu (job có thể đã đợi trong hàng). **Sửa đổi CP8.10:** ở `queue_mode = "lanes"` job gọi `run_pipeline(…, stages=<các stage của làn>)` một lần mỗi làn (W5); preflight chạy lại ở đầu làn `ai` (không ở đầu job: ingest / transcript / analysis vẫn chạy khi Ollama tắt, job lỗi `ollama preflight: …` ở làn `ai`, gửi lại URL chạy tiếp); `"serial"` như câu trước. Kết quả: `done` + `summary` `"<rendered>/<clips> Shorts"`; lỗi stage → `failed`, `error = "<stage>: <message>"` (CP8 E4); lỗi preflight → `failed`, `error = "ollama preflight: …"`.
 - Gửi lại URL của episode đã xong / lỗi / bị ngắt → job mới; pipeline tự skip / resume (CP8 E3).
 - Tiến độ: status từng stage đọc từ `manifest.json` (CP2) + stage hiện tại và thời gian từng stage (`on_stage`: `ran` / skip, giây) + log của job. Trang episode poll JSON mỗi 2,5 s khi có job đang chạy/đợi.
 - Khi render chạy trong job, `summary` thêm `" (<e> encoded, <r> reused)"` từ `RenderResult.encoded` / `reused` (CP8.2 T5).
@@ -60,11 +60,25 @@ Implementation tham chiếu: `src/auto_short/web/` (`app.py` app factory + route
 
 ## W5. Job model
 
-- Một worker thread, hàng đợi FIFO trong bộ nhớ; tại một thời điểm chỉ một job chạy. Job: `id` (số tăng dần trong phiên server), `episode_id`, `kind` (`pipeline` | `render`), `clip_ids` (job `render`: Short vừa sửa title), `status` (`queued`, `running`, `done`, `failed`, `interrupted`), `created_at` / `started_at` / `finished_at` (UTC ISO), `stage`, `stages` [{`stage`, `ran`, `seconds`}], `error`, `summary`, `logs`.
-- Một episode chỉ có tối đa một job `queued`/`running` (pipeline hoặc render); gửi URL trùng trả job đang có (kể cả job `render`), ghi title → 409.
-- Log: mọi record của logger `auto_short` phát ra trên worker thread khi job chạy (level ≥ INFO) được chép vào vòng đệm 200 dòng cuối của job, dạng `HH:MM:SS [LEVEL ]message`; server vẫn log ra stderr như CLI. Không gồm stderr của tiến trình con (ffmpeg, yt-dlp).
+**Sửa đổi CP8.10 (HUMAN LEAD 2026-09-28, `docs/tasks/CP8.10-queue-lanes.md` Q0–Q8)** — trước đó: một worker thread, một job chạy tại một thời điểm (nay là `queue_mode = "serial"`).
+
+- `[web] queue_mode = "lanes"` (mặc định): ba **làn**, mỗi làn một worker thread + hàng đợi FIFO trong bộ nhớ, mỗi làn chạy tối đa một job:
+  - `prepare` = ingest → transcript → analysis; `ai` = preflight Ollama → selection → titling; `render` = render.
+  - Job `pipeline` vào cuối hàng `prepare`; xong một làn → vào cuối hàng làn kế; lỗi / bị ngắt ở làn nào → job kết thúc ở đó (`failed` / `interrupted`, W4). Mỗi làn gọi `run_pipeline(…, stages=<các stage của làn>)` (CP8 E7); làn sau dùng episode id mà ingest trả về. Stage tự skip khi up to date (CP8 E3).
+  - Job `render` (sửa title / xóa / khôi phục Short) vào thẳng cuối hàng làn `render`, không ưu tiên (FIFO với render của job pipeline).
+  - Giới hạn tải trước: làn `prepare` không bắt đầu job mới khi đã có **2** job xong `prepare` đang đợi làn `ai` (hằng trong code `PREFETCH_LIMIT`, không phải config).
+  - Ngay trước ingest ở làn `prepare`: kiểm lại ngưỡng ổ W9 (< 3 GB) → job `failed`, `error` = message 507 của W9, không tải.
+  - Short + khai thị cùng video (CP8.9 K5): không có cơ chế phụ thuộc riêng; hai job đi qua làn `prepare` FIFO (Short trước, W4 / K7) nên ingest của `<id>.kt` luôn chạy sau transcript của `<id>` và dùng lại nguồn.
+  - Mỗi stage chỉ thuộc một làn nên một stage không bao giờ chạy song song với chính nó; analysis (CPU) có thể chạy cùng lúc với render (CPU) của tập khác, transcript Whisper (khi không có phụ đề YouTube) cùng lúc với AI (GPU) của tập khác.
+- `queue_mode = "serial"`: một worker thread chạy trọn job (6 stage, preflight đầu job) — hành vi trước CP8.10; không kiểm lại ổ trước ingest.
+- Job: `id` (số tăng dần trong phiên server), `episode_id`, `kind` (`pipeline` | `render`), `clip_ids` (job `render`: Short vừa sửa title), `status` (`queued`, `running`, `done`, `failed`, `interrupted`), `created_at` / `started_at` / `finished_at` (UTC ISO), `stage`, `stages` [{`stage`, `ran`, `seconds`}], `error`, `summary`, `logs`; CP8.10: `lane`, `waiting`.
+  - `status`: `queued` khi chưa vào làn nào; `running` từ lúc làn đầu tiên bắt đầu tới khi kết thúc, **kể cả lúc đợi giữa hai làn**.
+  - `lane`: làn đang chạy job hoặc làn job đang đợi (`"prepare"` | `"ai"` | `"render"`); `null` khi `queued`, đã kết thúc, hoặc `queue_mode = "serial"`. `waiting`: `true` khi job `running` đang đợi giữa hai làn.
+  - `stage`: stage đang chạy (`"preflight"` trong lúc preflight), hoặc stage đầu của làn kế khi đang đợi.
+- Một episode chỉ có tối đa một job `queued`/`running` (pipeline hoặc render; kể cả job đang đợi giữa hai làn); gửi URL trùng trả job đang có (kể cả job `render`), ghi title / xóa / khôi phục Short / dọn nguồn / xóa tập → 409.
+- Log: mọi record của logger `auto_short` phát ra trên worker thread của làn đang chạy job (level ≥ INFO) được chép vào vòng đệm 200 dòng cuối của job đó, dạng `HH:MM:SS [LEVEL ]message`; server vẫn log ra stderr như CLI. Không gồm stderr của tiến trình con (ffmpeg, yt-dlp).
 - Lịch sử job chỉ trong bộ nhớ: restart server mất hàng đợi và log (manifest còn; gửi lại URL → resume).
-- Tắt server (Ctrl-C / SIGINT / SIGTERM qua uvicorn) khi job đang chạy: worker nhận `KeyboardInterrupt` (inject vào thread) + tiến trình con trực tiếp nhận SIGINT; chờ tối đa 30 s. Stage đang chạy ghi `failed` + `error: "interrupted"` (CP2 `run_stage`), job `interrupted`. Nếu stage đang kẹt trong một lời gọi dài không trả về trong 30 s (vd request Ollama) thì server thoát, manifest giữ `running` — CP8 E3 coi là chưa up to date, gửi lại URL sẽ chạy lại stage đó.
+- Tắt server (Ctrl-C / SIGINT / SIGTERM qua uvicorn) khi job đang chạy: thread của mọi làn đang chạy job nhận `KeyboardInterrupt` (inject vào thread) + tiến trình con trực tiếp nhận SIGINT; chờ tối đa 30 s tổng. Stage đang chạy ghi `failed` + `error: "interrupted"` (CP2 `run_stage`), job `interrupted` (`"interrupted during <stage>"`); job đang đợi giữa hai làn → `interrupted` (`"interrupted while waiting for <lane>"`). Nếu stage đang kẹt trong một lời gọi dài không trả về trong 30 s (vd request Ollama) thì server thoát, manifest giữ `running` — CP8 E3 coi là chưa up to date, gửi lại URL sẽ chạy lại stage đó.
 
 ## W6. UI
 
@@ -115,7 +129,7 @@ Mọi route cần cookie (W2). JSON UTF-8.
 | `GET /playlists/{pid}` | CP8.7: trang bộ kinh |
 | `DELETE /api/episodes/{id}` | CP8.5 X3: 200 `{deleted: id}`; 404 id sai / traversal / không có; 409 `{detail, job}` khi có job đang chạy/đợi; 500 khi xóa lỗi |
 
-- `job` = các field W5 + `queue_position` (vị trí trong hàng, `null` khi không đợi).
+- `job` = các field W5 + `queue_position` (vị trí trong hàng, `null` khi không đợi). **Sửa đổi CP8.10:** thêm `lane`, `waiting` (W5); `queue_position` = vị trí 1-based trong hàng của làn job đang đợi (kể cả đợi giữa hai làn), `null` khi đang chạy / đã kết thúc; `job` trong `GET /api/episodes` và entry bộ kinh (`GET /api/playlists/{pid}`) cũng có `queue_position`. UI (W6): "đang tải trước" (làn `prepare` đang chạy), "đợi GPU" (đợi làn `ai`), "đợi render" (đợi làn `render`) ở trang tập, danh sách tập và trang bộ kinh.
 - `shorts[]` = `{clip_id, status (rendered | skipped), skip_reason, duration, source_start, source_end, title: {text, origin, display_lines}, sha256, video_url, download_url, download_name, deleted, rejected, published, published_stale, published_at, editable, ai_title, alternatives: [{n, title}], override: {title, origin} | null, pending_title: {text, origin} | null, rendering}` (CP8.5 thêm `download_name` … `published_at`; episode thêm `deleted`, `published` (số Short `rendered` đã tick), `publish_error`, `zip_name`; `GET /api/episodes` mỗi item thêm `published`, `publish_group`; CP8.6: episode thêm `archived: {at, freed} | null`, item danh sách thêm `archived: bool`; CP8.7: episode + item danh sách thêm `complete` ("Xong", W10), item thêm `in_playlist`).
   - CP8.5: `deleted` = render cuối bỏ qua Short vì `rejected` (file đã xóa); `rejected` = `review.json` đang xóa (khác `deleted` trong lúc job render chạy); `download_name` = tên W8 (`null` khi không có file).
   - `title` = title **trong file** (`render_manifest.json` `title` / `title_origin` / `title_display_lines`; manifest trước CP8.2 không có `title_origin` → `ai`). `video_url` = `/files/<id>/<clip>.mp4?v=<sha256[:12]>` (đổi khi file đổi), `null` khi Short bị bỏ qua.
@@ -248,6 +262,7 @@ Tập **Xong** ⇔ stage `render` `done` **và** mọi Short `rendered` trong `r
 | `port` | `8080` | 1–65535 |
 | `session_days` | `30` | 1–365, tuổi cookie đăng nhập |
 | `hashtags` | `["TịnhKhông", "LờiPhậtDạy", "TịnhĐộ", "NiệmPhật"]` | CP8.7: hashtag sau `#<series>` khi Copy title (W6); bộ kinh có danh sách riêng (CP8.8) không dùng |
+| `queue_mode` | `"lanes"` | CP8.10: `"lanes"` (làn prepare / ai / render, W5) \| `"serial"` (một job chạy trọn tại một thời điểm); giá trị khác → lỗi load config |
 
 Execution-only: không stage nào dùng, không vào config hash.
 
@@ -336,7 +351,7 @@ Dung lượng trống của ổ thật không tăng trong lần thử vì `sourc
 - HTTP không mã hóa: mật khẩu và cookie đi dạng rõ trong LAN (HTTPS ngoài scope).
 - Không giới hạn số lần đăng nhập sai ngoài độ trễ 1 s mỗi lần.
 - Job và log chỉ trong bộ nhớ; log không gồm output của ffmpeg / yt-dlp.
-- Một job tại một thời điểm; job dài (selection ~8 phút) chặn job khác của episode khác.
+- CP8.10: mỗi làn một job tại một thời điểm; job dài ở một làn (selection ~8 phút) vẫn chặn làn đó cho episode khác (không có 2 job GPU song song). Hàng đợi / làn chỉ trong bộ nhớ (restart mất). Analysis / render và Whisper / Ollama của hai tập khác nhau có thể tranh CPU / GPU khi chạy chồng (số đo: `docs/tasks/CP8.10-queue-lanes.md` Result). Không có làn cho CLI `run` (vẫn tuần tự, CP8).
 - Danh sách episode đọc lại toàn bộ manifest mỗi lần gọi (đủ cho vài chục episode).
 - Sửa title một Short phải đợi job của episode xong (409), kể cả job render của Short khác; không có hàng đợi nhiều lần sửa.
 - `titles.json` / `review.json` / `clips.json` được đọc lại mỗi lần poll trang episode (`list_titles`, vài chục KB).

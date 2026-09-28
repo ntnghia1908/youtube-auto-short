@@ -407,9 +407,9 @@ Besides Shorts, the same video yields longer "khai thị" videos (same 9:16 temp
 
 ---
 
-## CP8.10 — Queue Optimisation (planned)
+## CP8.10 — Queue Optimisation
 
-> Planned, HUMAN LEAD 2026-09-28 (CP8.9 amendment A2.4). Not part of CP8.9; needs its own task contract and decision gate (changes the job model, `docs/decisions/CP8.3-web-contract.md` W5).
+> HUMAN LEAD 2026-09-28 (CP8.9 amendment A2.4; task `docs/tasks/CP8.10-queue-lanes.md`, Q0–Q8). Contract: `docs/decisions/CP8.3-web-contract.md` W5 (lanes `prepare` / `ai` / `render`, `[web] queue_mode`), W7 (`lane`, `waiting`); `docs/decisions/CP8-pipeline-contract.md` E7 (`stages`).
 
 Download the video + captions ahead for jobs waiting in the queue, and let the AI stages (GPU) of one video overlap with the render (CPU) of another, instead of running one whole pipeline at a time.
 
