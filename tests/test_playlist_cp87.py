@@ -118,10 +118,10 @@ def test_import_playlist_lists_without_downloading(tcfg):
         d = c.get(f"/api/playlists/{PL}").json()
         assert [e["video_id"] for e in d["entries"]] == [VIDS[0], "eeeeeeeeeee", VIDS[1], VIDS[2]]
         assert [e["state"] for e in d["entries"]] == ["new", "unavailable", "new", "new"]
-        assert d["counts"] == {"all": 4, "todo": 3, "doing": 0, "done": 0}
+        assert d["counts"] == {"all": 4, "todo": 3, "running": 0, "failed": 0, "doing": 0, "done": 0}  # CP8.13 G1
         assert c.get("/api/playlists").json()["playlists"] == [
             {"id": PL, "title": _info()["title"], "count": 4, "fetched_at": doc["fetched_at"], "processed": 0,
-             "complete": 0, "doing": 0, "deleted": 0}]
+             "complete": 0, "running": 0, "failed": 0, "doing": 0, "deleted": 0}]  # CP8.13 G3
         # the same playlist again: stored one, no new listing
         r = c.post("/api/episodes", json={"url": f"https://www.youtube.com/playlist?list={PL}"})
         assert r.status_code == 200 and r.json()["created"] is False and len(lister.calls) == 1
@@ -209,7 +209,7 @@ def test_process_entry_queues_pipeline_and_status(tcfg):
         d = c.get(f"/api/playlists/{PL}").json()
         st = {e["video_id"]: e for e in d["entries"]}
         assert st[VIDS[0]]["state"] == "rendered" and st[VIDS[2]]["state"] == "rendered"
-        assert d["counts"] == {"all": 4, "todo": 0, "doing": 3, "done": 0}
+        assert d["counts"] == {"all": 4, "todo": 0, "running": 0, "failed": 0, "doing": 3, "done": 0}
 
 
 def test_failed_job_error_readable(tcfg):
@@ -437,7 +437,7 @@ def test_tombstone_on_delete_playlist_stats_and_reprocess(tcfg):
                 e[done_id]["published"]) == ("deleted", "done", "reprocess", 2, 2)
         assert (e[todo_id]["state"], e[todo_id]["group"], e[todo_id]["complete"]) == ("deleted", "todo", False)
         assert e[VIDS[2]]["action"] == "process"
-        assert d["counts"] == {"all": 3, "todo": 2, "doing": 0, "done": 1}
+        assert d["counts"] == {"all": 3, "todo": 2, "running": 0, "failed": 0, "doing": 0, "done": 1}
         s = c.get("/api/playlists").json()["playlists"][0]
         assert (s["processed"], s["complete"], s["deleted"]) == (2, 1, 2)
         # in a playlist -> not in the home "Đã xóa" list

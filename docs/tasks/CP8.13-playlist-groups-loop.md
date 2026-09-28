@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: IN_PROGRESS
 - Type: CHANGE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -72,8 +72,23 @@ Không chạm database / security model; đổi nghĩa trường `doing` và th�
 ## Result
 
 - Main changes:
+  - `src/auto_short/web/playlists.py`: `GROUPS` theo G1 (`queued`/`processing` → `running`; `failed`/`incomplete` → `failed`; `rendered` → `doing`; `new` → `todo`; `complete` → `done`; `deleted` giữ `group_of` cũ), `GROUP_NAMES`; `counts` = `{all, todo, running, failed, doing, done}` dựng từ `GROUP_NAMES`; `summary` thêm `running`, `failed` (cùng bảng nhóm qua `view`).
+  - `static/playlist.html`: 6 nút lọc theo danh sách G2 (thêm "Lỗi / dở dang"), dòng báo `#pl-failed-empty`.
+  - `static/app.js`: bộ kinh lọc bằng `data-group` cho mọi tab (bỏ `entryRunning` / `data-running` của CP8.12 A1); `PL_FILTERS` nhận giá trị lưu `failed`; số đếm = `counts` server; poll 5 s khi `state` là `queued` / `processing`; bỏ link "Khai thị" trên dòng tập (G4; dòng số lượng khai thị giữ nguyên); trang chủ `playlistSummary` (G3, mục = 0 bỏ); trang tập: `loopButton` ("🔁 Lặp lại", `aria-pressed`) sau "Tải về" trên thẻ có `<video>`, `Map` `loops` clip_id → bật, đọc lại khi dựng thẻ (G5).
+  - `static/style.css`: `.loop-btn[aria-pressed="true"]` (nền nhấn như nút lọc đang chọn). Thanh lọc ≤ 640 px đã có `flex-wrap` + nút ≥ 40 px (CP8.7) — không đổi.
+  - Docs: CP8.3 W6 (G5), W7 (bảng API `GET /api/playlists`, `counts`), W10 (nhóm lọc, trang chủ, tab, ghi chú CP8.12 A1 → CP8.13); CP8.9 A1.4 (bỏ link "Khai thị", tóm tắt theo nhóm mới); `AUTO_SHORT_CHECKPOINT_PLAN.md` mục CP8.13; `docs/workflow/current-state.md`.
 - Tests:
+  - Test cũ cập nhật (đổi hành vi đã duyệt G1–G3, không che lỗi): `tests/test_playlist_cp87.py` — `counts` có thêm `running`, `failed` (giá trị cũ giữ nguyên vì các tập ở đó là `new` / `rendered` / `complete` / `deleted`); tóm tắt `GET /api/playlists` có thêm `running`, `failed`. `tests/test_web_episode_ui_cp812.py` — tab "Đang xử lý" không còn lọc phía client (`entryRunning` / `data-running` bỏ theo G2), thứ tự tab 6 nút lọc có `failed`; tập có job khai thị đang chạy giờ ở nhóm `running` (trước: `doing`) theo G1. `tests/test_web_khaithi_cp89.py` không phải sửa (assert `doing` = 1 cho tập `rendered`, vẫn đúng theo G1).
+  - Test mới `tests/test_web_playlist_groups_cp813.py`: bảng nhóm G1; `view` / `counts` / `summary` cho 16 tổ hợp Short + khai thị + job (một bên lỗi → `failed`, một bên chạy → `running`, `incomplete` → `failed`, `deleted` Xong / chưa Xong); API thật với workspace `rendered` / `failed` / `incomplete` / stage `running` / `new` (AC1, AC3); HTML 6 tab theo đúng danh sách G2 + dòng báo, JS lọc theo `data-group` + giá trị lưu (AC2); dòng tập không có link "Khai thị", còn dòng số lượng (AC4); nút lặp lại chỉ trên thẻ có video, `aria-pressed`, `video.loop`, `Map`, không API / không lưu (AC5).
+  - `PYTHONPATH=<worktree>/src conda run -n auto-short python -m pytest -q`: `881 passed, 1 warning in 172.76s` (warning: StarletteDeprecationWarning httpx, có sẵn).
+  - `node scripts/framework-check.mjs`: toàn PASS, exit 0.
+  - Web scratch `127.0.0.1:8093` (worktree `src`, dữ liệu tạm trong scratchpad, đã tắt): API bộ kinh 8 entry (`rendered`+khai thị `rendered`, `failed`, `incomplete`, stage `running`, `complete`, `rendered`+khai thị `failed`, `new`, `unavailable`) → group `doing, failed, failed, running, done, failed, todo, None`, `counts {all 8, todo 1, running 1, failed 3, doing 1, done 1}`; `GET /api/playlists` `running 1, failed 3, doing 1` (AC1, AC3). Node + DOM giả chạy `app.js` được phục vụ: mặc định tab "Đang làm"; giá trị lưu `failed` / `running` được nạp lại, giá trị lạ → "Đang làm"; mỗi tab hiện đúng tập; bộ kinh không có tập chạy / lỗi → dòng "Không có tập nào đang xử lý" / "… lỗi / dở dang" hiện; không link "Khai thị" trên dòng tập, dòng "2 video khai thị, đã đăng 0/2" còn (AC2, AC4); trang chủ "8 tập · đã xử lý 6 · Xong 1 · đang xử lý 1 · lỗi / dở dang 3 · đang làm 1" và "2 tập · đã xử lý 1 · Xong 0 · đang làm 1" (G3); trang tập Short và khai thị: thẻ `rendered` có "Tải về / 🔁 Lặp lại", thẻ bỏ qua không có nút; bấm → `aria-pressed=true`, `video.loop=true`, thẻ khác không đổi; thẻ dựng lại do tick "Đã đăng" + refresh vẫn bật; bấm lại tắt / bật; không gọi API (AC5).
 - Review:
 - Important findings / decisions:
+  - AC2 / checklist ghi "7 nút lọc / 7 tab" nhưng G2 liệt kê 6 (Tất cả / Chưa xử lý / Đang xử lý / Lỗi / dở dang / Đang làm / Xong — "Lỗi / dở dang" là một tab): làm đúng danh sách G2 (6 nút); đề nghị HUMAN LEAD xác nhận.
+  - Nút lặp lại đặt sau "Tải về", trước "Xóa" trong hàng nút của thẻ; dùng class `.btn` như "Tải về".
+  - `busy` (poll) dựa `state` gộp `queued` / `processing` — tương đương điều kiện cũ (`combine_status` đã trả `queued` / `processing` khi job khai thị chạy).
+  - Kiểm bằng mắt trên trình duyệt (AC2, AC4, AC5, điện thoại): chưa làm — máy không có trình duyệt; manual test HUMAN LEAD trước READY (như CP8.12).
 - Known limitations:
+  - Trạng thái "Lặp lại" mất khi tải lại trang (theo G5: không lưu).
 - PR:
