@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -106,9 +106,10 @@ Chạm public API contract (trường mới của `POST` / `GET /api/episodes`) 
 
 ## Result
 
-- Main changes:
-- Tests:
-- Review:
-- Important findings / decisions:
-- Known limitations:
-- PR:
+- Main changes: `src/auto_short/khaithi.py` (mới: `khaithi.json`, tham số hiệu lực K2–K4); `config.py` (`[khaithi]`, `SelectionConfig.duration_minutes`); `analysis/stage.py`, `selection/stage.py` + `selection/prompt.py` (`kt1`); `ingest/stage.py`, `transcript/stage.py` (K5); `pipeline.py` (kiểm `khaithi.json` trước mọi stage), `cli.py` (`--khai-thi`, `status`); web: `app.py` (`kinds`, A1.1), `episodes.py` (`kind_fields`, tên file), `playlists.py` (`combine_status`, `resume_kinds`, A1.4), `jobs.py`, `review/names.py`, `static/` (A1.3, A1.5, trang tập, bộ kinh); docs: `docs/decisions/CP8.9-khai-thi-contract.md` (canonical K1–K9 + A1) + pointer CP1 §2/§3, CP2 D3, CP4 config, CP5 B3/B9, CP8.3 W3/W7/W8/W10; project profile; README; plan; `config.example.toml`.
+- Tests: `pytest -q` 817 passed (738 trước CP8.9). Mới: `tests/test_khaithi_ac1.py` (AC1: hash / params / prompt tập Short chốt từ code trước thay đổi), `tests/test_khaithi_cp89.py` (AC2–AC6, AC10, CLI, e2e `run --khai-thi` không mạng), `tests/test_web_khaithi_cp89.py` (AC7–AC9, AC11, AC12). Test cũ sửa theo A1 (mặc định hai kind): 4 test web gửi thêm `"kinds": ["short"]` vì chúng kiểm luồng W4 của riêng tập Short; helper `fake_pipeline` tôn trọng `episode_id`. `node scripts/framework-check.mjs` PASS.
+- Chạy thật (scratch, video `7axON1RpRjo` "Thập Thiện Nghiệp Đạo Kinh tập 7", 56,6 phút, hardlink source từ `work/` chính, config riêng, Ollama 11437): tập Short code cũ → `ingest`…`titling` đều skip (AC1). `run --khai-thi --min-minutes 5 --max-minutes 10`: ingest 2,5 s (hardlink, không tải; cùng inode), transcript 0,0 s (copy, không provider; `transcript.json` giống hệt), analysis 83,7 s (90 unit, 29 candidate, tất cả 300,09–464,16 s), selection 148,5 s (14 window, 3 có candidate → 3 lời gọi `kt1`, `max_window_words` 4000, `prompt_eval_count` lớn nhất 2641 / `num_ctx` 32768, prompt + eval lớn nhất 12519 = 38 %), titling 15,0 s, render 331,8 s → 3 video 1080×1920: 300,8 s, 340,1 s, 300,1 s. Chạy lại cùng lệnh → 6 stage skip. Web scratch (cổng 8093): 401 chưa đăng nhập; 4 body sai → 422 tiếng Việt; POST mặc định → 202, job Short (1) rồi khai thị (2), gửi lại → 200 `created: false`; GET đủ `kind` / `min_minutes` / `max_minutes` / `base_episode_id` / `khaithi_episode_id`; tải về `Tập7_KT01_Tại sao dân chủ khiến mỗi người đều là chủ.mp4`, zip `Tập7_KhaiThị.zip`. sha256 76 file `work/` chính trước / sau: không đổi.
+- Review: chờ HUMAN LEAD (manual test checklist trên).
+- Important findings / decisions: (1) Video thật có nhiều hard break (nhạc / lặng ≥ 10 s): 11/14 window không có candidate 5–10 phút; 3 video, cả 3 gần mức tối thiểu. Fixture thật `rbjfCfFq3Dk` trong test chỉ cho candidate ở 2–5 phút (fixture thưa segment) nên test dùng 2–5 phút + dữ liệu tổng hợp cho 14–15 phút. (2) Quyết định khi implement (không đổi decision gate): `max_minutes_limit` bị chặn ≤ 15 khi load (video > 15 phút ngoài scope); response `created` / `episode_id` / `job` lấy từ phần tử đầu tiên không lỗi; prompt có placeholder thời lượng chỉ dùng cho tập khai thị (ngược lại → lỗi selection); link playlist bỏ qua `kinds`.
+- Known limitations: xem `docs/decisions/CP8.9-khai-thi-contract.md` § Known limitations (hardlink đếm hai lần ở tab Bộ nhớ; bia mộ tập khai thị hiện ở "Đã xóa"; link về tập Short khi tập đó đã xóa; video ít đoạn nói liên tục → ít / không có video khai thị).
+- PR: chưa (chờ READY review).
