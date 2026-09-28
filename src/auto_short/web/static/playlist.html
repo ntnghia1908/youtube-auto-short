@@ -72,10 +72,12 @@
     <div id="pl-filters" class="filters">
       <button class="btn small" type="button" data-filter="all">Tất cả (<span class="n">0</span>)</button>
       <button class="btn small" type="button" data-filter="todo">Chưa xử lý (<span class="n">0</span>)</button>
+      <button class="btn small" type="button" data-filter="running">Đang xử lý (<span class="n">0</span>)</button>
       <button class="btn small" type="button" data-filter="doing">Đang làm (<span class="n">0</span>)</button>
       <button class="btn small" type="button" data-filter="done">Xong (<span class="n">0</span>)</button>
     </div>
     <ol id="pl-entries" class="pl-list"><li class="muted">Đang tải…</li></ol>
+    <p id="pl-running-empty" class="muted small" hidden>Không có tập nào đang xử lý</p>
   </section>
 </main>
 <script src="/static/app.js"></script>
