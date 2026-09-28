@@ -84,6 +84,7 @@ Trên trang tập (máy tính và điện thoại): chuyển giữa trang Short 
 - Test mới (vd `tests/test_web_episode_ui_cp812.py`): HTML trang tập có / không có các id ở AC 1; `app.js` có `renderKindBar`, `stagesShouldOpen`, `aria-current`, thông báo U4; `style.css` có `.kind-bar` sticky + `min-height: 44px`.
 - `node scripts/framework-check.mjs` PASS.
 - Chạy web scratch từ worktree (port khác 8080, `work/` scratch hoặc bản sao chỉ-đọc) + kiểm bằng trình duyệt ở 360 px và ≥ 1024 px: AC 2–5 (implementer ghi lại cách kiểm và kết quả trong Result).
+  - **Sửa đổi HUMAN LEAD 2026-09-28:** máy không có trình duyệt (không cài thêm) → phần kiểm bằng mắt ở 360 px / ≥ 1024 px (AC4: sticky, không cuộn ngang, vùng bấm) chuyển sang manual test của HUMAN LEAD trên điện thoại + máy tính, trên web scratch port 8093 (bản hard-link `work/` / `output/`), và là gate trước READY cho riêng AC4.
 
 Tất cả required verification phải chạy và PASS trước READY.
 
@@ -110,7 +111,7 @@ Task không chạm database, security model hay public API contract → manual t
 - Tests:
   - `tests/test_web_episode_ui_cp812.py` (7 test: HTML AC1, JS AC2/3/5/6 tĩnh, CSS AC4, dữ liệu API cho thanh, Short bị xóa / id không tồn tại; A1: HTML / JS tĩnh, dữ liệu `state` / `khaithi_state` khi job khai thị đang chạy). Toàn suite: `875 passed`.
   - Web scratch (port 8093, `work/` / `output/` tạm, không đụng repo chính / web 8080): chạy `app.js` được phục vụ trong Node với DOM giả tối thiểu (không có trình duyệt headless / jsdom trên máy, không cài thêm) — kiểm AC2, AC3 (có `source_url`), AC5 (theo cạnh, qua chuỗi trạng thái job giả; và job thật của pipeline giả bị chặn ở bước Phụ đề: khung mở + dòng "Đang tải trước: Phụ đề …", xong → khung đóng + "Xong: …"), AC6. A1: server scratch với pipeline giả chặn ở bước Phụ đề, bộ kinh 4 tập, một job khai thị đang chạy → "Đang xử lý (1)" chỉ hiện tập đó, "Đang làm (3)" giữ nguyên, lựa chọn lưu / nạp lại `running`; job xong → "Đang xử lý (0)", dòng "Không có tập nào đang xử lý", hết poll 5 s. **Chưa kiểm bằng trình duyệt thật ở 360 px / ≥ 1024 px** (sticky, không cuộn ngang, vùng bấm) — cần HUMAN LEAD / Tech Lead xem ở manual test.
-- Review:
+- Review: ORCHESTRATOR đọc diff `c1de0a9` (HTML / JS / CSS / test / docs) theo U1–U4, A1: không thấy lỗi; chạy lại `tests/test_web_episode_ui_cp812.py` + `tests/test_web_khaithi_cp89.py` → 32 passed. Chờ manual test AC4.
 - Important findings / decisions:
   - Tập Short chưa có khai thị: nút "Khai thị" là `<button>` mờ có `title` "Chưa có video khai thị — bấm để tạo"; trang khai thị không có `base_episode_id`: nút "Shorts" disabled, `title` "Không rõ tập Short của video này".
   - Trong lúc kiểm U4 đang chạy, nút "Shorts" hiển thị là link (lạc quan); lỗi mạng / lỗi khác giữ link.
