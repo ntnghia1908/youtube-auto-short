@@ -76,7 +76,7 @@ Không chạm database, security model hay public API contract → manual test l
   - AC2: trong worktree `PYTHONPATH=<worktree>/src python -m pytest -q` → `868 passed, 1 warning in 191.95s` (bằng baseline 868); sau đó worktree không có `output/` hay `work/`. PASS.
   - AC3: `git diff --stat origin/main` → `docs/tasks/FIX-test-output-dir.md` + `tests/conftest.py` (12 ++++--). PASS.
   - `node scripts/framework-check.mjs` → exit 0, 53 dòng PASS, không FAIL. PASS.
-- Review: chưa (chờ ORCHESTRATOR).
-- Important findings / decisions: warning duy nhất trong suite có sẵn từ trước, không liên quan. `docs/workflow/current-state.md` cố ý chưa sửa ở commit này (ORCHESTRATOR cập nhật để tránh xung đột với nhánh state chưa merge).
+- Review: ORCHESTRATOR ACCEPTED — diff chỉ `tests/conftest.py` (+9/-3) theo đúng approach; chạy lại độc lập `tests/test_web_jobs.py` + `tests/test_cli.py` từ cwd trống → `12 passed`, `find` rỗng.
+- Important findings / decisions: warning duy nhất trong suite có sẵn từ trước, không liên quan. `docs/workflow/current-state.md` cố ý chưa sửa ở commit này (ORCHESTRATOR cập nhật để tránh xung đột với nhánh state chưa merge). Quyết định: bỏ mục fixture khỏi `current-state.md` ở lần đồng bộ state sau merge (nhánh `docs/post-cp810-state`), không sửa trong PR này.
 - Known limitations: không thêm guard tự động (autouse `chdir`) theo Out of scope; `output/abcdefghijk/` ở repo chính vẫn còn — xem Manual test.
 - PR: chưa tạo (commit local, chưa push).
