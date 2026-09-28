@@ -118,6 +118,23 @@ deleted single episodes are listed under "Đã xóa" on the home page ("Xóa kh�
 YouTube's 100-character title limit. A bộ kinh page can set its own ordered hashtag list (CP8.8, "Hashtag khi Copy
 tiêu đề": add / remove / reorder, preview, "Khôi phục mặc định"), used for every episode of that bộ kinh.
 
+Khai thị videos (CP8.9): besides Shorts, a video can give longer "khai thị" videos (same 9:16 template, one
+complete teaching each, length within a chosen minute range after silence trimming; default 4–7 minutes, at most
+15) in a separate episode `<video id>.kt` next to the Short episode. On the home page both boxes "Short" and
+"Khai thị" are ticked by default (the Short job runs first; the khai thị job then reuses its downloaded video and
+transcript, hardlinked / copied, nothing re-downloaded); a Short episode page has "Tạo video khai thị". Downloads
+are named `Tập<episode>_KT<NN>_<title>.mp4` / `Tập<episode>_KhaiThị.zip`; titles, delete / restore, "Đã đăng",
+archive and delete work as for Shorts. In a bộ kinh an episode with khai thị videos is "Xong" only when both its
+Shorts and its khai thị videos are published. Changing the minutes of an existing khai thị episode asks first,
+then re-runs it from analysis. CLI:
+
+```bash
+auto-short run https://youtu.be/rbjfCfFq3Dk --khai-thi --min-minutes 5 --max-minutes 10   # episode rbjfCfFq3Dk.kt
+auto-short status rbjfCfFq3Dk.kt                                                          # kind: khai thi 5–10 minutes
+```
+
+Parameters in `[khaithi]` of `config.example.toml`. Contract: `docs/decisions/CP8.9-khai-thi-contract.md`.
+
 Storage tab (CP8.6, "Bộ nhớ" in the top bar, `/storage`): free / used space of the drive holding `work/` and
 `output/`, the size of every episode (source video / Shorts / other) and of the Whisper models, and clean-up
 suggestions with a "Làm" button (asks first; nothing is ever deleted automatically): episodes whose Shorts are all
