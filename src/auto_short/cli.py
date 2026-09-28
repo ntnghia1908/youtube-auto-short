@@ -80,9 +80,9 @@ def _build_parser() -> argparse.ArgumentParser:
                         "Shorts; with --episode-id X the episode is X.kt")
     u.add_argument("--min-minutes", type=int, metavar="N",
                    help="khai thi: minimum length in minutes after silence trimming (default: [khaithi] "
-                        "default_min_minutes, 5)")
+                        "default_min_minutes, 4)")
     u.add_argument("--max-minutes", type=int, metavar="M",
-                   help="khai thi: maximum length in minutes (default: [khaithi] default_max_minutes, 10)")
+                   help="khai thi: maximum length in minutes (default: [khaithi] default_max_minutes, 7)")
     u.add_argument("--config", type=Path, help="config TOML (default: ./config.toml if present)")
 
     w = sub.add_parser("web", help="web UI on the LAN (password from env AUTO_SHORT_WEB_PASSWORD; needs the "

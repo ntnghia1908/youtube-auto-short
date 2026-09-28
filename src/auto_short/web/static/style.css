@@ -166,3 +166,9 @@ summary { cursor: pointer; color: var(--muted); }
   .row { grid-template-columns: 1fr; }
   .short-title { font-size: .9rem; }
 }
+/* CP8.9 khai thị */
+.kind-box { display: flex; flex-wrap: wrap; gap: 1rem; margin: .5rem 0; }
+label.inline { display: inline-flex; align-items: center; gap: .35rem; font-weight: 600; margin: 0; }
+label.inline input { width: auto; }
+.row.even { grid-template-columns: 1fr 1fr; }
+.kind-label { display: inline-block; font-size: .75rem; padding: .05rem .45rem; border-radius: 999px; background: #e3ecff; color: #1d3f8a; font-weight: 600; }

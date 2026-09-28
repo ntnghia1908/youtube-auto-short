@@ -48,17 +48,18 @@ def episode_label(episode: str | None, episode_id: str) -> str:
     return label or clean_part(episode_id)
 
 
-def download_name(episode: str, number: int, total: int, title: str | None) -> str:
+def download_name(episode: str, number: int, total: int, title: str | None, *, khaithi: bool = False) -> str:
     """``Tập<episode>_S<NN>_<title>.mp4``: ``number`` = 1-based position of the clip in clips.json (kept when
     other Shorts are deleted), ``total`` = number of clips (width of ``NN``), ``title`` = the title in the file.
-    No title left after cleaning -> ``Tập<episode>_S<NN>.mp4``."""
-    head = f"Tập{episode}_S{number:0{index_width(total)}d}"
+    No title left after cleaning -> ``Tập<episode>_S<NN>.mp4``. A khai thị episode (CP8.9 K8) uses ``KT<NN>``."""
+    head = f"Tập{episode}_{'KT' if khaithi else 'S'}{number:0{index_width(total)}d}"
     t = truncate_utf8(clean_part(title))
     return f"{head}_{t}.mp4" if t else f"{head}.mp4"
 
 
-def zip_name(episode: str) -> str:
-    return f"Tập{episode}_Shorts.zip"
+def zip_name(episode: str, *, khaithi: bool = False) -> str:
+    """``Tập<episode>_Shorts.zip``; a khai thị episode (CP8.9 K8): ``Tập<episode>_KhaiThị.zip``."""
+    return f"Tập{episode}_KhaiThị.zip" if khaithi else f"Tập{episode}_Shorts.zip"
 
 
 def ascii_fallback(name: str) -> str:

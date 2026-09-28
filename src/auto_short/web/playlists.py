@@ -21,6 +21,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .. import khaithi
 from ..config import Config
 from ..review import ReviewError, episode_complete, publish_status, read_archive, read_publish, read_tombstone
 from ..review.names import MAX_COPY_CHARS, copy_text, hashtag, hashtags
@@ -326,22 +327,48 @@ class PlaylistStore:
             self._cache.clear()
         else:
             self._cache.pop(video_id, None)
+            self._cache.pop(video_id + khaithi.SUFFIX, None)  # CP8.9: the entry also shows its khai thi episode
+
+    def _kind_status(self, episode_id: str, job: dict | None) -> dict:
+        """Disk status of one episode (Short or khai thi) with its live job on top (L4)."""
+        st = dict(self._disk_status(episode_id))
+        if job is not None and job["status"] in ("queued", "running"):
+            st["state"] = QUEUED if job["status"] == "queued" else PROCESSING
+            st["stage"] = job.get("stage")
+        elif job is not None and job["status"] in ("failed", "interrupted") and st["state"] != COMPLETE:
+            st["state"], st["error"] = FAILED, job.get("error") or job["status"]
+        return st
+
+    def _khaithi_id(self, video_id: str | None) -> str | None:
+        """``<video_id>.kt`` when ``work/<video_id>.kt/`` exists (CP8.9 K8), else None."""
+        if not video_id:
+            return None
+        try:
+            kid = khaithi.episode_id_for(video_id)
+        except khaithi.KhaithiError:
+            return None
+        return kid if (Path(self._config.workspace.dir) / kid).is_dir() else None
 
     def view(self, doc: dict, jobs: dict[str, dict]) -> dict:
-        """Playlist page: entries (playlist order) with status (disk + live job), counts per filter group."""
+        """Playlist page: entries (playlist order) with status (disk + live job), counts per filter group. CP8.9
+        A1.4: with a khai thi episode ``<video_id>.kt`` the entry state combines both episodes."""
         entries, counts = [], {"all": 0, "todo": 0, "doing": 0, "done": 0}
         for e in doc["entries"]:
             vid = e.get("video_id")
-            st = dict(self._disk_status(vid)) if e.get("available") and vid else {"state": UNAVAILABLE}
+            usable = bool(e.get("available") and vid)
             job = jobs.get(vid) if vid else None
-            if job is not None and job["status"] in ("queued", "running"):
-                st["state"] = QUEUED if job["status"] == "queued" else PROCESSING
-                st["stage"] = job.get("stage")
-            elif job is not None and job["status"] in ("failed", "interrupted") and st["state"] != COMPLETE:
-                st["state"], st["error"] = FAILED, job.get("error") or job["status"]
+            kid = self._khaithi_id(vid) if usable else None
+            if not usable:
+                st = {"state": UNAVAILABLE}
+            else:
+                kst = self._kind_status(kid, jobs.get(kid)) if kid is not None else None
+                st = combine_status(self._kind_status(vid, job), kst)
             st["group"] = group_of(st["state"], bool(st.get("complete")))
-            st["action"] = ACTIONS.get(st["state"]) if e.get("available") and vid else None
+            st["action"] = ACTIONS.get(st["state"]) if usable else None
+            st["resume_kinds"] = resume_kinds(st) if usable else None  # A1.2 "Chạy tiếp"
             st["job"] = job
+            st["khaithi_job"] = jobs.get(kid) if kid is not None else None
+            st["khaithi_episode_id"] = kid
             counts["all"] += 1
             if st["group"]:
                 counts[st["group"]] += 1
@@ -358,6 +385,51 @@ class PlaylistStore:
         return {"id": v["id"], "title": v["title"], "count": v["count"], "fetched_at": v["fetched_at"],
                 "processed": processed, "complete": v["counts"]["done"], "doing": v["counts"]["doing"],
                 "deleted": deleted}
+
+
+_RANK = {NEW: 0, DELETED: 0, INCOMPLETE: 1, RENDERED: 2, COMPLETE: 3}
+_DONE_STATES = (RENDERED, COMPLETE)
+
+
+def combine_status(short: dict, kt: dict | None) -> dict:
+    """CP8.9 A1.4: entry status of a video from its Short status and, when ``work/<video_id>.kt/`` exists, its khai
+    thi status. Without a khai thi episode the Short status is returned unchanged (plus empty khai thi fields).
+    A job queued / running on either -> ``queued`` / ``processing``; either failed -> ``failed`` (error names which);
+    otherwise the less advanced of the two (new / deleted < incomplete < rendered < complete): "Xong" needs both."""
+    out = dict(short, short_state=short["state"], khaithi_state=None, khaithi_videos=None, khaithi_published=None)
+    if kt is None:
+        return out
+    out.update(khaithi_state=kt["state"], khaithi_videos=kt["shorts"], khaithi_published=kt["published"])
+    pair = (("Short", short), ("khai thị", kt))
+    for state in (PROCESSING, QUEUED):
+        hit = next(((name, st) for name, st in pair if st["state"] == state), None)
+        if hit is not None:
+            out.update(state=state, stage=hit[1].get("stage"), error=None, complete=False)
+            return out
+    failed = [(name, st) for name, st in pair if st["state"] == FAILED]
+    if failed:
+        out.update(state=FAILED, stage=failed[0][1].get("stage"), complete=False,
+                   error="; ".join(f"{name}: {st.get('error') or 'lỗi'}" for name, st in failed))
+        return out
+    name, low = min(pair, key=lambda x: _RANK.get(x[1]["state"], 0))
+    out["state"] = low["state"]
+    if low["state"] == DELETED:  # tombstone of the Short: Xong only if it was and the khai thi is Xong too
+        out["complete"] = bool(short.get("complete")) and kt["state"] == COMPLETE
+    else:
+        out["complete"] = low["state"] == COMPLETE
+    if name != "Short":
+        out["stage"], out["error"] = kt.get("stage"), kt.get("error")
+    return out
+
+
+def resume_kinds(st: dict) -> list[str]:
+    """CP8.9 A1.2 "Chạy tiếp": the Short unless its pipeline finished, plus the khai thi only when
+    ``work/<video_id>.kt/`` exists and its pipeline has not finished (never creates a khai thi for an old
+    episode)."""
+    kinds = [] if st.get("short_state") in _DONE_STATES else ["short"]
+    if st.get("khaithi_state") is not None and st["khaithi_state"] not in _DONE_STATES:
+        kinds.append("khaithi")
+    return kinds or ["short"]
 
 
 def disk_status(config: Config, video_id: str) -> dict:

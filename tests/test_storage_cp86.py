@@ -319,7 +319,7 @@ def test_archive_route_and_archived_episode_rules(tcfg, episode):
         for resp in (c.post(f"{BASE}/k01/title", json={"set": "Tiêu đề mới"}),
                      c.post(f"{BASE}/k01/title", json={"reset": True}),
                      c.post(f"{BASE}/k01/restore"),
-                     c.post("/api/episodes", json={"url": f"https://youtu.be/{EID}"})):
+                     c.post("/api/episodes", json={"url": f"https://youtu.be/{EID}", "kinds": ["short"]})):
             assert resp.status_code == 409 and msg in resp.json()["detail"]
         assert c.app.state.runner.jobs() == []
         # delete a Short: applied directly, no render job

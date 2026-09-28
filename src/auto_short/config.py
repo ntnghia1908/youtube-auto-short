@@ -201,8 +201,8 @@ class KhaithiConfig:
     """Khai thị videos (docs/decisions/CP8.9-khai-thi-contract.md K9). Only the effective values derived from
     these (K2-K4) enter the config hash; the defaults and the limit are execution-only."""
 
-    default_min_minutes: int = 5
-    default_max_minutes: int = 10
+    default_min_minutes: int = 4
+    default_max_minutes: int = 7
     max_minutes_limit: int = 15
     prompt_version: str = "kt1"
     window_words_per_minute: int = 400

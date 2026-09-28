@@ -139,7 +139,7 @@ def test_submit_runs_pipeline_and_episode_view(wcfg):
     with make_client(wcfg, calls=calls) as c:
         login(c)
         r = c.post("/api/episodes", json={"url": f"https://youtu.be/{VID}?si=R1TwdI4gh0sPcVHB",
-                                          "series": " Kinh A ", "episode": ""})
+                                          "series": " Kinh A ", "episode": "", "kinds": ["short"]})
         assert r.status_code == 202
         body = r.json()
         assert body["created"] is True and body["episode_id"] == VID and body["job"]["kind"] == "pipeline"
@@ -169,7 +169,7 @@ def test_submit_runs_pipeline_and_episode_view(wcfg):
         assert lst[0]["job"]["status"] == "done" and "logs" not in lst[0]["job"]
 
         # AC6: resubmit a finished episode -> a new job (the real pipeline skips every stage).
-        r = c.post("/api/episodes", json={"url": f"https://www.youtube.com/watch?v={VID}"})
+        r = c.post("/api/episodes", json={"url": f"https://www.youtube.com/watch?v={VID}", "kinds": ["short"]})
         assert r.status_code == 202 and r.json()["created"] is True
         assert c.app.state.runner.wait_idle(10)
 
@@ -178,10 +178,10 @@ def test_resubmit_while_running_is_not_duplicated(wcfg):
     gate, calls = threading.Event(), []
     with make_client(wcfg, pipeline=fake_pipeline(calls, gate=gate)) as c:
         login(c)
-        first = c.post("/api/episodes", json={"url": f"https://youtu.be/{VID}"})
+        first = c.post("/api/episodes", json={"url": f"https://youtu.be/{VID}", "kinds": ["short"]})
         assert first.status_code == 202
         for url in (f"https://youtu.be/{VID}?si=x", f"https://m.youtube.com/watch?v={VID}"):
-            again = c.post("/api/episodes", json={"url": url})
+            again = c.post("/api/episodes", json={"url": url, "kinds": ["short"]})
             assert again.status_code == 200 and again.json()["created"] is False
             assert again.json()["job"]["id"] == first.json()["job"]["id"]
         d = c.get(f"/api/episodes/{VID}").json()

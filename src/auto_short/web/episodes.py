@@ -10,6 +10,7 @@ import json
 import re
 from pathlib import Path
 
+from .. import khaithi
 from ..config import Config
 from ..pipeline import PIPELINE_STAGES
 from ..review.names import copy_text
@@ -92,19 +93,43 @@ def _series(config: Config, episode_id: str) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def _label(config: Config, episode_id: str) -> str:
-    """``<episode>`` of the download names: titles.json ``header.fields.episode``, else the episode id (X1)."""
+def kind_fields(config: Config, episode_id: str) -> dict:
+    """CP8.9 K7: ``kind`` ("short" | "khaithi", only from ``khaithi.json``), ``min_minutes``, ``max_minutes``,
+    ``base_episode_id`` (None for a Short) and ``khaithi_episode_id`` (a Short whose ``<id>.kt`` khai thị episode
+    exists). A broken ``khaithi.json`` still means "khaithi" (minutes None)."""
+    root, limit = Path(config.workspace.dir), config.khaithi.max_minutes_limit
+    if khaithi.path_of(root / episode_id).exists():
+        kt = khaithi.read_quiet(root / episode_id, limit)
+        return {"kind": khaithi.KIND, "min_minutes": kt.min_minutes if kt else None,
+                "max_minutes": kt.max_minutes if kt else None,
+                "base_episode_id": kt.base_episode_id if kt else None, "khaithi_episode_id": None}
+    try:
+        other = khaithi.episode_id_for(episode_id)
+    except khaithi.KhaithiError:
+        other = None
+    if other is not None and not khaithi.path_of(root / other).exists():
+        other = None
+    return {"kind": "short", "min_minutes": None, "max_minutes": None, "base_episode_id": None,
+            "khaithi_episode_id": other}
+
+
+def _label(config: Config, episode_id: str, kf: dict | None = None) -> str:
+    """``<episode>`` of the download names: titles.json ``header.fields.episode``, else the episode id (X1); for a
+    khai thị episode the base episode id, without ``.kt`` (CP8.9 K8)."""
+    kf = kf or kind_fields(config, episode_id)
     doc = _read_json(Path(config.workspace.dir) / episode_id / "titles.json") or {}
     fields = (doc.get("header") or {}).get("fields") or {}
     value = fields.get("episode") if isinstance(fields, dict) else None
-    return episode_label(value if isinstance(value, str) else None, episode_id)
+    return episode_label(value if isinstance(value, str) else None, kf["base_episode_id"] or episode_id)
 
 
 def _names(config: Config, episode_id: str, doc: dict) -> dict[str, str]:
     """Download name of every Short of the render manifest: number = position in the manifest (= clips.json
     order, CP7 R9, deleted Shorts included so the numbers never shift), title = the title in the file."""
-    label, shorts = _label(config, episode_id), doc.get("shorts") or []
-    return {s["clip_id"]: download_name(label, n, len(shorts), s.get("title"))
+    kf = kind_fields(config, episode_id)
+    label, shorts = _label(config, episode_id, kf), doc.get("shorts") or []
+    kt = kf["kind"] == khaithi.KIND
+    return {s["clip_id"]: download_name(label, n, len(shorts), s.get("title"), khaithi=kt)
             for n, s in enumerate(shorts, 1) if isinstance(s, dict) and isinstance(s.get("clip_id"), str)}
 
 
@@ -207,7 +232,9 @@ def episode_view(config: Config, episode_id: str, *, hashtags: list[str] | None 
                                       series=series, tags=tags)
                           for s in (doc or {}).get("shorts", []) if isinstance(s, dict)) if v]
     rendered = sum(1 for s in shorts if s["status"] == "rendered")
+    kf = kind_fields(config, episode_id)
     return {
+        **kf,  # CP8.9 K7
         "id": episode_id,
         "title": meta.get("title"),
         "channel": meta.get("channel"),
@@ -222,7 +249,7 @@ def episode_view(config: Config, episode_id: str, *, hashtags: list[str] | None 
         "published": sum(1 for s in shorts if s["status"] == "rendered" and s["published"]),
         "publish_error": publish_error,
         "zip_url": f"/files/{episode_id}/shorts.zip" if rendered else None,
-        "zip_name": zip_name(_label(config, episode_id)) if rendered else None,
+        "zip_name": zip_download_name(config, episode_id) if rendered else None,
         "max_title_chars": config.titling.max_chars,
         "titles_error": titles_error,
         "titles_ignored": ignored,
@@ -254,6 +281,7 @@ def list_episodes(config: Config) -> list[dict]:
         except OSError:
             mtime = 0.0
         items.append({
+            **kind_fields(config, ws.episode_id),  # CP8.9 K7
             "id": ws.episode_id,
             "title": meta.get("title"),
             "stages_done": sum(1 for s in stages if s["status"] == DONE),
@@ -311,7 +339,8 @@ def short_file(config: Config, episode_id: str, clip_id: str) -> tuple[Path, str
 
 
 def zip_download_name(config: Config, episode_id: str) -> str:
-    return zip_name(_label(config, episode_id))
+    kf = kind_fields(config, episode_id)
+    return zip_name(_label(config, episode_id, kf), khaithi=kf["kind"] == khaithi.KIND)
 
 
 

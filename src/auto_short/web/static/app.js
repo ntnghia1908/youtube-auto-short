@@ -87,12 +87,44 @@ const AutoShort = (() => {
       el("a", { href: "/storage", text: "tab Bộ nhớ" }), document.createTextNode("."));
   }
 
-  async function submitUrl(url, series, episode, mode) {
+  // ``kt`` (CP8.9): {min, max} minutes -> a khai thị job on <video_id>.kt; omitted = Short.
+  async function submitUrl(url, series, episode, mode, kt) {
+    const body = { url, series: series || null, episode: episode || null, mode: mode || null };
+    if (kt) Object.assign(body, { kind: "khaithi", min_minutes: kt.min, max_minutes: kt.max });
     return api("/api/episodes", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url, series: series || null, episode: episode || null, mode: mode || null }),
+      body: JSON.stringify(body),
     });
+  }
+
+  // --- CP8.9 khai thị -----------------------------------------------------------------------------
+
+  // Video id of a single-video YouTube URL (mirror of the server's parser, only to look up <id>.kt first).
+  function videoIdOf(url) {
+    const m = String(url || "").match(/(?:youtu\.be\/|[?&]v=|\/(?:shorts|embed|live|v)\/)([A-Za-z0-9_-]{11})(?![A-Za-z0-9_-])/);
+    return m ? m[1] : null;
+  }
+
+  function ktLabel(d) {
+    return d.min_minutes && d.max_minutes ? `Khai thị ${d.min_minutes}–${d.max_minutes} phút` : "Khai thị";
+  }
+
+  // Minutes typed in two number inputs (the server re-checks: whole numbers, 1 ≤ min < max ≤ 15).
+  function ktMinutes(minSel, maxSel) {
+    const read = (sel) => { const v = $(sel).value.trim(); return /^\d+$/.test(v) ? Number(v) : v; };
+    return { min: read(minSel), max: read(maxSel) };
+  }
+
+  // K7: an existing khai thị episode with other minutes is replaced (re-run from analysis): ask first.
+  async function confirmKhaithi(videoId, kt) {
+    if (!videoId) return true;
+    let cur;
+    try { cur = await api("/api/episodes/" + encodeURIComponent(videoId + ".kt")); } catch (_) { return true; }
+    if (cur.kind !== "khaithi" || (cur.min_minutes === kt.min && cur.max_minutes === kt.max)) return true;
+    return confirm(`Video này đã có video khai thị ${cur.min_minutes}–${cur.max_minutes} phút.\n\n` +
+      `Chạy lại với ${kt.min}–${kt.max} phút sẽ THAY TOÀN BỘ video khai thị cũ (AI chọn lại đoạn, đặt lại tiêu đề); ` +
+      "các tick \"Đã đăng\" cũ thành \"đã đăng bản cũ\". Tiếp tục?");
   }
 
   function gotoResult(data) {
@@ -104,12 +136,18 @@ const AutoShort = (() => {
 
   function initIndex() {
     const form = $("#submit-form"), btn = $("#submit-btn"), err = $("#submit-error");
+    const kindOf = () => (document.querySelector('input[name="kind"]:checked') || {}).value || "short";
+    document.querySelectorAll('input[name="kind"]').forEach((r) => r.addEventListener("change", () => {
+      $("#kt-minutes").hidden = kindOf() !== "khaithi";
+    }));
     async function send(mode) {
       err.hidden = true;
+      const kt = kindOf() === "khaithi" ? ktMinutes("#kt-min", "#kt-max") : null;
+      if (kt && !(await confirmKhaithi(videoIdOf($("#url").value), kt))) return;
       btn.disabled = true;
-      btn.textContent = mode === "playlist" || /[?&]list=/.test($("#url").value) ? "Đang lấy danh sách…" : "Đang kiểm tra…";
+      btn.textContent = !kt && (mode === "playlist" || /[?&]list=/.test($("#url").value)) ? "Đang lấy danh sách…" : "Đang kiểm tra…";
       try {
-        const data = await submitUrl($("#url").value, $("#series").value.trim(), $("#episode").value.trim(), mode);
+        const data = await submitUrl($("#url").value, $("#series").value.trim(), $("#episode").value.trim(), mode, kt);
         if (data.kind === "ask") { $("#ask-box").hidden = false; return; }
         gotoResult(data);
       } catch (e) {
@@ -217,6 +255,7 @@ const AutoShort = (() => {
       return el("li", { "data-group": e.publish_group || "none" },
         el("a", { href: "/episodes/" + encodeURIComponent(e.id) },
           el("span", { class: "ep-name", text: e.title || e.id }),
+          e.kind === "khaithi" ? el("span", { class: "kind-label", text: ktLabel(e) }) : null,
           el("span", { class: "ep-state muted", text: `${e.id} · ${state}` })));
     }));
     applyEpisodeFilter();
@@ -233,6 +272,7 @@ const AutoShort = (() => {
     episodeId = decodeURIComponent(location.pathname.split("/").filter(Boolean)[1] || "");
     $("#resubmit").addEventListener("click", resubmit);
     $("#delete-episode").addEventListener("click", deleteEpisode);
+    $("#kt-create").addEventListener("click", createKhaithi);
     document.querySelectorAll("#filters [data-filter]").forEach((b) => b.addEventListener("click", () => {
       filter = b.dataset.filter;
       applyFilter();
@@ -262,17 +302,54 @@ const AutoShort = (() => {
     }
   }
 
-  async function resubmit() {
-    const btn = $("#resubmit");
+  // CP8.9 K7: "Tạo video khai thị" on a Short episode page (same API as the home page form).
+  async function createKhaithi() {
+    const d = lastData || {};
+    const err = $("#kt-error"), btn = $("#kt-create");
+    err.hidden = true;
+    const kt = ktMinutes("#kt-min", "#kt-max");
+    if (!(await confirmKhaithi(videoIdOf(d.source_url), kt))) return;
     btn.disabled = true;
     try {
-      await submitUrl(btn.dataset.url);
+      const data = await submitUrl(d.source_url, null, null, "video", kt);
+      location.href = "/episodes/" + encodeURIComponent(data.episode_id);
+    } catch (e) {
+      err.textContent = e.message;
+      err.hidden = false;
+      btn.disabled = false;
+    }
+  }
+
+  async function resubmit() {
+    const btn = $("#resubmit");
+    const d = lastData || {};
+    btn.disabled = true;
+    try {
+      // a khai thị episode resumes with its own minutes (unchanged -> nothing re-runs that is up to date)
+      await submitUrl(btn.dataset.url, null, null, null,
+        d.kind === "khaithi" && d.min_minutes ? { min: d.min_minutes, max: d.max_minutes } : null);
       refreshEpisode();
     } catch (e) {
       setJobStatus(`Không chạy được: ${e.message}`, "error");
     } finally {
       btn.disabled = false;
     }
+  }
+
+  // CP8.9 K7: link between the Short page and the khai thị page of the same video; "Tạo video khai thị" box.
+  function renderKindLinks(d) {
+    const box = $("#kind-links");
+    const isKt = d.kind === "khaithi";
+    const other = isKt ? d.base_episode_id : d.khaithi_episode_id;
+    box.hidden = !other;
+    if (other) {
+      box.replaceChildren(el("a", { href: "/episodes/" + encodeURIComponent(other),
+        text: isKt ? "→ Trang Short của video này" : "→ Trang video khai thị của video này" }));
+    }
+    $("#shorts-label").textContent = isKt ? "Video khai thị" : "Shorts";
+    const kb = $("#kt-box");
+    kb.hidden = isKt || !d.source_url;
+    $("#kt-summary").textContent = d.khaithi_episode_id ? "Tạo lại video khai thị (đổi số phút)" : "Tạo video khai thị từ video này";
   }
 
   function setJobStatus(text, cls) {
@@ -303,7 +380,9 @@ const AutoShort = (() => {
     if (d.complete) meta.unshift("✔ Xong (đã đăng hết)");
     if (d.channel) meta.push(d.channel);
     if (d.duration) meta.push(fmtSeconds(d.duration));
+    if (d.kind === "khaithi") meta.unshift(ktLabel(d));
     $("#ep-meta").textContent = meta.join(" · ");
+    renderKindLinks(d);
 
     const job = d.job;
     const timings = {};
@@ -1017,6 +1096,7 @@ const AutoShort = (() => {
         el("span", { class: "pl-index muted", text: `${e.index}.` }),
         el("div", { class: "pl-body" }, head,
           el("span", { class: "muted small", text: [e.episode ? `tập ${e.episode}` : null, e.duration ? fmtSeconds(e.duration) : null].filter(Boolean).join(" · ") }),
+          e.khaithi_episode_id ? el("a", { class: "kind-label", href: "/episodes/" + encodeURIComponent(e.khaithi_episode_id), text: "Khai thị" }) : null,
           el("span", { class: "pl-state small", text: entryState(e) }),
           e.state === "failed" && e.error ? el("span", { class: "error small", text: e.error }) : null),
         actions);

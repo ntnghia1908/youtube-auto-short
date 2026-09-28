@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..config import Config
-from ..pipeline import PIPELINE_STAGES, PreflightError, StageRun, ollama_preflight, run_pipeline
+from ..pipeline import PIPELINE_STAGES, PipelineError, PreflightError, StageRun, ollama_preflight, run_pipeline
 from ..render import RenderError, run_render
 
 log = logging.getLogger("auto_short")
@@ -257,8 +257,11 @@ class JobRunner:
 
 def pipeline_target(url: str, config: Config, *, series: str | None = None, episode: str | None = None,
                     pipeline: Callable = run_pipeline,
-                    preflight: Callable[[Config], None] | None = ollama_preflight) -> Callable[[Job], None]:
-    """Job target running the CP8 pipeline on ``url`` (preflight again when the job starts, E8)."""
+                    preflight: Callable[[Config], None] | None = ollama_preflight,
+                    episode_id: str | None = None) -> Callable[[Job], None]:
+    """Job target running the CP8 pipeline on ``url`` (preflight again when the job starts, E8). ``episode_id``:
+    the khai thị episode ``<video_id>.kt`` (CP8.9 K7; its ``khaithi.json`` is written before the job is queued),
+    None = the id ingest derives (a Short)."""
 
     def target(job: Job) -> None:
         def checked_preflight(cfg: Config) -> None:
@@ -272,11 +275,15 @@ def pipeline_target(url: str, config: Config, *, series: str | None = None, epis
             job.stage = PIPELINE_STAGES[i + 1] if i + 1 < len(PIPELINE_STAGES) else None
 
         job.stage = PIPELINE_STAGES[0]
+        kw = {"episode_id": episode_id} if episode_id is not None else {}
         try:
             result = pipeline(url, config, series=series, episode=episode,
-                              preflight=checked_preflight if preflight is not None else None, on_stage=on_stage)
+                              preflight=checked_preflight if preflight is not None else None, on_stage=on_stage,
+                              **kw)
         except PreflightError as exc:
             raise JobFailed(f"ollama preflight: {exc}") from exc
+        except PipelineError as exc:
+            raise JobFailed(str(exc)) from exc
         if not result.ok:
             job.stage = result.failed_stage
             raise JobFailed(f"{result.failed_stage}: {result.error}")

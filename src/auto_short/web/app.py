@@ -14,7 +14,7 @@ import zipfile
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import parse_qs, quote
 
 from fastapi import FastAPI, Request
@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, StrictBool
 
+from .. import khaithi
 from ..config import Config
 from ..pipeline import PIPELINE_STAGES, PreflightError, ollama_preflight, run_pipeline
 from ..render import run_render
@@ -44,6 +45,7 @@ LOGIN_DELAY = 1.0  # seconds to wait after a wrong password
 PUBLIC_PATHS = {"/login", "/static/style.css"}
 MAX_FIELD = 100
 ZIP_CHUNK = 1 << 20
+KINDS = ("short", "khaithi")  # CP8.9 A1.1, in job order
 
 
 class SubmitIn(BaseModel):
@@ -52,6 +54,10 @@ class SubmitIn(BaseModel):
     episode: str | None = Field(default=None, max_length=MAX_FIELD)
     # CP8.7 L2: for ``watch?v=…&list=…`` the user chooses the single video or the whole playlist
     mode: Literal["video", "playlist"] | None = None
+    # CP8.9 A1.1: ["short", "khaithi"] (absent = both) + khai thị minutes; checked in the handler (Vietnamese 422)
+    kinds: Any = None
+    min_minutes: Any = None
+    max_minutes: Any = None
 
 
 class PreviewIn(BaseModel):
@@ -263,9 +269,9 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         for job in runner.jobs():  # queued jobs whose workspace does not exist yet
             if job.active and job.episode_id not in known:
                 known.add(job.episode_id)
-                items.insert(0, {"id": job.episode_id, "title": None, "stages_done": 0,
-                                 "stages_total": len(PIPELINE_STAGES), "running": None, "failed": None,
-                                 "shorts": 0})
+                items.insert(0, {**ep.kind_fields(config, job.episode_id), "id": job.episode_id, "title": None,
+                                 "stages_done": 0, "stages_total": len(PIPELINE_STAGES), "running": None,
+                                 "failed": None, "shorts": 0})
         in_playlists = playlists.video_ids()
         for item in items:
             job = runner.latest(item["id"])
@@ -273,11 +279,31 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             item.setdefault("published", 0)
             item.setdefault("complete", False)
             item["publish_group"] = ep.publish_group(item)
-            item["in_playlist"] = item["id"] in in_playlists  # CP8.7: home page "Tập lẻ" = not in a bộ kinh
+            # CP8.7: home page "Tập lẻ" = not in a bộ kinh; CP8.9 K8: a khai thị episode follows its base video
+            item["in_playlist"] = (item.get("base_episode_id") or item["id"]) in in_playlists
         return {"episodes": items}
+
+    def _kinds(body: SubmitIn) -> list[str] | JSONResponse:
+        """CP8.9 A1.1: ``kinds`` (absent = Short + khai thị), always in the order Short then khai thị."""
+        raw = body.kinds
+        if raw is None:
+            kinds = list(KINDS)
+        else:
+            if not isinstance(raw, list) or not raw or not all(isinstance(k, str) and k in KINDS for k in raw):
+                return JSONResponse({"detail": "kinds phải là danh sách không rỗng gồm \"short\" và / hoặc "
+                                               "\"khaithi\""}, status_code=422)
+            if len(set(raw)) != len(raw):
+                return JSONResponse({"detail": "kinds bị trùng"}, status_code=422)
+            kinds = [k for k in KINDS if k in raw]
+        if khaithi.KIND not in kinds and (body.min_minutes is not None or body.max_minutes is not None):
+            return JSONResponse({"detail": "Số phút chỉ dùng khi có video khai thị"}, status_code=422)
+        return kinds
 
     @app.post("/api/episodes")
     def api_submit(body: SubmitIn):
+        kinds = _kinds(body)
+        if isinstance(kinds, JSONResponse):
+            return kinds
         try:
             parsed = classify_url(body.url)
         except UrlError as exc:
@@ -285,31 +311,74 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         if parsed.kind == ASK and body.mode is None:  # CP8.7 L2: the UI asks "tập lẻ" or "cả bộ kinh"
             return JSONResponse({"kind": ASK, "video_id": parsed.video_id, "playlist_id": parsed.playlist_id})
         if parsed.kind == PLAYLIST or (parsed.kind == ASK and body.mode == "playlist"):
-            return _import_playlist(parsed.playlist_id)
+            return _import_playlist(parsed.playlist_id)  # A1.3: kinds / minutes do not apply to a bộ kinh
         if body.mode == "playlist":
             return JSONResponse({"detail": "URL không có playlist"}, status_code=422)
+        lo = hi = None
+        if khaithi.KIND in kinds:  # K2 minutes (absent = [khaithi] defaults)
+            kc = config.khaithi
+            try:
+                lo, hi = khaithi.check_minutes(
+                    kc.default_min_minutes if body.min_minutes is None else body.min_minutes,
+                    kc.default_max_minutes if body.max_minutes is None else body.max_minutes, kc.max_minutes_limit)
+            except khaithi.KhaithiError as exc:
+                return JSONResponse({"detail": exc.vi}, status_code=422)
         video_id, url = parsed.video_id, canonical_url(parsed.video_id)
         series, episode = _clean(body.series), _clean(body.episode)
-        current = runner.latest(video_id)
-        if current is not None and current.active:
-            return JSONResponse({"created": False, "episode_id": video_id, "job": _job_view(current)})
-        if is_archived(Path(config.workspace.dir) / video_id):  # CP8.6 S3
-            return JSONResponse({"detail": str(ArchivedError(video_id))}, status_code=409)
-        if storage.status()["block"]:  # CP8.6 S4
-            return JSONResponse({"detail": "Ổ đĩa server còn dưới 3 GB trống: không nhận video mới. "
-                                           "Dọn bớt ở tab Bộ nhớ rồi thử lại."}, status_code=507)
-        if preflight is not None:
+
+        # W4 per kind on its own episode (A1.1): duplicate job, archived (CP8.6 S3), low disk (CP8.6 S4)
+        items: list[dict] = []
+        for kind in kinds:
+            eid = video_id if kind == "short" else khaithi.episode_id_for(video_id)
+            item: dict = {"kind": kind, "episode_id": eid}
+            current = runner.latest(eid)
+            if current is not None and current.active:
+                item.update(created=False, job=current)
+            elif is_archived(Path(config.workspace.dir) / eid):
+                item.update(error=str(ArchivedError(eid)), status=409)
+            elif storage.status()["block"]:
+                item.update(error="Ổ đĩa server còn dưới 3 GB trống: không nhận video mới. "
+                                  "Dọn bớt ở tab Bộ nhớ rồi thử lại.", status=507)
+            items.append(item)
+        todo = [i for i in items if "job" not in i and "error" not in i]
+        if todo and preflight is not None:  # once for the whole request
             try:
                 preflight(config)
             except PreflightError as exc:
-                return JSONResponse({"detail": f"ollama preflight: {exc}"}, status_code=503)
+                for i in todo:
+                    i.update(error=f"ollama preflight: {exc}", status=503)
+                todo = []
         with submit_lock:
-            job, created = runner.submit(video_id, KIND_PIPELINE,
-                                         pipeline_target(url, config, series=series, episode=episode,
-                                                         pipeline=pipeline, preflight=preflight))
+            for i in todo:  # Short first, then khai thị (K5 reuses the Short's source + transcript)
+                current = runner.latest(i["episode_id"])
+                if current is not None and current.active:
+                    i.update(created=False, job=current)
+                    continue
+                if i["kind"] == khaithi.KIND:
+                    try:  # written just before its job is queued; changed minutes -> re-run from analysis
+                        _, changed = khaithi.prepare(config, video_id, lo, hi)
+                    except khaithi.KhaithiError as exc:
+                        i.update(error=exc.vi, status=409)
+                        continue
+                    log.info("web: khai thi %s %d-%d minutes (%s)", i["episode_id"], lo, hi,
+                             "parameters changed" if changed else "parameters unchanged")
+                job, created = runner.submit(
+                    i["episode_id"], KIND_PIPELINE,
+                    pipeline_target(url, config, series=series, episode=episode, pipeline=pipeline,
+                                    preflight=preflight,
+                                    episode_id=i["episode_id"] if i["kind"] == khaithi.KIND else None))
+                i.update(created=created, job=job)
         playlists.invalidate(video_id)
-        return JSONResponse({"kind": "video", "created": created, "episode_id": video_id, "job": _job_view(job)},
-                            status_code=202 if created else 200)
+        storage.invalidate()
+        out = [{k: (_job_view(v) if k == "job" else v) for k, v in i.items()} for i in items]
+        ok = [i for i in out if "error" not in i]
+        if not ok:
+            return JSONResponse({"detail": out[0]["error"], "kind": "video", "episodes": out},
+                                status_code=out[0]["status"])
+        first = ok[0]  # UI before A1: created / episode_id / job of the first accepted episode
+        return JSONResponse({"kind": "video", "episodes": out, "created": first["created"],
+                             "episode_id": first["episode_id"], "job": first["job"]},
+                            status_code=202 if any(i.get("created") for i in ok) else 200)
 
     # --- playlists (CP8.7) ---------------------------------------------------------------------------
 
@@ -432,12 +501,15 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     def api_episode(episode_id: str):
         if not ep.valid_episode_id(episode_id):
             return JSONResponse({"detail": "không có episode này"}, status_code=404)
-        view = ep.episode_view(config, episode_id, hashtags=playlists.hashtags_for(episode_id))
+        kf = ep.kind_fields(config, episode_id)
+        # CP8.9 K8: a khai thị episode copies with the hashtags of the bộ kinh of its base video
+        view = ep.episode_view(config, episode_id,
+                               hashtags=playlists.hashtags_for(kf["base_episode_id"] or episode_id))
         job = runner.latest(episode_id)
         if view is None:
             if job is None:
                 return JSONResponse({"detail": "không có episode này"}, status_code=404)
-            view = {"id": episode_id, "title": None, "channel": None, "duration": None, "source_url": None,
+            view = {**kf, "id": episode_id, "title": None, "channel": None, "duration": None, "source_url": None,
                     "stages": [], "header": None, "shorts": [], "rendered": 0, "deleted": 0, "published": 0,
                     "zip_url": None, "zip_name": None, "archived": None}
         view["job"] = _job_view(job)
