@@ -1,8 +1,15 @@
-"""W5: in-memory FIFO job queue with one worker thread; per-job log ring buffer (stdlib only).
+"""W5 job queue (CP8.10): in-memory FIFO lanes ``prepare`` / ``ai`` / ``render``, one worker thread per lane;
+per-job log ring buffer (stdlib only).
 
-One job runs at a time (pipeline now; per-Short render jobs later), so the CPU/GPU is not shared and no two
-jobs write the same manifest. A second job for an episode that already has a queued/running job is refused.
-The queue lives in memory: a server restart forgets it (manifests stay; resubmitting resumes, CP8 E3).
+``queue_mode = "lanes"`` (default): a pipeline job goes lane by lane (ingest → transcript → analysis, then
+preflight → selection → titling, then render), joining the tail of the next lane's queue after each lane; a
+``render`` job (title edit / Short deletion) goes straight to the render lane. Each lane runs one job at a time, so
+the AI of one episode overlaps with the render (CPU) of another and the next episodes are prepared in advance.
+``queue_mode = "serial"``: one worker runs each job through all six stages (W5 before CP8.10).
+
+An episode has at most one queued/running job (also while it waits between two lanes), so two jobs never write the
+same manifest. The queue lives in memory: a server restart forgets it (manifests stay; resubmitting resumes, CP8
+E3). Contract: docs/decisions/CP8.3-web-contract.md W5.
 """
 
 from __future__ import annotations
@@ -32,6 +39,14 @@ LOG_LINES = 200
 KIND_PIPELINE = "pipeline"
 KIND_RENDER = "render"
 
+MODE_LANES, MODE_SERIAL = "lanes", "serial"
+PREPARE, AI, RENDER = "prepare", "ai", "render"
+LANES = (PREPARE, AI, RENDER)
+LANE_STAGES: dict[str, tuple[str, ...]] = {
+    PREPARE: ("ingest", "transcript", "analysis"), AI: ("selection", "titling"), RENDER: ("render",)}
+PREFETCH_LIMIT = 2  # Q2: prepare starts no new job while this many prepared jobs wait for the ai lane
+_SERIAL = "serial"  # internal lane of queue_mode "serial" (reported as lane null)
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -39,6 +54,14 @@ def _now() -> str:
 
 class JobFailed(Exception):
     """Raised by a job target to finish the job as ``failed`` with this message."""
+
+
+@dataclass(frozen=True)
+class Step:
+    """One part of a job, run by the worker of ``lane``."""
+
+    lane: str
+    run: Callable[["Job"], None]
 
 
 @dataclass
@@ -51,12 +74,18 @@ class Job:
     created_at: str = field(default_factory=_now)
     started_at: str | None = None
     finished_at: str | None = None
-    stage: str | None = None  # stage currently running (set by the target)
+    stage: str | None = None  # stage currently running (set by the target), or the next one while waiting
     stages: list[dict] = field(default_factory=list)  # finished stages: {stage, ran, seconds}
     error: str | None = None
     summary: str | None = None
     clip_ids: list[str] = field(default_factory=list)  # render job: Shorts whose title / deletion just changed
     logs: deque = field(default_factory=lambda: deque(maxlen=LOG_LINES), repr=False)
+    # CP8.10: lane running the job or the lane it waits for (None: not started yet / finished / serial mode)
+    lane: str | None = None
+    waiting: bool = False  # running, waiting between two lanes
+    steps: list[Step] = field(default_factory=list, repr=False)
+    step: int = field(default=0, repr=False)  # index of the running / next step
+    t0: float = field(default=0.0, repr=False)  # monotonic start
 
     @property
     def active(self) -> bool:
@@ -67,7 +96,7 @@ class Job:
             "id": self.id, "episode_id": self.episode_id, "kind": self.kind, "status": self.status,
             "created_at": self.created_at, "started_at": self.started_at, "finished_at": self.finished_at,
             "stage": self.stage, "stages": list(self.stages), "error": self.error, "summary": self.summary,
-            "clip_ids": list(self.clip_ids),
+            "clip_ids": list(self.clip_ids), "lane": self.lane, "waiting": self.waiting,
         }
         if logs:
             out["logs"] = list(self.logs)
@@ -75,15 +104,15 @@ class Job:
 
 
 class _JobLogHandler(logging.Handler):
-    """Copies ``auto_short`` log records emitted on the worker thread into the running job's ring buffer."""
+    """Copies ``auto_short`` log records emitted on a lane's worker thread into the job that lane runs."""
 
     def __init__(self, runner: "JobRunner"):
         super().__init__(logging.INFO)
         self._runner = runner
 
     def emit(self, record: logging.LogRecord) -> None:
-        job = self._runner.current
-        if job is None or record.thread != self._runner.worker_ident:
+        job = self._runner.job_on_thread(record.thread)
+        if job is None:
             return
         try:
             stamp = time.strftime("%H:%M:%S", time.localtime(record.created))
@@ -105,69 +134,104 @@ def _child_pids() -> list[int]:
     return pids
 
 
+def _interrupt(thread_ident: int) -> None:
+    ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_ulong(thread_ident), ctypes.py_object(KeyboardInterrupt))
+
+
 class JobRunner:
-    def __init__(self) -> None:
+    """``mode`` = ``[web] queue_mode``: ``"lanes"`` (CP8.10) or ``"serial"`` (one worker, whole job)."""
+
+    def __init__(self, mode: str = MODE_LANES) -> None:
+        if mode not in (MODE_LANES, MODE_SERIAL):
+            raise ValueError(f"unknown queue mode {mode!r}")
+        self.mode = mode
+        self._lane_names = LANES if mode == MODE_LANES else (_SERIAL,)
         self._lock = threading.Condition()
-        self._queue: deque[Job] = deque()
+        self._queues: dict[str, deque[Job]] = {lane: deque() for lane in self._lane_names}
+        self._current: dict[str, Job | None] = {lane: None for lane in self._lane_names}
+        self._threads: dict[str, threading.Thread] = {}
+        self._idents: dict[int, str] = {}  # worker thread ident -> lane
         self._jobs: dict[str, Job] = {}
         self._latest: dict[str, Job] = {}  # episode_id -> newest job
         self._ids = itertools.count(1)
-        self._thread: threading.Thread | None = None
         self._stopping = False
         self._handler = _JobLogHandler(self)
-        self.current: Job | None = None
-        self.worker_ident: int | None = None
 
     # --- lifecycle -----------------------------------------------------------------------------
 
     def start(self) -> None:
-        if self._thread is not None:
+        if self._threads:
             return
         if log.level == logging.NOTSET:
             log.setLevel(logging.INFO)
         log.addHandler(self._handler)
-        self._thread = threading.Thread(target=self._work, name="auto-short-jobs", daemon=True)
-        self._thread.start()
+        self._stopping = False
+        for lane in self._lane_names:
+            name = "auto-short-jobs" if lane == _SERIAL else f"auto-short-{lane}"
+            thread = threading.Thread(target=self._work, args=(lane,), name=name, daemon=True)
+            self._threads[lane] = thread
+            thread.start()
 
     def stop(self, timeout: float = 30.0) -> None:
-        """Stop the worker. A running job gets KeyboardInterrupt (the stage records ``failed`` /
-        ``interrupted``, CP2) and its child processes SIGINT; waits up to ``timeout`` seconds. A stage blocked
-        in a long call that ignores the interrupt keeps ``running`` in the manifest and resumes on resubmit."""
+        """Stop every lane. Each running job gets KeyboardInterrupt on its lane thread (the stage records
+        ``failed`` / ``interrupted``, CP2) and the child processes SIGINT; waits up to ``timeout`` seconds in total.
+        A stage blocked in a long call that ignores the interrupt keeps ``running`` in the manifest and resumes on
+        resubmit. Jobs waiting between two lanes end ``interrupted``; queued jobs are forgotten with the process."""
         with self._lock:
             self._stopping = True
             self._lock.notify_all()
-            running = self.current
-        thread = self._thread
-        if thread is not None and running is not None and thread.ident is not None:
-            log.info("web: stopping, interrupting job %s [%s]", running.id, running.episode_id)
-            ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_ulong(thread.ident),
-                                                       ctypes.py_object(KeyboardInterrupt))
+            running = [(lane, job) for lane, job in self._current.items() if job is not None]
+        for lane, job in running:
+            thread = self._threads.get(lane)
+            if thread is not None and thread.ident is not None:
+                log.info("web: stopping, interrupting job %s [%s]%s", job.id, job.episode_id,
+                         "" if lane == _SERIAL else f" (lane {lane})")
+                _interrupt(thread.ident)
+        if running:
             for pid in _child_pids():
                 try:
                     os.kill(pid, signal.SIGINT)
                 except OSError:
                     pass
-        if thread is not None:
-            thread.join(timeout)
-            if thread.is_alive():
-                log.warning("web: job still running after %.0f s; exiting anyway", timeout)
+        deadline = time.monotonic() + timeout
+        for thread in self._threads.values():
+            thread.join(max(0.0, deadline - time.monotonic()))
+        if any(t.is_alive() for t in self._threads.values()):
+            log.warning("web: job still running after %.0f s; exiting anyway", timeout)
+        with self._lock:
+            for queue in self._queues.values():
+                for job in queue:
+                    if job.status == RUNNING:  # waiting between two lanes
+                        job.status, job.error = INTERRUPTED, f"interrupted while waiting for {job.lane}"
+                        job.finished_at, job.waiting = _now(), False
+            self._lock.notify_all()
         log.removeHandler(self._handler)
-        self._thread = None
+        self._threads = {}
 
     # --- queue ---------------------------------------------------------------------------------
 
+    def _steps(self, kind: str, target: Callable[[Job], None]) -> list[Step]:
+        if self.mode == MODE_SERIAL:
+            return [Step(_SERIAL, target)]
+        lane_steps = getattr(target, "lane_steps", None)
+        if lane_steps is not None:
+            return list(lane_steps())
+        return [Step(RENDER if kind == KIND_RENDER else PREPARE, target)]
+
     def submit(self, episode_id: str, kind: str, target: Callable[[Job], None], *,
                clip_ids: list[str] | None = None) -> tuple[Job, bool]:
-        """Queue a job; returns ``(job, True)``, or ``(existing active job, False)`` for a duplicate."""
+        """Queue a job; returns ``(job, True)``, or ``(existing active job, False)`` for a duplicate. In lanes mode
+        a target with ``lane_steps()`` (:class:`PipelineTarget`) runs lane by lane; any other callable is one step in
+        the render lane (``render`` job) or the prepare lane."""
         with self._lock:
             latest = self._latest.get(episode_id)
             if latest is not None and latest.active:
                 return latest, False
             job = Job(id=str(next(self._ids)), episode_id=episode_id, kind=kind, target=target,
-                      clip_ids=list(clip_ids or []))
+                      clip_ids=list(clip_ids or []), steps=self._steps(kind, target))
             self._jobs[job.id] = job
             self._latest[episode_id] = job
-            self._queue.append(job)
+            self._queues[job.steps[0].lane].append(job)
             self._lock.notify_all()
         log.info("web: queued %s job %s [%s]", kind, job.id, episode_id)
         return job, True
@@ -193,50 +257,75 @@ class JobRunner:
             return list(self._jobs.values())
 
     def queue_position(self, job: Job) -> int | None:
-        """1-based position among queued jobs, None when not queued."""
+        """1-based position in the queue of the lane the job waits for (queued, or waiting between two lanes);
+        None when it runs or has finished."""
         with self._lock:
-            for i, j in enumerate(self._queue, 1):
-                if j is job:
-                    return i
+            for queue in self._queues.values():
+                for i, j in enumerate(queue, 1):
+                    if j is job:
+                        return i
         return None
 
+    def job_on_thread(self, thread_ident: int | None) -> Job | None:
+        """The job the lane worker ``thread_ident`` is running (log handler)."""
+        lane = self._idents.get(thread_ident) if thread_ident is not None else None
+        return self._current.get(lane) if lane is not None else None
+
+    def running(self) -> dict[str, Job]:
+        """Lane -> job it is running (test / diagnostics)."""
+        with self._lock:
+            return {lane: job for lane, job in self._current.items() if job is not None}
+
     def wait_idle(self, timeout: float = 10.0) -> bool:
-        """Test helper: wait until no job is queued or running."""
+        """Test helper: wait until no job is queued, running in a lane or waiting between two lanes."""
         deadline = time.monotonic() + timeout
         with self._lock:
-            while self._queue or self.current is not None:
+            while any(self._queues.values()) or any(j is not None for j in self._current.values()):
                 left = deadline - time.monotonic()
                 if left <= 0:
                     return False
                 self._lock.wait(left)
         return True
 
-    # --- worker --------------------------------------------------------------------------------
+    # --- workers -------------------------------------------------------------------------------
 
-    def _work(self) -> None:
-        self.worker_ident = threading.get_ident()
+    def _can_start(self, lane: str) -> bool:
+        if not self._queues[lane]:
+            return False
+        if lane == PREPARE:  # Q2: bounded prefetch
+            return len(self._queues[AI]) < PREFETCH_LIMIT
+        return True
+
+    def _work(self, lane: str) -> None:
+        self._idents[threading.get_ident()] = lane
         try:
-            self._loop()
+            self._loop(lane)
         except KeyboardInterrupt:  # stop() raced with the end of a job
             pass
 
-    def _loop(self) -> None:
+    def _loop(self, lane: str) -> None:
         while True:
             with self._lock:
-                while not self._queue and not self._stopping:
+                while not self._stopping and not self._can_start(lane):
                     self._lock.wait()
                 if self._stopping:
                     return
-                job = self._queue.popleft()
-                job.status, job.started_at = RUNNING, _now()
-                self.current = job
-            t0 = time.monotonic()
+                job = self._queues[lane].popleft()
+                first = job.status == QUEUED
+                if first:
+                    job.status, job.started_at, job.t0 = RUNNING, _now(), time.monotonic()
+                job.lane = None if lane == _SERIAL else lane
+                job.waiting = False
+                self._current[lane] = job
+                self._lock.notify_all()  # a shorter ai queue may let the prepare lane start (Q2)
+            ok = False
             try:
-                log.info("web: start %s job %s [%s]", job.kind, job.id, job.episode_id)
-                job.target(job)
-                job.status = DONE
-                log.info("web: job %s done in %.1f s [%s]%s", job.id, time.monotonic() - t0, job.episode_id,
-                         f": {job.summary}" if job.summary else "")
+                if first:
+                    log.info("web: start %s job %s [%s]", job.kind, job.id, job.episode_id)
+                else:
+                    log.info("web: job %s continues in lane %s [%s]", job.id, lane, job.episode_id)
+                job.steps[job.step].run(job)
+                ok = True
             except KeyboardInterrupt:
                 job.status, job.error = INTERRUPTED, f"interrupted during {job.stage or 'start'}"
                 log.info("web: job %s interrupted [%s]", job.id, job.episode_id)
@@ -247,39 +336,63 @@ class JobRunner:
                 job.status, job.error = FAILED, f"{type(exc).__name__}: {exc}"
                 log.exception("web: job %s crashed [%s]", job.id, job.episode_id)
             finally:
-                job.finished_at = _now()
+                last = not ok or job.step + 1 >= len(job.steps)
+                if ok and last:
+                    job.status = DONE
+                    log.info("web: job %s done in %.1f s [%s]%s", job.id, time.monotonic() - job.t0,
+                             job.episode_id, f": {job.summary}" if job.summary else "")
                 with self._lock:
-                    self.current = None
+                    self._current[lane] = None
+                    if last:
+                        job.finished_at, job.lane, job.waiting = _now(), None, False
+                    else:  # tail of the next lane's queue
+                        job.step += 1
+                        nxt = job.steps[job.step].lane
+                        job.lane, job.waiting = nxt, True
+                        job.stage = LANE_STAGES[nxt][0]
+                        self._queues[nxt].append(job)
                     self._lock.notify_all()
 
 
 # --- pipeline job (W4) ---------------------------------------------------------------------------
 
-def pipeline_target(url: str, config: Config, *, series: str | None = None, episode: str | None = None,
-                    pipeline: Callable = run_pipeline,
-                    preflight: Callable[[Config], None] | None = ollama_preflight,
-                    episode_id: str | None = None) -> Callable[[Job], None]:
-    """Job target running the CP8 pipeline on ``url`` (preflight again when the job starts, E8). ``episode_id``:
-    the khai thị episode ``<video_id>.kt`` (CP8.9 K7; its ``khaithi.json`` is written before the job is queued),
-    None = the id ingest derives (a Short)."""
+class PipelineTarget:
+    """Job target running the CP8 pipeline on ``url``. ``episode_id``: the khai thị episode ``<video_id>.kt``
+    (CP8.9 K7; its ``khaithi.json`` is written before the job is queued), None = the id ingest derives (a Short).
 
-    def target(job: Job) -> None:
+    Called directly (``queue_mode = "serial"``): all six stages, preflight again when the job starts (E8).
+    ``lane_steps()`` (lanes, CP8.10): ``prepare`` = W9 disk check then ingest → transcript → analysis, ``ai`` =
+    preflight → selection → titling, ``render`` = render; the later lanes use the episode id ingest returned.
+    ``disk_blocked`` (None = no check) returns the W9 message when the drive is below the block threshold."""
+
+    def __init__(self, url: str, config: Config, *, series: str | None = None, episode: str | None = None,
+                 pipeline: Callable = run_pipeline,
+                 preflight: Callable[[Config], None] | None = ollama_preflight,
+                 episode_id: str | None = None, disk_blocked: Callable[[], str | None] | None = None):
+        self.url, self.config, self.series, self.episode = url, config, series, episode
+        self.pipeline, self.preflight, self.episode_id = pipeline, preflight, episode_id
+        self.disk_blocked = disk_blocked
+        self._resolved: str | None = episode_id  # episode id for the ai / render lanes
+
+    def _run(self, job: Job, stages: tuple[str, ...] | None, *, preflight: bool, episode_id: str | None):
         def checked_preflight(cfg: Config) -> None:
             job.stage = "preflight"
-            preflight(cfg)
-            job.stage = PIPELINE_STAGES[0]
+            self.preflight(cfg)
+            job.stage = (stages or PIPELINE_STAGES)[0]
 
         def on_stage(run: StageRun) -> None:
             job.stages.append({"stage": run.stage, "ran": run.ran, "seconds": run.seconds})
             i = PIPELINE_STAGES.index(run.stage)
             job.stage = PIPELINE_STAGES[i + 1] if i + 1 < len(PIPELINE_STAGES) else None
 
-        job.stage = PIPELINE_STAGES[0]
-        kw = {"episode_id": episode_id} if episode_id is not None else {}
+        job.stage = (stages or PIPELINE_STAGES)[0]
+        kw: dict = {"episode_id": episode_id} if episode_id is not None else {}
+        if stages is not None:
+            kw["stages"] = stages
         try:
-            result = pipeline(url, config, series=series, episode=episode,
-                              preflight=checked_preflight if preflight is not None else None, on_stage=on_stage,
-                              **kw)
+            result = self.pipeline(self.url, self.config, series=self.series, episode=self.episode,
+                                   preflight=checked_preflight if preflight and self.preflight is not None else None,
+                                   on_stage=on_stage, **kw)
         except PreflightError as exc:
             raise JobFailed(f"ollama preflight: {exc}") from exc
         except PipelineError as exc:
@@ -287,13 +400,51 @@ def pipeline_target(url: str, config: Config, *, series: str | None = None, epis
         if not result.ok:
             job.stage = result.failed_stage
             raise JobFailed(f"{result.failed_stage}: {result.error}")
+        return result
+
+    def _finish(self, job: Job, result) -> None:
         job.stage = None
         job.summary = f"{result.rendered}/{result.clips} Shorts"
         render = result.stages[-1].result if result.stages else None
         if render is not None and render.ran and getattr(render, "encoded", None) is not None:
             job.summary += f" ({render.encoded} encoded, {render.reused} reused)"
 
-    return target
+    def __call__(self, job: Job) -> None:
+        """Whole pipeline in one call (serial mode, W5 before CP8.10)."""
+        self._finish(job, self._run(job, None, preflight=True, episode_id=self.episode_id))
+
+    # lanes (CP8.10)
+
+    def prepare(self, job: Job) -> None:
+        job.stage = LANE_STAGES[PREPARE][0]
+        if self.disk_blocked is not None:  # Q2: W9 threshold again right before a download
+            message = self.disk_blocked()
+            if message:
+                raise JobFailed(message)
+        result = self._run(job, LANE_STAGES[PREPARE], preflight=False, episode_id=self.episode_id)
+        self._resolved = result.episode_id or self._resolved
+
+    def _later_id(self, job: Job) -> str:
+        return self._resolved or job.episode_id
+
+    def ai(self, job: Job) -> None:
+        self._run(job, LANE_STAGES[AI], preflight=True, episode_id=self._later_id(job))
+
+    def render(self, job: Job) -> None:
+        self._finish(job, self._run(job, LANE_STAGES[RENDER], preflight=False, episode_id=self._later_id(job)))
+
+    def lane_steps(self) -> list[Step]:
+        return [Step(PREPARE, self.prepare), Step(AI, self.ai), Step(RENDER, self.render)]
+
+
+def pipeline_target(url: str, config: Config, *, series: str | None = None, episode: str | None = None,
+                    pipeline: Callable = run_pipeline,
+                    preflight: Callable[[Config], None] | None = ollama_preflight,
+                    episode_id: str | None = None,
+                    disk_blocked: Callable[[], str | None] | None = None) -> PipelineTarget:
+    """See :class:`PipelineTarget`."""
+    return PipelineTarget(url, config, series=series, episode=episode, pipeline=pipeline, preflight=preflight,
+                          episode_id=episode_id, disk_blocked=disk_blocked)
 
 
 # --- render job (W4 title edit) ------------------------------------------------------------------------

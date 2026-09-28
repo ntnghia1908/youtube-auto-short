@@ -203,6 +203,12 @@ class WebConfig:
     session_days: int = 30  # login cookie lifetime
     # CP8.7: hashtags appended to the copied title (after #<series>); written without "#"
     hashtags: tuple[str, ...] = ("TịnhKhông", "LờiPhậtDạy", "TịnhĐộ", "NiệmPhật")
+    # CP8.10: "lanes" = prepare / ai / render lanes run in parallel (one job per lane); "serial" = one job at a
+    # time through all six stages (W5 before CP8.10)
+    queue_mode: str = "lanes"
+
+
+WEB_QUEUE_MODES = ("lanes", "serial")
 
 
 @dataclass(frozen=True)
@@ -537,7 +543,15 @@ def _web(data: dict) -> WebConfig:
         port=_int(we, "port", d.port, w, lo=1, hi=65535),
         session_days=_int(we, "session_days", d.session_days, w, lo=1, hi=365),
         hashtags=_hashtags(we, d.hashtags),
+        queue_mode=_queue_mode(we, d.queue_mode),
     )
+
+
+def _queue_mode(section: dict, default: str) -> str:
+    value = section.get("queue_mode", default)
+    if value not in WEB_QUEUE_MODES:
+        raise ConfigError(f"web.queue_mode must be one of: {', '.join(repr(m) for m in WEB_QUEUE_MODES)}")
+    return value
 
 
 def _learning(data: dict) -> LearningConfig:

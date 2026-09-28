@@ -26,6 +26,8 @@ GB = 1_000_000_000
 OLD_DAYS = 7  # P1: "cũ" = older than 7 days
 WARN_BYTES, WARN_RATIO = 10 * GB, 0.10  # P2: warning banner below 10 GB free or below 10 % free
 BLOCK_BYTES = 3 * GB  # P2: refuse a new URL below 3 GB free
+BLOCK_MESSAGE = ("Ổ đĩa server còn dưới 3 GB trống: không nhận video mới. "
+                 "Dọn bớt ở tab Bộ nhớ rồi thử lại.")  # 507 of POST /api/episodes; CP8.10: job failed before ingest
 CACHE_SECONDS = 30.0
 
 DiskUsage = Callable[[Path], tuple[int, int, int]]  # shutil.disk_usage-like: (total, used, free)
@@ -223,6 +225,10 @@ class StorageCache:
         """S4 banner / block (cheap, not cached)."""
         disks = disk_info(self._config, self._disk_usage)
         return {"disks": disks, **warning(disks)}
+
+    def block_message(self) -> str | None:
+        """:data:`BLOCK_MESSAGE` when a drive is below the block threshold (W9 507, CP8.10 check before ingest)."""
+        return BLOCK_MESSAGE if self.status()["block"] else None
 
     def report(self, active: set[str] | None = None) -> dict:
         key = frozenset(active or ())
