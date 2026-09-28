@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: BUG
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -70,9 +70,13 @@ Không chạm database, security model hay public API contract → manual test l
 
 ## Result
 
-- Main changes:
-- Tests:
-- Review:
-- Important findings / decisions:
-- Known limitations:
-- PR:
+- Main changes: `tests/conftest.py` — fixture `cfg` thêm `render=replace(RenderConfig(), output_dir=tmp_path / "output")` (import `replace`, `RenderConfig`); fixture `config_file` thêm khối `[render]\noutput_dir = "<tmp_path/output>"`. Không đổi `src/`. Đã grep: không test nào append thêm `[render]` vào `config_file` (tránh trùng bảng TOML) hoặc dựa vào `cfg.render.output_dir == Path("output")`.
+- Tests (môi trường: conda `auto-short`, Python 3.12, node qua nvm; 2026-09-28):
+  - AC1: `cd <scratchpad>/ac1` (thư mục mới, trống) `&& PYTHONPATH=<worktree>/src python -m pytest -q -p no:cacheprovider <worktree>/tests` → `868 passed, 1 warning in 172.72s`; `find <scratchpad>/ac1 -mindepth 1` → rỗng (trước fix: `output/abcdefghijk/…`). PASS.
+  - AC2: trong worktree `PYTHONPATH=<worktree>/src python -m pytest -q` → `868 passed, 1 warning in 191.95s` (bằng baseline 868); sau đó worktree không có `output/` hay `work/`. PASS.
+  - AC3: `git diff --stat origin/main` → `docs/tasks/FIX-test-output-dir.md` + `tests/conftest.py` (12 ++++--). PASS.
+  - `node scripts/framework-check.mjs` → exit 0, 53 dòng PASS, không FAIL. PASS.
+- Review: chưa (chờ ORCHESTRATOR).
+- Important findings / decisions: warning duy nhất trong suite có sẵn từ trước, không liên quan. `docs/workflow/current-state.md` cố ý chưa sửa ở commit này (ORCHESTRATOR cập nhật để tránh xung đột với nhánh state chưa merge).
+- Known limitations: không thêm guard tự động (autouse `chdir`) theo Out of scope; `output/abcdefghijk/` ở repo chính vẫn còn — xem Manual test.
+- PR: chưa tạo (commit local, chưa push).
