@@ -415,6 +415,14 @@ Download the video + captions ahead for jobs waiting in the queue, and let the A
 
 ---
 
+## CP8.11 — Series / Episode Recognition
+
+> HUMAN LEAD 2026-09-28 (`docs/tasks/CP8.11-series-recognition.md`, D1–D7; done before CP8.10, whose id was already taken). Contract: `docs/decisions/CP6-titling-contract.md` G2 (Sửa đổi CP8.11), `docs/decisions/CP8.3-web-contract.md` W7, W10.
+
+The titling header recognizes the series name / episode number from more video title forms (`[titling.header] title_patterns`, first match wins; e.g. `Tập 11/128: Giảng "Thái Thượng Cảm Ứng Thiên" | …`) without flags; episodes already titled are not re-run. Fallback for unusual titles: a "Tên bộ kinh" set on the bộ kinh page (web), used only when no pattern matches.
+
+---
+
 ## CP9 — Human Review + Batch Processing
 
 > Re-plan HUMAN LEAD 2026-09-27: phần batch mức playlist (bộ kinh: liệt kê, bấm xử lý từng tập, xếp hàng, trạng thái "Xong" suy ra khi đăng hết) kéo lên CP8.7 (`docs/tasks/CP8.7-playlist.md`, `docs/decisions/CP8.3-web-contract.md` W10). CP9 còn: tự xử lý hàng loạt, approval state, failed-item isolation đầy đủ.

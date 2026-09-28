@@ -3,7 +3,7 @@
 | Metadata | Value |
 |---|---|
 | Status | ACCEPTED |
-| Accepted by | — (G1–G10, P1–P4 duyệt cùng APPROVE TASK 2026-09-26; Sửa G4 (prompt v2), sửa title bằng tay → CP9, chốt model `qwen3:14b` think off + v2 HUMAN LEAD 2026-09-26; review ACCEPTED) |
+| Accepted by | — (G1–G10, P1–P4 duyệt cùng APPROVE TASK 2026-09-26; Sửa G4 (prompt v2), sửa title bằng tay → CP9, chốt model `qwen3:14b` think off + v2 HUMAN LEAD 2026-09-26; review ACCEPTED). Sửa đổi CP8.11 (HUMAN LEAD 2026-09-28, D1–D7): G2, G7 `sources`, config `[titling.header]` |
 | Checkpoint | CP6 (S2) |
 | Roadmap | `AUTO_SHORT_CHECKPOINT_PLAN.md` §4 CP6 |
 | Task contract | `docs/tasks/CP6-titling.md` |
@@ -20,12 +20,20 @@ Implementation tham chiếu: `src/auto_short/titling/` (`prompt.py`, `logic.py`,
 
 ## G2. Header (deterministic, không AI)
 
-- Trường `speaker`, `series`, `episode`. Mỗi trường resolve theo thứ tự: CLI flag (`--speaker` / `--series` / `--episode`) > `[titling.header]` (chuỗi không rỗng) > named group cùng tên của regex `title_pattern` (`re.search` trên `metadata.title`, NFC). Giá trị được chuẩn hóa NFC + gộp khoảng trắng; flag/config rỗng sau chuẩn hóa = không đặt. Nguồn từng trường ghi ở `header.sources` (`cli | config | metadata`, `null` khi không resolve); `header.fields` là giá trị (`null` khi không resolve).
+- Trường `speaker`, `series`, `episode`. Mỗi trường resolve theo thứ tự: CLI flag (`--speaker` / `--series` / `--episode`) > `[titling.header]` (chuỗi không rỗng) > named group cùng tên của **pattern đầu tiên khớp** trong danh sách regex `title_patterns` (`re.search` trên `metadata.title`, NFC, theo thứ tự; mọi group lấy từ đúng một match, không trộn giữa các pattern) > "Tên bộ kinh" (chỉ khi **không pattern nào khớp**, xem Sửa đổi CP8.11). Giá trị được chuẩn hóa NFC + gộp khoảng trắng; flag/config rỗng sau chuẩn hóa = không đặt. Nguồn từng trường ghi ở `header.sources` (`cli | config | metadata | playlist`, `null` khi không resolve); `header.fields` là giá trị (`null` khi không resolve).
 - Dòng header = template `[titling.header] lines` (`str.format` với `{speaker}`, `{series}`, `{episode}`), mặc định `["{speaker}", "{series} (tập {episode})"]`; 1–3 dòng (CP1 §4); dòng render ra rỗng (sau gộp khoảng trắng) → `failed`. Template chỉ được dùng ba trường trên (kiểm lúc đọc config: `{}` / `{title}` / `{speaker.x}` / cú pháp hỏng → lỗi config).
-- Trường template cần mà không resolve được → stage `failed`, `error` nêu trường + flag/config cần đặt (vd `header field(s) not resolved: series (pass --series or set [titling.header] series), …`). Trường không dùng trong template được phép không resolve.
-- Mặc định: `speaker = "HT.Tịnh Không"` (theo ảnh mẫu CP1 §4), `series = ""`, `episode = ""`, `title_pattern = ^(?:Phật Thuyết\s+)?(?P<series>.+?)\s+tập\s+(?P<episode>\d+)\b` (rỗng = tắt). Video test → `["HT.Tịnh Không", "Thập Thiện Nghiệp Đạo Kinh (tập 9)"]`.
+- Trường template cần mà không resolve được → stage `failed`, `error` nêu trường + flag/config cần đặt (vd `header field(s) not resolved: series (pass --series or set [titling.header] series), …; metadata title '…' does not match [titling.header] title_patterns; or set "Tên bộ kinh" of its bộ kinh on the web`). Trường không dùng trong template được phép không resolve.
+- Mặc định: `speaker = "HT.Tịnh Không"` (theo ảnh mẫu CP1 §4), `series = ""`, `episode = ""`, `title_patterns` = (1) `^(?:Phật Thuyết\s+)?(?P<series>.+?)\s+tập\s+(?P<episode>\d+)\b` (pattern CP6 gốc, đứng đầu), (2) `^Tập\s+(?P<episode>\d+)(?:\s*/\s*\d+)?\s*:\s*(?:Giảng\s+)?["“](?P<series>[^"”]+?)\s*["”]` (CP8.11; `[]` = tắt). Video test → `["HT.Tịnh Không", "Thập Thiện Nghiệp Đạo Kinh (tập 9)"]`; `Tập 11/128: Giảng "Thái Thượng Cảm Ứng Thiên" | …` → `["HT.Tịnh Không", "Thái Thượng Cảm Ứng Thiên (tập 11)"]`.
 - CP6 không ngắt dòng; "dòng" là dòng logic. Ngắt dòng hiển thị và kiểm ≤ 3 dòng hiển thị là của CP7.
-- `header.lines` đã resolve vào `config_hash`. CLI flag không được lưu: chạy lại không flag mà giá trị resolve khác → chạy lại stage (giá trị ổn định nên đặt trong config); resolve thất bại → `failed`.
+- `header.lines` đã resolve vào `config_hash`. CLI flag không được lưu: chạy lại không flag mà giá trị resolve khác → chạy lại stage (giá trị ổn định nên đặt trong config); resolve thất bại → `failed`. Tương tự cho "Tên bộ kinh": đổi / bỏ tên sau khi tập dùng nguồn này đã titling → lần chạy sau titling chạy lại (tập có title khớp pattern không bao giờ đọc tên bộ kinh → không đổi hash).
+
+### Sửa đổi CP8.11 — nhận dạng tên bộ kinh / số tập (HUMAN LEAD 2026-09-28)
+
+Quyết định: `docs/tasks/CP8.11-series-recognition.md` D1–D7.
+
+- **Danh sách pattern (D2, D3):** `title_pattern` (một regex) thành `title_patterns` (danh sách, khớp đầu tiên thắng); pattern CP6 gốc đứng đầu nên title đã khớp trước đây resolve y hệt (không stale). Pattern thứ hai nhận dạng dạng `Tập N/M: Giảng "<Tên>" | …` (ngoặc `"…"` hoặc `“…”`, `/M` và `Giảng` tùy chọn, khoảng trắng quanh `/` và `:`).
+- **"Tên bộ kinh" (D5, D6):** nguồn dự phòng, chỉ dùng khi không pattern nào khớp tiêu đề: `series` = trường `series` của bộ kinh đã lưu (`<workspace.dir>/_playlists/<playlist_id>.json`, CP8.3 W10 L1) đầu tiên theo `playlist_id` có đặt tên và có entry `video_id` = `metadata.youtube.id` (tập `.kt` dùng id video nguồn); `episode` = `entry.episode` nếu có, không thì `str(entry.index)`; nguồn `"playlist"`. CLI / config vẫn thắng từng trường. Hàm đọc thuần, chỉ đọc, không lock: `auto_short.titling.playlist.playlist_header` (core, không import `auto_short.web`); CLI `titling` / `run` cũng thấy nguồn này. Nguồn không phải YouTube (không có `metadata.youtube.id`) không có nguồn này.
+- Không đổi: `lines`, `speaker`, prompt, thành phần `config_hash` (G9).
 
 ## G3. Text clip
 
@@ -86,7 +94,7 @@ Thứ tự key cố định:
  "candidates_sha256": "<sha256 canonical JSON candidates.json (= clips.json.candidates_sha256)>",
  "header": {"lines": ["HT.Tịnh Không", "Thập Thiện Nghiệp Đạo Kinh (tập 9)"],
             "fields": {"speaker": "HT.Tịnh Không", "series": "Thập Thiện Nghiệp Đạo Kinh", "episode": "9"},
-            "sources": {"speaker": "config", "series": "metadata", "episode": "metadata"}},
+            "sources": {"speaker": "config", "series": "metadata", "episode": "metadata"}},  // cli | config | metadata | playlist
  "model": {"provider": "ollama", "name": "qwen3:14b", "think": false,
            "options": {"temperature": 0, "seed": 42, "num_ctx": 16384}},
  "prompt_version": "v2", "prompt_sha256": "<G4>",
@@ -140,7 +148,7 @@ Dùng `run_stage` của CP2 nguyên trạng:
 
 ## Config `[titling]`
 
-Xem `config.example.toml`: `model`, `think`, `temperature` (0–2), `seed` (≥ 0), `num_ctx` (≥ 512), `prompt_version` (`v1` | `v2`, mặc định `v2`), `n_options` (1–10), `min_chars` (≥ 1), `max_chars` (≥ `min_chars`), `retries` (≥ 0) — trong hash; `ollama_host`, `timeout` (> 0), `retry_backoff` (list số 0–3600) — thực thi. `[titling.header]`: `speaker`, `series`, `episode` (chuỗi; `episode` nhận cả số nguyên TOML; rỗng = không đặt), `title_pattern` (regex hợp lệ; rỗng = tắt), `lines` (1–3 chuỗi không rỗng, chỉ trường `{speaker}` `{series}` `{episode}`).
+Xem `config.example.toml`: `model`, `think`, `temperature` (0–2), `seed` (≥ 0), `num_ctx` (≥ 512), `prompt_version` (`v1` | `v2`, mặc định `v2`), `n_options` (1–10), `min_chars` (≥ 1), `max_chars` (≥ `min_chars`), `retries` (≥ 0) — trong hash; `ollama_host`, `timeout` (> 0), `retry_backoff` (list số 0–3600) — thực thi. `[titling.header]`: `speaker`, `series`, `episode` (chuỗi; `episode` nhận cả số nguyên TOML; rỗng = không đặt), `title_patterns` (danh sách regex, mỗi phần tử chuỗi không rỗng, regex hợp lệ — lỗi nêu chỉ số; `[]` = tắt; CP8.11) hoặc key cũ `title_pattern` (một regex, tương đương danh sách một phần tử; `""` = tắt; đặt cả hai → lỗi config), `lines` (1–3 chuỗi không rỗng, chỉ trường `{speaker}` `{series}` `{episode}`).
 
 ## Quyết định khi implement (không có trong task contract)
 
