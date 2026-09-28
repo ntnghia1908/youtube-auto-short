@@ -47,7 +47,7 @@ Trang bộ kinh chia tập theo đúng việc cần làm: đang chạy, lỗi / 
 ## Acceptance Criteria
 
 1. `group` / `counts` đúng G1 cho mỗi `state` (gồm tập gộp Short + khai thị: một bên lỗi → `failed`; một bên đang chạy → `running`).
-2. Trang bộ kinh có 7 nút lọc theo G2, mặc định "Đang làm", giá trị lưu `failed` / `running` được nạp lại; tab rỗng có dòng báo.
+2. Trang bộ kinh có 6 nút lọc theo G2, mặc định "Đang làm", giá trị lưu `failed` / `running` được nạp lại; tab rỗng có dòng báo.
 3. `GET /api/playlists` có `running`, `failed`, `doing` theo G1; dòng trang chủ theo G3.
 4. Dòng tập trang bộ kinh không còn link "Khai thị"; dòng số lượng khai thị còn nguyên.
 5. Thẻ Short có video có nút "Lặp lại" bật / tắt `loop`, trạng thái giữ qua poll; thẻ không có video (đã xóa / bỏ qua) không có nút.
@@ -63,7 +63,7 @@ Trang bộ kinh chia tập theo đúng việc cần làm: đang chạy, lỗi / 
 
 Không chạm database / security model; đổi nghĩa trường `doing` và thêm trường trong HTTP API nội bộ của web (chỉ UI của project dùng) → manual test là điểm danh, riêng phần hiển thị (AC2, AC4, AC5 bằng mắt) là gate trước READY như CP8.12.
 
-- [ ] Trang bộ kinh: 7 tab, số đếm đúng; "Đang làm" chỉ còn tập đã render chưa đăng hết; tập lỗi / dở dang ở "Lỗi / dở dang" với nút "Chạy tiếp"; mặc định mở "Đang làm".
+- [ ] Trang bộ kinh: 6 tab, số đếm đúng; "Đang làm" chỉ còn tập đã render chưa đăng hết; tập lỗi / dở dang ở "Lỗi / dở dang" với nút "Chạy tiếp"; mặc định mở "Đang làm".
 - [ ] Dòng tập không còn link "Khai thị"; vẫn thấy số video khai thị.
 - [ ] Trang chủ: dòng tóm tắt bộ kinh ghi đang xử lý / lỗi / đang làm.
 - [ ] Trang tập: bấm "Lặp lại" trên một Short → xem hết tự phát lại; tắt → dừng ở cuối; Short khác không bị ảnh hưởng.
@@ -83,9 +83,9 @@ Không chạm database / security model; đổi nghĩa trường `doing` và th�
   - `PYTHONPATH=<worktree>/src conda run -n auto-short python -m pytest -q`: `881 passed, 1 warning in 172.76s` (warning: StarletteDeprecationWarning httpx, có sẵn).
   - `node scripts/framework-check.mjs`: toàn PASS, exit 0.
   - Web scratch `127.0.0.1:8093` (worktree `src`, dữ liệu tạm trong scratchpad, đã tắt): API bộ kinh 8 entry (`rendered`+khai thị `rendered`, `failed`, `incomplete`, stage `running`, `complete`, `rendered`+khai thị `failed`, `new`, `unavailable`) → group `doing, failed, failed, running, done, failed, todo, None`, `counts {all 8, todo 1, running 1, failed 3, doing 1, done 1}`; `GET /api/playlists` `running 1, failed 3, doing 1` (AC1, AC3). Node + DOM giả chạy `app.js` được phục vụ: mặc định tab "Đang làm"; giá trị lưu `failed` / `running` được nạp lại, giá trị lạ → "Đang làm"; mỗi tab hiện đúng tập; bộ kinh không có tập chạy / lỗi → dòng "Không có tập nào đang xử lý" / "… lỗi / dở dang" hiện; không link "Khai thị" trên dòng tập, dòng "2 video khai thị, đã đăng 0/2" còn (AC2, AC4); trang chủ "8 tập · đã xử lý 6 · Xong 1 · đang xử lý 1 · lỗi / dở dang 3 · đang làm 1" và "2 tập · đã xử lý 1 · Xong 0 · đang làm 1" (G3); trang tập Short và khai thị: thẻ `rendered` có "Tải về / 🔁 Lặp lại", thẻ bỏ qua không có nút; bấm → `aria-pressed=true`, `video.loop=true`, thẻ khác không đổi; thẻ dựng lại do tick "Đã đăng" + refresh vẫn bật; bấm lại tắt / bật; không gọi API (AC5).
-- Review:
+- Review: ORCHESTRATOR đọc diff `fcfe974` (playlists.py, app.js, playlist.html, style.css, tests, docs) theo G1–G5: không thấy lỗi; `doing` chỉ còn dùng ở tóm tắt trang chủ. Chờ manual test HUMAN LEAD (AC2, AC4, AC5 bằng mắt).
 - Important findings / decisions:
-  - AC2 / checklist ghi "7 nút lọc / 7 tab" nhưng G2 liệt kê 6 (Tất cả / Chưa xử lý / Đang xử lý / Lỗi / dở dang / Đang làm / Xong — "Lỗi / dở dang" là một tab): làm đúng danh sách G2 (6 nút); đề nghị HUMAN LEAD xác nhận.
+  - AC2 / checklist ban đầu ghi "7 nút / 7 tab" — lỗi đánh máy của ORCHESTRATOR; G2 (canonical) liệt kê 6 tab, đã sửa AC2 / checklist thành 6.
   - Nút lặp lại đặt sau "Tải về", trước "Xóa" trong hàng nút của thẻ; dùng class `.btn` như "Tải về".
   - `busy` (poll) dựa `state` gộp `queued` / `processing` — tương đương điều kiện cũ (`combine_status` đã trả `queued` / `processing` khi job khai thị chạy).
   - Kiểm bằng mắt trên trình duyệt (AC2, AC4, AC5, điện thoại): chưa làm — máy không có trình duyệt; manual test HUMAN LEAD trước READY (như CP8.12).
