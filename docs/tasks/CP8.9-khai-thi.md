@@ -2,13 +2,13 @@
 
 ## Status / Approval
 
-- Status: READY
+- Status: IN_PROGRESS
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
 - Execution profile: dual-agent
 - Base commit / branch: `194c7f4` (`docs/cp8.4-skip`, trên `origin/main` `7274d8e`) / `feature/cp8.9-khai-thi`
-- Human Lead approval: accepted (HUMAN LEAD 2026-09-28: APPROVE TASK, D1–D6 theo đề xuất; K1–K9 dưới đây là chi tiết hóa D1–D6, không thêm quyết định mới). Sửa đổi **A1** HUMAN LEAD 2026-09-28 (trong lúc IN_PROGRESS): "Xử lý" một tập tạo cả Short lẫn khai thị, mặc định 4–7 phút, "Xong" tính cả khai thị — xem § Sửa đổi A1; A1 thắng K6–K9 / AC nếu mâu thuẫn
+- Human Lead approval: accepted (HUMAN LEAD 2026-09-28: APPROVE TASK, D1–D6 theo đề xuất; K1–K9 dưới đây là chi tiết hóa D1–D6, không thêm quyết định mới). Sửa đổi **A1** HUMAN LEAD 2026-09-28 (trong lúc IN_PROGRESS): "Xử lý" một tập tạo cả Short lẫn khai thị, mặc định 4–7 phút, "Xong" tính cả khai thị — xem § Sửa đổi A1; A1 thắng K6–K9 / AC nếu mâu thuẫn. Sửa đổi **A2**, **A3** HUMAN LEAD 2026-09-28 sau manual test lần 1 — xem § Sửa đổi A2, A3
 - Implementation authorized: YES
 
 Lifecycle: `DRAFT → APPROVED → IN_PROGRESS → READY`. DONE suy ra từ Git sau khi merge.
@@ -61,6 +61,17 @@ Thay phần tương ứng của K7, K8 (bộ kinh) và D6. CLI (K6) giữ nguyê
 - **A1.4 "Xong" và trạng thái dòng tập trong bộ kinh (thay D6 và câu "chỉ theo tập Short" của K8):** tập Xong ⇔ tập Short Xong (W10 L4) **và**, nếu `work/<video_id>.kt/` tồn tại, tập khai thị cũng Xong (cùng luật L4 trên render/publish của nó). Tập chưa có khai thị (xử lý trước CP8.9) → như cũ. `state` tổng hợp: có job đợi / chạy ở một trong hai → `queued` / `processing`; một trong hai `failed` → `failed` (`error` ghi rõ Short hay khai thị); cả hai render xong chưa Xong → `rendered`; còn lại như cũ. Dòng tập hiển thị số Short và số video khai thị riêng (vd "12 Short · 3 khai thị", đã đăng a/n cho từng loại); tóm tắt bộ kinh (xử lý / Xong / đang làm) theo `state` tổng hợp. Bia mộ (`_deleted/`) và gợi ý dọn (W9) giữ theo tập Short; ghi vào Known limitations nếu có lệch.
 - **A1.5 Trang chủ "Tập lẻ" / danh sách:** tập khai thị có tập Short cùng video hiện gộp dưới tập Short (nhãn + link), không thành dòng riêng; không có tập Short → dòng riêng có nhãn.
 
+## Sửa đổi A2, A3 (HUMAN LEAD 2026-09-28, sau manual test lần 1)
+
+Bằng chứng (web test, dữ liệu thật): tập 20 (`X8ao0_7ufto`, 4–7 phút) chỉ ra 1 video khai thị: phụ đề YouTube tự động có 35 nhãn `[âm nhạc]` (34/35 dài 1,1–3,5 s) → 33 hard break (CP4 A4 a) → 34 đoạn vụn, chỉ 6 candidate. HUMAN LEAD nghe 3 mẫu tại các nhãn đó: **chỉ là chỗ ngừng, không có tiếng**. Mô phỏng bỏ hard break từ nhãn ≤ 5 s: tập 20 còn 4 hard break (đoạn liền dài nhất 1208 s, 839 s); tập 7, 8, `W2d-xS4ttTw` còn 1–2. Ngoài ra `kt1` chỉ ra đúng 1 đề xuất mỗi window (tập 7: 3 lần gọi → 3; tập 20: 1 → 1).
+
+- **A3.1 Nhãn ngắn không là hard break (chỉ tập khai thị):** với tập khai thị, segment `non_speech` dài ≤ `[khaithi] soft_label_max_seconds` (mặc định **5.0** s) **không** tạo hard break (CP4 A4 a); ranh giới đó được xử lý như khoảng lặng thường (điểm cắt nếu thỏa luật `silence` CP4 A5, nằm trong được candidate; rút khoảng lặng khi render như CP7 vì audio là im lặng). Nhãn dài hơn và khoảng lặng ≥ `hard_break_silence` vẫn là hard break. Giá trị hiệu lực vào `used_config` / `params` của analysis tập khai thị (tập khai thị cũ trở thành stale — HUMAN LEAD đồng ý: video khai thị cũ xóa hay giữ đều được, chạy lại thì thay). Tập Short: **không đổi** (AC1 giữ nguyên).
+- **A3.2 Prompt `kt2`:** như `kt1` nhưng yêu cầu rõ: đề xuất **mọi** đoạn đạt yêu cầu trong danh sách, các đoạn không chồng lấn nhau nếu có thể, không dừng ở một đề xuất khi danh sách còn dài (vẫn tối đa 12 đề xuất, vẫn "thà không đề xuất còn hơn cụt ý"). `[khaithi] prompt_version` mặc định → `kt2`; `kt1` giữ nguyên văn.
+- **A2.1 Tab mặc định trang bộ kinh:** "Đang làm" (thay "Tất cả"); nhóm "Đang làm" rỗng → vẫn mở "Đang làm" (người dùng tự chuyển tab). Tab người dùng chọn có thể nhớ trong trình duyệt (localStorage, bọc try/catch).
+- **A2.2 Chọn loại ở trang bộ kinh:** thanh ở đầu trang: "Khi bấm Xử lý tạo: ☑ Short ☑ Khai thị [4]–[7] phút" (mặc định theo `[khaithi]`, trình duyệt nhớ, bọc try/catch); áp cho nút "Xử lý" và "Xử lý lại" của mọi dòng (gửi `kinds` + phút theo A1.1); bỏ tick cả hai → nút tắt. "Chạy tiếp" giữ A1.2 (không theo thanh chọn).
+- **A2.3 Nhãn nút ở tập khai thị:** mọi chữ "Short" trong UI của tập khai thị đổi thành "video" / "video khai thị" (vd "Xóa video", "Hiện video đã xóa", "Khôi phục", đếm "3 video khai thị"); tập Short giữ nguyên chữ.
+- **A2.4 Plan:** thêm mục `CP8.10 — Tối ưu hàng đợi (planned, HUMAN LEAD 2026-09-28)` vào `AUTO_SHORT_CHECKPOINT_PLAN.md`: tải video + phụ đề trước cho job trong hàng đợi, AI (GPU) và render (CPU) chạy chồng giữa các video; decision gate riêng (CP8.3 W5), không làm trong CP8.9.
+
 ## Implementation approach
 
 - Hàm thuần đọc / kiểm `khaithi.json` và tính tham số hiệu lực (một chỗ, dùng chung analysis / selection / CLI / web); analysis và selection nhận config hiệu lực thay vì đọc `config.analysis` / `config.selection` trực tiếp cho các key K2–K4.
@@ -80,6 +91,8 @@ Thay phần tương ứng của K7, K8 (bộ kinh) và D6. CLI (K6) giữ nguyê
 7. Web: `POST /api/episodes` với `kind: "khaithi"` hợp lệ → 202, job trên `<video_id>.kt`; giá trị sai / kèm playlist → 422; job trùng → 200 `created: false`; archived → 409; chưa đăng nhập → 401. `GET` trả `kind`, `min_minutes`, `max_minutes`, `base_episode_id`, `khaithi_episode_id` đúng.
 8. Tên file tải về / zip của tập khai thị theo K8; Copy dùng hashtag của bộ kinh chứa `base_id`; tập khai thị của video thuộc bộ kinh không hiện ở "Tập lẻ".
 11. A1: `POST /api/episodes` không kèm `kinds` → hai job (Short rồi khai thị 4–7 phút); `kinds` chỉ một loại → một job; `kinds` rỗng / trùng / min–max kèm khi không có khai thị → 422; một kind archived → kind kia vẫn chạy. Nút bộ kinh gửi `kinds` đúng A1.2.
+13. A3.1: tập khai thị với nhãn `non_speech` ≤ 5 s giữa hai unit → không hard break, candidate vắt qua được; nhãn > 5 s / lặng ≥ 10 s vẫn hard break; tập Short cùng transcript → hard break như cũ (AC1). A3.2: `kt2` là mặc định, `kt1` giữ nguyên `prompt_sha256`. Chạy thật tập 20 (`X8ao0_7ufto`, 4–7 phút) → số candidate và video khai thị ghi vào Result (kỳ vọng > 1; nếu vẫn ≤ 2 → báo, không tự đổi tham số khác).
+14. A2: trang bộ kinh mở tab "Đang làm"; thanh chọn loại gửi đúng `kinds` / phút; tập khai thị không còn chữ "Short" trên nút / nhãn.
 12. A1.4: "Xong" của tập có khai thị cần cả hai Xong; tập không có khai thị giữ kết quả cũ (test CP8.7 cũ pass); `state` tổng hợp và đếm Short / khai thị đúng.
 9. Sửa title, xóa / khôi phục, tick "Đã đăng", xóa tập, archive hoạt động trên tập khai thị; xóa / archive tập Short không làm hỏng tập khai thị (và ngược lại).
 10. `config.example.toml` có `[khaithi]` với giá trị K9; config sai → lỗi load rõ ràng.
@@ -94,6 +107,8 @@ Thay phần tương ứng của K7, K8 (bộ kinh) và D6. CLI (K6) giữ nguyê
 Tất cả required verification phải chạy và PASS trước READY.
 
 ## Manual test checklist (Tech Lead)
+
+Lần 1 (HUMAN LEAD 2026-09-28, web test cổng 8091): phát hiện khai thị ra ít, tab mặc định, thiếu chọn loại ở bộ kinh, nhãn "Xóa Short" ở tập khai thị → A2, A3; đề xuất tối ưu hàng đợi → CP8.10.
 
 Chạm public API contract (trường mới của `POST` / `GET /api/episodes`) — manual test là gate trước integration. Không chạm database, không đổi security model.
 
