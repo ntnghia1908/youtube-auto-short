@@ -24,6 +24,20 @@
     </div>
   </section>
   <section class="card">
+    <details id="sr-box">
+      <summary>Tên bộ kinh (<span id="sr-state">tự nhận từ tiêu đề</span>)</summary>
+      <p id="sr-help" class="muted small">Chỉ dùng cho tập mà tiêu đề video không nhận ra tên bộ kinh / số tập (hiện: <span id="sr-unrecognized">0</span> tập). Đổi tên sau khi tập đã xử lý → lần chạy sau tạo lại tiêu đề AI của tập đó.</p>
+      <div class="sr-edit">
+        <input id="sr-input" type="text" maxlength="100" autocomplete="off" placeholder="Tên bộ kinh" aria-label="Tên bộ kinh">
+      </div>
+      <div class="edit-actions">
+        <button id="sr-save" class="btn primary small" type="button">Lưu</button>
+        <button id="sr-reset" class="btn small" type="button">Bỏ tên</button>
+        <span id="sr-msg" class="small" hidden></span>
+      </div>
+    </details>
+  </section>
+  <section class="card">
     <details id="ht-box">
       <summary>Hashtag khi Copy tiêu đề (<span id="ht-state">mặc định</span>)</summary>
       <p class="muted small">Danh sách đầy đủ, theo thứ tự, cho mọi tập của bộ kinh này. Tổng tiêu đề + hashtag ≤ 100 ký tự: hashtag cuối bị bỏ khi quá dài.</p>

@@ -26,13 +26,14 @@ from ..config import Config
 from ..review import ReviewError, episode_complete, publish_status, read_archive, read_publish, read_tombstone
 from ..review.names import MAX_COPY_CHARS, copy_text, hashtag, hashtags
 from ..review.publish import PUBLISH_NAME
+from ..titling.logic import match_title
+from ..titling.playlist import PLAYLISTS_DIR, normalize_series, stored_series
 from ..workspace import DONE, Workspace, WorkspaceError, atomic_write_json
 from . import episodes as ep
 from .urls import PLAYLIST_ID_RE, playlist_url, valid_playlist_id
 
 log = logging.getLogger("auto_short")
 
-PLAYLISTS_DIR = "_playlists"
 SCHEMA_VERSION = 1
 LIST_TIMEOUT = 60.0  # L5: seconds for listing a playlist inside the request
 STATUS_CACHE_SECONDS = 5.0  # L5
@@ -110,15 +111,31 @@ def _now() -> str:
 
 
 def episode_number(title: str | None, config: Config) -> str | None:
-    """Episode number from the entry title with CP6 ``[titling.header] title_pattern`` (group ``episode``), e.g.
-    "Thập Thiện Nghiệp Đạo Kinh tập 1/149 - …" -> "1"."""
-    pattern = config.titling.header.title_pattern
-    if not pattern or not title:
-        return None
-    m = re.search(pattern, unicodedata.normalize("NFC", title))
+    """Episode number from the entry title with the first matching CP6 ``[titling.header] title_patterns`` entry
+    (group ``episode``, CP8.11 D4), e.g. "Thập Thiện Nghiệp Đạo Kinh tập 1/149 - …" -> "1",
+    'Tập 11/128: Giảng "Thái Thượng Cảm Ứng Thiên" | …' -> "11"."""
+    m = match_title(config.titling.header.title_patterns, title)
     if m is None or "episode" not in m.re.groupindex or m.group("episode") is None:
         return None
     return m.group("episode")
+
+
+def title_series(title: str | None, config: Config) -> str | None:
+    """Series name of an entry title from the first matching ``title_patterns`` entry (group ``series``)."""
+    m = match_title(config.titling.header.title_patterns, title)
+    if m is None or "series" not in m.re.groupindex or m.group("series") is None:
+        return None
+    return " ".join(unicodedata.normalize("NFC", m.group("series")).split()) or None
+
+
+def _with_user_fields(doc: dict, source: dict) -> dict:
+    """``doc`` with the user's fields of ``source`` (``hashtags`` then ``series``, after ``entries``; H5, D5)."""
+    for key in ("hashtags", "series"):
+        doc.pop(key, None)
+    for key in ("hashtags", "series"):
+        if key in source:
+            doc[key] = source[key]
+    return doc
 
 
 def build_document(info: dict, playlist_id: str, config: Config, *, now: str | None = None) -> dict:
@@ -238,10 +255,11 @@ class PlaylistStore:
         before = {e.get("video_id") for e in old["entries"]}
         added = [e["video_id"] for e in doc["entries"] if e.get("video_id") and e["video_id"] not in before]
         with self._lock:
-            # the user's hashtags survive "Cập nhật danh sách" (H5); re-read under the lock: saved during the fetch
+            # the user's hashtags (H5) and series name (CP8.11 D5) survive "Cập nhật danh sách"; re-read under the
+            # lock: saved during the fetch
             current = self.load(playlist_id)
-            if current is not None and "hashtags" in current:
-                doc["hashtags"] = current["hashtags"]
+            if current is not None:
+                _with_user_fields(doc, current)
             atomic_write_json(self.path(playlist_id), doc)
         return doc, added
 
@@ -254,9 +272,29 @@ class PlaylistStore:
             doc = self.load(playlist_id)
             if doc is None:
                 raise FileNotFoundError(playlist_id)
-            doc.pop("hashtags", None)
+            fields = {k: doc[k] for k in ("series",) if k in doc}
             if tags is not None:
-                doc["hashtags"] = tags
+                fields["hashtags"] = tags
+            _with_user_fields(doc, fields)
+            atomic_write_json(self.path(playlist_id), doc)
+        return doc
+
+    # --- "Tên bộ kinh" (CP8.11 D5) ----------------------------------------------------------------------
+
+    def set_series(self, playlist_id: str, value: object) -> dict:
+        """Store the playlist's series name (``None`` = not set: field removed); invalid -> PlaylistError (422)."""
+        try:
+            series = normalize_series(value) if value is not None else None
+        except ValueError as exc:
+            raise PlaylistError(str(exc)) from exc
+        with self._lock:
+            doc = self.load(playlist_id)
+            if doc is None:
+                raise FileNotFoundError(playlist_id)
+            fields = {k: doc[k] for k in ("hashtags",) if k in doc}
+            if series is not None:
+                fields["series"] = series
+            _with_user_fields(doc, fields)
             atomic_write_json(self.path(playlist_id), doc)
         return doc
 
@@ -376,7 +414,22 @@ class PlaylistStore:
         tags, custom = self.effective_hashtags(doc)
         return {"id": doc["playlist_id"], "title": doc.get("title"), "url": doc.get("url"),
                 "fetched_at": doc.get("fetched_at"), "count": len(doc["entries"]), "entries": entries,
-                "counts": counts, "hashtags": tags, "hashtags_custom": custom}
+                "counts": counts, "hashtags": tags, "hashtags_custom": custom, **self.series_view(doc)}
+
+    def series_view(self, doc: dict) -> dict:
+        """CP8.11 D7: ``series`` (the user's name or null), ``series_suggested`` (series of the first entry title a
+        pattern recognizes, or null), ``unrecognized`` (available entries whose title no pattern matches)."""
+        patterns = self._config.titling.header.title_patterns
+        suggested, unrecognized = None, 0
+        for e in doc["entries"]:
+            if not e.get("available"):
+                continue
+            title = e.get("title")
+            if match_title(patterns, title) is None:
+                unrecognized += 1
+            elif suggested is None:
+                suggested = title_series(title, self._config)
+        return {"series": stored_series(doc), "series_suggested": suggested, "unrecognized": unrecognized}
 
     def summary(self, doc: dict, jobs: dict[str, dict]) -> dict:
         v = self.view(doc, jobs)

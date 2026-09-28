@@ -62,7 +62,7 @@ def test_header_missing_field_names_flag():
     assert h["lines"] == ["HT.Tịnh Không"] and h["fields"]["series"] is None and h["sources"]["series"] is None
     # pattern off -> metadata not used
     with pytest.raises(TitlingError, match="--series"):
-        resolve_header(replace(H, title_pattern=""), VIDEO_TITLE)
+        resolve_header(replace(H, title_patterns=()), VIDEO_TITLE)
 
 
 def test_header_template_lines():

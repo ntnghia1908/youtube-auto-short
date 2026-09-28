@@ -123,16 +123,22 @@ class SelectionConfig:
 # G2: header fields and template (docs/decisions/CP6-titling-contract.md).
 HEADER_FIELDS = ("speaker", "series", "episode")
 DEFAULT_TITLE_PATTERN = r"^(?:Phật Thuyết\s+)?(?P<series>.+?)\s+tập\s+(?P<episode>\d+)\b"
+# CP8.11 D2: ordered, the first pattern that matches the title wins (the CP6 pattern first: unchanged results).
+DEFAULT_TITLE_PATTERNS = (
+    DEFAULT_TITLE_PATTERN,
+    r'^Tập\s+(?P<episode>\d+)(?:\s*/\s*\d+)?\s*:\s*(?:Giảng\s+)?["“](?P<series>[^"”]+?)\s*["”]',
+)
 
 
 @dataclass(frozen=True)
 class TitlingHeaderConfig:
-    """Deterministic header (G2): CLI flag > these values (non-empty) > ``title_pattern`` groups."""
+    """Deterministic header (G2): CLI flag > these values (non-empty) > groups of the first matching
+    ``title_patterns`` entry > the "Tên bộ kinh" of a stored bộ kinh (CP8.11 D5)."""
 
     speaker: str = "HT.Tịnh Không"
     series: str = ""
     episode: str = ""
-    title_pattern: str = DEFAULT_TITLE_PATTERN  # regex on metadata.title; empty = off
+    title_patterns: tuple[str, ...] = DEFAULT_TITLE_PATTERNS  # regexes on metadata.title, in order; () = off
     lines: tuple[str, ...] = ("{speaker}", "{series} (tập {episode})")
 
 
@@ -393,6 +399,33 @@ def _template_fields(line: str) -> list[str]:
         raise ConfigError(f"titling.header.lines: invalid template {line!r}: {exc}") from exc
 
 
+def _title_patterns(he: dict, d: TitlingHeaderConfig, w: str) -> tuple[str, ...]:
+    """CP8.11 D3: ``title_patterns`` (list of regexes, ``[]`` = off) or the legacy ``title_pattern`` (one regex,
+    ``""`` = off); both -> error."""
+    if "title_patterns" in he and "title_pattern" in he:
+        raise ConfigError(f"{w}: set title_patterns or title_pattern, not both")
+    if "title_pattern" in he:
+        pattern = he["title_pattern"]
+        if not isinstance(pattern, str):
+            raise ConfigError(f"{w}.title_pattern must be a string (empty = off)")
+        try:
+            re.compile(pattern)
+        except re.error as exc:
+            raise ConfigError(f"{w}.title_pattern is not a valid regex: {exc}") from exc
+        return (pattern,) if pattern else ()
+    patterns = he.get("title_patterns", list(d.title_patterns))
+    if not isinstance(patterns, list):
+        raise ConfigError(f"{w}.title_patterns must be a list of regex strings ([] = off)")
+    for n, pattern in enumerate(patterns):
+        if not isinstance(pattern, str) or not pattern:
+            raise ConfigError(f"{w}.title_patterns[{n}] must be a non-empty string")
+        try:
+            re.compile(pattern)
+        except re.error as exc:
+            raise ConfigError(f"{w}.title_patterns[{n}] is not a valid regex: {exc}") from exc
+    return tuple(patterns)
+
+
 def _titling_header(ti: dict) -> TitlingHeaderConfig:
     he = _section(ti, "header") if "header" in ti else {}
     d, w = TitlingHeaderConfig(), "titling.header"
@@ -404,13 +437,7 @@ def _titling_header(ti: dict) -> TitlingHeaderConfig:
         if not isinstance(value, str):
             raise ConfigError(f"{w}.{key} must be a string (empty = not set)")
         values[key] = value.strip()
-    pattern = he.get("title_pattern", d.title_pattern)
-    if not isinstance(pattern, str):
-        raise ConfigError(f"{w}.title_pattern must be a string (empty = off)")
-    try:
-        re.compile(pattern)
-    except re.error as exc:
-        raise ConfigError(f"{w}.title_pattern is not a valid regex: {exc}") from exc
+    patterns = _title_patterns(he, d, w)
     lines = he.get("lines", list(d.lines))
     if not isinstance(lines, list) or not 1 <= len(lines) <= 3 or \
             not all(isinstance(x, str) and x.strip() for x in lines):
@@ -420,7 +447,7 @@ def _titling_header(ti: dict) -> TitlingHeaderConfig:
             if name not in HEADER_FIELDS:
                 raise ConfigError(f"{w}.lines: unknown field {{{name}}} in {line!r} "
                                   f"(allowed: {', '.join('{' + f + '}' for f in HEADER_FIELDS)})")
-    return TitlingHeaderConfig(title_pattern=pattern, lines=tuple(lines), **values)
+    return TitlingHeaderConfig(title_patterns=patterns, lines=tuple(lines), **values)
 
 
 def _titling(data: dict) -> TitlingConfig:

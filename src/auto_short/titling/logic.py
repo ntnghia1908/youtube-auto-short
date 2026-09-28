@@ -10,6 +10,7 @@ import json
 import re
 import string
 import unicodedata
+from collections.abc import Callable
 
 from ..config import HEADER_FIELDS, TitlingHeaderConfig
 from ..selection.logic import normalize_word
@@ -39,15 +40,36 @@ def _clean(value) -> str | None:
     return value or None
 
 
+def match_title(patterns, title: str | None) -> re.Match | None:
+    """CP8.11 D3: the match of the first pattern (in order) that matches ``title`` (NFC, ``re.search``); None when
+    there is no title or no pattern matches. The caller takes every group from this one match (no mixing)."""
+    if not title:
+        return None
+    text = unicodedata.normalize("NFC", title)
+    for pattern in patterns:
+        m = re.search(pattern, text)
+        if m is not None:
+            return m
+    return None
+
+
+PlaylistLookup = Callable[[], "tuple[str, str] | None"]
+
+
 def resolve_header(hcfg: TitlingHeaderConfig, metadata_title: str | None,
-                   cli: dict[str, str | None] | None = None) -> dict:
-    """Resolve ``speaker``/``series``/``episode`` (CLI > config > ``title_pattern`` group) and
-    render ``hcfg.lines``. Returns ``{"lines", "fields", "sources"}``; unresolved fields are null.
-    A template field that cannot be resolved, or a line that renders empty, raises TitlingError."""
+                   cli: dict[str, str | None] | None = None, playlist: PlaylistLookup | None = None) -> dict:
+    """Resolve ``speaker``/``series``/``episode`` (CLI > config > groups of the first matching ``title_patterns``
+    entry > ``playlist``) and render ``hcfg.lines``. ``playlist`` returns the ``(series, episode)`` of the "Tên bộ
+    kinh" of a stored bộ kinh listing this video (CP8.11 D5); it is called only when no pattern matches the title.
+    Returns ``{"lines", "fields", "sources"}``; unresolved fields are null. A template field that cannot be
+    resolved, or a line that renders empty, raises TitlingError."""
     cli = cli or {}
-    match = None
-    if hcfg.title_pattern and metadata_title:
-        match = re.search(hcfg.title_pattern, unicodedata.normalize("NFC", metadata_title))
+    match = match_title(hcfg.title_patterns, metadata_title)
+    fallback = None
+    if match is None and playlist is not None:
+        found = playlist()
+        if found is not None:
+            fallback = dict(zip(("series", "episode"), found))
     fields, sources = {}, {}
     for key in HEADER_FIELDS:
         value, source = _clean(cli.get(key)), "cli"
@@ -55,6 +77,8 @@ def resolve_header(hcfg: TitlingHeaderConfig, metadata_title: str | None,
             value, source = _clean(getattr(hcfg, key)), "config"
         if value is None and match is not None and key in match.re.groupindex:
             value, source = _clean(match.group(key)), "metadata"
+        if value is None and fallback is not None and key in fallback:
+            value, source = _clean(fallback[key]), "playlist"
         fields[key], sources[key] = value, (source if value is not None else None)
 
     needed = [name for line in hcfg.lines for _, name, _, _ in string.Formatter().parse(line) if name]
@@ -63,7 +87,7 @@ def resolve_header(hcfg: TitlingHeaderConfig, metadata_title: str | None,
         hint = ", ".join(f"{k} (pass {_FLAGS[k]} or set [titling.header] {k})" for k in missing)
         where = f"metadata title {metadata_title!r}" if metadata_title else "no metadata title"
         raise TitlingError(f"header field(s) not resolved: {hint}; {where} does not match "
-                           "[titling.header] title_pattern")
+                           "[titling.header] title_patterns; or set \"Tên bộ kinh\" of its bộ kinh on the web")
     lines = []
     for n, tpl in enumerate(hcfg.lines, 1):
         line = " ".join(tpl.format(**{k: v or "" for k, v in fields.items()}).split())
