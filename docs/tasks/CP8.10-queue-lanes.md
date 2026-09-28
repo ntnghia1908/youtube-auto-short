@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: CHANGE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -112,7 +112,7 @@ Chạm public API contract (trường job mới) và đổi job model — manual
     - K5 thật: khai thị ingest 1,3 s (hardlink), transcript 0,02 s (copy), không tải lại.
     - Mật khẩu: server nhận qua env; script poll đọc từ file scratch quyền 600 (`realrun/.pw`, đã xóa sau khi chạy).
     - Tắt server (SIGINT) khi không có job: thoát sạch. Cổng 8080 / worktree web không bị đụng. `work/` repo chính: danh sách `sha256sum` 256 file trước / sau giống hệt (sha256 của danh sách `7db5f3a7…61bd` cả hai lần).
-- Review: chưa (chờ ORCHESTRATOR).
+- Review: ORCHESTRATOR (dual-agent) review diff-first 2026-09-28 — ACCEPTED, không blocking finding. Chạy lại `pytest -q` (PYTHONPATH worktree) 868 passed, `node scripts/framework-check.mjs` PASS; sha256 `work/` chính trước / sau khớp. Diff khớp Q0–Q8; 4 quyết định khi implement (`queue_position` ở danh sách / bộ kinh, job đợi giữa làn → `interrupted` khi tắt server, kiểm ổ ở đầu làn prepare, `stages` không cần liền) nằm trong boundary — chờ HUMAN LEAD xác nhận ở manual test. Finding nhãn "queued" của ORCHESTRATOR sai (nhãn đã có); chỉ thêm CSS `.stage.queued` (`8c5068e`). Ngoài scope: fixture `cfg` (`tests/conftest.py`) để `render.output_dir` tương đối → test web ghi `output/abcdefghijk/` vào thư mục chạy pytest (task riêng).
 - Important findings / decisions:
   - Race tìm thấy khi test: làn `ai` lấy job khỏi hàng làm hàng ngắn lại nhưng không `notify` → làn `prepare` có thể ngủ mãi dù dưới giới hạn tải trước; đã sửa (`notify_all` sau khi lấy job) + `test_prefetch_limit` bắt được.
   - Quyết định nhỏ khi implement (trong boundary Q0–Q8, cần ORCHESTRATOR xác nhận): `queue_position` thêm vào `job` của `GET /api/episodes` và entry bộ kinh (additive, để nhãn "đợi GPU (vị trí n)"); job đợi giữa làn khi tắt server → `interrupted` (`"interrupted while waiting for <lane>"`), job `queued` giữ `queued` như cũ; kiểm ổ W9 chạy ở đầu làn `prepare` cả khi ingest sẽ skip; chế độ `serial` không kiểm lại ổ (giữ đúng hành vi cũ); `stages` là tập con đúng thứ tự (không bắt buộc liền nhau), `force_from` ngoài `stages` không có tác dụng; callable job thường ở chế độ lanes = một bước (làn `render` cho job `render`, còn lại làn `prepare`).
