@@ -32,7 +32,7 @@ from ..review import (ArchivedError, EpisodeNotFound, ReviewError, TitlePreview,
                       restore_clip, set_alternative, set_published, set_title)
 from . import episodes as ep
 from .auth import COOKIE_NAME, SessionSigner, load_or_create_secret
-from .storage import StorageCache
+from .storage import BLOCK_MESSAGE, StorageCache
 from .jobs import KIND_PIPELINE, KIND_RENDER, JobRunner, pipeline_target, render_target
 from .playlists import LIST_TIMEOUT, PlaylistError, PlaylistStore, ytdlp_list
 from .urls import ASK, PLAYLIST, UrlError, canonical_url, classify_url, valid_playlist_id
@@ -159,7 +159,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     ``run_pipeline``, CP7/CP8.2 ``run_render``); so are ``disk_usage`` (``shutil.disk_usage``) and ``clock`` (epoch
     seconds, ages of the storage recommendations) for CP8.6; ``playlist_lister`` (yt-dlp flat listing) and
     ``playlist_timeout`` for CP8.7."""
-    runner = runner or JobRunner()
+    runner = runner or JobRunner(config.web.queue_mode)
     storage = StorageCache(config, disk_usage=disk_usage, clock=clock)
     playlists = PlaylistStore(config, lister=playlist_lister, timeout=playlist_timeout)
     # Serialises "no active job for the episode?" + review.json write + job submit (W5: no title write while a
@@ -259,11 +259,11 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
 
     # --- API ---------------------------------------------------------------------------------------
 
-    def _job_view(job) -> dict | None:
+    def _job_view(job, *, logs: bool = True) -> dict | None:
         if job is None:
             return None
-        out = job.to_dict()
-        out["queue_position"] = runner.queue_position(job)
+        out = job.to_dict(logs=logs)
+        out["queue_position"] = runner.queue_position(job)  # CP8.10: in the queue of the lane it waits for
         return out
 
     @app.get("/api/episodes")
@@ -279,7 +279,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         in_playlists = playlists.video_ids()
         for item in items:
             job = runner.latest(item["id"])
-            item["job"] = job.to_dict(logs=False) if job else None
+            item["job"] = _job_view(job, logs=False)
             item.setdefault("published", 0)
             item.setdefault("complete", False)
             item["publish_group"] = ep.publish_group(item)
@@ -341,8 +341,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             elif is_archived(Path(config.workspace.dir) / eid):
                 item.update(error=str(ArchivedError(eid)), status=409)
             elif storage.status()["block"]:
-                item.update(error="Ổ đĩa server còn dưới 3 GB trống: không nhận video mới. "
-                                  "Dọn bớt ở tab Bộ nhớ rồi thử lại.", status=507)
+                item.update(error=BLOCK_MESSAGE, status=507)
             items.append(item)
         todo = [i for i in items if "job" not in i and "error" not in i]
         if todo and preflight is not None:  # once for the whole request
@@ -370,7 +369,8 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                     i["episode_id"], KIND_PIPELINE,
                     pipeline_target(url, config, series=series, episode=episode, pipeline=pipeline,
                                     preflight=preflight,
-                                    episode_id=i["episode_id"] if i["kind"] == khaithi.KIND else None))
+                                    episode_id=i["episode_id"] if i["kind"] == khaithi.KIND else None,
+                                    disk_blocked=storage.block_message))
                 i.update(created=created, job=job)
         playlists.invalidate(video_id)
         storage.invalidate()
@@ -402,7 +402,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         for job in runner.jobs():
             latest = runner.latest(job.episode_id)
             if latest is job:
-                out[job.episode_id] = job.to_dict(logs=False)
+                out[job.episode_id] = _job_view(job, logs=False)
         return out
 
     def _playlist_or_404(playlist_id: str):

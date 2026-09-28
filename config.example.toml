@@ -154,6 +154,9 @@ session_days = 30                    # login cookie lifetime (days)
 # Hashtags added after the title by the "Copy" button (after #<series>; "#" optional; spaces / punctuation dropped;
 # dropped from the end when title + tags exceed 100 characters).
 hashtags = ["TịnhKhông", "LờiPhậtDạy", "TịnhĐộ", "NiệmPhật"]
+# Job queue (CP8.10): "lanes" = ingest/transcript/analysis, AI (selection/titling) and render of different videos
+# run at the same time (one job per lane); "serial" = one video through all six stages at a time.
+queue_mode = "lanes"
 
 [khaithi]
 # Khai thị videos: `auto-short run <url> --khai-thi --min-minutes N --max-minutes M` / web "Khai thị"

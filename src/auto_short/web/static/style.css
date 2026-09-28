@@ -45,6 +45,7 @@ summary { cursor: pointer; color: var(--muted); }
 .stage.running { background: #fff7cc; } .stage.running .stage-status { color: var(--busy); }
 .stage.failed { background: #fdecea; } .stage.failed .stage-status { color: var(--err); }
 .stage.stale .stage-status { color: var(--busy); }
+.stage.queued .stage-status { color: var(--busy); }
 .stage-error { flex-basis: 100%; color: var(--err); font-size: .85rem; word-break: break-word; }
 .actions { margin: .5rem 0; }
 .log { max-height: 320px; overflow: auto; background: #111; color: #ddd; padding: .6rem; border-radius: 6px; font-size: .78rem; white-space: pre-wrap; word-break: break-word; }

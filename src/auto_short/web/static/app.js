@@ -63,6 +63,16 @@ const AutoShort = (() => {
 
   function jobActive(job) { return job && (job.status === "queued" || job.status === "running"); }
 
+  // CP8.10 queue lanes: "đang tải trước" (prepare lane running), "đợi GPU" / "đợi render" (waiting between lanes).
+  function laneLabel(job) {
+    if (!job || job.status !== "running" || !job.lane) return null;
+    const pos = job.queue_position ? ` (vị trí ${job.queue_position})` : "";
+    if (job.waiting && job.lane === "ai") return "đợi GPU" + pos;
+    if (job.waiting && job.lane === "render") return "đợi render" + pos;
+    if (!job.waiting && job.lane === "prepare") return "đang tải trước";
+    return null;
+  }
+
   // Human-readable size, binary units like the OS (648 MB = 678 949 583 bytes); GB with 1 decimal.
   function fmtBytes(n) {
     if (n === null || n === undefined) return "";
@@ -264,7 +274,10 @@ const AutoShort = (() => {
       const unit = e.kind === "khaithi" ? "video khai thị" : "Shorts";
       if (jobActive(e.job)) {
         active = true;
-        return e.job.status === "queued" ? "đang đợi" : `đang chạy: ${STAGE_LABELS[e.job.stage] || e.job.stage || ""}`;
+        if (e.job.status === "queued") return "đang đợi";
+        const lane = laneLabel(e.job);
+        if (lane && e.job.waiting) return lane;
+        return `${lane || "đang chạy"}: ${STAGE_LABELS[e.job.stage] || e.job.stage || ""}`;
       }
       if (e.failed) return `lỗi ở ${STAGE_LABELS[e.failed] || e.failed}`;
       if (e.running) return `dừng giữa chừng ở ${STAGE_LABELS[e.running] || e.running}`;
@@ -422,7 +435,13 @@ const AutoShort = (() => {
     if (job) for (const s of job.stages) timings[s.stage] = s;
     if (jobActive(job)) {
       if (job.status === "queued") setJobStatus(`Đang đợi trong hàng (vị trí ${job.queue_position || "?"})`, "busy");
-      else setJobStatus(`Đang chạy: ${stageLabel(job.stage) || "…"} (bắt đầu ${fmtTime(job.started_at)})`, "busy");
+      else if (job.waiting) {
+        const lane = laneLabel(job);
+        setJobStatus(`${lane ? lane[0].toUpperCase() + lane.slice(1) : "Đang đợi"}: tiếp theo ${stageLabel(job.stage) || "…"} (bắt đầu ${fmtTime(job.started_at)})`, "busy");
+      } else {
+        const lane = laneLabel(job);
+        setJobStatus(`${lane ? lane[0].toUpperCase() + lane.slice(1) : "Đang chạy"}: ${stageLabel(job.stage) || "…"} (bắt đầu ${fmtTime(job.started_at)})`, "busy");
+      }
     } else if (job && job.status === "done") setJobStatus(`Xong: ${job.summary || ""} (${fmtTime(job.finished_at)})`, "ok");
     else if (job && job.status === "failed") setJobStatus(`Lỗi: ${job.error}`, "error");
     else if (job && job.status === "interrupted") setJobStatus(`Bị ngắt (${job.error}). Bấm chạy tiếp để tiếp tục.`, "error");
@@ -431,7 +450,7 @@ const AutoShort = (() => {
     const stages = d.stages.length ? d.stages : Object.keys(STAGE_LABELS).map((s) => ({ stage: s, status: "pending" }));
     $("#stages").replaceChildren(...stages.map((s) => {
       let status = s.status;
-      if (jobActive(job) && job.stage === s.stage && status !== "running") status = "running";
+      if (jobActive(job) && job.stage === s.stage && status !== "running") status = job.waiting ? "queued" : "running";
       const t = timings[s.stage];
       const extra = t ? (t.ran ? fmtSeconds(t.seconds) : "bỏ qua (đã có)") : "";
       return el("li", { class: "stage " + status },
@@ -1194,6 +1213,13 @@ const AutoShort = (() => {
     let text = PL_STATE[e.state] || e.state;
     if ((e.state === "processing" || e.state === "failed") && e.stage) text += `: ${STAGE_LABELS[e.stage] || e.stage}`;
     if (e.state === "queued" && e.job && e.job.status === "queued") text = "đang chờ trong hàng";
+    if (e.state === "processing") { // CP8.10: lane of the running job (Short first, then khai thị)
+      const job = [e.job, e.khaithi_job].find((j) => laneLabel(j));
+      if (job) {
+        const who = job === e.khaithi_job ? "khai thị " : "";
+        text = job.waiting ? who + laneLabel(job) : `${who}${laneLabel(job)}: ${STAGE_LABELS[job.stage] || job.stage || ""}`;
+      }
+    }
     if (e.shorts || e.state === "rendered" || e.state === "complete") text += ` · ${e.shorts} Short, đã đăng ${e.published}/${e.shorts}`;
     if (e.khaithi_state) { // CP8.9 A1.4: the khai thị videos of the same video, counted separately
       text += e.khaithi_videos || e.khaithi_state === "rendered" || e.khaithi_state === "complete"
