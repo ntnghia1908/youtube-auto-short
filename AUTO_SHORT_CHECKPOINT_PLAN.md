@@ -423,6 +423,14 @@ The titling header recognizes the series name / episode number from more video t
 
 ---
 
+## CP8.12 — Episode Page: Shorts / Khai thị Bar + Collapsible Stages
+
+> HUMAN LEAD 2026-09-28 (`docs/tasks/CP8.12-episode-ui.md`, U1–U4, S1). Contract: `docs/decisions/CP8.3-web-contract.md` W6 (Sửa đổi CP8.12).
+
+On the episode page (desktop and phone): a two-button bar [Shorts | Khai thị] pinned to the top of the screen switches between the Short and khai thị pages of the same video; the 6-step list collapses to one line when the episode is done and opens by itself while running or on error. A deleted target / missing episode shows a message instead of an error page. Amendment A1: the bộ kinh page gets an "Đang xử lý" filter (episodes with a queued / running job).
+
+---
+
 ## CP9 — Human Review + Batch Processing
 
 > Re-plan HUMAN LEAD 2026-09-27: phần batch mức playlist (bộ kinh: liệt kê, bấm xử lý từng tập, xếp hàng, trạng thái "Xong" suy ra khi đăng hết) kéo lên CP8.7 (`docs/tasks/CP8.7-playlist.md`, `docs/decisions/CP8.3-web-contract.md` W10). CP9 còn: tự xử lý hàng loạt, approval state, failed-item isolation đầy đủ.

@@ -14,13 +14,19 @@
 </header>
 <div id="disk-banner" class="disk-banner" hidden></div>
 <main class="container">
+  <nav id="kind-bar" class="kind-bar" aria-label="Short / khai thị của video này">
+    <span class="kind-btn">Shorts</span>
+    <span class="kind-btn">Khai thị</span>
+  </nav>
+  <p id="kind-note" class="note small kind-note" role="status" hidden></p>
   <section class="card">
     <h2 id="ep-title">…</h2>
     <p id="ep-meta" class="muted small"></p>
-    <p id="kind-links" class="small" hidden></p>
-    <div id="job-status" class="job-status"></div>
+    <details id="stages-box" class="stages-box" open>
+      <summary><span id="job-status" class="job-status">Các bước xử lý</span></summary>
+      <ol id="stages" class="stages"></ol>
+    </details>
     <p id="archived-note" class="note small" hidden></p>
-    <ol id="stages" class="stages"></ol>
     <div class="actions">
       <button id="resubmit" class="btn" type="button" hidden>Chạy tiếp / chạy lại (bước đã xong được bỏ qua)</button>
       <button id="delete-episode" class="btn danger" type="button" hidden>Xóa tập này</button>

@@ -180,3 +180,16 @@ label.inline input { width: auto; }
 .episode-list a.sub-episode { padding: 0 .2rem .6rem 1rem; }
 .inline-minutes { display: inline-flex; align-items: center; gap: .25rem; font-size: .9rem; }
 .inline-minutes input { width: 4.2rem; padding: .35rem .4rem; }
+/* CP8.12 episode page: sticky [Shorts | Khai thị] bar (U1), collapsible stages box (U2) */
+.kind-bar { position: sticky; top: 0; z-index: 20; display: flex; gap: .4rem; padding: .4rem; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 2px 6px rgba(0,0,0,.12); }
+.kind-btn { flex: 1 1 0; min-width: 0; min-height: 44px; display: flex; align-items: center; justify-content: center; padding: .4rem .6rem; border: 1px solid var(--border); border-radius: 8px; background: #fafaf8; color: var(--text); font: inherit; font-weight: 600; text-align: center; text-decoration: none; cursor: pointer; }
+.kind-btn.current { background: var(--accent-bg); border-color: var(--accent); font-weight: 700; cursor: default; }
+.kind-btn.dim { opacity: .55; }
+.kind-btn:disabled { cursor: not-allowed; }
+.kind-note { margin: 0; }
+.kind-note[hidden] { display: none; }
+.stages-box > summary { display: flex; align-items: center; gap: .5rem; min-height: 44px; list-style: none; color: var(--text); }
+.stages-box > summary::-webkit-details-marker { display: none; }
+.stages-box > summary::before { content: "▸"; color: var(--muted); flex: none; }
+.stages-box[open] > summary::before { content: "▾"; }
+.stages-box > summary .job-status { margin: 0; min-width: 0; word-break: break-word; }

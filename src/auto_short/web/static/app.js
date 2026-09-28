@@ -43,7 +43,9 @@ const AutoShort = (() => {
     if (!res.ok) {
       let msg = data && data.detail;
       if (Array.isArray(msg)) msg = msg.map((d) => d.msg).join("; ");
-      throw new Error(msg || `HTTP ${res.status}`);
+      const err = new Error(msg || `HTTP ${res.status}`);
+      err.status = res.status; // CP8.12 U4: the episode page tells a missing episode (404) from other errors
+      throw err;
     }
     return data;
   }
@@ -381,26 +383,112 @@ const AutoShort = (() => {
     }
   }
 
-  // CP8.9 K7: link between the Short page and the khai thị page of the same video; "Tạo video khai thị" box.
-  function renderKindLinks(d) {
-    const box = $("#kind-links");
+  // CP8.12 U1 (replaces the CP8.9 K7 text link): sticky [Shorts | Khai thị] bar. The current page's button is
+  // highlighted (aria-current, not a link); the other one links to the other episode of the same video, or is dimmed.
+  const KT_GONE_NOTE = "Tập Short của video này đã bị xóa. Muốn có lại Short: gửi lại link video ở trang chủ (chọn Short).";
+  let kindBarKey = null;
+  let baseCheck = null; // CP8.12 U4: {id, state: "pending" | "ok" | "gone" | "error"}, checked once per page
+
+  function checkBaseEpisode(id) {
+    if (baseCheck && baseCheck.id === id) return;
+    baseCheck = { id, state: "pending" };
+    api("/api/episodes/" + encodeURIComponent(id))
+      .then(() => { baseCheck.state = "ok"; })
+      .catch((e) => { baseCheck.state = e.status === 404 ? "gone" : "error"; }) // temporary error: keep the link
+      .finally(() => { if (lastData) renderKindBar(lastData); });
+  }
+
+  function openKtBox() {
+    const kb = $("#kt-box");
+    kb.open = true;
+    kb.scrollIntoView({ block: "center", behavior: "smooth" });
+    $("#kt-min").focus({ preventScroll: true });
+  }
+
+  function showKindNote(text) {
+    const note = $("#kind-note");
+    note.textContent = text;
+    note.hidden = !text;
+  }
+
+  function kindButton(label, spec) {
+    if (spec.current) return el("span", { class: "kind-btn current", "aria-current": "page", text: label });
+    if (spec.href) return el("a", { class: "kind-btn", href: spec.href, text: label });
+    const b = el("button", { class: "kind-btn dim", type: "button", disabled: !!spec.disabled, title: spec.title,
+      text: label });
+    if (spec.onClick) b.addEventListener("click", spec.onClick);
+    return b;
+  }
+
+  function renderKindBar(d) {
     const isKt = d.kind === "khaithi";
-    const other = isKt ? d.base_episode_id : d.khaithi_episode_id;
-    box.hidden = !other;
-    if (other) {
-      box.replaceChildren(el("a", { href: "/episodes/" + encodeURIComponent(other),
-        text: isKt ? "→ Trang Short của video này" : "→ Trang video khai thị của video này" }));
+    const ktBoxShown = !isKt && !!d.source_url;
+    let shorts, kt, key;
+    if (isKt) {
+      kt = { current: true };
+      const base = d.base_episode_id;
+      if (base) checkBaseEpisode(base);
+      const state = base ? baseCheck.state : null;
+      if (!base) shorts = { disabled: true, title: "Không rõ tập Short của video này" };
+      else if (state === "gone") shorts = { title: "Tập Short đã bị xóa", onClick: () => showKindNote(KT_GONE_NOTE) };
+      else shorts = { href: "/episodes/" + encodeURIComponent(base) };
+      key = `kt|${base}|${state === "gone"}`;
+    } else {
+      shorts = { current: true };
+      const other = d.khaithi_episode_id;
+      if (other) kt = { href: "/episodes/" + encodeURIComponent(other) };
+      else if (ktBoxShown) kt = { title: "Chưa có video khai thị — bấm để tạo", onClick: openKtBox };
+      else kt = { disabled: true, title: "Không có link video nguồn" };
+      key = `short|${other}|${ktBoxShown}`;
+    }
+    if (key !== kindBarKey) { // rebuilt only when it changes: polling keeps focus / hover on the buttons
+      kindBarKey = key;
+      $("#kind-bar").replaceChildren(kindButton("Shorts", shorts), kindButton("Khai thị", kt));
+      if (!(isKt && baseCheck && baseCheck.state === "gone")) showKindNote("");
     }
     $("#shorts-label").textContent = isKt ? "Video khai thị" : "Shorts";
-    const kb = $("#kt-box");
-    kb.hidden = isKt || !d.source_url;
+    $("#kt-box").hidden = !ktBoxShown;
     $("#kt-summary").textContent = d.khaithi_episode_id ? "Tạo lại video khai thị (đổi số phút)" : "Tạo video khai thị từ video này";
   }
 
+  // CP8.12 U2: the stages box is closed when every stage is done and no job is active, open otherwise.
+  function stagesShouldOpen(d) {
+    const job = d.job;
+    if (jobActive(job)) return true;
+    if (job && (job.status === "failed" || job.status === "interrupted")) return true;
+    const stages = d.stages || [];
+    return !stages.length || !stages.every((s) => s.status === "done");
+  }
+
+  // Applied on edges only (first render, or the wanted state changed): a poll never undoes the user's own toggle.
+  let stagesOpenApplied = null;
+  function applyStagesOpen(d) {
+    const want = stagesShouldOpen(d);
+    if (want === stagesOpenApplied) return;
+    stagesOpenApplied = want;
+    $("#stages-box").open = want;
+  }
+
+  function stagesDoneText(d) {
+    const stages = (d && d.stages) || [];
+    const total = stages.length || Object.keys(STAGE_LABELS).length;
+    return `Các bước xử lý: ${stages.filter((s) => s.status === "done").length}/${total} xong`;
+  }
+
+  // The job line is the summary of the stages box; with no job line it falls back to "x/6 xong" (never empty).
   function setJobStatus(text, cls) {
     const box = $("#job-status");
-    box.className = "job-status " + (cls || "");
-    box.textContent = text;
+    box.className = "job-status " + (text ? cls || "" : "");
+    box.textContent = text || stagesDoneText(lastData);
+  }
+
+  // CP8.12 U4: the episode is gone (API 404) → a message + link home instead of the page; polling stops.
+  function showEpisodeGone() {
+    clearTimeout(pollTimer);
+    document.title = "Tập không còn — Auto Short";
+    $("main").replaceChildren(el("section", { class: "card gone" },
+      el("h2", { text: "Tập này không còn (đã bị xóa hoặc chưa từng xử lý)." }),
+      el("p", {}, el("a", { class: "btn", href: "/", text: "← Về trang chủ" }))));
   }
 
   async function refreshEpisode() {
@@ -409,6 +497,7 @@ const AutoShort = (() => {
     try {
       data = await api("/api/episodes/" + encodeURIComponent(episodeId));
     } catch (e) {
+      if (e.status === 404) { showEpisodeGone(); return; }
       setJobStatus(e.message, "error");
       pollTimer = setTimeout(refreshEpisode, POLL_MS * 4);
       return;
@@ -428,7 +517,7 @@ const AutoShort = (() => {
     if (d.duration) meta.push(fmtSeconds(d.duration));
     if (d.kind === "khaithi") meta.unshift(ktLabel(d));
     $("#ep-meta").textContent = meta.join(" · ");
-    renderKindLinks(d);
+    renderKindBar(d);
 
     const job = d.job;
     const timings = {};
@@ -446,6 +535,7 @@ const AutoShort = (() => {
     else if (job && job.status === "failed") setJobStatus(`Lỗi: ${job.error}`, "error");
     else if (job && job.status === "interrupted") setJobStatus(`Bị ngắt (${job.error}). Bấm chạy tiếp để tiếp tục.`, "error");
     else setJobStatus("", "");
+    applyStagesOpen(d);
 
     const stages = d.stages.length ? d.stages : Object.keys(STAGE_LABELS).map((s) => ({ stage: s, status: "pending" }));
     $("#stages").replaceChildren(...stages.map((s) => {
@@ -992,7 +1082,7 @@ const AutoShort = (() => {
   function initPlaylist() {
     playlistId = decodeURIComponent(location.pathname.split("/").filter(Boolean)[1] || "");
     const savedFilter = store("autoShort.plFilter");
-    if (["all", "todo", "doing", "done"].includes(savedFilter)) plFilter = savedFilter;
+    if (["all", "todo", "running", "doing", "done"].includes(savedFilter)) plFilter = savedFilter;
     document.querySelectorAll("#pl-filters [data-filter]").forEach((b) => b.addEventListener("click", () => {
       plFilter = b.dataset.filter;
       store("autoShort.plFilter", plFilter);
@@ -1034,11 +1124,20 @@ const AutoShort = (() => {
     } catch (e) { plMessage(e.message, "error"); }
   }
 
+  // CP8.12 A1: "Đang xử lý" = a job of the Short or of the khai thị episode is queued / running (client-side filter
+  // on the API data; the server groups are unchanged, such an entry is also under "Đang làm").
+  const RUNNING_STATES = ["queued", "processing"];
+  function entryRunning(e) { return RUNNING_STATES.includes(e.state) || RUNNING_STATES.includes(e.khaithi_state); }
+
   function applyPlFilter() {
     document.querySelectorAll("#pl-filters [data-filter]").forEach((b) => b.classList.toggle("active", b.dataset.filter === plFilter));
+    let shown = 0;
     document.querySelectorAll("#pl-entries li[data-group]").forEach((li) => {
-      li.hidden = plFilter !== "all" && li.dataset.group !== plFilter;
+      li.hidden = plFilter === "running" ? li.dataset.running !== "1"
+        : plFilter !== "all" && li.dataset.group !== plFilter;
+      if (!li.hidden) shown += 1;
     });
+    $("#pl-running-empty").hidden = !(plFilter === "running" && shown === 0);
   }
 
   // Per-bộ kinh hashtags (bổ sung HUMAN LEAD 2026-09-27): chips in order, add / remove / move, preview.
@@ -1253,10 +1352,11 @@ const AutoShort = (() => {
     }
     $("#pl-meta").replaceChildren(document.createTextNode(`${d.count} tập · lấy danh sách lúc ${fmtTime(d.fetched_at)} · `),
       el("a", { href: d.url, target: "_blank", rel: "noopener", text: "mở trên YouTube" }));
-    document.querySelectorAll("#pl-filters [data-filter]").forEach((b) => { b.querySelector(".n").textContent = d.counts[b.dataset.filter]; });
+    const counts = { ...d.counts, running: d.entries.filter(entryRunning).length };
+    document.querySelectorAll("#pl-filters [data-filter]").forEach((b) => { b.querySelector(".n").textContent = counts[b.dataset.filter]; });
     let busy = false;
     $("#pl-entries").replaceChildren(...d.entries.map((e) => {
-      if (e.state === "queued" || e.state === "processing") busy = true;
+      if (entryRunning(e)) busy = true;
       const title = e.title || e.video_id || "(không rõ)";
       const head = e.state === "new" || e.state === "unavailable" || e.state === "deleted" || !e.video_id ? el("span", { class: "ep-name", text: title })
         : el("a", { class: "ep-name", href: "/episodes/" + encodeURIComponent(e.video_id), text: title });
@@ -1268,7 +1368,7 @@ const AutoShort = (() => {
         b.addEventListener("click", () => processEntry(e, b));
         actions.append(b);
       }
-      return el("li", { class: "pl-entry " + e.state, "data-group": e.group || "none" },
+      return el("li", { class: "pl-entry " + e.state, "data-group": e.group || "none", "data-running": entryRunning(e) ? "1" : null },
         el("span", { class: "pl-index muted", text: `${e.index}.` }),
         el("div", { class: "pl-body" }, head,
           el("span", { class: "muted small", text: [e.episode ? `tập ${e.episode}` : null, e.duration ? fmtSeconds(e.duration) : null].filter(Boolean).join(" · ") }),

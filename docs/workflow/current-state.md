@@ -19,8 +19,8 @@ Web chạy cho HUMAN LEAD trong tmux `youtube:web` từ worktree `../youtube-aut
 1. G6A — thí nghiệm + khuyến nghị chiến lược Pinyin authority (task contract riêng, từ `origin/main` sạch); không đổi production Pinyin trước khi HUMAN LEAD duyệt.
 2. Sau G6A: G6B → CL1.3 (+ C10) → CL1.4 theo roadmap.
 3. Auto Short tiếp theo:
-   - FIX-test-output-dir (fixture `cfg`/`config_file` giữ `render.output_dir` trong `tmp_path`): READY, PR #23 chờ HUMAN LEAD merge. `output/abcdefghijk/` rác đã xóa ở repo chính.
-   - CP8.12 (S1, PROPOSED — HUMAN LEAD duyệt hướng 2026-09-28): trang tập — thanh chuyển Shorts / Khai thị dạng nút, ghim đầu màn hình khi cuộn; danh sách bước thu gọn (tự đóng khi xong, mở khi chạy / lỗi), cả máy tính và mobile. Chưa có task contract.
+   - FIX-test-output-dir: đã merge (PR #23; `main` = `d2cfce3`). `output/abcdefghijk/` rác đã xóa ở repo chính.
+   - CP8.12 (S1, `docs/tasks/CP8.12-episode-ui.md`, APPROVED 2026-09-28): IN_PROGRESS — implementation trên nhánh `feature/cp8.12-episode-ui` (worktree `../youtube-auto-short-cp812`), chờ review; thanh [Shorts | Khai thị] ghim đầu trang tập, khung 6 bước thu gọn, thông báo khi tập đích / tập không còn; A1: tab "Đang xử lý" ở trang bộ kinh.
    - Bố cục title (S2, PROPOSED): title bị giao diện YouTube Shorts che (~25% đáy khung, ~13% phải). Hướng khuyến nghị: header → title → video, thu khung còn ~0.75W; render 2–3 phương án mẫu để HUMAN LEAD chọn trước khi sửa `docs/decisions/CP7-render-contract.md`. Đổi `render_key` → tập cũ chạy lại sẽ render lại.
    - Sau đó: CP9, CP10.
 
