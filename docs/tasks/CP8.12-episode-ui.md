@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: IN_PROGRESS
 - Type: CHANGE
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -52,6 +52,15 @@ Trên trang tập (máy tính và điện thoại): chuyển giữa trang Short 
     - Mọi trang tập: `GET /api/episodes/<id>` trả 404 → thay nội dung trang bằng thông báo "Tập này không còn (đã bị xóa hoặc chưa từng xử lý)." + link về trang chủ; dừng poll (không hiện dòng lỗi "không có episode này" rồi poll mãi như hiện tại). Lỗi khác giữ hành vi cũ (hiện lỗi, poll chậm).
   - **U3** Áp như nhau trên máy tính và điện thoại; không thêm trang / route / trường API.
 
+## Sửa đổi A1 — tab "Đang xử lý" ở trang bộ kinh (HUMAN LEAD 2026-09-28, trong lúc IN_PROGRESS)
+
+- Trang bộ kinh (`playlist.html`, phần bộ kinh của `app.js`, `style.css`) thêm nút lọc **"Đang xử lý (n)"** giữa "Chưa xử lý" và "Đang làm": chỉ tập có job đang đợi hàng hoặc đang chạy (`state` `queued` / `processing`) **hoặc** job khai thị của cùng video đang đợi / chạy (`khaithi_state` `queued` / `processing`). Mỗi dòng vẫn hiện làn / stage như hiện tại ("đang tải trước", "đợi GPU", "đợi render", stage đang chạy).
+- Lọc phía client từ dữ liệu `GET /api/playlists/{pid}` hiện có; không đổi API, không đổi nhóm `group` của server (W10). "Đang làm" giữ nguyên (tập đang xử lý hiện ở cả hai tab). Bộ lọc mặc định giữ "Đang làm"; lựa chọn được nhớ như cũ (`autoShort.plFilter`, thêm giá trị mới hợp lệ).
+- Tab rỗng → dòng "Không có tập nào đang xử lý". Poll 5 s như cũ: tập xử lý xong tự rời tab. Thanh lọc trên điện thoại xuống dòng, không cuộn ngang, nút ≥ 40 px (W6 CP8.7).
+- Scope thêm: `playlist.html`; docs CP8.3 W10 thêm một dòng "Sửa đổi CP8.12 A1" trỏ task này.
+- AC A1: HTML trang bộ kinh có nút `data-filter` mới "Đang xử lý"; JS lọc đúng `queued` / `processing` (Short hoặc khai thị) và chấp nhận giá trị lưu mới; test tĩnh + kiểm web scratch có một tập đang chạy.
+- Manual test: [ ] Trang bộ kinh có tập đang chạy → tab "Đang xử lý" chỉ hiện tập đó, số đếm đúng; tập xong → tự rời tab; mặc định vẫn mở "Đang làm".
+
 ## Implementation approach
 
 - HTML: thêm `<nav id="kind-bar" class="kind-bar">` trước thẻ đầu; bỏ `#kind-links`; bọc `#stages` bằng `<details id="stages-box"><summary><span id="job-status" …></span></summary>…</details>`.
@@ -93,9 +102,18 @@ Task không chạm database, security model hay public API contract → manual t
 ## Result
 
 - Main changes:
+  - `episode.html`: `nav#kind-bar` (hai nút) + `p#kind-note` (thông báo U4) trên thẻ đầu của `main`; bỏ `#kind-links`; `<details id="stages-box">` với `<summary>` chứa `#job-status`, bọc `#stages`. `#archived-note` giờ nằm ngay dưới khung các bước (trước ở giữa dòng job và danh sách bước), vẫn ngoài khung thu gọn.
+  - `app.js`: `renderKindBar(d)` (thay `renderKindLinks`; chỉ dựng lại khi trạng thái thanh đổi), `checkBaseEpisode` (U4, một lần / trang), `openKtBox`; `stagesShouldOpen(d)` + `applyStagesOpen(d)` (theo cạnh); `setJobStatus` fallback "Các bước xử lý: x/6 xong"; `showEpisodeGone()` khi API 404 (dừng poll). `api()` gắn `err.status` vào lỗi (không đổi message / hành vi nơi khác).
+  - `style.css`: `.kind-bar` sticky `top: 0` (nền `--card`, bóng, `z-index: 20`), `.kind-btn` `flex: 1 1 0; min-width: 0; min-height: 44px`, `.current` nền accent, `.dim` mờ; summary `#stages-box` `min-height: 44px`, dấu ▸ / ▾, giữ màu `ok` / `error` / `busy`.
+  - Docs: CP8.3 W6 dòng "Sửa đổi CP8.12" + metadata Accepted by; `AUTO_SHORT_CHECKPOINT_PLAN.md` mục CP8.12; `docs/workflow/current-state.md`.
 - Tests:
+  - `tests/test_web_episode_ui_cp812.py` (5 test: HTML AC1, JS AC2/3/5/6 tĩnh, CSS AC4, dữ liệu API cho thanh, Short bị xóa / id không tồn tại). Toàn suite: `873 passed` (xem báo cáo implementer).
+  - Web scratch (port 8093, `work/` / `output/` tạm, không đụng repo chính / web 8080): chạy `app.js` được phục vụ trong Node với DOM giả tối thiểu (không có trình duyệt headless / jsdom trên máy, không cài thêm) — kiểm AC2, AC3 (có `source_url`), AC5 (theo cạnh, qua chuỗi trạng thái job giả), AC6. **Chưa kiểm bằng trình duyệt thật ở 360 px / ≥ 1024 px** (sticky, không cuộn ngang, vùng bấm) — cần HUMAN LEAD / Tech Lead xem ở manual test.
 - Review:
 - Important findings / decisions:
+  - Tập Short chưa có khai thị: nút "Khai thị" là `<button>` mờ có `title` "Chưa có video khai thị — bấm để tạo"; trang khai thị không có `base_episode_id`: nút "Shorts" disabled, `title` "Không rõ tập Short của video này".
+  - Trong lúc kiểm U4 đang chạy, nút "Shorts" hiển thị là link (lạc quan); lỗi mạng / lỗi khác giữ link.
+  - Trang `/episodes/<id>` sai định dạng id vẫn trả JSON 404 từ server như trước (route ngoài scope).
 - Known limitations:
   - Kiểm tập Short còn hay không (U4) chạy một lần khi mở trang khai thị; tập Short bị xóa trong lúc trang đang mở thì bấm "Shorts" sẽ tới thông báo "Tập này không còn …" của U4 (không phải 404 thô).
 - PR:
