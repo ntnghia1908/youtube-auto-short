@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: CHANGE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -81,7 +81,7 @@ Chấp nhận (HUMAN LEAD): góc phải title (x 905–945, ≈ 40 px) bị cộ
 1. Layout mặc định: header (81, 22, 918, 184); video (0, 211, 1080, 1254); title x 135, rộng 810, mép dưới 1600; title 2 dòng ở 70 px cao 227, 3 dòng ở 70 px cao 297 (≤ tối đa); title dài hơn → panel 297, thu chữ; dưới `min_font_scale` → `failed`.
 2. Title luôn vẽ trên video (pixel vùng giao là panel vàng + chữ), mép dưới title ≤ 1600 < 1625 với mọi title hợp lệ.
 3. Key L2: mặc định mới có hiệu lực; `title_bottom` được validate; config sai hình học (L4) báo lỗi rõ.
-4. Tập đã render bằng layout cũ: `auto-short status` báo render `stale`; chạy lại → mọi Short encode lại, `render_manifest.json` hợp lệ R9; tập chưa chạy lại giữ file cũ nguyên byte.
+4. Tập đã render bằng layout cũ: chạy lại → log `render: run (config changed)`, mọi Short encode lại, `render_manifest.json` hợp lệ R9; tập chưa chạy lại giữ file cũ nguyên byte. (Sửa đổi HUMAN LEAD 2026-09-29 sau review: bản trước ghi "`auto-short status` báo render `stale`" — sai với CP2, `status` chỉ in trạng thái đã lưu.)
 5. Web / CLI xem trước title (CP8.2 T2) cho dòng / cỡ chữ / chiều cao panel khớp Short render ra.
 6. Mọi test PASS; test đổi assert tọa độ / cỡ chữ / key có lý do ở Result.
 
@@ -119,7 +119,7 @@ Không chạm database, security model hay public API contract → manual test l
 - Verification khác:
   - `node scripts/framework-check.mjs` → PASS (exit 0).
   - Scratch render thật `rbjfCfFq3Dk` (hard-link `work/`, `review.json` + `manifest.json` chép riêng, `output_dir` scratch): `render: run (config changed)`, 13/13 encoded, 0 reused, 826.2 s Short trong 326 s. Layout gốc: header (81, 22, 918, 184), video (0, 211, 1080, 1254) crop 930×1080 x 255, title (135, 1373, 810, 227); header 48 px 2 dòng; 13/13 title 70 px (5 × 3 dòng panel 297 y 1303, 8 × 2 dòng panel 227 y 1373), mép dưới 1600 cho cả 13. `ffprobe` 13/13: h264 1080×1920 yuv420p 30000/1001, AAC 48 kHz stereo, lệch thời lượng ≤ 0.016 s, sha256 khớp manifest. `k01` / `k04` **byte-identical** với mẫu V16 (sha256 `d4883d8b…` / `3aecf124…`); `render_key` khác mẫu (config hash khác) như dự kiến. Frame `k01` / `k04` (t = 5 s): pixel title trong vùng giao video = `#FEDB00` (±2), dưới video nền đen. `work/` / `output/` chính không đổi (sha256 26 file trước / sau).
-- Review:
+- Review: ORCHESTRATOR review diff-first (contract → diff → AC → evidence): ACCEPTED. Chạy lại toàn bộ test trong worktree (898 passed) + framework check PASS. Micro-fix: import tương đối `.text` trong `plan.py`, số px title đè video trong bảng V16 (92 / 162). Fit thử header của 13 bộ / tập thật với layout mới: tất cả 2 dòng, 46–49 px. AC4 sửa câu chữ (HUMAN LEAD đồng ý); `README.md` 1 dòng ngoài scope giữ (số crop đúng với layout mới). Không còn blocking finding.
 - Important findings / decisions:
   - AC4 "`auto-short status` báo render `stale`": **không đúng với code hiện tại** — `status` chỉ in trạng thái đã lưu trong `manifest.json` (`done`) và không so `config_hash`; đổi config chỉ được phát hiện khi stage chạy lại (`check_up_to_date` → log `render: run (config changed)`). Hành vi L5 (file cũ giữ nguyên tới khi chạy lại, lúc đó encode lại cả tập) đúng và đã test. Không sửa `status` (ngoài scope); ghi ở CP7 "Giới hạn đã biết".
   - L4 "header + khe + video ≤ 1920" implement là **đáy video** (`min_frame_margin` + header + khe + video) ≤ 1920 vì header bắt đầu ở `min_frame_margin`; thêm kiểm `title_panel_height` ≤ `title_panel_max_height` (giữ kiểm tương đương của CP7).
