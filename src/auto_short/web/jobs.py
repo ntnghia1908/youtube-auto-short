@@ -29,6 +29,8 @@ from pathlib import Path
 
 from ..config import Config
 from ..pipeline import PIPELINE_STAGES, PipelineError, PreflightError, StageRun, ollama_preflight, run_pipeline
+from ..post import fetch as post_fetch
+from ..post import stage as post_stage
 from ..render import RenderError, run_render
 
 log = logging.getLogger("auto_short")
@@ -39,6 +41,9 @@ LOG_LINES = 200
 KIND_PIPELINE = "pipeline"
 KIND_RENDER = "render"
 KIND_ADD = "add"  # CP9 C7: AI title of a Short added by hand (lane ai), then render (lane render)
+KIND_POST = "post"  # CP8.15 P1: compose / recompose community post text (lane ai; no render)
+KIND_POST_SEARCH = "post_search"  # CP8.15 P5b: find images from a link (lane prepare; no Ollama)
+POST_IMAGES_KEY = "_post_images"  # CP8.15 P9: pseudo episode id for the (single, global) image search job
 
 MODE_LANES, MODE_SERIAL = "lanes", "serial"
 PREPARE, AI, RENDER = "prepare", "ai", "render"
@@ -240,6 +245,10 @@ class JobRunner:
     def latest(self, episode_id: str) -> Job | None:
         with self._lock:
             return self._latest.get(episode_id)
+
+    def job(self, job_id: str) -> Job | None:
+        with self._lock:
+            return self._jobs.get(job_id)
 
     def forget(self, episode_id: str) -> bool:
         """Drop the finished jobs of a deleted episode (CP8.5 X3) so it leaves every view; refused (False) while
@@ -529,3 +538,81 @@ def add_short_target(config: Config, clip_id: str, *, render: Callable = run_ren
                      titler: Callable | None = None) -> AddShortTarget:
     """See :class:`AddShortTarget`."""
     return AddShortTarget(config, clip_id, render=render, preflight=preflight, titler=titler)
+
+
+# --- post-compose job (CP8.15 P1) -----------------------------------------------------------------------------
+
+class PostComposeTarget:
+    """Job target composing (or recomposing) the community post text of one or more Shorts of an episode: lane
+    ``ai`` (Ollama preflight, like W4, but only the ``[post]`` model), no render afterwards (``posts.json`` is user
+    state, CP8.15 P7). Called directly (``queue_mode = "serial"``): the one step."""
+
+    def __init__(self, config: Config, clips: "list[str] | str", *, compose: Callable | None = None,
+                 preflight: Callable[[Config], None] | None = post_stage.preflight, lock: object | None = None):
+        self.config, self.clips = config, clips
+        self.compose = compose or post_stage.compose_posts
+        self.preflight = preflight
+        self.lock = lock
+        self.result: post_stage.ComposeSummary | None = None
+
+    def run(self, job: Job) -> None:
+        try:
+            if self.preflight is not None:
+                job.stage = "preflight"
+                self.preflight(self.config)
+            job.stage = "post"
+            self.result = self.compose(job.episode_id, self.config, self.clips, lock=self.lock)
+        except PreflightError as exc:
+            raise JobFailed(f"ollama preflight: {exc}") from exc
+        except post_stage.PostComposeError as exc:
+            raise JobFailed(str(exc)) from exc
+        job.stage = None
+        st = self.result
+        job.summary = f"{len(st.clip_ids)} Short: {st.ai} AI, {st.raw} raw" + \
+            (f", {len(st.errors)} lỗi text nguồn" if st.errors else "")
+
+    def __call__(self, job: Job) -> None:
+        self.run(job)
+
+    def lane_steps(self) -> list[Step]:
+        return [Step(AI, self.run)]
+
+
+def post_compose_target(config: Config, clips: "list[str] | str", *, compose: Callable | None = None,
+                        preflight: Callable[[Config], None] | None = post_stage.preflight,
+                        lock: object | None = None) -> PostComposeTarget:
+    """See :class:`PostComposeTarget`."""
+    return PostComposeTarget(config, clips, compose=compose, preflight=preflight, lock=lock)
+
+
+# --- image search job (CP8.15 P5b) ----------------------------------------------------------------------------
+
+class ImageSearchTarget:
+    """Job target finding images from a link (P5b): lane ``prepare`` (no Ollama). Runs under the pseudo episode id
+    :data:`POST_IMAGES_KEY` (the job runner keys "one active job" by episode; image search is not tied to one).
+    Called directly (``queue_mode = "serial"``): the one step."""
+
+    def __init__(self, config: Config, url: str, *, search: Callable | None = None):
+        self.config, self.url = config, url
+        self.search = search or post_fetch.search_images
+        self.result: post_fetch.SearchResult | None = None
+
+    def run(self, job: Job) -> None:
+        cfg = self.config.post
+        try:
+            self.result = self.search(self.url, cfg.image_dir, cfg.image_dir / "sources.tsv")
+        except post_fetch.FetchError as exc:
+            raise JobFailed(str(exc)) from exc
+        job.summary = f"+{len(self.result.added)} ảnh" + (f", {len(self.result.duplicate)} trùng"
+                                                           if self.result.duplicate else "")
+
+    def __call__(self, job: Job) -> None:
+        self.run(job)
+
+    def lane_steps(self) -> list[Step]:
+        return [Step(PREPARE, self.run)]
+
+
+def image_search_target(config: Config, url: str, *, search: Callable | None = None) -> ImageSearchTarget:
+    """See :class:`ImageSearchTarget`."""
+    return ImageSearchTarget(config, url, search=search)

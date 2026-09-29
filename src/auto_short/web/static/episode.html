@@ -54,6 +54,11 @@
         <a id="zip" class="btn" hidden>Tải tất cả (.zip)</a>
       </div>
     </div>
+    <div id="posts-head" class="shorts-head" hidden>
+      <span id="posts-count" class="muted small"></span>
+      <button id="posts-compose-all" class="btn small needs-idle" type="button">Soạn bài cho mọi Short</button>
+    </div>
+    <p id="posts-msg" class="small" hidden></p>
     <p id="header-lines" class="muted small"></p>
     <p id="shorts-note" class="note small" hidden></p>
     <div id="filters" class="filters" hidden>
@@ -91,6 +96,25 @@
         <button id="tr-clear" class="btn small" type="button" hidden>Bỏ chọn</button>
         <button id="tr-add" class="btn primary small needs-idle" type="button" disabled>Thêm đoạn này</button>
       </div>
+    </div>
+  </div>
+</div>
+<div id="image-dialog" class="modal" role="dialog" aria-modal="true" aria-labelledby="image-title" hidden>
+  <div class="modal-box">
+    <div class="modal-head">
+      <h2 id="image-title">Thư viện ảnh</h2>
+      <button id="image-close" class="btn small" type="button">Đóng</button>
+    </div>
+    <div class="pane">
+      <div class="edit-actions">
+        <label class="btn small" for="image-upload-input">Tải ảnh lên
+          <input id="image-upload-input" type="file" accept="image/jpeg,image/png" hidden></label>
+        <input id="image-search-url" type="url" placeholder="Dán link ảnh hoặc trang có ảnh…" aria-label="Link tìm ảnh">
+        <button id="image-search-btn" class="btn small" type="button">Tìm ảnh</button>
+      </div>
+      <div id="image-quick-links" class="edit-actions" hidden></div>
+      <p id="image-msg" class="small" hidden></p>
+      <div id="image-grid" class="img-grid"></div>
     </div>
   </div>
 </div>

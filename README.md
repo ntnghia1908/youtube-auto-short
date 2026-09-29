@@ -140,6 +140,19 @@ auto-short status rbjfCfFq3Dk.kt                                                
 
 Parameters in `[khaithi]` of `config.example.toml`. Contract: `docs/decisions/CP8.9-khai-thi-contract.md`.
 
+Community post text (CP8.15): each rendered Short (and khai thị video) has a collapsible "Bài đăng cộng đồng"
+panel — "Soạn bài" sends its literal caption text to Ollama, which is only allowed to add punctuation / paragraph
+breaks (never change, add, drop or reorder a word; validated deterministically, retried, falling back to one raw
+paragraph on failure); the paragraphs, an image and an optional Short link are then assembled into a copy-paste
+post (title, paragraphs, "— speaker, series tập N", link, hashtags), edited by hand if needed, with "Sao chép bài"
+and a separate "Đã đăng bài" tick (independent from the Short's own "Đã đăng"). "Soạn bài cho mọi Short" composes
+every Short of the episode that has none yet. Images come from a library outside the repo (`[post] image_dir`,
+default `~/.local/share/auto-short/post-images/`; copy files into it by hand, or use "Tải ảnh lên" / "Tìm ảnh từ
+link" in the "Đổi ảnh" dialog — JPEG/PNG only, ≥ 600 px short edge, ≤ 15 MB; a link to an image or to a page is
+accepted, matching images are downloaded straight into the library after the same checks; only public
+http(s) hosts are fetched, never a local/private address). Parameters in `[post]` of `config.example.toml`.
+Contract: `docs/decisions/CP8.15-community-post-contract.md`.
+
 Storage tab (CP8.6, "Bộ nhớ" in the top bar, `/storage`): free / used space of the drive holding `work/` and
 `output/`, the size of every episode (source video / Shorts / other) and of the Whisper models, and clean-up
 suggestions with a "Làm" button (asks first; nothing is ever deleted automatically): episodes whose Shorts are all

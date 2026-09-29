@@ -13,6 +13,7 @@ import time
 import zipfile
 from collections.abc import Callable
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import parse_qs, quote
@@ -25,16 +26,24 @@ from pydantic import BaseModel, Field, StrictBool
 from .. import khaithi
 from ..config import Config
 from ..pipeline import PIPELINE_STAGES, PreflightError, ollama_preflight, run_pipeline
+from ..post import fetch as post_fetch
+from ..post import images as post_images
+from ..post import logic as post_logic
+from ..post import source as post_source
+from ..post import stage as post_stage
+from ..post import store as post_store
 from ..render import run_render
 from ..review import (ArchivedError, EpisodeNotFound, ReviewError, TitlePreview, archive_source, content_disposition,
                       list_tombstones, mark_downloaded, remove_tombstone,
-                      delete_episode, is_archived, preview_title, reject_archived_clip, reject_clip, reset_title,
-                      restore_clip, set_alternative, set_published, set_title)
+                      delete_episode, is_archived, list_titles, preview_title, reject_archived_clip, reject_clip,
+                      reset_title, restore_clip, set_alternative, set_published, set_title)
 from ..review import shorts as review_shorts
+from ..review.names import hashtags as review_hashtags
 from . import episodes as ep
 from .auth import COOKIE_NAME, SessionSigner, load_or_create_secret
 from .storage import BLOCK_MESSAGE, StorageCache
-from .jobs import KIND_ADD, KIND_PIPELINE, KIND_RENDER, JobRunner, add_short_target, pipeline_target, render_target
+from .jobs import (KIND_ADD, KIND_PIPELINE, KIND_POST, KIND_POST_SEARCH, KIND_RENDER, POST_IMAGES_KEY, JobRunner,
+                   add_short_target, image_search_target, pipeline_target, post_compose_target, render_target)
 from .playlists import LIST_TIMEOUT, PlaylistError, PlaylistStore, ytdlp_list
 from .urls import ASK, PLAYLIST, UrlError, canonical_url, classify_url, valid_playlist_id
 
@@ -121,6 +130,24 @@ class AddIn(BaseModel):
     end_nudge: Any = 0
 
 
+class PostComposeIn(BaseModel):
+    """CP8.15 P9: ``{"clips": [...]}`` (1-based clip ids) or ``{"clips": "all"}`` ("Soạn bài cho mọi Short")."""
+
+    clips: Any = None
+
+
+class PostEditIn(BaseModel):
+    """CP8.15 P9 ``PUT``: any non-empty subset of ``paragraphs`` / ``image`` / ``link``."""
+
+    paragraphs: list[str] | None = Field(default=None, max_length=200)
+    image: str | None = Field(default=None, max_length=100)
+    link: str | None = Field(default=None, max_length=2000)
+
+
+class PostImageSearchIn(BaseModel):
+    url: str = Field(max_length=2000)
+
+
 def _preview_dict(p: TitlePreview | None) -> dict | None:
     if p is None:
         return None
@@ -191,12 +218,17 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                pipeline: Callable = run_pipeline, render: Callable = run_render,
                secret: bytes | None = None, disk_usage: Callable = shutil.disk_usage,
                clock: Callable[[], float] = time.time, playlist_lister: Callable = ytdlp_list,
-               playlist_timeout: float = LIST_TIMEOUT, titler: Callable | None = None) -> FastAPI:
+               playlist_timeout: float = LIST_TIMEOUT, titler: Callable | None = None,
+               post_compose: Callable | None = None,
+               post_preflight: Callable[[Config], None] | None = post_stage.preflight,
+               post_search: Callable | None = None) -> FastAPI:
     """``preflight`` / ``pipeline`` / ``render`` are injectable for tests (defaults: CP8 ``ollama_preflight`` /
     ``run_pipeline``, CP7/CP8.2 ``run_render``); so are ``disk_usage`` (``shutil.disk_usage``) and ``clock`` (epoch
     seconds, ages of the storage recommendations) for CP8.6; ``playlist_lister`` (yt-dlp flat listing) and
     ``playlist_timeout`` for CP8.7; ``titler`` (AI title of an added Short, default
-    :func:`auto_short.titling.added.title_added`) for CP9."""
+    :func:`auto_short.titling.added.title_added`) for CP9; ``post_compose`` / ``post_preflight`` (default
+    :func:`auto_short.post.stage.compose_posts` / ``.preflight``) and ``post_search`` (default
+    :func:`auto_short.post.fetch.search_images`) for CP8.15."""
     runner = runner or JobRunner(config.web.queue_mode)
     storage = StorageCache(config, disk_usage=disk_usage, clock=clock)
     playlists = PlaylistStore(config, lister=playlist_lister, timeout=playlist_timeout)
@@ -204,6 +236,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     # pipeline / render job of the episode is queued or running).
     submit_lock = threading.Lock()
     publish_lock = threading.Lock()  # publish.json read-modify-write (no job check: allowed while a job runs)
+    post_lock = threading.Lock()  # posts.json read-modify-write (CP8.15 P7: allowed even while a job runs)
     signer = SessionSigner(secret if secret is not None else load_or_create_secret(Path(config.workspace.dir)),
                            password, config.web.session_days)
 
@@ -795,6 +828,262 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         playlists.invalidate(episode_id)
         storage.invalidate()
         return result
+
+    # --- CP8.15: community post text ------------------------------------------------------------------------
+
+    def _post_now() -> str:
+        return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def _posts_path(episode_id: str) -> Path:
+        return Path(config.workspace.dir) / episode_id / post_store.POSTS_NAME
+
+    def _post_header_fields(episode_id: str) -> dict | None:
+        try:
+            doc = json.loads((Path(config.workspace.dir) / episode_id / "titles.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        fields = (doc.get("header") or {}).get("fields")
+        return fields if isinstance(fields, dict) else None
+
+    def _post_series_and_tags(episode_id: str) -> tuple[str | None, tuple[str, ...]]:
+        """Like ``episode_view``'s per-Short hashtags (CP8.7/CP8.8): custom bộ kinh hashtags, else ``#<series>`` +
+        ``[web] hashtags``."""
+        kf = ep.kind_fields(config, episode_id)
+        custom = playlists.hashtags_for(kf["base_episode_id"] or episode_id)
+        if custom is not None:
+            return None, tuple(custom)
+        fields = _post_header_fields(episode_id)
+        return (fields.get("series") if fields else None), tuple(config.web.hashtags)
+
+    def _post_image_sources() -> dict[str, str]:
+        try:
+            lines = (config.post.image_dir / "sources.tsv").read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return {}
+        out = {}
+        for line in lines:
+            name, _, url = line.partition("\t")
+            if name and url:
+                out[name] = url
+        return out
+
+    def _post_entry_view(entry: dict, *, ep_src, title: str | None, header_fields: dict | None,
+                         hashtags_list: list[str]) -> dict:
+        stale = post_stage.compute_stale(ep_src, entry) if ep_src is not None else True
+        image = entry["image"]
+        image_missing = image is not None and post_images.resolve(config.post.image_dir, image) is None
+        text = post_logic.compose_copy_text(title=title, paragraphs=entry["paragraphs"], header_fields=header_fields,
+                                            link=entry["link"], hashtags=hashtags_list)
+        return {"clip_id": entry["clip_id"], "paragraphs": list(entry["paragraphs"]), "origin": entry["origin"],
+                "stale": stale, "image": image, "image_missing": image_missing, "link": entry["link"],
+                "posted": entry["posted_at"] is not None, "posted_at": entry["posted_at"], "text": text,
+                "chars": len(text)}
+
+    @app.get("/api/episodes/{episode_id}/posts")
+    def api_posts(episode_id: str):
+        """P7/P9: every stored post of the episode (read-only, allowed while a job runs); ``post_error`` when
+        ``posts.json`` is broken (not overwritten)."""
+        if (bad := _episode_or_404(episode_id)) is not None:
+            return bad
+        with post_lock:
+            try:
+                doc = post_store.read_posts(_posts_path(episode_id), episode_id)
+                post_error = None
+            except post_store.PostsError as exc:
+                doc, post_error = post_store.empty_posts(episode_id), str(exc)
+        try:
+            ep_src = post_source.load(episode_id, config)
+        except post_source.PostSourceError:
+            ep_src = None
+        titles_by_clip: dict[str, str | None] = {}
+        try:
+            titles_by_clip = {c["clip_id"]: c["title"] for c in list_titles(episode_id, config)["clips"]}
+        except ReviewError:
+            pass
+        header_fields = _post_header_fields(episode_id)
+        series, tags = _post_series_and_tags(episode_id)
+        hashtags_list = review_hashtags(series, tags)
+        posts = [_post_entry_view(e, ep_src=ep_src, title=titles_by_clip.get(e["clip_id"]),
+                                  header_fields=header_fields, hashtags_list=hashtags_list) for e in doc["posts"]]
+        return {"posts": posts, "post_error": post_error}
+
+    def _post_clips(body: PostComposeIn) -> "list[str] | str | JSONResponse":
+        raw = body.clips
+        if raw == "all":
+            return "all"
+        if not isinstance(raw, list) or not raw or not all(isinstance(c, str) and ep.valid_clip_id(c) for c in raw):
+            return JSONResponse({"detail": 'clips phải là "all" hoặc một danh sách clip_id không rỗng'},
+                                status_code=422)
+        return raw
+
+    @app.post("/api/episodes/{episode_id}/posts")
+    def api_posts_compose(episode_id: str, body: PostComposeIn):
+        """P1: soạn / soạn lại bài (lane ai) -> 202 job; 409 khi episode đang có job; 503 Ollama preflight."""
+        if (bad := _episode_or_404(episode_id)) is not None:
+            return bad
+        clips = _post_clips(body)
+        if isinstance(clips, JSONResponse):
+            return clips
+        if post_preflight is not None:
+            try:
+                post_preflight(config)
+            except PreflightError as exc:
+                return JSONResponse({"detail": f"ollama preflight: {exc}"}, status_code=503)
+        with submit_lock:
+            if (busy := _busy(episode_id)) is not None:
+                return busy
+            job, _created = runner.submit(episode_id, KIND_POST,
+                                          post_compose_target(config, clips, compose=post_compose,
+                                                              preflight=post_preflight, lock=post_lock))
+        log.info("web: soạn bài %s [%s] -> job %s", clips if clips == "all" else ",".join(clips), episode_id, job.id)
+        return JSONResponse({"job": _job_view(job)}, status_code=202)
+
+    @app.put("/api/episodes/{episode_id}/posts/{clip}")
+    def api_posts_edit(episode_id: str, clip: str, body: PostEditIn):
+        """P9: sửa tay ``paragraphs`` (-> ``origin: manual``) / đổi ``image`` / sửa ``link`` (P6); được cả khi job
+        đang chạy (P7); cần đã có bài (bấm "Soạn bài" trước)."""
+        if (bad := _check_clip(episode_id, clip)) is not None:
+            return bad
+        given = body.model_fields_set & {"paragraphs", "image", "link"}
+        if not given:
+            return JSONResponse({"detail": "cần ít nhất một trong: paragraphs, image, link"}, status_code=422)
+        changes: dict = {}
+        if "paragraphs" in given:
+            paragraphs = body.paragraphs
+            if not isinstance(paragraphs, list) or not paragraphs \
+                    or not all(isinstance(p, str) and p.strip() for p in paragraphs):
+                return JSONResponse({"detail": "paragraphs phải là mảng chuỗi không rỗng"}, status_code=422)
+            changes["paragraphs"] = [p.strip() for p in paragraphs]
+            changes["origin"] = post_store.MANUAL
+        if "image" in given:
+            if body.image is None or post_images.resolve(config.post.image_dir, body.image) is None:
+                return JSONResponse({"detail": "không có ảnh này trong thư viện"}, status_code=404)
+            changes["image"] = body.image
+        if "link" in given:
+            try:
+                changes["link"] = post_logic.normalize_link(body.link)
+            except post_logic.LinkError as exc:
+                return JSONResponse({"detail": str(exc)}, status_code=422)
+        order = [cid for cid, _ in post_stage.rendered_clip_ids(config, episode_id)]
+        with post_lock:
+            try:
+                doc = post_store.read_posts(_posts_path(episode_id), episode_id)
+                doc = post_store.with_fields(doc, order, clip, changes, now=_post_now())
+            except post_store.PostsError as exc:
+                return JSONResponse({"detail": str(exc)}, status_code=422)
+            post_store.write(_posts_path(episode_id), doc)
+        entry = post_store.find(doc, clip)
+        try:
+            ep_src = post_source.load(episode_id, config)
+        except post_source.PostSourceError:
+            ep_src = None
+        title = None
+        try:
+            title = next((c["title"] for c in list_titles(episode_id, config)["clips"] if c["clip_id"] == clip), None)
+        except ReviewError:
+            pass
+        header_fields = _post_header_fields(episode_id)
+        series, tags = _post_series_and_tags(episode_id)
+        log.info("web: post %s [%s] sửa %s", clip, episode_id, ", ".join(sorted(given)))
+        return _post_entry_view(entry, ep_src=ep_src, title=title, header_fields=header_fields,
+                                hashtags_list=review_hashtags(series, tags))
+
+    @app.post("/api/episodes/{episode_id}/posts/{clip}/posted")
+    def api_posts_posted(episode_id: str, clip: str, body: PublishedIn):
+        """P8: tick / untick "Đã đăng bài" — độc lập với "Đã đăng" Short (``publish.json``); được cả khi job
+        đang chạy."""
+        if (bad := _check_clip(episode_id, clip)) is not None:
+            return bad
+        order = [cid for cid, _ in post_stage.rendered_clip_ids(config, episode_id)]
+        with post_lock:
+            try:
+                doc = post_store.read_posts(_posts_path(episode_id), episode_id)
+                doc = post_store.with_posted(doc, order, clip, body.value, now=_post_now())
+            except post_store.PostsError as exc:
+                return JSONResponse({"detail": str(exc)}, status_code=422)
+            post_store.write(_posts_path(episode_id), doc)
+        entry = post_store.find(doc, clip)
+        log.info("web: post %s [%s] %s \"Đã đăng bài\"", clip, episode_id, "tick" if body.value else "untick")
+        return {"clip_id": clip, "posted": entry["posted_at"] is not None, "posted_at": entry["posted_at"]}
+
+    # --- CP8.15: image library (P5, P5a, P5b) ---------------------------------------------------------------
+
+    @app.get("/api/post-images")
+    def api_post_images():
+        infos = post_images.list_images(config.post.image_dir)
+        used = post_images.usage_counts(Path(config.workspace.dir))
+        sources = _post_image_sources()
+        return {"images": [{"name": i.name, "width": i.width, "height": i.height, "bytes": i.bytes,
+                            "used": used.get(i.name, 0), "source": sources.get(i.name)} for i in infos],
+                "image_sources": list(config.post.image_sources)}
+
+    @app.post("/api/post-images")
+    async def api_post_images_upload(request: Request, name: str = ""):
+        """P5a: raw body (``Content-Type: image/jpeg`` | ``image/png``), original name in ``?name=``."""
+        if not name.strip():
+            return JSONResponse({"detail": "cần tên ảnh gốc (?name=...)"}, status_code=422)
+        try:
+            declared = int(request.headers.get("content-length") or 0)
+        except ValueError:
+            declared = 0
+        if declared > post_images.MAX_BYTES:
+            return JSONResponse({"detail": f"ảnh lớn hơn {post_images.MAX_BYTES // (1024 * 1024)} MB"},
+                                status_code=422)
+        body = await request.body()
+        if len(body) > post_images.MAX_BYTES:
+            return JSONResponse({"detail": f"ảnh lớn hơn {post_images.MAX_BYTES // (1024 * 1024)} MB"},
+                                status_code=422)
+        try:
+            img_name, duplicate = post_images.save_image(config.post.image_dir, body, original_name=name)
+        except post_images.ImageError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=422)
+        log.info("web: post-images: %s \"%s\" (%d bytes)%s", "upload" if not duplicate else "upload (trùng)",
+                 img_name, len(body), "" if not duplicate else ", ảnh có sẵn")
+        return JSONResponse({"image": img_name, "duplicate": duplicate}, status_code=200)
+
+    @app.delete("/api/post-images/{name}")
+    def api_post_images_delete(name: str):
+        path = post_images.resolve(config.post.image_dir, name)
+        if path is None:
+            return JSONResponse({"detail": "không có ảnh này"}, status_code=404)
+        used = post_images.usage_counts(Path(config.workspace.dir)).get(name, 0)
+        post_images.delete_image(config.post.image_dir, name)
+        log.info("web: post-images: xóa %s (đang dùng ở %d bài)", name, used)
+        return {"used": used}
+
+    @app.post("/api/post-images/search")
+    def api_post_images_search(body: PostImageSearchIn):
+        """P5b: tìm ảnh từ một link -> job nền (lane prepare, không cần Ollama); 409 khi đang tìm."""
+        with submit_lock:
+            current = runner.latest(POST_IMAGES_KEY)
+            if current is not None and current.active:
+                return JSONResponse({"detail": "đang tìm ảnh; đợi xong rồi tìm tiếp",
+                                     "job": _job_view(current)}, status_code=409)
+            job, _created = runner.submit(POST_IMAGES_KEY, KIND_POST_SEARCH,
+                                          image_search_target(config, body.url, search=post_search))
+        log.info("web: post-images: tìm ảnh %s -> job %s", body.url, job.id)
+        return JSONResponse({"job": _job_view(job)}, status_code=202)
+
+    @app.get("/api/post-images/search/{job_id}")
+    def api_post_images_search_status(job_id: str):
+        job = runner.job(job_id)
+        if job is None or job.episode_id != POST_IMAGES_KEY:
+            return JSONResponse({"detail": "không có job này"}, status_code=404)
+        result = getattr(job.target, "result", None)
+        found = len(result.added) + len(result.duplicate) if result is not None else 0
+        return {"status": job.status, "found": found, "added": list(result.added) if result else [],
+                "duplicate": list(result.duplicate) if result else [],
+                "skipped": dict(result.skipped) if result else {}}
+
+    @app.get("/files/post-images/{name}")
+    def post_image_file(name: str, download: str | None = None):
+        path = post_images.resolve(config.post.image_dir, name)
+        if path is None:
+            return JSONResponse({"detail": "không có ảnh này"}, status_code=404)
+        headers = {"Cache-Control": "private, no-cache"}
+        if download is not None:
+            headers["Content-Disposition"] = content_disposition(name)
+        return FileResponse(path, media_type=post_images.CONTENT_TYPES[Path(name).suffix.lower()], headers=headers)
 
     @app.delete("/api/episodes/{episode_id}")
     def api_episode_delete(episode_id: str):

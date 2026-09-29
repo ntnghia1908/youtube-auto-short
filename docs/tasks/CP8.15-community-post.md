@@ -2,7 +2,8 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: IN_PROGRESS
+- BLOCKED note: implementation + toàn bộ test PASS, nhưng tỉ lệ qua validate P3 lần đầu trên dữ liệu thật (72 %) dưới ngưỡng 90 % của Q4 (xem Result) — chưa đặt READY, chờ quyết định HUMAN LEAD.
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -127,8 +128,35 @@ Chạm public API contract (route web mới) → manual test là gate trước i
 ## Result
 
 - Main changes:
-- Tests:
-- Review:
+  - `src/auto_short/post/` (mới): `source.py` (P2 text nguồn, đọc trực tiếp artifact — không sửa `review/`), `validate.py` (P3: parse response + validate token/dấu câu + `raw_fallback`), `prompt.py` (prompt `post` `v1`), `logic.py` (P6 `normalize_link`, P3 `chunk_lines`, P4 `compose_copy_text`/`header_line`), `store.py` (P7 `posts.json` schema/read/write/merge), `stage.py` (P1/P3 orchestration: AI call + retry, `post_log.json`, `preflight`, `rendered_clip_ids`, `compute_stale`), `images.py` (P5/P5a: sniff JPEG/PNG bằng magic bytes, validate, save/list/delete, `least_used`), `fetch.py` (P5b/P13: `check_url` (SSRF-safe, resolver injectable cho test), `fetch` (giới hạn byte, redirect có kiểm lại), HTML parser stdlib, `search_images`).
+  - `src/auto_short/config.py`: `PostConfig` + `_post()` parser + wire vào `Config`/`from_dict`; `config.example.toml` `[post]`.
+  - `src/auto_short/web/jobs.py`: `PostComposeTarget`/`post_compose_target` (lane `ai`), `ImageSearchTarget`/`image_search_target` (lane `prepare`, id `_post_images`), `KIND_POST`, `KIND_POST_SEARCH`, `POST_IMAGES_KEY`, `JobRunner.job(job_id)` (tra job theo id, cần cho route trạng thái tìm ảnh).
+  - `src/auto_short/web/app.py`: route P9 đầy đủ (`GET`/`POST /api/episodes/{id}/posts`, `PUT`/`POST .../posts/{clip}[/posted]`, `GET`/`POST /api/post-images`, `DELETE /api/post-images/{name}`, `GET`/`POST /api/post-images/search[/{job}]`, `GET /files/post-images/{name}`); `create_app` thêm `post_compose`/`post_preflight`/`post_search` (injectable, mặc định hàm thật).
+  - `src/auto_short/web/static/`: khu "Bài đăng cộng đồng" mỗi thẻ Short (`postPanel`), nút "Soạn bài cho mọi Short" + đếm đã đăng (`refreshPostsHead`), hộp thoại "Thư viện ảnh" dùng chung (`initImageDialog` + upload / tìm ảnh từ link / xóa).
+  - Docs (P12): decision record `docs/decisions/CP8.15-community-post-contract.md`; pointer ở `CP8.3-web-contract.md` (metadata, W5, W6, W7); `project-profile.md` (authority list + dòng module `post/` + dòng `web/`); `README.md`; `AUTO_SHORT_CHECKPOINT_PLAN.md`.
+- Tests: `tests/test_post_backend.py` (44), `tests/test_post_images.py` (10), `tests/test_post_fetch.py` (13, HTTP server local `127.0.0.1` + `resolver` giả — không ra Internet), `tests/test_post_stage.py` (11), `tests/test_web_post_cp815.py` (44, FastAPI `TestClient`, AI/search giả); `tests/test_config.py` thêm `test_post_config` + `test_post_config_invalid`. Toàn bộ suite: **2 lần** `pytest -q -n auto` — lần 1 sau khi xong backend + web (1090 passed, 1 fail); lần 2 sau khi sửa lỗi `fetch.py` bên dưới (1091 passed, 1 fail, +1 test hồi quy). Cả hai lần, fail duy nhất là `tests/test_web_lanes_cp810.py::test_lanes_artifacts_identical_to_serial` — **không liên quan CP8.15** (file không đụng tới, dùng render/pipeline thật, không dùng `post/`); chạy lại một mình PASS ngay (`1 passed in 10.21s`) → flaky có sẵn dưới tải `-n auto` song song, không phải hồi quy của task này.
+- Review: chưa qua vòng review (single pass, chưa có review round riêng).
 - Important findings / decisions:
+  - **P2 "bỏ head_cut" (quyết định khi implement):** với clip AI không cut tay, text nguồn = toàn bộ text của `unit_ids` (không áp bước bỏ `head_cut` như `titling.logic.clip_text` làm) — từ nối đầu bị cắt khỏi *video* vẫn còn trong text bài đăng. Đọc lại P2 nhiều lần vẫn thấy đây là cách hợp lý nhất để "dùng lại `clip_text` (CP6 G3), bỏ `head_cut`" theo đúng câu chữ; ghi lại ở Known limitations để HUMAN LEAD xác nhận hướng đọc này đúng ý.
+  - **`text`/`chars` của `GET .../posts` = bài đầy đủ P4** (title + đoạn + header + link + hashtag), không phải chỉ `paragraphs` — khớp câu "UI hiện số ký tự" của P4 (giới hạn ký tự nói tới cả bài, không phải riêng đoạn văn). Textarea sửa tay dùng trực tiếp `paragraphs` (join bằng dòng trống), không dùng `text`.
+  - **`GET /api/post-images` thêm field `image_sources`** (danh sách link nhanh từ `[post] image_sources`) — bản JSON trong P9 không liệt kê field này, nhưng cần để UI vẽ nút nhanh (P5b); coi là bổ sung tương thích xuôi (additive), không đổi field đã liệt kê.
+  - **409 khi soạn bài / khi tìm ảnh:** dùng lại đúng luật "một job mỗi episode" của job runner có sẵn (`_busy`, CP8.10) cho soạn bài — nghĩa là soạn bài cũng bị 409 khi episode có job pipeline/render khác đang chạy, không chỉ khi có job soạn bài khác. Tìm ảnh dùng id giả `_post_images` (không phải episode id) nên không cạnh tranh với job của episode nào, chỉ với chính nó.
+  - **`PUT`/`posted` không qua `submit_lock`:** đúng P7 ("được cả khi job đang chạy"), chỉ khóa qua `post_lock` (giống `publish_lock` CP8.5) — khác hẳn title/cut (CP8.2/CP9) vốn bị 409 khi có job.
+  - **Bug tìm thấy khi chạy thật, đã sửa:** `post/fetch.py` `fetch()` gọi `urllib.request.Request(url, …)` với `url` gốc (có thể chứa ký tự Unicode chưa mã hoá, ví dụ tên file tiếng Trung trong link ảnh thật từ hwadzan.com) → `UnicodeEncodeError` khi gửi request line. Sửa bằng `_iri_to_uri()` (percent-encode path/query/fragment, giữ nguyên `%XX` đã có). Thêm test hồi quy `test_fetch_encodes_non_ascii_path`. Chỉ phát hiện được nhờ chạy thật với link ảnh thật (test giả trước đó toàn dùng URL ASCII).
+  - **Q4 — BLOCKED (không tự đổi model/prompt):** chạy thật với Ollama `qwen3:14b` trên **bản sao** dữ liệu thật (không đụng `work/`/`output/` chính; scratch dir, config riêng trỏ về đó) — 2 tập Short thật (`4oOZz2CBz3g` 7 Short, `c_6QuBGFzY4` 9 Short, tổng 16) + 1 Short khai thị mỗi tập `.kt` tương ứng (2 Short khai thị, 2 khối mỗi khối do text dài) = **18 bài** composed:
+    - Qua validate lần đầu (không cần retry): **13/18 = 72 %** (Short thường: 12/16 = 75 %; khai thị: 1/2 = 50 %).
+    - Qua validate sau retry (attempt 2/3 thành công mà attempt 1 thất bại): **0/18 = 0 %** — mọi lần thất bại lặp lại cùng lỗi ở mọi attempt (đọc `post_log.json` xác nhận: model tái tạo gần như cùng một lỗi nội dung ở `temperature 0`, retry không sửa được).
+    - `origin: raw` (hết lượt): **5/18 = 28 %** (`retries = 2`, 3 lượt mỗi khối).
+    - Thời gian: 2,1–35,6 s một Short (trung bình 9,0 s); Short thường 2,1–21,1 s, khai thị (2 khối) 9,7–35,2 s.
+    - Số ký tự đoạn văn (không kể title/header/hashtag): 427–2821, trung bình 887.
+    - Đọc `post_log.json` của 2 trường hợp `raw`: cả hai là lỗi nội dung thật (không phải bug validator) — một lần AI thêm từ "Sẽ" không có trong nguồn, một lần AI tách "dịchvụ" (một token dính liền do lỗi caption) thành "dịch vụ" (hai token) — đúng loại "sửa lỗi chính tả / nhận dạng sai" mà P3 cấm rõ. Một lần khác (`4oOZz2CBz3g` k02, đã qua validate) AI trả lại gần như y nguyên, không thêm dấu câu nào (chỉ viết hoa chữ đầu) — không vi phạm P3 (không cấm "thêm ít") nhưng cho thấy chất lượng-hữu-dụng không đều dù validator chấp nhận.
+    - **72 % < 90 % ngưỡng Q4** → theo đúng chỉ dẫn task, KHÔNG tự đổi `[post] model` hay prompt; báo lại đây để HUMAN LEAD quyết (chấp nhận ngưỡng thấp hơn / đổi model trong `[post]` (không cần code mới, chỉ đổi config) / sửa prompt `v2` (cần task/S1 riêng vì đổi prompt text) / thêm bước sửa tay nổi bật hơn trong UI).
+  - Tìm ảnh thật từ 2 link (không qua opener giả, gọi Internet thật): link ảnh trực tiếp trong `~/.cache/auto-short-post-images/sources.tsv` (`…/1淨空老法師01.jpg`) → 1 ảnh, 5,8 s. `sources.tsv` chỉ có link ảnh trực tiếp (không có link trang) → dùng trang HTML thật cùng site (`https://www.hwadzan.com/`, có `<img data-src>` lazy-load + `<meta property="og:image">`) làm ví dụ "trang chứa ảnh": 40 ứng viên tìm được, 20,5 s, 10 ảnh đạt (≥ 600 px) vào thư viện + `sources.tsv`, 14 ảnh bị bỏ vì nhỏ hơn 600 px (lý do ghi rõ theo kích thước). Không ảnh nào trùng nội dung trong lần chạy này.
+  - Mẫu đọc (P4, kèm ảnh thật từ thư viện) — 5 mẫu ở `/tmp/claude-*/…/scratchpad/cp815-verify/samples/` (đường dẫn phụ thuộc phiên; nội dung cũng in trong log agent) gồm 3 `ai` + 2 `raw`, để HUMAN LEAD đọc và so hai loại.
 - Known limitations:
-- PR:
+  - Q4 dưới ngưỡng — xem trên; UI đã có nhãn cảnh báo (`raw`) nhưng không có cảnh báo cho trường hợp "qua validate nhưng gần như không thêm dấu câu".
+  - P2 lấy full text khi không có cut tay bao gồm cả từ nối bị `head_cut` cắt khỏi video (không khớp 100 % lời trong video); ảnh hưởng tối đa một từ ở đầu Short, sửa tay được (`manual`).
+  - `retries`/`retry_backoff` ít tác dụng với lỗi nội dung hệ thống (model lặp lại cùng lỗi ở `temperature 0`); chỉ giúp lỗi tạm thời (mạng, JSON hỏng).
+  - Manual test checklist (điện thoại, đăng thử thật) chưa chạy — cần HUMAN LEAD.
+  - Chưa review vòng nào (mới một lượt implement).
+- PR: chưa tạo (chưa READY; theo `docs/ai/project-profile.md` §5, PR chỉ sau READY + HUMAN LEAD approval). Commit cục bộ trên `feature/cp8.15-community-post`, chưa push.

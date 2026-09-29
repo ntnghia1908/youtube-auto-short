@@ -244,3 +244,18 @@ body.modal-open { overflow: hidden; }
   .modal-box { border-radius: 0; }
   .proposal .edit-actions .btn, .tr-bar .btn { min-height: 40px; }
 }
+
+/* CP8.15: community post text + image library */
+.post-edit { display: grid; gap: .4rem; }
+.post-panel { display: grid; gap: .5rem; border-top: 1px dashed var(--border); padding-top: .4rem; }
+.post-panel[hidden] { display: none; }
+.post-badges { display: flex; flex-wrap: wrap; gap: .3rem; }
+.badge.stale-badge { background: #fdecea; color: var(--err); }
+.post-textarea { width: 100%; min-height: 6rem; padding: .45rem; font-size: .95rem; border: 1px solid var(--border);
+  border-radius: 8px; font-family: inherit; }
+.post-image-row { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+.post-image img { width: 72px; height: 72px; object-fit: cover; border-radius: 8px; background: #eee; }
+.img-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: .6rem; }
+.img-card { border: 1px solid var(--border); border-radius: 8px; padding: .4rem; display: grid; gap: .3rem;
+  justify-items: center; }
+.img-card img { width: 100%; aspect-ratio: 1 / 1; object-fit: cover; border-radius: 6px; background: #eee; }
