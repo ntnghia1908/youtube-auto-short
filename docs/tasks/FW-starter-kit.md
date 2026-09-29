@@ -280,4 +280,4 @@ Không chạm database, security model hoặc public API contract; manual test l
   - Adapter Codex chưa kiểm chứng (cần gói Plus hoặc API key); cờ sandbox / approval của `codex exec` chưa xác minh.
   - Số đo Copilot là của gói Free, một task nhỏ; đo lại khi có Pro (manual checklist).
   - Tag `v4.2` của kit gắn sau khi PR kit merge; repo kit đang private, chuyển public chờ HUMAN LEAD xác nhận ở READY.
-- PR:
+- PR: #34 (repo này); kit: ntnghia1908/ai-dev-framework#1

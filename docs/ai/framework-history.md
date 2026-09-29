@@ -55,4 +55,4 @@ File này chỉ ghi lịch sử; rule hiện hành nằm ở canonical owner c�
 - Thay đổi: tách Core khỏi hai đoạn project-specific; checker dùng chung đọc `framework.config.json`; thêm adapter Copilot IMPLEMENTER và field `Implementer` trong `_template.md`. Không đổi rule Core nên không tăng version.
 - Lý do: dùng lại framework cho project khác; HUMAN LEAD 2026-09-29.
 - Task: `docs/tasks/FW-starter-kit.md`
-- PR:
+- PR: #34; kit ntnghia1908/ai-dev-framework#1
