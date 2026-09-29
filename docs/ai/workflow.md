@@ -4,7 +4,7 @@
 |---|---|
 | Status | CURRENT |
 | Version | 4.2 |
-| Accepted by | CP0 framework adoption; v4.1: HUMAN LEAD 2026-09-26 (FW-v4.1); v4.2: HUMAN LEAD 2026-09-29 (FW-implementer-speed) |
+| Accepted by | CP0 framework adoption; v4.1: HUMAN LEAD 2026-09-26 (FW-v4.1); v4.2: HUMAN LEAD 2026-09-29 (FW-implementer-speed); FW-starter-kit: HUMAN LEAD 2026-09-29 |
 
 > HUMAN LEAD quyết boundary. Agent tự thực thi bên trong boundary đã duyệt.
 
@@ -32,7 +32,7 @@ Class cao nhất thắng. S1 gặp decision gate → nâng S2. Không chắc S0 
 
 ## 3. Decision gates
 
-Cần HUMAN LEAD quyết trước khi làm khi chạm: scope; architecture; dependency; security model; public API contract; breaking change; significant shared abstraction; project-wide policy/convention. Database/schema gate được giữ trong workflow vì framework có thể áp dụng cho project có database, nhưng project này hiện không có database authority.
+Cần HUMAN LEAD quyết trước khi làm khi chạm: scope; architecture; dependency; security model; public API contract; breaking change; significant shared abstraction; project-wide policy/convention. Database/schema gate được giữ trong workflow vì framework có thể áp dụng cho project có database.
 
 **Dependency proposal:**
 

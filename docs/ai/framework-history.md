@@ -48,3 +48,11 @@ File này chỉ ghi lịch sử; rule hiện hành nằm ở canonical owner c�
 - Lý do: đo 22 lần chạy IMPLEMENTER cho thấy suite tuần tự 3 phút 30 giây chạy 10–32 lần mỗi task và subagent kế thừa model đắt của session chính.
 - Task: `docs/tasks/FW-implementer-speed.md`
 - PR: #31 (merge `6516638`).
+
+### v4.2 — FW-starter-kit: starter kit + checker dùng chung + nhiều IMPLEMENTER
+
+- Ngày: 2026-09-29
+- Thay đổi: tách Core khỏi hai đoạn project-specific; checker dùng chung đọc `framework.config.json`; thêm adapter Copilot IMPLEMENTER và field `Implementer` trong `_template.md`. Không đổi rule Core nên không tăng version.
+- Lý do: dùng lại framework cho project khác; HUMAN LEAD 2026-09-29.
+- Task: `docs/tasks/FW-starter-kit.md`
+- PR: #34; kit ntnghia1908/ai-dev-framework#1

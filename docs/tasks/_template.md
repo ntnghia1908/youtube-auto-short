@@ -9,6 +9,7 @@
 - Change class: S1 | S2
 - Owner: <người chịu trách nhiệm — không ghi model/tool>
 - Execution profile: dual-agent | single-agent
+- Implementer: <chỉ dual-agent: adapter trong Danh sách IMPLEMENTER của docs/ai/project-profile.md §7 — lý do một dòng>
 - Human Lead: <nếu khác Owner>
 - Base commit / branch: <SHA / branch>
 - Human Lead approval: <pending / accepted>
