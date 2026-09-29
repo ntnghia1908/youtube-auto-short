@@ -23,7 +23,7 @@ Web chạy cho HUMAN LEAD trong tmux `youtube:web` từ worktree `../youtube-aut
    - CP8.12 (S1, `docs/tasks/CP8.12-episode-ui.md`): đã merge (PR #25, `33ca2f8`).
    - CP8.13 (S2, `docs/tasks/CP8.13-playlist-groups-loop.md`): đã merge (PR #26, `25f5b59`): nhóm lọc bộ kinh mới (Đang xử lý / Lỗi / dở dang / Đang làm = chỉ tập đã render chưa đăng hết), bỏ link "Khai thị" ở dòng tập, nút "Lặp lại" trên thẻ video.
    - CP8.14 (S2, `docs/tasks/CP8.14-title-layout.md`): đã merge (PR #28, `d623cd3`): layout V16 tránh giao diện YouTube Shorts.
-   - Sau đó: CP9, CP10.
+   - CP9 (S2, `docs/tasks/CP9-clip-review.md`, APPROVED 2026-09-29, đang làm ở worktree `../youtube-auto-short-cp9`): thêm Short từ đề xuất AI / đoạn chọn trên transcript + sửa điểm đầu/cuối. Re-plan 2026-09-29: phần CP9 khác đã làm ở CP8.x; "xử lý tất cả" bộ kinh không làm. CP10: đóng (HUMAN LEAD 2026-09-29).
 
 Đây là PROPOSED, không authorize implementation tiếp theo.
 
