@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
 
-from auto_short.render.text import MAX_LINES, block_height
+from .text import MAX_LINES, block_height
 
 WIDTH, HEIGHT = 1080, 1920  # CP1 §2
 BACKGROUND = "#000000"  # CP1 §4

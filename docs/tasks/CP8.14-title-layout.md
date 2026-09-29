@@ -44,7 +44,7 @@ Mẫu: tập `rbjfCfFq3Dk` (nguồn 1440×1080), clip `k01` (title 3 dòng) và 
 | Khe header → video | 0.005 W (5) | giữ |
 | Video | 1.12 W (1210), crop 964 × 1080 | **1.16 W (1254)**, y 211–1465, crop 930 × 1080 (nguồn 4:3) |
 | Title panel | 0.81 W, cao ≥ 0.27 W, chữ 0.0815 W (88 px), ngay dưới video | **0.75 W (810)**, cao ≥ **0.21 W (227)**, chữ **0.065 W (70 px)**, căn giữa ngang, **mép dưới cố định y 1600**, nổi trên video |
-| Title 2 / 3 dòng | 1573–1865 / 1542–1895 | 1373–1600 / 1303–1600 (đè video 91 / 164 px) |
+| Title 2 / 3 dòng | 1573–1865 / 1542–1895 | 1373–1600 / 1303–1600 (đè video 92 / 162 px) |
 
 Chấp nhận (HUMAN LEAD): góc phải title (x 905–945, ≈ 40 px) bị cột nút đè một chút; chữ Hán burn-in của nguồn có thể lộ phía trên title (không bắt buộc che).
 
