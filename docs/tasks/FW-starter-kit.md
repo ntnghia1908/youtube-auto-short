@@ -8,7 +8,7 @@
 - Owner: HUMAN LEAD
 - Execution profile: dual-agent
 - Base commit / branch: `bb0824b` (`origin/main`, sau PR #33 v4.2) / `feature/fw-starter-kit` (worktree `../youtube-auto-short-fw-kit`); repo kit: xem D1
-- Human Lead approval: accepted (HUMAN LEAD 2026-09-29: APPROVE TASK; D1 = repo riêng `ntnghia1908/ai-dev-framework`, ORCHESTRATOR tự tạo repo, tạo private trong lúc dựng; HUMAN LEAD cho phép chuyển **public** khi kiểm không còn thông tin riêng của `dang-vu-spring` (kiểm ở review, trước READY); D2 = C, sửa đổi cùng ngày: **A + pilot ngay với Copilot Free** ("Pilot bản free luôn để có pro thì sài luôn"); D3–D7 như đề xuất; D8 = A; D9 như đề xuất)
+- Human Lead approval: accepted (HUMAN LEAD 2026-09-29: APPROVE TASK; D1 = repo riêng `ntnghia1908/ai-dev-framework`, ORCHESTRATOR tự tạo repo, tạo private trong lúc dựng; HUMAN LEAD cho phép chuyển **public** khi kiểm không còn thông tin riêng của `dang-vu-spring` (kiểm ở review, trước READY); D2 = C, sửa đổi cùng ngày: **A + pilot ngay với Copilot Free** ("Pilot bản free luôn để có pro thì sài luôn"); D3–D7 như đề xuất; D8 = A; D9 như đề xuất; D10 (sửa đổi cùng ngày): Copilot là IMPLEMENTER thứ hai, ORCHESTRATOR chọn IMPLEMENTER theo từng task — "Tôi đồng ý. Nhưng nếu có bản pro thì nhắc tôi đo lại cho chính xác")
 - Implementation authorized: YES
 
 Lifecycle: `DRAFT → APPROVED → IN_PROGRESS → READY`. DONE suy ra từ Git sau khi merge.
@@ -195,6 +195,20 @@ Giải thích **vì sao** và **chạy thế nào**, không tạo rule mới —
 10. Ví dụ đi hết một vòng S2 (lấy từ một task thật của repo này, rút gọn).
 11. Giới hạn đã biết (D8) và lịch sử version.
 
+### D10 — Nhiều IMPLEMENTER, ORCHESTRATOR chọn theo task (HUMAN LEAD 2026-09-29: đồng ý)
+
+- Core không đổi: `dual-agent` vẫn là ORCHESTRATOR + IMPLEMENTER; tool nào làm IMPLEMENTER là việc của adapter / project.
+- **Danh sách IMPLEMENTER** là project policy, khai ở `docs/ai/project-profile.md` §7 (canonical owner), HUMAN LEAD duyệt: mỗi dòng = adapter, điểm mạnh, giới hạn (vd hạn mức gói), tiêu chí dùng, dự phòng.
+- ORCHESTRATOR chọn IMPLEMENTER lúc viết contract, ghi field `- Implementer: <adapter> — <lý do một dòng>` (task `dual-agent`); `APPROVE TASK` duyệt luôn lựa chọn này. Gọi tool / AI CLI của IMPLEMENTER đã được duyệt không vi phạm "không gọi AI CLI ngoài execution profile".
+- Không đổi IMPLEMENTER giữa task (một writer / branch), trừ dự phòng khai trong danh sách (hạn mức, auth, lỗi tool, circuit breaker) → ghi Result.
+- Hai IMPLEMENTER song song chỉ khi tập file không giao nhau, mỗi người một branch (`workflow.md` §5).
+- Tên model / vendor chỉ ở adapter và project-profile, không vào Core.
+- Tiêu chí ban đầu viết từ số đo pilot (D2); **khi HUMAN LEAD có Copilot Pro: đo lại và cập nhật tiêu chí** (manual checklist).
+- Phạm vi trong task này:
+  - Kit: template project-profile §7 thêm mục "Danh sách IMPLEMENTER" (FILL + ví dụ trung tính); `_template.md` thêm field `Implementer` (tùy chọn, chỉ `dual-agent`); adapter Claude Code (`execution.md`) ghi ORCHESTRATOR chọn theo §7 và truyền override / gọi adapter tương ứng; adapter Copilot README ghi cách ORCHESTRATOR gọi non-interactive; `mechanism.md` §4 giải thích.
+  - Repo này: `_template.md` thêm field `Implementer` (giống kit). Danh sách IMPLEMENTER của repo này trong `project-profile.md` §7 → **follow-up sau khi CP8.15 merge** (file ngoài scope).
+  - Checker: không bắt buộc field `Implementer` (contract cũ không có); chưa kiểm giá trị.
+
 ## Implementation approach
 
 - Tách Core trong repo này (D4) trước, rồi dựng kit từ đó; Core kit = Core repo, kiểm bằng `diff`.
@@ -214,12 +228,13 @@ Giải thích **vì sao** và **chạy thế nào**, không tạo rule mới —
 6. Kit có `install-new-project.md`, `install-existing-project.md`, `upgrade.md` theo D6.
 7. `docs/mechanism.md` có đủ mục D9; không có rule mới (mọi câu normative đều là pointer tới Core / template).
 8. Adapter Copilot: template IMPLEMENTER + delegation prompt + checklist pilot, nguồn tài liệu GitHub được ghi; pilot phần 2 đã chạy với Copilot Free, kết quả + số đo ghi ở Result (PASS / PARTIAL / FAIL + fallback nếu có); nhãn adapter khớp kết quả pilot.
+11. D10: kit có mục Danh sách IMPLEMENTER (template §7), field `Implementer` ở `_template.md` (kit + repo này, giống nhau), adapter Claude Code / Copilot và `mechanism.md` §4 mô tả cơ chế chọn; không đổi Core.
 9. Repo này: `framework-history.md` có entry dưới `## v4.2`; `FRAMEWORK_ADOPTION.md` ghi repo kit + tag + commit.
 10. Không file Out of scope nào của repo này bị sửa.
 
 ## Required verification
 
-- Repo kit: `node --test tests/` → PASS — AC3.
+- Repo kit: `node --test` → PASS — AC3.
 - Repo kit: `node scripts/framework-check.mjs` chạy trên fixture PASS / FAIL như mong đợi — AC3.
 - `diff <kit>/core/docs/ai/workflow.md docs/ai/workflow.md` và `execution-profiles.md` → rỗng — AC2.
 - `git diff bb0824b -- docs/ai/workflow.md docs/ai/execution-profiles.md` → chỉ hai đoạn D4 + metadata — AC2.
@@ -236,7 +251,8 @@ Không chạm database, security model hoặc public API contract; manual test l
 
 - [ ] Đọc `docs/mechanism.md`: hiểu được framework chạy thế nào mà không cần đọc Core trước.
 - [ ] Đọc `install-new-project.md`: đủ để cài cho một project mới mà không cần hỏi thêm.
-- [ ] Khi có Copilot Pro: chạy lại một task S1 nhỏ bằng adapter Copilot, so với pilot Free.
+- [ ] Khi có Copilot Pro: **đo lại** (chạy lại một task S1 nhỏ bằng adapter Copilot, cùng số đo như pilot Free) và cập nhật tiêu chí trong Danh sách IMPLEMENTER.
+- [ ] Sau khi CP8.15 merge: follow-up khai Danh sách IMPLEMENTER của repo này ở `docs/ai/project-profile.md` §7.
 - [ ] Sau merge: S0 cập nhật `docs/workflow/current-state.md` (khi CP8.15 không còn sửa file này).
 
 ## Result
