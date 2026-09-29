@@ -228,9 +228,9 @@ Giải thích **vì sao** và **chạy thế nào**, không tạo rule mới —
 6. Kit có `install-new-project.md`, `install-existing-project.md`, `upgrade.md` theo D6.
 7. `docs/mechanism.md` có đủ mục D9; không có rule mới (mọi câu normative đều là pointer tới Core / template).
 8. Adapter Copilot: template IMPLEMENTER + delegation prompt + checklist pilot, nguồn tài liệu GitHub được ghi; pilot phần 2 đã chạy với Copilot Free, kết quả + số đo ghi ở Result (PASS / PARTIAL / FAIL + fallback nếu có); nhãn adapter khớp kết quả pilot.
-11. D10: kit có mục Danh sách IMPLEMENTER (template §7), field `Implementer` ở `_template.md` (kit + repo này, giống nhau), adapter Claude Code / Copilot và `mechanism.md` §4 mô tả cơ chế chọn; không đổi Core.
 9. Repo này: `framework-history.md` có entry dưới `## v4.2`; `FRAMEWORK_ADOPTION.md` ghi repo kit + tag + commit.
 10. Không file Out of scope nào của repo này bị sửa.
+11. D10: kit có mục Danh sách IMPLEMENTER (template §7), field `Implementer` ở `_template.md` (kit + repo này, giống nhau), adapter Claude Code / Copilot và `mechanism.md` §4 mô tả cơ chế chọn; không đổi Core.
 
 ## Required verification
 
