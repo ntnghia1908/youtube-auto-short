@@ -8,7 +8,7 @@
 - Owner: HUMAN LEAD
 - Execution profile: dual-agent
 - Base commit / branch: `bb0824b` (`origin/main`, sau PR #33 v4.2) / `feature/fw-starter-kit` (worktree `../youtube-auto-short-fw-kit`); repo kit: xem D1
-- Human Lead approval: accepted (HUMAN LEAD 2026-09-29: APPROVE TASK; D1 = repo riêng `ntnghia1908/ai-dev-framework`, ORCHESTRATOR tự tạo repo, tạo **private**, chỉ cân nhắc public sau khi kiểm không còn thông tin riêng của `dang-vu-spring`; D2 = C (Copilot Free, pilot khi có Pro); D3–D7 như đề xuất; D8 = A; D9 như đề xuất)
+- Human Lead approval: accepted (HUMAN LEAD 2026-09-29: APPROVE TASK; D1 = repo riêng `ntnghia1908/ai-dev-framework`, ORCHESTRATOR tự tạo repo, tạo private trong lúc dựng; HUMAN LEAD cho phép chuyển **public** khi kiểm không còn thông tin riêng của `dang-vu-spring` (kiểm ở review, trước READY); D2 = C, sửa đổi cùng ngày: **A + pilot ngay với Copilot Free** ("Pilot bản free luôn để có pro thì sài luôn"); D3–D7 như đề xuất; D8 = A; D9 như đề xuất)
 - Implementation authorized: YES
 
 Lifecycle: `DRAFT → APPROVED → IN_PROGRESS → READY`. DONE suy ra từ Git sau khi merge.
@@ -99,7 +99,6 @@ Có repo starter kit Framework v4.2 (tag `v4.2`) cài được vào project mớ
 - Out of scope:
   - `docs/ai/project-profile.md`, `README.md`, `docs/workflow/current-state.md`, `src/`, `tests/` của repo này. Việc cần sửa ở đó → ghi Result làm follow-up.
   - Thay đổi nội dung rule Core §1–§9, kể cả khôi phục rule từ upstream (D8 phương án B là task riêng, version mới).
-  - Pilot Copilot IMPLEMENTER thật (chờ Copilot Pro; task S1 sau).
   - Áp kit vào một project khác thật (chỉ cài thử vào thư mục tạm).
   - Công cụ cài tự động (`npx`, script copy có tham số).
   - Adapter tool khác; dịch sang tiếng Anh.
@@ -118,6 +117,16 @@ Có repo starter kit Framework v4.2 (tag `v4.2`) cài được vào project mớ
 - Thứ tự: PR kit merge + tag trước; PR repo này sau (trỏ tới tag).
 
 ### D2 — Adapter Copilot (HUMAN LEAD 2026-09-29: đang có Copilot Free, Pro sau)
+
+**Sửa đổi HUMAN LEAD 2026-09-29: pilot ngay với Copilot Free** — phương án A, pilot trong task này:
+
+- Copilot CLI (`@github/copilot`, npm global, cần Node ≥ 22; mọi gói kể cả Free có CLI — nguồn docs.github.com/en/copilot/get-started/plans, tra 2026-09-29). Cài CLI là tool máy dev, không phải dependency của project. Đăng nhập (`/login` hoặc token "Copilot Requests") do HUMAN LEAD làm.
+- **Pilot = phần 2 (dogfood trong repo này)**: IMPLEMENTER của phần 2 là Copilot CLI với custom agent `implementer` (`.github/agents/implementer.agent.md` từ kit). ORCHESTRATOR (Claude Code) chạy `copilot -p "<delegation prompt>" --agent implementer` trong worktree `../youtube-auto-short-fw-kit` với tool được phép giới hạn (đọc/sửa file, `node`, `git diff/status`); chặn `git commit`, `git push`, `gh`. Execution profile task vẫn `dual-agent`; IMPLEMENTER phần 1 = adapter Claude Code, phần 2 = adapter Copilot (HUMAN LEAD duyệt ở đây).
+- Fallback (duyệt trước): nếu Copilot không chạy được (auth, hạn mức Free, lỗi tool) hoặc chạm circuit breaker → ghi lý do ở Result, phần 2 giao lại IMPLEMENTER Claude Code; pilot ghi FAIL / PARTIAL, không che.
+- Đo pilot (ghi Result): số lần chạy, thời gian, số lần ORCHESTRATOR phải trả lại, blocking finding, READY report có đúng mẫu, có vi phạm boundary (commit/push/file ngoài scope) không, hạn mức Free tiêu tốn (nếu xem được).
+- Adapter kit bỏ nhãn "chưa kiểm chứng" nếu pilot PASS; ghi "kiểm chứng: Copilot Free, <ngày>, task FW-starter-kit phần 2".
+
+Thiết kế ban đầu (giữ làm nền):
 
 - Task này: phương án **C** — viết adapter + delegation prompt template + checklist pilot, ghi rõ "chưa kiểm chứng". Hướng thiết kế là **A (local)**: Copilot chạy trong worktree của task như IMPLEMENTER; ORCHESTRATOR (Claude Code) sinh delegation prompt; HUMAN LEAD chuyển prompt cho Copilot; Copilot trả READY report; ORCHESTRATOR review diff trên cùng branch.
 - Không dùng coding agent trên cloud (phương án B: tự tạo draft PR → lệch integration mechanism).
@@ -204,7 +213,7 @@ Giải thích **vì sao** và **chạy thế nào**, không tạo rule mới —
 5. Cài thử theo `install-new-project.md` vào thư mục tạm → checker PASS; bỏ điền một `FILL` → FAIL đúng file.
 6. Kit có `install-new-project.md`, `install-existing-project.md`, `upgrade.md` theo D6.
 7. `docs/mechanism.md` có đủ mục D9; không có rule mới (mọi câu normative đều là pointer tới Core / template).
-8. Adapter Copilot: template IMPLEMENTER + delegation prompt + checklist pilot, ghi "chưa kiểm chứng"; nguồn tài liệu GitHub được ghi.
+8. Adapter Copilot: template IMPLEMENTER + delegation prompt + checklist pilot, nguồn tài liệu GitHub được ghi; pilot phần 2 đã chạy với Copilot Free, kết quả + số đo ghi ở Result (PASS / PARTIAL / FAIL + fallback nếu có); nhãn adapter khớp kết quả pilot.
 9. Repo này: `framework-history.md` có entry dưới `## v4.2`; `FRAMEWORK_ADOPTION.md` ghi repo kit + tag + commit.
 10. Không file Out of scope nào của repo này bị sửa.
 
@@ -227,7 +236,7 @@ Không chạm database, security model hoặc public API contract; manual test l
 
 - [ ] Đọc `docs/mechanism.md`: hiểu được framework chạy thế nào mà không cần đọc Core trước.
 - [ ] Đọc `install-new-project.md`: đủ để cài cho một project mới mà không cần hỏi thêm.
-- [ ] Khi có Copilot Pro: pilot IMPLEMENTER theo checklist adapter trên một task S1 nhỏ.
+- [ ] Khi có Copilot Pro: chạy lại một task S1 nhỏ bằng adapter Copilot, so với pilot Free.
 - [ ] Sau merge: S0 cập nhật `docs/workflow/current-state.md` (khi CP8.15 không còn sửa file này).
 
 ## Result
