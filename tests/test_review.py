@@ -147,7 +147,8 @@ def test_alternative_reset_and_list(ws, rcfg):
     assert k01 == {"clip_id": "k01", "candidate_id": "c00001", "status": "titled", "ai_title": TITLES["k01"],
                    "alternatives": [{"n": 1, "title": ALTS["k01"][0]}, {"n": 2, "title": ALTS["k01"][1]}],
                    "override": {"title": ALTS["k01"][0], "origin": "alternative"},
-                   "title": ALTS["k01"][0], "origin": "alternative", "rejected": False}  # CP8.5: + rejected
+                   "title": ALTS["k01"][0], "origin": "alternative", "rejected": False,  # CP8.5: + rejected
+                   "added": False}  # CP9: + added
     assert (k02["title"], k02["origin"]) == ("Một câu khác", "manual")
 
     p = reset_title(EID, rcfg, "k01")

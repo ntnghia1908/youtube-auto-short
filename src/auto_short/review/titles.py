@@ -1,4 +1,5 @@
-"""Manual title overrides of one episode (CP8.2): list, preview, set, choose an AI alternative, reset.
+"""Manual title overrides of one episode (CP8.2): list, preview, set, choose an AI alternative, reset. CP9: the same
+functions work on a Short added by hand (``review.json`` ``added``, its ``title`` is the title in use).
 
 Functions shared by the CLI (``auto-short title``) and the web UI. Each call reads the episode from the workspace
 (no state kept between calls), validates, and writes ``work/<id>/review.json`` atomically only when the new title
@@ -17,8 +18,9 @@ from ..config import Config
 from ..titling.logic import TITLED, normalize_title
 from ..workspace import DONE, Workspace, WorkspaceError, atomic_write_json, validate_episode_id
 from .archive import check_not_archived
-from .logic import (AI, ALTERNATIVE, MANUAL, REVIEW_NAME, ReviewError, manual_title_error, read_review,
-                    resolve_titles, with_override, with_rejected, without_override, without_rejected)
+from .logic import (ADDED_KEY, AI, ALTERNATIVE, MANUAL, REVIEW_NAME, ReviewError, added_entries, added_origin,
+                    manual_title_error, read_review, resolve_titles, with_added, with_override, with_rejected,
+                    without_override, without_rejected)
 
 
 @dataclass(frozen=True)
@@ -41,13 +43,28 @@ class _Episode:
     review: dict
 
     @property
+    def added(self) -> list[dict]:
+        """CP9: Shorts added by hand (``review.json`` ``added``), after the clips.json clips."""
+        return list(self.review.get(ADDED_KEY, []))
+
+    @property
     def order(self) -> list[str]:
-        return [c["id"] for c in self.clips]
+        return [c["id"] for c in self.clips] + [e["clip_id"] for e in self.added]
+
+    def added_entry(self, clip_id: str) -> dict | None:
+        return next((e for e in self.added if e["clip_id"] == clip_id), None)
 
     def entry(self, clip_id: str) -> dict:
+        """The titles.json entry of ``clip_id``; for an added Short (CP9) a titles.json-like view of it
+        (``title`` = its AI title, ``alternatives`` = the AI alternatives)."""
         for t in self.titles:
             if t["clip_id"] == clip_id:
                 return t
+        a = self.added_entry(clip_id)
+        if a is not None:
+            return {"clip_id": a["clip_id"], "candidate_id": a["candidate_id"], "title": a["ai_title"],
+                    "evidence": None, "alternatives": list(a["alternatives"]),
+                    "status": TITLED if a["ai_title"] is not None else "untitled"}
         raise ReviewError(f"no clip {clip_id!r} in episode {self.ws.episode_id!r} "
                           f"(clips: {', '.join(self.order) or 'none'})")
 
@@ -129,11 +146,12 @@ def list_titles(episode_id: str, config: Config) -> dict:
                     "override": {"title": str, "origin": "manual" | "alternative"} | None,
                     "title": str | None,                               # title the render uses (T4)
                     "origin": "ai" | "manual" | "alternative" | None,
-                    "rejected": bool}],                                # deleted (CP8.5 X2): not rendered
+                    "rejected": bool,                                  # deleted (CP8.5 X2): not rendered
+                    "added": bool}],                                   # CP9: Short added by hand (after clips)
          "ignored": [str, ...]}                                         # T3 warnings (override not applied)
     """
     ep = _load(episode_id, config)
-    resolved, warnings = resolve_titles(ep.titles, ep.review)
+    resolved, warnings = resolve_titles(ep.titles + added_entries(ep.review), ep.review)
     overrides = {e["clip_id"]: e for e in ep.review["titles"]}
     clips = []
     for t, r in zip(ep.titles, resolved):
@@ -144,7 +162,14 @@ def list_titles(episode_id: str, config: Config) -> dict:
                       "alternatives": [{"n": n, "title": a["title"]}
                                        for n, a in enumerate(t.get("alternatives") or [], 1)],
                       "override": {"title": o["title"], "origin": o["origin"]} if applied else None,
-                      "title": r.title, "origin": r.origin, "rejected": r.rejected})
+                      "title": r.title, "origin": r.origin, "rejected": r.rejected, "added": False})
+    for a, r in zip(ep.added, resolved[len(ep.titles):]):  # CP9 C1: added Shorts, after the clips
+        clips.append({"clip_id": a["clip_id"], "candidate_id": a["candidate_id"],
+                      "status": TITLED if a["ai_title"] is not None else "untitled", "ai_title": a["ai_title"],
+                      "alternatives": [{"n": n, "title": x["title"]} for n, x in enumerate(a["alternatives"], 1)],
+                      "override": {"title": r.title, "origin": r.origin} if r.origin in (MANUAL, ALTERNATIVE)
+                      else None,
+                      "title": r.title, "origin": r.origin, "rejected": r.rejected, "added": True})
     return {"episode_id": ep.ws.episode_id, "clips": clips, "ignored": warnings}
 
 
@@ -162,6 +187,12 @@ def set_title(episode_id: str, config: Config, clip_id: str, text: str) -> Title
     check_not_archived(ep.ws.dir, ep.ws.episode_id)  # CP8.6 S3
     entry = ep.entry(clip_id)
     preview = _validate(config, clip_id, text, MANUAL)
+    added = ep.added_entry(clip_id)
+    if added is not None:  # CP9 C1: the added Short's own title
+        new = {**added, "title": preview.title}
+        _write(ep, with_added(ep.review, ep.order, new))
+        return TitlePreview(clip_id, preview.title, added_origin(new), preview.display_lines, preview.font_size,
+                            preview.panel_height)
     _write(ep, with_override(ep.review, ep.order, clip_id=clip_id, candidate_id=entry["candidate_id"],
                              title=preview.title, origin=MANUAL))
     return preview
@@ -178,6 +209,10 @@ def set_alternative(episode_id: str, config: Config, clip_id: str, n: int) -> Ti
         raise ReviewError(f"clip {clip_id} has no alternative {n!r} "
                           f"({'choose 1-' + str(len(alts)) if alts else 'it has no alternatives'})")
     preview = _validate(config, clip_id, alts[n - 1]["title"], ALTERNATIVE)
+    added = ep.added_entry(clip_id)
+    if added is not None:  # CP9 C1
+        _write(ep, with_added(ep.review, ep.order, {**added, "title": preview.title}))
+        return preview
     _write(ep, with_override(ep.review, ep.order, clip_id=clip_id, candidate_id=entry["candidate_id"],
                              title=preview.title, origin=ALTERNATIVE))
     return preview
@@ -189,9 +224,14 @@ def reset_title(episode_id: str, config: Config, clip_id: str) -> TitlePreview |
     ep = _load(episode_id, config)
     check_not_archived(ep.ws.dir, ep.ws.episode_id)  # CP8.6 S3
     entry = ep.entry(clip_id)
-    review, removed = without_override(ep.review, ep.order, clip_id)
-    if removed:
-        _write(ep, review)
+    added = ep.added_entry(clip_id)
+    if added is not None:  # CP9 C1: back to the AI title (None: untitled, waits for a manual title)
+        if added["title"] != added["ai_title"]:
+            _write(ep, with_added(ep.review, ep.order, {**added, "title": added["ai_title"]}))
+    else:
+        review, removed = without_override(ep.review, ep.order, clip_id)
+        if removed:
+            _write(ep, review)
     if entry["status"] != TITLED:
         return None
     return _fit(config, clip_id, entry["title"], AI)
