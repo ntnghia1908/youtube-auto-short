@@ -145,29 +145,28 @@ def _playlist(cfg):
 
 
 def test_playlist_page_running_filter_static(tcfg):
+    """CP8.13 G2 replaces the CP8.12 A1 client-side filter (``entryRunning``): "Đang xử lý" is the server group
+    ``running`` like every other tab (tests of the new tabs: tests/test_web_playlist_groups_cp813.py)."""
     _playlist(tcfg)
     with client(tcfg) as c:
         html = c.get(f"/playlists/{PL}").text
         js = c.get("/static/app.js").text
     filters = html[html.index('<div id="pl-filters"'):html.index("</div>", html.index('<div id="pl-filters"'))]
     order = [m.group(1) for m in re.finditer(r'data-filter="(\w+)"', filters)]
-    assert order == ["all", "todo", "running", "doing", "done"]  # between "Chưa xử lý" and "Đang làm"
+    assert order == ["all", "todo", "running", "failed", "doing", "done"]
     assert '>Đang xử lý (<span class="n">0</span>)</button>' in filters
     assert '<p id="pl-running-empty" class="muted small" hidden>Không có tập nào đang xử lý</p>' in html
     for needle in ('const RUNNING_STATES = ["queued", "processing"];',
-                   "RUNNING_STATES.includes(e.state) || RUNNING_STATES.includes(e.khaithi_state)",
-                   '["all", "todo", "running", "doing", "done"].includes(savedFilter)',
                    'let plFilter = "doing";',  # default tab unchanged
-                   'plFilter === "running" ? li.dataset.running !== "1"',
-                   '"data-running": entryRunning(e) ? "1" : null',
-                   "running: d.entries.filter(entryRunning).length",
+                   'li.hidden = plFilter !== "all" && li.dataset.group !== plFilter;',
                    '$("#pl-running-empty").hidden = !(plFilter === "running" && shown === 0);'):
         assert needle in js, needle
+    assert "entryRunning" not in js and "data-running" not in js
 
 
 def test_playlist_running_states_short_and_khaithi(tcfg):
     """The data behind "Đang xử lý": a khai thị job of the video (Short done) shows as khaithi_state queued /
-    processing; the server groups are unchanged ("Đang làm")."""
+    processing; CP8.13 G1: the entry is in the server group ``running`` (no longer "Đang làm")."""
     write_episode(tcfg, EID)
     _playlist(tcfg)
     gate = threading.Event()
@@ -184,7 +183,7 @@ def test_playlist_running_states_short_and_khaithi(tcfg):
             v = c.get(f"/api/playlists/{PL}").json()
             e = v["entries"][0]
             assert e["khaithi_state"] in ("queued", "processing") and e["state"] in ("queued", "processing")
-            assert v["counts"]["doing"] == 1
+            assert e["group"] == "running" and (v["counts"]["running"], v["counts"]["doing"]) == (1, 0)
         finally:
             gate.set()
         assert c.app.state.runner.wait_idle(10)

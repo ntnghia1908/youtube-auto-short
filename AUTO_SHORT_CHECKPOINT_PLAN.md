@@ -431,6 +431,14 @@ On the episode page (desktop and phone): a two-button bar [Shorts | Khai thị] 
 
 ---
 
+## CP8.13 — Bộ kinh Filter Groups + Loop Button
+
+> HUMAN LEAD 2026-09-28 (`docs/tasks/CP8.13-playlist-groups-loop.md`, G1–G5, S2). Contract: `docs/decisions/CP8.3-web-contract.md` W6, W7, W10 (Sửa đổi CP8.13); `docs/decisions/CP8.9-khai-thi-contract.md` A1.4 (Sửa đổi CP8.13).
+
+The bộ kinh page groups episodes by what is left to do: Chưa xử lý / Đang xử lý / Lỗi / dở dang (failed or unfinished, "Chạy tiếp") / Đang làm (rendered, not every Short posted) / Xong; the home page summary counts đang xử lý / lỗi / dở dang / đang làm. An episode row no longer carries a "Khai thị" link (the khai thị page is reached from the episode page bar). On the episode page each video has a "🔁 Lặp lại" toggle (replay from the start when it ends).
+
+---
+
 ## CP9 — Human Review + Batch Processing
 
 > Re-plan HUMAN LEAD 2026-09-27: phần batch mức playlist (bộ kinh: liệt kê, bấm xử lý từng tập, xếp hàng, trạng thái "Xong" suy ra khi đăng hết) kéo lên CP8.7 (`docs/tasks/CP8.7-playlist.md`, `docs/decisions/CP8.3-web-contract.md` W10). CP9 còn: tự xử lý hàng loạt, approval state, failed-item isolation đầy đủ.

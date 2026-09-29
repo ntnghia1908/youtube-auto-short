@@ -233,8 +233,14 @@ const AutoShort = (() => {
     list.replaceChildren(...data.playlists.map((p) => el("li", {},
       el("a", { href: "/playlists/" + encodeURIComponent(p.id) },
         el("span", { class: "ep-name", text: p.title || p.id }),
-        el("span", { class: "ep-state muted", text: `${p.count} tập · đã xử lý ${p.processed} · Xong ${p.complete}` +
-          (p.doing ? ` · đang làm ${p.doing}` : "") })))));
+        el("span", { class: "ep-state muted", text: playlistSummary(p) })))));
+  }
+
+  // CP8.13 G3: "… · đang xử lý a · lỗi / dở dang b · đang làm c" (a part equal to 0 is left out).
+  function playlistSummary(p) {
+    return `${p.count} tập · đã xử lý ${p.processed} · Xong ${p.complete}` +
+      [["đang xử lý", p.running], ["lỗi / dở dang", p.failed], ["đang làm", p.doing]]
+        .filter(([, n]) => n).map(([label, n]) => ` · ${label} ${n}`).join("");
   }
 
   // Episode list filter (CP8.5 X4): publish_group from the API ("todo" | "done" | null).
@@ -586,6 +592,9 @@ const AutoShort = (() => {
   let filter = "all"; // all | todo | done ("Chưa đăng" / "Đã đăng")
   let archived = false; // CP8.6: source video cleaned up
   let showDeleted = false;
+  // CP8.13 G5: "Lặp lại" per video (clip_id -> on), kept while the page is open (a card rebuilt by a poll reads it
+  // back); off by default, never stored.
+  const loops = new Map();
 
   function cardKey(s) {
     return JSON.stringify([s.status, s.sha256, s.title, s.pending_title, s.override, s.rendering, s.editable,
@@ -676,8 +685,10 @@ const AutoShort = (() => {
     const title = s.title || {};
     const card = el("article", { class: "short" + (s.rendering ? " rendering" : ""), "data-clip": s.clip_id });
     const media = el("div", { class: "short-media" });
+    let video = null;
     if (s.status === "rendered") {
-      media.append(el("video", { controls: true, preload: "metadata", playsinline: true, src: s.video_url }));
+      video = el("video", { controls: true, preload: "metadata", playsinline: true, src: s.video_url });
+      media.append(video);
     } else if (s.deleted) {
       card.classList.add("deleted");
       media.append(el("div", { class: "short-missing", text: "Đã xóa (file đã bỏ; khôi phục = dựng lại)" }));
@@ -704,6 +715,7 @@ const AutoShort = (() => {
       s.status === "rendered" || s.published ? publishBox(s) : null,
       el("div", { class: "short-actions" },
         s.download_url ? downloadLink(s) : null,
+        video ? loopButton(s.clip_id, video) : null,
         s.editable && !(archived && s.deleted) ? deleteButton(s) : null),
       s.editable && !s.deleted && !archived ? titleEditor(s) : el("div", { class: "title-edit", hidden: true }));
     card.append(body);
@@ -766,6 +778,21 @@ const AutoShort = (() => {
     });
     wrap.append(btn, note);
     return wrap;
+  }
+
+  // CP8.13 G5: toggle ``video.loop`` of this card (only playback: no request, no card rebuild).
+  function loopButton(clipId, video) {
+    const on = loops.get(clipId) === true;
+    video.loop = on;
+    const b = el("button", { class: "btn loop-btn", type: "button", "aria-pressed": on ? "true" : "false",
+      title: "Xem hết tự phát lại từ đầu", text: "🔁 Lặp lại" });
+    b.addEventListener("click", () => {
+      const next = loops.get(clipId) !== true;
+      loops.set(clipId, next);
+      video.loop = next;
+      b.setAttribute("aria-pressed", next ? "true" : "false");
+    });
+    return b;
   }
 
   // CP8.7: a download ticks "Đã đăng" server-side; show it on the next refresh.
@@ -1039,6 +1066,7 @@ const AutoShort = (() => {
   };
   let playlistId = null;
   let plFilter = "doing"; // CP8.9 A2.1: "Đang làm" by default; the user's choice is remembered
+  const PL_FILTERS = ["all", "todo", "running", "failed", "doing", "done"]; // CP8.13 G2
   let plTimer = null;
   let plDefaultsApplied = false;
 
@@ -1082,7 +1110,7 @@ const AutoShort = (() => {
   function initPlaylist() {
     playlistId = decodeURIComponent(location.pathname.split("/").filter(Boolean)[1] || "");
     const savedFilter = store("autoShort.plFilter");
-    if (["all", "todo", "running", "doing", "done"].includes(savedFilter)) plFilter = savedFilter;
+    if (PL_FILTERS.includes(savedFilter)) plFilter = savedFilter;
     document.querySelectorAll("#pl-filters [data-filter]").forEach((b) => b.addEventListener("click", () => {
       plFilter = b.dataset.filter;
       store("autoShort.plFilter", plFilter);
@@ -1124,20 +1152,19 @@ const AutoShort = (() => {
     } catch (e) { plMessage(e.message, "error"); }
   }
 
-  // CP8.12 A1: "Đang xử lý" = a job of the Short or of the khai thị episode is queued / running (client-side filter
-  // on the API data; the server groups are unchanged, such an entry is also under "Đang làm").
+  // CP8.13 G1/G2: every tab filters on the server ``group`` (CP8.12 A1 "Đang xử lý" included: the combined state
+  // is queued / processing when a job of the Short or of the khai thị episode is). A job running keeps polling.
   const RUNNING_STATES = ["queued", "processing"];
-  function entryRunning(e) { return RUNNING_STATES.includes(e.state) || RUNNING_STATES.includes(e.khaithi_state); }
 
   function applyPlFilter() {
     document.querySelectorAll("#pl-filters [data-filter]").forEach((b) => b.classList.toggle("active", b.dataset.filter === plFilter));
     let shown = 0;
     document.querySelectorAll("#pl-entries li[data-group]").forEach((li) => {
-      li.hidden = plFilter === "running" ? li.dataset.running !== "1"
-        : plFilter !== "all" && li.dataset.group !== plFilter;
+      li.hidden = plFilter !== "all" && li.dataset.group !== plFilter;
       if (!li.hidden) shown += 1;
     });
     $("#pl-running-empty").hidden = !(plFilter === "running" && shown === 0);
+    $("#pl-failed-empty").hidden = !(plFilter === "failed" && shown === 0);
   }
 
   // Per-bộ kinh hashtags (bổ sung HUMAN LEAD 2026-09-27): chips in order, add / remove / move, preview.
@@ -1352,11 +1379,10 @@ const AutoShort = (() => {
     }
     $("#pl-meta").replaceChildren(document.createTextNode(`${d.count} tập · lấy danh sách lúc ${fmtTime(d.fetched_at)} · `),
       el("a", { href: d.url, target: "_blank", rel: "noopener", text: "mở trên YouTube" }));
-    const counts = { ...d.counts, running: d.entries.filter(entryRunning).length };
-    document.querySelectorAll("#pl-filters [data-filter]").forEach((b) => { b.querySelector(".n").textContent = counts[b.dataset.filter]; });
+    document.querySelectorAll("#pl-filters [data-filter]").forEach((b) => { b.querySelector(".n").textContent = d.counts[b.dataset.filter] || 0; });
     let busy = false;
     $("#pl-entries").replaceChildren(...d.entries.map((e) => {
-      if (entryRunning(e)) busy = true;
+      if (RUNNING_STATES.includes(e.state)) busy = true;
       const title = e.title || e.video_id || "(không rõ)";
       const head = e.state === "new" || e.state === "unavailable" || e.state === "deleted" || !e.video_id ? el("span", { class: "ep-name", text: title })
         : el("a", { class: "ep-name", href: "/episodes/" + encodeURIComponent(e.video_id), text: title });
@@ -1368,11 +1394,10 @@ const AutoShort = (() => {
         b.addEventListener("click", () => processEntry(e, b));
         actions.append(b);
       }
-      return el("li", { class: "pl-entry " + e.state, "data-group": e.group || "none", "data-running": entryRunning(e) ? "1" : null },
+      return el("li", { class: "pl-entry " + e.state, "data-group": e.group || "none" },
         el("span", { class: "pl-index muted", text: `${e.index}.` }),
         el("div", { class: "pl-body" }, head,
           el("span", { class: "muted small", text: [e.episode ? `tập ${e.episode}` : null, e.duration ? fmtSeconds(e.duration) : null].filter(Boolean).join(" · ") }),
-          e.khaithi_episode_id ? el("a", { class: "kind-label", href: "/episodes/" + encodeURIComponent(e.khaithi_episode_id), text: "Khai thị" }) : null,
           el("span", { class: "pl-state small", text: entryState(e) }),
           e.state === "failed" && e.error ? el("span", { class: "error small", text: e.error }) : null),
         actions);

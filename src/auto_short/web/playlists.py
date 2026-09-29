@@ -43,8 +43,11 @@ UNAVAILABLE_TITLES = {"[Private video]", "[Deleted video]", "[Unavailable video]
 # entry states (L4 + UI filter groups)
 NEW, QUEUED, PROCESSING, FAILED, RENDERED, INCOMPLETE, COMPLETE, UNAVAILABLE, DELETED = (
     "new", "queued", "processing", "failed", "rendered", "incomplete", "complete", "unavailable", "deleted")
-GROUPS = {NEW: "todo", QUEUED: "doing", PROCESSING: "doing", FAILED: "doing", RENDERED: "doing",
-          INCOMPLETE: "doing", COMPLETE: "done", UNAVAILABLE: None}
+# CP8.13 G1: Chưa xử lý / Đang xử lý / Lỗi / dở dang / Đang làm (render done, not every Short ticked) / Xong; an
+# unavailable entry is only under "Tất cả". One table for the entry ``group``, ``counts`` and the summary (G3).
+GROUPS = {NEW: "todo", QUEUED: "running", PROCESSING: "running", FAILED: "failed", INCOMPLETE: "failed",
+          RENDERED: "doing", COMPLETE: "done", UNAVAILABLE: None}
+GROUP_NAMES = ("todo", "running", "failed", "doing", "done")
 # button per state: process (Xử lý), resume (Chạy tiếp), reprocess (Xử lý lại, asks first: new download, the AI may
 # choose other clips / titles)
 ACTIONS = {NEW: "process", FAILED: "resume", INCOMPLETE: "resume", DELETED: "reprocess"}
@@ -390,7 +393,7 @@ class PlaylistStore:
     def view(self, doc: dict, jobs: dict[str, dict]) -> dict:
         """Playlist page: entries (playlist order) with status (disk + live job), counts per filter group. CP8.9
         A1.4: with a khai thi episode ``<video_id>.kt`` the entry state combines both episodes."""
-        entries, counts = [], {"all": 0, "todo": 0, "doing": 0, "done": 0}
+        entries, counts = [], {"all": 0, **{g: 0 for g in GROUP_NAMES}}
         for e in doc["entries"]:
             vid = e.get("video_id")
             usable = bool(e.get("available") and vid)
@@ -436,8 +439,8 @@ class PlaylistStore:
         processed = sum(1 for e in v["entries"] if e["state"] not in (NEW, UNAVAILABLE))
         deleted = sum(1 for e in v["entries"] if e["state"] == DELETED)
         return {"id": v["id"], "title": v["title"], "count": v["count"], "fetched_at": v["fetched_at"],
-                "processed": processed, "complete": v["counts"]["done"], "doing": v["counts"]["doing"],
-                "deleted": deleted}
+                "processed": processed, "complete": v["counts"]["done"], "running": v["counts"]["running"],
+                "failed": v["counts"]["failed"], "doing": v["counts"]["doing"], "deleted": deleted}
 
 
 _RANK = {NEW: 0, DELETED: 0, INCOMPLETE: 1, RENDERED: 2, COMPLETE: 3}
