@@ -100,9 +100,10 @@ def _silences_ms(ep: Episode) -> list[tuple[int, int]]:
 
 def base_start(ep: Episode, n: int) -> int:
     """C3 start for first line ``segments[n]`` (CP4 A6 "đầu unit" + ``boundary_pad``)."""
-    t0 = ms(ep.segments[n]["start"])
+    t0, t1 = ms(ep.segments[n]["start"]), ms(ep.segments[n]["end"])
     tol, pad = ms(ep.params["align_tolerance"]), ms(ep.params["boundary_pad"])
-    near = [(a, b) for a, b in _silences_ms(ep) if a <= t0 + tol and b >= t0 - tol]
+    # like A6, a silence counts only if it ends before the line does (else it is not the gap before this line)
+    near = [(a, b) for a, b in _silences_ms(ep) if a <= t0 + tol and b >= t0 - tol and b < t1]
     if near:
         a, b = min(near, key=lambda s: (abs(s[1] - t0), s[1]))
         edge, lower = b, a  # speech starts at the silence end; padding stays inside the silence
@@ -113,9 +114,11 @@ def base_start(ep: Episode, n: int) -> int:
 
 def base_end(ep: Episode, n: int) -> int:
     """C3 end for last line ``segments[n]`` (CP4 A6 "cuối unit" + ``boundary_pad``)."""
-    t1 = ms(ep.segments[n]["end"])
+    t0, t1 = ms(ep.segments[n]["start"]), ms(ep.segments[n]["end"])
     tol, pad = ms(ep.params["align_tolerance"]), ms(ep.params["boundary_pad"])
-    near = [(a, b) for a, b in _silences_ms(ep) if a <= t1 + tol and b >= t1 - tol]
+    # like A6, a silence counts only if it starts after the line does (a caption line timed inside the pause
+    # after the previous one would otherwise get that line's end, and "+ dòng" would not move the end)
+    near = [(a, b) for a, b in _silences_ms(ep) if a <= t1 + tol and b >= t1 - tol and a > t0]
     if near:
         a, b = min(near, key=lambda s: (abs(s[0] - t1), s[0]))
         edge, upper = a, b

@@ -137,6 +137,19 @@ def test_base_points_follow_a6():
     assert C.base_start(contiguous, 1) == 24000 and C.base_end(contiguous, 0) == 24000
 
 
+def test_line_timed_inside_a_pause_still_moves_the_edge():
+    """Real data (7axON1RpRjo): a caption line whose timing starts inside the pause after the previous line. The
+    pause belongs to the previous line only (A6: a silence starting before the line is not its end edge), so
+    "+ dòng" at the end really moves the end (and symmetric for the start)."""
+    ep = C.Episode([{"id": "p", "start": 20.0, "end": 24.0, "kind": "speech", "text": "p"},
+                    {"id": "q", "start": 24.2, "end": 26.0, "kind": "speech", "text": "q"},
+                    {"id": "r", "start": 30.0, "end": 34.0, "kind": "speech", "text": "r"}],
+                   [(24.0, 27.0), (28.0, 30.2)], dict(PARAMS), (0.0, 100.0))
+    assert C.base_end(ep, 0) == 24300 and C.base_end(ep, 1) == 26300
+    # q: the pause ends after q, so no silence edge: q.start - pad, not before the end of p
+    assert C.base_start(ep, 2) == 29900 and C.base_start(ep, 1) == 24000
+
+
 def test_resolve_range_nudges_and_limits():
     ep = _ep()
     a, b = seg(ep.segments, 2)["id"], seg(ep.segments, 9)["id"]

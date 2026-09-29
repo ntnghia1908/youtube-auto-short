@@ -452,6 +452,8 @@ The title panel was hidden by the YouTube Shorts UI (channel / description row a
 > Re-plan HUMAN LEAD 2026-09-27: phần batch mức playlist (bộ kinh: liệt kê, bấm xử lý từng tập, xếp hàng, trạng thái "Xong" suy ra khi đăng hết) kéo lên CP8.7 (`docs/tasks/CP8.7-playlist.md`, `docs/decisions/CP8.3-web-contract.md` W10). CP9 còn: tự xử lý hàng loạt, approval state, failed-item isolation đầy đủ.
 >
 > **Re-plan HUMAN LEAD 2026-09-29:** CP9 chỉ còn hai việc (`docs/tasks/CP9-clip-review.md`): (1) thêm Short từ đề xuất AI còn lại hoặc từ đoạn chọn trên transcript (AI đặt title); (2) sửa điểm đầu/cuối Short (theo dòng caption + tinh chỉnh ±0.2 s). Các mục khác bên dưới đã làm ở CP8.x (sửa title CP8.2, xóa/khôi phục CP8.5, render lại từng Short CP8.2, bộ kinh + hàng đợi CP8.7/CP8.10, lỗi / chạy tiếp CP8.13); "xử lý tất cả" một bộ kinh và approval state riêng: không làm.
+>
+> Contract: `docs/decisions/CP8.2-title-override-contract.md` T1, T8 (`review.json` `cuts` / `added`, luật đoạn tay); `docs/decisions/CP7-render-contract.md` R2, R3, R9, R11; `docs/decisions/CP8.3-web-contract.md` W5–W8.
 
 Scope:
 - candidate review;
