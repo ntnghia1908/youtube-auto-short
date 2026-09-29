@@ -21,7 +21,7 @@ Web chạy cho HUMAN LEAD trong tmux `youtube:web` từ worktree `../youtube-aut
 3. Auto Short tiếp theo:
    - FIX-test-output-dir: đã merge (PR #23; `main` = `d2cfce3`). `output/abcdefghijk/` rác đã xóa ở repo chính.
    - CP8.12 (S1, `docs/tasks/CP8.12-episode-ui.md`): đã merge (PR #25, `33ca2f8`).
-   - CP8.13 (S2, `docs/tasks/CP8.13-playlist-groups-loop.md`, IN_PROGRESS, nhánh `feature/cp8.13-playlist-groups`, worktree `../youtube-auto-short-cp813`): nhóm lọc bộ kinh mới (Đang xử lý / Lỗi / dở dang / Đang làm = chỉ tập đã render chưa đăng hết), bỏ link "Khai thị" ở dòng tập, nút "Lặp lại" trên thẻ video. Kiểm bằng mắt (AC2, AC4, AC5): manual test HUMAN LEAD trước READY.
+   - CP8.13 (S2, `docs/tasks/CP8.13-playlist-groups-loop.md`, READY 2026-09-29): PR chờ HUMAN LEAD merge (nhánh `feature/cp8.13-playlist-groups`): nhóm lọc bộ kinh mới (Đang xử lý / Lỗi / dở dang / Đang làm = chỉ tập đã render chưa đăng hết), bỏ link "Khai thị" ở dòng tập, nút "Lặp lại" trên thẻ video.
    - Bố cục title (S2, PROPOSED): title bị giao diện YouTube Shorts che (~25% đáy khung, ~13% phải). Hướng khuyến nghị: header → title → video, thu khung còn ~0.75W; render 2–3 phương án mẫu để HUMAN LEAD chọn trước khi sửa `docs/decisions/CP7-render-contract.md`. Đổi `render_key` → tập cũ chạy lại sẽ render lại.
    - Sau đó: CP9, CP10.
 

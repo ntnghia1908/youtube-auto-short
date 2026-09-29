@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: CHANGE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -83,7 +83,7 @@ Không chạm database / security model; đổi nghĩa trường `doing` và th�
   - `PYTHONPATH=<worktree>/src conda run -n auto-short python -m pytest -q`: `881 passed, 1 warning in 172.76s` (warning: StarletteDeprecationWarning httpx, có sẵn).
   - `node scripts/framework-check.mjs`: toàn PASS, exit 0.
   - Web scratch `127.0.0.1:8093` (worktree `src`, dữ liệu tạm trong scratchpad, đã tắt): API bộ kinh 8 entry (`rendered`+khai thị `rendered`, `failed`, `incomplete`, stage `running`, `complete`, `rendered`+khai thị `failed`, `new`, `unavailable`) → group `doing, failed, failed, running, done, failed, todo, None`, `counts {all 8, todo 1, running 1, failed 3, doing 1, done 1}`; `GET /api/playlists` `running 1, failed 3, doing 1` (AC1, AC3). Node + DOM giả chạy `app.js` được phục vụ: mặc định tab "Đang làm"; giá trị lưu `failed` / `running` được nạp lại, giá trị lạ → "Đang làm"; mỗi tab hiện đúng tập; bộ kinh không có tập chạy / lỗi → dòng "Không có tập nào đang xử lý" / "… lỗi / dở dang" hiện; không link "Khai thị" trên dòng tập, dòng "2 video khai thị, đã đăng 0/2" còn (AC2, AC4); trang chủ "8 tập · đã xử lý 6 · Xong 1 · đang xử lý 1 · lỗi / dở dang 3 · đang làm 1" và "2 tập · đã xử lý 1 · Xong 0 · đang làm 1" (G3); trang tập Short và khai thị: thẻ `rendered` có "Tải về / 🔁 Lặp lại", thẻ bỏ qua không có nút; bấm → `aria-pressed=true`, `video.loop=true`, thẻ khác không đổi; thẻ dựng lại do tick "Đã đăng" + refresh vẫn bật; bấm lại tắt / bật; không gọi API (AC5).
-- Review: ORCHESTRATOR đọc diff `fcfe974` (playlists.py, app.js, playlist.html, style.css, tests, docs) theo G1–G5: không thấy lỗi; `doing` chỉ còn dùng ở tóm tắt trang chủ. Chờ manual test HUMAN LEAD (AC2, AC4, AC5 bằng mắt).
+- Review: ORCHESTRATOR đọc diff `fcfe974` (playlists.py, app.js, playlist.html, style.css, tests, docs) theo G1–G5: không thấy lỗi; `doing` chỉ còn dùng ở tóm tắt trang chủ. HUMAN LEAD 2026-09-29 cho READY sau web scratch 8093 (bản hard-link dữ liệu thật).
 - Important findings / decisions:
   - AC2 / checklist ban đầu ghi "7 nút / 7 tab" — lỗi đánh máy của ORCHESTRATOR; G2 (canonical) liệt kê 6 tab, đã sửa AC2 / checklist thành 6.
   - Nút lặp lại đặt sau "Tải về", trước "Xóa" trong hàng nút của thẻ; dùng class `.btn` như "Tải về".
