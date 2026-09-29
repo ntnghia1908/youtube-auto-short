@@ -35,7 +35,7 @@ File này chỉ ghi lịch sử; rule hiện hành nằm ở canonical owner c�
 - Thay đổi: thêm "Session scope và handoff" (`docs/ai/workflow.md` §9); adapter Claude Code map sang kết thúc session + handoff prompt; thêm file lịch sử này; checker yêu cầu history có entry cho version của workflow.
 - Lý do: quyết định HUMAN LEAD 2026-09-26: "Nên xác định scope cho mỗi session chat. Khi đủ scope nên suggest clear và viết prompt ngắn cho session tiếp theo. Việc này nên update vào framework và ghi nhận vào lịch sử phát triển framework."
 - Task: `docs/tasks/FW-v4.1-session-scope.md`
-- PR: pending.
+- PR: #4 (merge `5edeb1f`).
 
 ### v4.1 — FW-implementer-speed: test policy + adapter IMPLEMENTER
 
@@ -43,4 +43,4 @@ File này chỉ ghi lịch sử; rule hiện hành nằm ở canonical owner c�
 - Thay đổi: adapter Claude Code (`.claude/agents/implementer.md`) khai `model: sonnet` và hướng dẫn làm việc gọn; project policy "Test policy" (`docs/ai/project-profile.md` §8); dev dependency `pytest-xdist`. Không đổi Framework Core nên không tăng version.
 - Lý do: đo 22 lần chạy IMPLEMENTER cho thấy suite tuần tự 3 phút 30 giây chạy 10–32 lần mỗi task và subagent kế thừa model đắt của session chính.
 - Task: `docs/tasks/FW-implementer-speed.md`
-- PR: pending.
+- PR: #31 (merge `6516638`).
