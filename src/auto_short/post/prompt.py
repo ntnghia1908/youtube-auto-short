@@ -1,4 +1,6 @@
-"""Versioned "post" prompt (P3): the AI only adds punctuation and splits paragraphs; it never changes a word.
+"""Versioned "post" prompt (P3, amended ORCHESTRATOR review round 1): the AI is free to punctuate however it
+likes; the result is a plain-text reply (no JSON, no response schema) that is then projected deterministically
+onto the source words (:mod:`auto_short.post.validate`) so the post can never contain a word the AI did not see.
 
 Canonical contract: docs/decisions/CP8.15-community-post-contract.md P3.
 """
@@ -7,8 +9,12 @@ from __future__ import annotations
 
 import hashlib
 
-PROMPT_VERSION = "v1"
+PROMPT_VERSION = "v2"
 
+# v1 (superseded, HUMAN LEAD 2026-09-29 after Q4 BLOCKED at 72%): asked for strict JSON + forbade any rewording,
+# validated by exact token equality — too strict in practice (real captions have spacing/word-boundary noise the
+# model "corrects", which the old validator rightly rejected as a content change, but drove most posts to `raw`).
+# Kept only as a text constant (P3 amendment); the pipeline no longer parses JSON for any prompt_version.
 SYSTEM_PROMPT_V1 = """\
 Bạn biên tập lại lời giảng Phật pháp tiếng Việt để đăng thành bài viết. Lời vào là caption tạo tự động: không có \
 dấu câu, viết hoa lộn xộn, có thể sai chính tả do nhận dạng giọng nói.
@@ -28,15 +34,21 @@ Nếu không chắc câu nên ngắt ở đâu, ngắt câu dài hơn thay vì �
 Trả lời đúng JSON {"paragraphs": ["đoạn 1", "đoạn 2", ...]} — nối toàn bộ paragraphs bằng dấu cách phải cho lại \
 đúng từng từ của lời vào (chỉ khác dấu câu và hoa/thường)."""
 
+# v2 (P3 amendment, ORCHESTRATOR review round 1 / HUMAN LEAD 2026-09-29): short free-form instruction; the reply
+# is plain text, projected onto the source tokens afterwards (post/validate.py) so wording never drifts even
+# though the model is not asked to preserve it word-for-word itself.
+SYSTEM_PROMPT_V2 = """\
+Bạn biên tập lại lời giảng Phật pháp tiếng Việt (caption tự động, chưa có dấu câu) để đăng thành bài viết.
+
+Hãy thêm dấu câu phù hợp, chia đoạn văn hợp lý (xuống dòng giữa các đoạn), viết hoa chữ đầu câu. Giữ nguyên đúng \
+các từ của lời vào, không thêm/bớt/đổi từ nào, không diễn giải lại, không thêm ý.
+
+Chỉ trả về đoạn văn bản đã có dấu câu (không giải thích, không JSON, không markdown)."""
+
 USER_TEMPLATE_V1 = "Lời giảng (chưa có dấu câu):\n{text}"
+USER_TEMPLATE_V2 = USER_TEMPLATE_V1
 
-PROMPTS = {"v1": (SYSTEM_PROMPT_V1, USER_TEMPLATE_V1)}
-
-RESPONSE_SCHEMA = {
-    "type": "object",
-    "properties": {"paragraphs": {"type": "array", "items": {"type": "string"}}},
-    "required": ["paragraphs"],
-}
+PROMPTS = {"v1": (SYSTEM_PROMPT_V1, USER_TEMPLATE_V1), "v2": (SYSTEM_PROMPT_V2, USER_TEMPLATE_V2)}
 
 
 def prompt_texts(version: str) -> tuple[str, str]:

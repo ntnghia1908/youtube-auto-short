@@ -23,7 +23,8 @@ def _config(tmp_path, **post_over):
 
 class FakeClient:
     """``replies`` (optional): a queue of items consumed one per ``chat()`` call, in order (missing/exhausted ->
-    a trivially valid punctuation of the chunk text); a str is raw JSON content, an Exception is raised."""
+    a trivially valid free-form punctuation of the chunk text); a str is the raw plain-text reply, an Exception
+    is raised."""
 
     def __init__(self, replies: list | None = None):
         self.replies = list(replies) if replies is not None else []
@@ -35,11 +36,7 @@ class FakeClient:
         item = self.replies.pop(0) if self.replies else None
         if isinstance(item, Exception):
             raise item
-        if isinstance(item, str):
-            content = item
-        else:
-            para = text[0].upper() + text[1:] + "."
-            content = json.dumps({"paragraphs": [para]}, ensure_ascii=False)
+        content = item if isinstance(item, str) else text[0].upper() + text[1:] + "."
         return ChatResult(content=content, thinking=None, eval_count=1, prompt_eval_count=1, total_duration=1)
 
 
@@ -70,8 +67,8 @@ def test_compose_posts_one_clip_ai_origin(tmp_path):
 def test_compose_posts_falls_back_to_raw_after_retries_exhausted(tmp_path):
     make_post_episode(tmp_path / "work", tmp_path / "output")
     cfg = _config(tmp_path)
-    # Every attempt returns a response with a changed word: never validates (retries = 1 -> 2 attempts total).
-    bad = json.dumps({"paragraphs": ["Một câu hoàn toàn khác."]})
+    # Every attempt returns unrelated text: near-zero match ratio (retries = 1 -> 2 attempts total).
+    bad = "Một câu hoàn toàn khác không liên quan gì."
     client = FakeClient([bad, bad])
     summary = stage.compose_posts("post8TestEp1", cfg, ["k01"], client=client, sleep=sleep_noop)
     assert (summary.ai, summary.raw) == (0, 1)
@@ -86,8 +83,8 @@ def test_compose_posts_falls_back_to_raw_after_retries_exhausted(tmp_path):
 def test_compose_posts_retries_then_succeeds(tmp_path):
     make_post_episode(tmp_path / "work", tmp_path / "output")
     cfg = _config(tmp_path)
-    bad = json.dumps({"paragraphs": ["Một câu hoàn toàn khác."]})
-    client = FakeClient([bad])  # attempt 1 fails, attempt 2 (no queued reply) succeeds trivially
+    bad = "Một câu hoàn toàn khác không liên quan gì."
+    client = FakeClient([bad])  # attempt 1 fails (low ratio), attempt 2 (no queued reply) succeeds trivially
     summary = stage.compose_posts("post8TestEp1", cfg, ["k01"], client=client, sleep=sleep_noop)
     assert (summary.ai, summary.raw) == (1, 0)
     assert len(client.calls) == 2

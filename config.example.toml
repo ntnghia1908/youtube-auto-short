@@ -184,8 +184,8 @@ think = false
 temperature = 0
 seed = 42
 num_ctx = 8192
-prompt_version = "v1"        # prompt text lives in code (post/prompt.py)
-retries = 2                  # extra attempts per chunk on HTTP/timeout/JSON/schema/token-mismatch errors
+prompt_version = "v2"        # free-form AI + projection onto source words (post/prompt.py); "v1" kept for reference
+retries = 2                  # extra attempts per chunk on HTTP/timeout/empty output/match ratio < 0.9
 chunk_words = 400            # text longer than this (words) is punctuated in several AI calls (caption line boundaries)
 # Image library (P5): copy the candidate images into this directory by hand (not created by code); JPEG/PNG only,
 # top level, served whole (no resize / crop / text overlay). Outside the repo: not committed, not backed up here.

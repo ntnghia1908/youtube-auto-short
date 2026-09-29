@@ -21,9 +21,10 @@ def sha(doc: dict) -> str:
 
 
 def make_post_episode(root: Path, output_dir: Path, *, episode_id: str = EID,
-                      titles: dict[str, str] | None = None) -> Workspace:
+                      titles: dict[str, str] | None = None, head_cut_words: str | None = None) -> Workspace:
     """clips: k01 = lines 1-8, k02 = lines 21-28 (both rendered). ``titles`` overrides a clip_id's rendered title
-    text (default ``f"Tiêu đề {clip_id}"``)."""
+    text (default ``f"Tiêu đề {clip_id}"``). ``head_cut_words`` (P2, ORCHESTRATOR review round 1 B1): CP5 B11
+    ``head_cut`` on k01, dropping these leading words of its own text (e.g. ``"dòng 1"``, the start of line 1)."""
     segments, silences = timeline()
     speech = [s for s in segments if s["kind"] == "speech"]
     units = [{"id": f"u{n:05d}", "start": s["start"], "end": s["end"], "segment_ids": [s["id"]], "text": s["text"],
@@ -56,9 +57,14 @@ def make_post_episode(root: Path, output_dir: Path, *, episode_id: str = EID,
     cand_doc = {"schema_version": 1, "episode_id": episode_id, "transcript_sha256": "t" * 64,
                "silences_sha256": sha(sil_doc), "params": dict(PARAMS),
                "content": {"start": CONTENT[0], "end": CONTENT[1]}, "units": units, "candidates": cands}
+    def head_cut(n: int, c: dict) -> dict | None:
+        if n != 1 or not head_cut_words:
+            return None
+        return {"words": head_cut_words, "original_start": c["source_start"]}
+
     clips = [{"id": f"k0{n}", "candidate_id": c["id"], "source_start": c["source_start"],
               "source_end": c["source_end"], "source_duration": c["source_duration"], "duration": c["duration"],
-              "unit_ids": c["unit_ids"], "segment_ids": c["segment_ids"], "head_cut": None}
+              "unit_ids": c["unit_ids"], "segment_ids": c["segment_ids"], "head_cut": head_cut(n, c)}
              for n, c in enumerate(cands, 1)]
     clips_doc = {"schema_version": 1, "episode_id": episode_id, "candidates_sha256": sha(cand_doc), "clips": clips}
     header = {"lines": ["HT.Tịnh Không", f"{SERIES} (tập {EPISODE_N})"],

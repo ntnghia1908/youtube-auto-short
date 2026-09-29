@@ -3,13 +3,13 @@
 | Metadata | Value |
 |---|---|
 | Status | ACCEPTED (chờ manual test HUMAN LEAD) |
-| Accepted by | HUMAN LEAD 2026-09-29: APPROVE TASK; Q1 ảnh chọn trong thư viện + upload + tìm ảnh từ link (ảnh tìm được vào thẳng thư viện); Q2–Q4 theo đề xuất (P4 bố cục, soạn theo yêu cầu, model `qwen3:14b`) |
+| Accepted by | HUMAN LEAD 2026-09-29: APPROVE TASK; Q1 ảnh chọn trong thư viện + upload + tìm ảnh từ link (ảnh tìm được vào thẳng thư viện); Q2–Q4 theo đề xuất (P4 bố cục, soạn theo yêu cầu, model `qwen3:14b`). Sửa đổi HUMAN LEAD 2026-09-29 (ORCHESTRATOR review round 1, sau Q4 BLOCKED ở 72%): P3 đổi sang AI tự do + chiếu (projection) về chữ gốc bằng `difflib` (prompt `v2`), Q4 đổi tiêu chí (≥ 90% bài `ai` có ≥ 4 dấu câu / 100 từ); B1: bản đầu implement sai P2 (giữ nguyên từ nối bị `head_cut`, ghi nhầm là HUMAN LEAD đã chấp nhận) — sửa lại đúng P2 gốc (bỏ `head_cut` như CP6 G3). |
 | Checkpoint | CP8.15 (S2) |
 | Roadmap | `AUTO_SHORT_CHECKPOINT_PLAN.md` §4 CP8.15 |
 | Task contract | `docs/tasks/CP8.15-community-post.md` |
 | Builds on | `docs/decisions/CP6-titling-contract.md` (G3 `clip_text`, G5 validate style); `docs/decisions/CP8.2-title-override-contract.md` (CP9: cut points, added Shorts, `review.cuts.lines_in`); `docs/decisions/CP8.3-web-contract.md` W4/W5/W7 (job model, API, auth); `docs/decisions/CP8.9-khai-thi-contract.md` (một Short/khai thị dùng chung route); CP1 §10 (dependency: không thêm) |
 
-File này là **canonical owner** của: text nguồn một bài đăng cộng đồng của một Short (P2), prompt AI "chỉ thêm dấu câu / chia đoạn" (`post` `v1`, P3) và validate token, schema `posts.json` (P7) + `post_log.json`, thư viện ảnh (P5) + upload (P5a) + tìm ảnh từ link (P5b), link Short (P6), bố cục text sao chép (P4), config `[post]` (P11), route web + job (P9) và security tải ảnh từ link (P13). Nơi khác chỉ trỏ tới đây. Không đổi contract stage CP2–CP9: `posts.json` không phải input của stage nào (như `publish.json`, CP8.3 W8). Thay đổi cần decision gate mới với HUMAN LEAD.
+File này là **canonical owner** của: text nguồn một bài đăng cộng đồng của một Short (P2), prompt AI tự do + chiếu (projection) deterministic về chữ gốc (`post` `v2`, P3), schema `posts.json` (P7) + `post_log.json`, thư viện ảnh (P5) + upload (P5a) + tìm ảnh từ link (P5b), link Short (P6), bố cục text sao chép (P4), config `[post]` (P11), route web + job (P9) và security tải ảnh từ link (P13). Nơi khác chỉ trỏ tới đây. Không đổi contract stage CP2–CP9: `posts.json` không phải input của stage nào (như `publish.json`, CP8.3 W8). Thay đổi cần decision gate mới với HUMAN LEAD.
 
 Implementation tham chiếu: `src/auto_short/post/` (`source.py`, `validate.py`, `prompt.py`, `logic.py`, `store.py`, `stage.py`, `images.py`, `fetch.py`), `src/auto_short/config.py` (`PostConfig`), `src/auto_short/web/app.py` (route), `src/auto_short/web/jobs.py` (`PostComposeTarget`, `ImageSearchTarget`), `src/auto_short/web/static/` (khu "Bài đăng cộng đồng", hộp thoại "Thư viện ảnh").
 
@@ -21,22 +21,25 @@ Một bài cho mỗi Short `rendered` chưa xóa của một episode (Short AI, 
 
 Đúng lời của Short hiện tại, đọc trực tiếp artifact của episode (`clips.json`, `candidates.json`, `transcript.json`, `silences.json`, `review.json`; `post/source.py`, không sửa `review/`):
 
-- Clip AI (`clips.json`) **không** có cut tay (`review.json` `cuts`): text = nối `text` mọi `units` (`candidates.json`) của `unit_ids` — như CP6 G3 `clip_text` nhưng **không** áp bước bỏ `head_cut`: từ nối đầu Short bị `head_cut` (CP5 B11) cắt khỏi *video* vẫn còn trong text nguồn của bài đăng. Đơn giản hóa có chủ đích (HUMAN LEAD 2026-09-29, xem Known limitations của task): tối đa một từ nối ở đầu, sửa tay được (`origin: manual`) nếu thấy sai.
+- Clip AI (`clips.json`) **không** có cut tay (`review.json` `cuts`): text = nối `text` mọi `units` (`candidates.json`) của `unit_ids`, **có** áp bước bỏ `head_cut` — đúng như CP6 G3 `clip_text` (từ nối đầu Short bị `head_cut`, CP5 B11, cắt khỏi video cũng bị bỏ khỏi text nguồn, vì đó không phải lời thật sự có trong Short). `post/source.py` dùng lại `titling.logic.clip_text` cho đúng bước bỏ + kiểm khớp (cùng thông báo lỗi khi `head_cut` không còn khớp đầu text, "chạy lại 'selection'"); phần chia theo unit (ranh giới khối P3) tự dựng lại nhưng cho cùng kết quả khi nối lại.
 - Clip có cut tay, hoặc Short thêm tay (`review.json` `added`): text = nối `text` các dòng caption trong khoảng hiện tại (`review.cuts.lines_in`) — cùng luật `review.shorts.added_titling_input` dùng cho title AI của Short thêm tay.
 - `source_sha256` = sha256 hex của text nguồn (UTF-8) → bài `stale` khi khác giá trị lưu trong `posts.json` (sửa đầu/cuối, selection chạy lại, hoặc Short không còn tồn tại).
 
-## P3. AI chỉ thêm dấu câu / chia đoạn
+## P3. AI thêm dấu câu / chia đoạn (sửa đổi HUMAN LEAD 2026-09-29, ORCHESTRATOR review round 1)
 
-Prompt mới `post` `v1` (text trong `post/prompt.py`, có `prompt_sha256`); user prompt = text nguồn (P2) hoặc một khối (dưới); trả `{"paragraphs": ["…"]}`.
+Bản đầu (prompt `v1` + validate token-chặt: dãy token AI phải bằng đúng dãy token nguồn) đo được 72% bài `ai` qua validate lần đầu trên dữ liệu thật (< 90% ngưỡng Q4 khi đó) — quá chặt với nhiễu caption thật (chỗ dính/tách từ do lỗi nhận dạng mà AI "sửa lại", vốn hợp lý nhưng validator cũ coi là đổi nội dung). Thay bằng: AI tự do diễn đạt lại dấu câu / hoa thường theo cách nó thấy hợp lý, rồi **chiếu (project) kết quả về đúng chữ nguồn** một cách xác định (không phụ thuộc AI) — nên bài luôn đúng từng chữ nguồn dù AI không được yêu cầu giữ nguyên chữ.
 
-Validate deterministic (`post/validate.py`), hai lớp:
-
-1. Nội dung từ: nối mọi đoạn bằng dấu cách, tách token theo khoảng trắng, chuẩn hóa mỗi token như `selection.logic.normalize_word` (NFC, chữ thường, bỏ dấu câu hai đầu) — dãy token phải **bằng đúng** dãy token nguồn (không thêm / bớt / đổi / đảo).
-2. Dấu câu thêm: so ký tự (đã hạ chữ thường) của text nối với text nguồn (đa tập ký tự, không theo vị trí) — ký tự dư ra chỉ được thuộc `. , ? ! : ; …` và ngoặc kép (`"` `"` `"`).
-
-Sai (một trong hai lớp, hoặc lỗi HTTP/JSON/schema) → retry theo `[post] retries`; hết lượt cho **một khối** → cả Short `origin: raw` (một đoạn = text nguồn, viết hoa chữ đầu, thêm dấu chấm cuối nếu chưa có dấu kết câu), UI cảnh báo.
-
-Text dài (khai thị 4–7 phút): chia khối theo ranh giới dòng caption / unit (không cắt ngang), mỗi khối ≤ `[post] chunk_words` (mặc định 400), mỗi khối một lần gọi AI + validate riêng; khối nào cũng qua mới `origin: ai` (paragraphs nối theo thứ tự khối), một khối hỏng hẳn → cả Short `raw` (P3 trên, trên toàn bộ text, không phải chỉ khối hỏng).
+- **Prompt `post` `v2`** (mặc định `[post] prompt_version`; `v1` giữ trong `post/prompt.py` làm tư liệu, không dùng): yêu cầu ngắn — thêm dấu câu, chia đoạn (xuống dòng giữa đoạn), viết hoa đầu câu, giữ nguyên từ ngữ, chỉ trả văn bản (không JSON, không giải thích). Gọi Ollama **không kèm `format`** (JSON schema) — trả lời tự do; `selection.client.ChatClient`/`OllamaClient`/`request_body` nhận `format: dict | None` (bỏ hẳn key `format` khi `None`/rỗng, thứ tự key giữ nguyên khi có `format` — không đổi hành vi của `[selection]`/`[titling]`).
+- **Chiếu deterministic** (`post/validate.project_response`, stdlib `difflib.SequenceMatcher(None, norm_src, norm_ai, autojunk=False)`): tách token nguồn (`source_text.split()`) và token AI (tách theo dòng trống thành đoạn, rồi theo khoảng trắng), chuẩn hóa cả hai như `selection.logic.normalize_word` (NFC, chữ thường, bỏ dấu câu hai đầu) cho việc gióng hàng. Bài kết quả = **đúng dãy token nguồn**, không hơn không kém:
+  - Token nguồn nằm trong khối `equal` (khớp với một token AI theo `SequenceMatcher`): nhận dấu câu đầu/cuối của token AI khớp (chỉ giữ `. , ? ! : ; …` và ngoặc kép `" " "`, bỏ ký tự khác), hoa/thường ký tự đầu theo token AI khớp, và một ngắt đoạn ngay sau nó nếu token AI khớp là token cuối của một đoạn AI (dòng trống).
+  - Token nguồn không khớp (AI thêm / bớt / đổi / đảo chữ ở đúng vị trí đó): giữ nguyên chữ gốc, không dấu câu, không đổi hoa/thường.
+  - Token AI thừa (không khớp token nguồn nào): bỏ, không dùng cho gì (kể cả tín hiệu ngắt đoạn của nó).
+  - Sau chiếu: viết hoa chữ đầu mỗi đoạn và chữ đầu ngay sau mỗi dấu `. ? ! …`; đoạn cuối cùng phải kết bằng dấu câu kết (`. ? ! …`), thiếu thì thêm `.`.
+  - **Tỉ lệ khớp** = số token nguồn nằm trong khối `equal` / tổng số token nguồn (0–1; không tính token AI thừa, nên AI thêm chữ không tự làm giảm tỉ lệ — chỉ AI bớt/đổi/đảo mới giảm).
+- **Retry / raw:** tỉ lệ khớp < 0.9, output rỗng, hoặc lỗi HTTP/timeout → retry theo `[post] retries`; hết lượt cho **một khối** → cả Short `origin: raw` (một đoạn = text nguồn, viết hoa chữ đầu, thêm dấu chấm cuối nếu chưa có dấu kết câu), UI cảnh báo.
+- **Nhãn "ít dấu câu" (Q4):** bài `origin: ai` có < 4 dấu câu `. , ? ! : ; …` / 100 từ (đếm trên `paragraphs`, không tính ngoặc kép; `post/validate.marks_per_100_words`) → UI hiện nhãn cảnh báo riêng (vẫn là `ai`, không đổi `raw`).
+- **Text dài** (khai thị 4–7 phút): chia khối theo ranh giới dòng caption / unit (không cắt ngang), mỗi khối ≤ `[post] chunk_words` (mặc định 400), mỗi khối một lần gọi AI + chiếu riêng; khối nào cũng qua (≥ 0.9) mới `origin: ai` (paragraphs nối theo thứ tự khối, tỉ lệ khớp trung bình các khối); một khối hỏng hẳn (hết lượt) → cả Short `raw` (áp lại toàn bộ text, không chỉ khối hỏng).
+- `post_log.json`: mỗi lần gọi ghi cả `raw_output` (văn bản thô AI trả) và `match_ratio`, cùng `request`/`response`/lỗi/thời gian như trước; entry mỗi Short ghi `match_ratio` (trung bình khi `ai`, tỉ lệ của lần thử cuối khi `raw`).
 
 Log mỗi lần gọi AI: `work/<id>/post_log.json` (append, không byte-stable — có timestamp mỗi entry, như `review_titling_log.json` CP9 C6): model, prompt, từng lần gọi (request/response/lỗi/valid), khối, `origin`, thời gian.
 

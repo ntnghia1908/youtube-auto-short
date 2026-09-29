@@ -5,9 +5,11 @@ Reads the episode's artifacts directly (``clips.json``, ``candidates.json``, ``t
 does not depend on that module's private helpers:
 
 - A Short from ``clips.json`` (AI-selected) with **no** manual cut (``review.json`` ``cuts``): the full text of its
-  candidate's ``unit_ids`` range, like :func:`auto_short.titling.logic.clip_text` **without** applying the
-  ``head_cut`` drop — a connector word ``head_cut`` removes from the render (CP5 B11) stays in the post text (HUMAN
-  LEAD 2026-09-29 accepted this simplification for CP8.15; see the task's Known limitations).
+  candidate's ``unit_ids`` range, **with** the ``head_cut`` drop applied exactly like
+  :func:`auto_short.titling.logic.clip_text` (CP6 G3) — a connector word ``head_cut`` removes from the render
+  (CP5 B11) is dropped from the post text too, so the text matches what is actually spoken in the Short. Reuses
+  ``clip_text`` itself for the drop-and-validate step (identical mismatch error, ORCHESTRATOR review round 1 B1);
+  the caption-line-level breakdown below is only for the chunk boundaries of P3.
 - A Short with a manual cut, or added by hand (``review.json`` ``added``): the caption lines of its current range
   (:func:`auto_short.review.cuts.lines_in`, the same rule :func:`auto_short.review.shorts.added_titling_input` uses
   for the AI title of an added Short).
@@ -27,6 +29,8 @@ from .. import hashing
 from ..config import Config
 from ..review import cuts as C
 from ..review.logic import ADDED_KEY, read_review, resolve_cuts
+from ..titling.logic import TitlingError
+from ..titling.logic import clip_text as titling_clip_text
 from ..workspace import Workspace, WorkspaceError, validate_episode_id
 
 CANDIDATES_NAME = "candidates.json"
@@ -104,12 +108,31 @@ def load(episode_id: str, config: Config) -> SourceEpisode:
 
 
 def _full_clip_lines(clip: dict, units: list[dict], index: dict[str, int]) -> list[str]:
-    """The candidate's full text (P2: like CP6 G3 ``clip_text``, without the ``head_cut`` drop), one entry per
-    unit (chunk boundary, P3)."""
+    """P2: the candidate's text like CP6 G3 ``clip_text`` (``head_cut`` dropped when present), one entry per
+    unit for the chunk boundaries of P3. Delegates the drop-and-validate step to ``clip_text`` itself (identical
+    mismatch error); rebuilds the per-unit breakdown by removing the same number of leading tokens so joining the
+    result reproduces ``clip_text``'s string exactly."""
     first, last = clip["unit_ids"]
     if first not in index or last not in index or index[first] > index[last]:
         raise PostSourceError(f"Short {clip['id']}: unit_ids {clip['unit_ids']} không có trong candidates.json")
-    return [u["text"] for u in units[index[first]:index[last] + 1]]
+    lines = [u["text"] for u in units[index[first]:index[last] + 1]]
+    cut = clip.get("head_cut")
+    if not cut:
+        return lines
+    try:
+        titling_clip_text(clip, units, index)  # validates the drop; raises on mismatch (same message as titling)
+    except TitlingError as exc:
+        raise PostSourceError(str(exc)) from exc
+    remaining = len(cut["words"].split())
+    out: list[str] = []
+    for line in lines:
+        tokens = line.split()
+        if remaining >= len(tokens):
+            remaining -= len(tokens)
+            continue
+        out.append(" ".join(tokens[remaining:]))
+        remaining = 0
+    return out
 
 
 def source_lines(ep: SourceEpisode, clip_id: str) -> list[str]:

@@ -1140,6 +1140,7 @@ const AutoShort = (() => {
   function postBadges(p) {
     const nodes = [];
     if (p.origin === "raw") nodes.push(el("span", { class: "badge stale-badge", text: "AI không chắc — kiểm lại" }));
+    if (p.low_punctuation) nodes.push(el("span", { class: "badge stale-badge", text: "Ít dấu câu — kiểm lại" }));
     if (p.stale) nodes.push(el("span", { class: "badge stale-badge", text: "Text nguồn đã đổi — soạn lại" }));
     if (p.image_missing) nodes.push(el("span", { class: "badge stale-badge", text: "Thiếu ảnh" }));
     return nodes;

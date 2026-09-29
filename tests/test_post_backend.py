@@ -6,7 +6,7 @@ import pytest
 
 from auto_short.post import source, store
 from auto_short.post.logic import LinkError, chunk_lines, compose_copy_text, header_line, normalize_link
-from auto_short.post.validate import parse_response, validate_paragraphs, raw_fallback, ResponseError
+from auto_short.post.validate import marks_per_100_words, project_response, raw_fallback
 from auto_short.review.logic import with_added, with_cut
 from cp9_helpers import seg
 from post_helpers import make_post_episode
@@ -25,6 +25,45 @@ def test_source_text_ai_clip_full_text(tmp_path):
     expected = " ".join(f"dòng {i} lời giảng thứ {i} về tâm" for i in range(1, 9))
     assert text == expected
     assert source.source_sha256(text) == source.source_sha256(expected)
+
+
+def test_source_text_ai_clip_drops_head_cut_words(tmp_path):
+    """P2 (ORCHESTRATOR review round 1 B1): head_cut words are dropped, exactly like CP6 G3 clip_text."""
+    from auto_short.config import Config, RenderConfig, WorkspaceConfig
+
+    make_post_episode(tmp_path / "work", tmp_path / "output", head_cut_words="dòng 1")
+    cfg = Config(workspace=WorkspaceConfig(dir=tmp_path / "work"), render=RenderConfig(output_dir=tmp_path / "output"))
+    ep = source.load("post8TestEp1", cfg)
+    text = source.source_text(ep, "k01")
+    expected = "lời giảng thứ 1 về tâm " + " ".join(f"dòng {i} lời giảng thứ {i} về tâm" for i in range(2, 9))
+    assert text == expected
+
+
+def test_source_text_head_cut_mismatch_raises(tmp_path):
+    """P2: a head_cut that no longer matches the start of its text raises (like titling.logic.clip_text)."""
+    from auto_short.config import Config, RenderConfig, WorkspaceConfig
+
+    make_post_episode(tmp_path / "work", tmp_path / "output", head_cut_words="không khớp")
+    cfg = Config(workspace=WorkspaceConfig(dir=tmp_path / "work"), render=RenderConfig(output_dir=tmp_path / "output"))
+    ep = source.load("post8TestEp1", cfg)
+    with pytest.raises(source.PostSourceError, match="head_cut"):
+        source.source_text(ep, "k01")
+
+
+def test_full_clip_lines_drops_head_cut_words_spanning_a_unit_boundary():
+    """Same rule at the unit level (P3 chunk boundaries): dropping spans into the next unit correctly."""
+    units = [{"id": "u1", "text": "cho nên chúng"}, {"id": "u2", "text": "ta cần phải học"}]
+    index = {"u1": 0, "u2": 1}
+    clip = {"id": "k01", "unit_ids": ["u1", "u2"], "head_cut": {"words": "cho nên chúng ta", "original_start": 0.0}}
+    lines = source._full_clip_lines(clip, units, index)
+    assert " ".join(lines) == "cần phải học"
+
+
+def test_full_clip_lines_no_head_cut_returns_unit_texts():
+    units = [{"id": "u1", "text": "chúng ta cần"}, {"id": "u2", "text": "phải học"}]
+    index = {"u1": 0, "u2": 1}
+    clip = {"id": "k01", "unit_ids": ["u1", "u2"], "head_cut": None}
+    assert source._full_clip_lines(clip, units, index) == ["chúng ta cần", "phải học"]
 
 
 def test_source_text_manual_cut_uses_caption_lines(tmp_path):
@@ -75,53 +114,83 @@ def test_source_load_missing_clip_raises(tmp_path):
         source.source_text(ep, "k99")
 
 
-# --- P3 validation ---------------------------------------------------------------------------------------------
+# --- P3 (amended, ORCHESTRATOR review round 1): free-form AI + deterministic projection --------------------------
 
 
-def test_validate_paragraphs_accepts_punctuation_and_case_changes():
+def test_project_response_perfect_match():
     src = "hôm nay chúng ta học về tâm và cảnh"
-    ok = ["Hôm nay, chúng ta học về tâm và cảnh."]
-    assert validate_paragraphs(ok, src) is None
-    ok2 = ["Hôm nay chúng ta học về tâm", "và cảnh."]
-    assert validate_paragraphs(ok2, src) is None
+    paragraphs, ratio = project_response(src, "Hôm nay, chúng ta học về tâm và cảnh.")
+    assert paragraphs == ["Hôm nay, chúng ta học về tâm và cảnh."]
+    assert ratio == 1.0
 
 
-def test_validate_paragraphs_rejects_word_changes():
-    src = "hôm nay chúng ta học về tâm và cảnh"
-    assert validate_paragraphs(["Hôm nay chúng ta học về tâm và cảnh giới."], src)  # added a word
-    assert validate_paragraphs(["Hôm nay chúng ta học tâm và cảnh."], src)  # dropped "về"
-    assert validate_paragraphs(["Hôm nay chúng ta học về cảnh và tâm."], src)  # reordered
-    assert validate_paragraphs(["Hôm nay chúng ta học về tim và cảnh."], src)  # changed a word
+def test_project_response_paragraph_break_from_blank_line():
+    src = "a b c d e f g h"
+    paragraphs, ratio = project_response(src, "A, b c.\n\nD e f g h!")
+    assert paragraphs == ["A, b c.", "D e f g h!"]
+    assert ratio == 1.0
 
 
-def test_validate_paragraphs_rejects_disallowed_punctuation():
-    src = "hôm nay chúng ta học về tâm"
-    assert validate_paragraphs(["Hôm nay chúng ta học về #tâm"], src)
-    assert validate_paragraphs(["Hôm nay chúng ta học về tâm~"], src)
+def test_project_response_added_word_does_not_lower_ratio():
+    """Extra AI tokens are simply dropped (P3): every source token still matches."""
+    src = "tôi nói với các bạn"
+    paragraphs, ratio = project_response(src, "Tôi thực sự nói với các bạn.")
+    assert paragraphs == ["Tôi nói với các bạn."]
+    assert ratio == 1.0
 
 
-def test_validate_paragraphs_rejects_empty():
-    assert validate_paragraphs([], "x")
-    assert validate_paragraphs(["  "], "x")
-    assert validate_paragraphs("not a list", "x")
+def test_project_response_dropped_word_keeps_original_unmatched_token():
+    src = "tôi nói với các bạn"
+    paragraphs, ratio = project_response(src, "Tôi nói các bạn.")
+    assert paragraphs == ["Tôi nói với các bạn."]  # "với" kept as-is: no punctuation, no case change
+    assert ratio == 0.8
+
+
+def test_project_response_changed_word_keeps_original_unmatched_token():
+    src = "tôi nói với các bạn"
+    paragraphs, ratio = project_response(src, "Tôi nói với những bạn.")
+    assert paragraphs == ["Tôi nói với các bạn."]
+    assert ratio == 0.8
+
+
+def test_project_response_reordered_words_still_projected_in_source_order():
+    src = "tôi học kinh này"
+    paragraphs, ratio = project_response(src, "Kinh này tôi học.")
+    # the source order is always kept (P3): "tôi"/"học" match despite being reordered by the AI
+    assert " ".join(paragraphs).split() == ["tôi", "học", "kinh", "này."] or ratio < 1.0
+    assert ratio > 0  # at least some tokens still match regardless of order
+
+
+def test_project_response_empty_ai_text_gives_zero_ratio():
+    paragraphs, ratio = project_response("a b c", "")
+    assert ratio == 0.0
+    assert paragraphs  # still returns something (the caller decides retry/raw from the ratio)
+
+
+def test_project_response_only_allowed_punctuation_kept():
+    """A disallowed character in the AI token (e.g. '#') is stripped, not carried into the post."""
+    src = "hôm nay chúng ta học"
+    paragraphs, ratio = project_response(src, "#Hôm nay chúng ta học~")
+    assert "#" not in paragraphs[0] and "~" not in paragraphs[0]
+    assert ratio == 1.0
+
+
+def test_project_response_ensures_terminal_punctuation():
+    paragraphs, _ratio = project_response("a b c", "a b c")
+    assert paragraphs[-1].endswith(".")
+
+
+def test_marks_per_100_words():
+    assert marks_per_100_words(["Một hai ba bốn năm."]) == 20.0  # 1 mark / 5 words
+    assert marks_per_100_words(["Không có dấu câu nào cả"]) == 0.0
+    assert marks_per_100_words([]) == 0.0
+    assert marks_per_100_words(['Câu "trích dẫn" ở đây.']) == pytest.approx(20.0)  # quotes not counted as marks
 
 
 def test_raw_fallback():
     assert raw_fallback("hôm nay chúng ta học") == ["Hôm nay chúng ta học."]
     assert raw_fallback("hôm nay chúng ta học?") == ["Hôm nay chúng ta học?"]
     assert raw_fallback("") == [""]
-
-
-def test_parse_response():
-    assert parse_response('{"paragraphs": ["a", "b"]}') == ["a", "b"]
-    with pytest.raises(ResponseError):
-        parse_response("not json")
-    with pytest.raises(ResponseError):
-        parse_response('{"paragraphs": []}')
-    with pytest.raises(ResponseError):
-        parse_response('{"paragraphs": [1]}')
-    with pytest.raises(ResponseError):
-        parse_response('{"nope": []}')
 
 
 # --- P3 chunking -----------------------------------------------------------------------------------------------

@@ -25,8 +25,10 @@ from ..selection.client import ChatClient, ChatError, OllamaClient, resolve_host
 from ..workspace import atomic_write_json
 from . import images, source, store
 from .logic import chunk_lines
-from .prompt import RESPONSE_SCHEMA, prompt_sha256, render_user_prompt, system_prompt
-from .validate import ResponseError, parse_response, raw_fallback, validate_paragraphs
+from .prompt import prompt_sha256, render_user_prompt, system_prompt
+from .validate import project_response, raw_fallback
+
+MATCH_RATIO_THRESHOLD = 0.9  # P3 amendment (ORCHESTRATOR review round 1)
 
 log = logging.getLogger("auto_short")
 
@@ -100,12 +102,13 @@ def preflight(config: Config, *, opener: Callable[..., object] | None = None,
     log.info("post: ollama %s ok (%s)", host, model)
 
 
-# --- P3: punctuate one chunk, with retries --------------------------------------------------------------------
+# --- P3 (amended, ORCHESTRATOR review round 1): free-form AI + deterministic projection, with retries -----------
 
 def _punctuate_chunk(client: ChatClient, cfg: PostConfig, chunk_text: str, clog: dict,
-                     sleep: Callable[[float], None]) -> list[str] | None:
-    """One chunk with retries (P3): returns the validated paragraphs, or None when every attempt either failed
-    (HTTP/timeout/JSON/schema) or did not validate (token / punctuation mismatch)."""
+                     sleep: Callable[[float], None]) -> tuple[list[str], float] | None:
+    """One chunk with retries (P3): returns ``(paragraphs, match_ratio)`` of the first attempt whose projection
+    matches at least :data:`MATCH_RATIO_THRESHOLD`, or None when every attempt either failed (HTTP/timeout/empty
+    output) or stayed below the threshold."""
     messages = [{"role": "system", "content": system_prompt(cfg.prompt_version)},
                 {"role": "user", "content": render_user_prompt(cfg.prompt_version, text=chunk_text)}]
     opts = options(cfg)
@@ -115,31 +118,37 @@ def _punctuate_chunk(client: ChatClient, cfg: PostConfig, chunk_text: str, clog:
         if wait > 0:
             sleep(wait)
         call: dict = {"attempt": attempt, "backoff_seconds": wait, "seconds": None,
-                     "request": {"model": cfg.model, "messages": messages, "format": RESPONSE_SCHEMA,
-                                 "options": opts, "think": cfg.think, "stream": False},
-                     "response": None, "error": None, "paragraphs": None, "valid": False}
+                     "request": {"model": cfg.model, "messages": messages, "options": opts, "think": cfg.think,
+                                 "stream": False},
+                     "response": None, "error": None, "raw_output": None, "match_ratio": None, "paragraphs": None,
+                     "valid": False}
         clog["ai_calls"].append(call)
         t0 = time.monotonic()
         try:
-            res = client.chat(model=cfg.model, messages=messages, format=RESPONSE_SCHEMA, options=opts,
-                              think=cfg.think)
+            res = client.chat(model=cfg.model, messages=messages, format=None, options=opts, think=cfg.think)
             call["response"] = {"content": res.content, "thinking": res.thinking, "eval_count": res.eval_count,
                                 "prompt_eval_count": res.prompt_eval_count, "total_duration": res.total_duration,
                                 **res.extra}
-            paragraphs = parse_response(res.content)
-        except (ChatError, ResponseError) as exc:
+        except ChatError as exc:
             call["seconds"] = round(time.monotonic() - t0, 3)
             call["error"] = str(exc)
             log.warning("post: chunk attempt %d/%d failed: %s", attempt, attempts, exc)
             continue
         call["seconds"] = round(time.monotonic() - t0, 3)
-        call["paragraphs"] = paragraphs
-        reason = validate_paragraphs(paragraphs, chunk_text)
-        if reason is None:
+        raw_output = res.content or ""
+        call["raw_output"] = raw_output
+        if not raw_output.strip():
+            call["error"] = "output rỗng"
+            log.warning("post: chunk attempt %d/%d: output rỗng", attempt, attempts)
+            continue
+        paragraphs, ratio = project_response(chunk_text, raw_output)
+        call["paragraphs"], call["match_ratio"] = paragraphs, round(ratio, 4)
+        if ratio >= MATCH_RATIO_THRESHOLD:
             call["valid"] = True
-            return paragraphs
-        call["error"] = reason
-        log.warning("post: chunk attempt %d/%d: rejected (%s)", attempt, attempts, reason)
+            return paragraphs, ratio
+        call["error"] = f"tỉ lệ khớp {ratio:.2f} < {MATCH_RATIO_THRESHOLD:g}"
+        log.warning("post: chunk attempt %d/%d: tỉ lệ khớp %.2f < %.2g", attempt, attempts, ratio,
+                    MATCH_RATIO_THRESHOLD)
     return None
 
 
@@ -153,6 +162,7 @@ class ComposeResult:
     chunks: int
     attempts: int  # total AI calls used (every chunk)
     first_try: bool  # every chunk validated on its first attempt (Q4)
+    match_ratio: float | None  # origin ai: average over chunks; raw: the last failing attempt's ratio (or None)
 
 
 def compose_clip(client: ChatClient, cfg: PostConfig, clip_id: str, candidate_id: str, lines: list[str],
@@ -162,18 +172,24 @@ def compose_clip(client: ChatClient, cfg: PostConfig, clip_id: str, candidate_id
     text = " ".join(lines)
     chunks = chunk_lines(lines, cfg.chunk_words)
     all_paragraphs: list[str] = []
+    ratios: list[float] = []
     ok = True
     for chunk in chunks:
         result = _punctuate_chunk(client, cfg, " ".join(chunk), clog, sleep)
         if result is None:
             ok = False
             break
-        all_paragraphs += result
+        paragraphs, ratio = result
+        all_paragraphs += paragraphs
+        ratios.append(ratio)
     attempts = len(clog["ai_calls"])
     if ok:
+        avg_ratio = sum(ratios) / len(ratios) if ratios else None
         return ComposeResult(clip_id, candidate_id, store.AI, all_paragraphs, text, len(chunks), attempts,
-                             attempts == len(chunks))
-    return ComposeResult(clip_id, candidate_id, store.RAW, raw_fallback(text), text, len(chunks), attempts, False)
+                             attempts == len(chunks), avg_ratio)
+    last_ratio = clog["ai_calls"][-1]["match_ratio"] if clog["ai_calls"] else None
+    return ComposeResult(clip_id, candidate_id, store.RAW, raw_fallback(text), text, len(chunks), attempts, False,
+                         last_ratio)
 
 
 def _append_log(path: Path, episode_id: str, entry: dict) -> None:
@@ -278,8 +294,8 @@ def compose_posts(episode_id: str, config: Config, clips: "list[str] | str", *, 
             "at": _now(), "clip_id": cid, "candidate_id": cand_by_clip[cid], "model": model_block(cfg),
             "prompt_version": cfg.prompt_version, "prompt_sha256": prompt_sha256(cfg.prompt_version),
             "chunks": result.chunks, "attempts": result.attempts, "first_try": result.first_try,
-            "seconds": round(secs, 3), "origin": result.origin, "text": result.source_text,
-            "paragraphs": result.paragraphs, "ai_calls": clog["ai_calls"]})
+            "match_ratio": result.match_ratio, "seconds": round(secs, 3), "origin": result.origin,
+            "text": result.source_text, "paragraphs": result.paragraphs, "ai_calls": clog["ai_calls"]})
         with guard:
             doc = store.read_posts(posts_path, episode_id)
             image = images.least_used(cfg.image_dir, Path(config.workspace.dir)) if store.find(doc, cid) is None \

@@ -234,7 +234,7 @@ class PostConfig:
     temperature: float = 0.0
     seed: int = 42
     num_ctx: int = 8192
-    prompt_version: str = "v1"
+    prompt_version: str = "v2"  # free-form AI + deterministic projection (P3 amendment, HUMAN LEAD 2026-09-29)
     retries: int = 2
     chunk_words: int = 400  # P3: text longer than this (words) is punctuated in several AI calls
     # P5: outside the repo, not committed.

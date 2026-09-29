@@ -141,9 +141,12 @@ auto-short status rbjfCfFq3Dk.kt                                                
 Parameters in `[khaithi]` of `config.example.toml`. Contract: `docs/decisions/CP8.9-khai-thi-contract.md`.
 
 Community post text (CP8.15): each rendered Short (and khai thị video) has a collapsible "Bài đăng cộng đồng"
-panel — "Soạn bài" sends its literal caption text to Ollama, which is only allowed to add punctuation / paragraph
-breaks (never change, add, drop or reorder a word; validated deterministically, retried, falling back to one raw
-paragraph on failure); the paragraphs, an image and an optional Short link are then assembled into a copy-paste
+panel — "Soạn bài" sends its literal caption text to Ollama, free-form (add punctuation, split paragraphs);
+the reply is then deterministically projected back onto the source words (stdlib `difflib`, never the model
+itself) so the post can never actually contain a word it did not see, however it rewords things; below a 90%
+match ratio it retries, falling back to one raw paragraph on failure ("ít dấu câu" labels a passing post whose
+punctuation is too sparse to be useful). The paragraphs, an image and an optional Short link are then assembled
+into a copy-paste
 post (title, paragraphs, "— speaker, series tập N", link, hashtags), edited by hand if needed, with "Sao chép bài"
 and a separate "Đã đăng bài" tick (independent from the Short's own "Đã đăng"). "Soạn bài cho mọi Short" composes
 every Short of the episode that has none yet. Images come from a library outside the repo (`[post] image_dir`,

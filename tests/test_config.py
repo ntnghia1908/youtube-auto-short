@@ -131,7 +131,7 @@ def test_learning_config_invalid(data):
 
 def test_post_config():
     d = config_mod.Config().post
-    assert (d.model, d.chunk_words, d.retries, d.prompt_version) == ("qwen3:14b", 400, 2, "v1")
+    assert (d.model, d.chunk_words, d.retries, d.prompt_version) == ("qwen3:14b", 400, 2, "v2")
     assert d.image_dir.is_absolute() and "~" not in str(d.image_dir)
     p = config_mod.from_dict({"post": {
         "model": "qwen3:30b", "chunk_words": 250, "retries": 1, "image_dir": "/tmp/post-images",

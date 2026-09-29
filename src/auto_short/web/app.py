@@ -32,6 +32,7 @@ from ..post import logic as post_logic
 from ..post import source as post_source
 from ..post import stage as post_stage
 from ..post import store as post_store
+from ..post import validate as post_validate
 from ..render import run_render
 from ..review import (ArchivedError, EpisodeNotFound, ReviewError, TitlePreview, archive_source, content_disposition,
                       list_tombstones, mark_downloaded, remove_tombstone,
@@ -874,10 +875,14 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         image_missing = image is not None and post_images.resolve(config.post.image_dir, image) is None
         text = post_logic.compose_copy_text(title=title, paragraphs=entry["paragraphs"], header_fields=header_fields,
                                             link=entry["link"], hashtags=hashtags_list)
+        # P3 amendment: "ít dấu câu" label (Q4) — an "ai" post whose punctuation is too sparse to be useful,
+        # even though the projection matched the source words well enough to not fall back to "raw".
+        low_punctuation = entry["origin"] == post_store.AI \
+            and post_validate.marks_per_100_words(entry["paragraphs"]) < 4
         return {"clip_id": entry["clip_id"], "paragraphs": list(entry["paragraphs"]), "origin": entry["origin"],
                 "stale": stale, "image": image, "image_missing": image_missing, "link": entry["link"],
                 "posted": entry["posted_at"] is not None, "posted_at": entry["posted_at"], "text": text,
-                "chars": len(text)}
+                "chars": len(text), "low_punctuation": low_punctuation}
 
     @app.get("/api/episodes/{episode_id}/posts")
     def api_posts(episode_id: str):
