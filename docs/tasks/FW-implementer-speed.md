@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: CHANGE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -121,7 +121,7 @@ Không chạm database, security model hoặc public API contract; manual test l
 
 - Main changes: `pytest-xdist` (dev, cài được 3.8.0, execnet 2.1.2) trong `pyproject.toml` + CP1 §10 (dòng bảng + sửa đổi HUMAN LEAD); Test policy ở `docs/ai/project-profile.md` §8; `.claude/agents/implementer.md` (`model: sonnet`, hướng dẫn gọn, pointer tới Test policy); README; entry `framework-history.md` dưới `## v4.1`.
 - Tests: tuần tự `python -m pytest -q`: 898 passed, 183.7 s (3 phút 3 giây). Song song `-n auto` ×3: 898 passed mỗi lần, 61.9 s / 61.8 s / 60.8 s (≈ 3× nhanh hơn). Không có test nào fail riêng khi song song → không sửa test / fixture. `python -c "import xdist"` OK.
-- Review:
+- Review: ORCHESTRATOR review diff-first (contract → diff → AC → evidence): ACCEPTED, không micro-fix. Chạy lại: `pytest -q -n auto` → 898 passed, 61.1 s; `node scripts/framework-check.mjs` exit 0 (kiểm exit thật, không qua pipe); `workflow.md` / `execution-profiles.md` không đổi; env `auto-short` import `auto_short` từ repo chính. IMPLEMENTER chạy override `sonnet` (transcript: `claude-sonnet-5-5`): 7 phút, 32 turn, ≈ 0.6 M token đọc từ cache, 4 lần chạy toàn bộ suite (đúng số required verification yêu cầu).
 - Important findings / decisions: chạy `-n auto` có 48 warning (lặp `StarletteDeprecationWarning` mỗi worker, tuần tự là 1); không ảnh hưởng kết quả.
-- Known limitations:
+- Known limitations: D3 / D4 là hành vi agent, chỉ đánh giá được qua các task sau (manual checklist); `-n auto` in 48 warning thay vì 1.
 - PR:
