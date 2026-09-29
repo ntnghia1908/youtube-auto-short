@@ -76,10 +76,12 @@ Tất cả required verification phải chạy và PASS trước READY.
 
 Chạm public API contract (route web mới) → manual test là gate trước integration.
 
-- [ ] Điện thoại + desktop: "Thêm Short" từ đề xuất AI và từ transcript, nghe Short mới, sửa title.
-- [ ] "Sửa đầu/cuối": thêm/bớt dòng, ±0.2 s, "Nghe thử", lưu → nghe lại; "Về như AI chọn".
-- [ ] Số `S<NN>`, tick "Đã đăng", tên file tải về của Short cũ không đổi.
-- [ ] Tập khai thị làm được như trên.
+Kết quả: **ĐẠT** — HUMAN LEAD 2026-09-29, server test 8081 (code `206ba3b`, bản sao `7axON1RpRjo`, `4oOZz2CBz3g`, `4oOZz2CBz3g.kt` ở `~/.cache/auto-short-cp9-test/`).
+
+- [x] Điện thoại + desktop: "Thêm Short" từ đề xuất AI và từ transcript, nghe Short mới, sửa title.
+- [x] "Sửa đầu/cuối": thêm/bớt dòng, ±0.2 s, "Nghe thử", lưu → nghe lại; "Về như AI chọn".
+- [x] Số `S<NN>`, tick "Đã đăng", tên file tải về của Short cũ không đổi.
+- [x] Tập khai thị làm được như trên.
 
 ## Result
 
@@ -115,5 +117,5 @@ Chạm public API contract (route web mới) → manual test là gate trước i
   - Mốc caption tự động gần đúng; điểm C3 có thể lệch lời nói, dùng ±0.2 s + "Nghe thử". "Nghe thử" phát nguồn chưa rút khoảng lặng.
   - Title AI có thể bắt đầu chữ thường (`4oOZz2CBz3g.kt` `m02`); CP6 G5 không bắt luật này — sửa tay được.
   - `GET /transcript` tập khai thị dài ~1.7 s (tính dòng thuộc khoảng cho mọi Short); chấp nhận.
-  - Manual test checklist (điện thoại + desktop) chưa làm — gate trước integration.
-- PR: chưa (không push).
+- Manual test: ĐẠT (HUMAN LEAD 2026-09-29, 8081).
+- PR: `feature/cp9-clip-review` → `main` (HUMAN LEAD 2026-09-29: push + PR).
