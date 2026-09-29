@@ -3,7 +3,7 @@
 ## Status / Approval
 
 - Status: IN_PROGRESS
-- BLOCKED note: implementation + toàn bộ test PASS, nhưng tỉ lệ qua validate P3 lần đầu trên dữ liệu thật (72 %) dưới ngưỡng 90 % của Q4 (xem Result) — chưa đặt READY, chờ quyết định HUMAN LEAD.
+- Sửa đổi (HUMAN LEAD 2026-09-29, sau BLOCKED Q4): P3 đổi sang AI tự do + chiếu dấu câu về chữ gốc (prompt `v2`), Q4 đổi tiêu chí; P2 giữ nguyên (bỏ `head_cut`) — bản đầu làm sai, phải sửa.
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -31,13 +31,13 @@ Trên thẻ mỗi Short (tập Short và khai thị): bấm "Soạn bài" → c�
 - **Q1. Ảnh:** chọn ảnh trong thư viện cho từng bài; thư viện khởi đầu = 25 ảnh ứng viên (`~/.cache/auto-short-post-images/`, chép tay vào `image_dir`); thêm nút **upload ảnh** và nút **tìm ảnh** (đưa link để tìm) → P5, P5a, P5b, P13.
 - **Q2. Bố cục bài:** theo đề xuất P4 (title, dòng ghi nguồn, link, hashtag bộ kinh).
 - **Q3. Lúc soạn:** theo đề xuất P1 (theo yêu cầu, không tự chạy sau render).
-- **Q4. Model:** theo đề xuất, `qwen3:14b`; chạy thử ≥ 90 % bài qua validate P3 ngay, không thì báo lại trước READY.
+- **Q4. Model:** `qwen3:14b`. **Sửa đổi 2026-09-29:** đạt khi chạy thật ≥ 90 % bài `origin: ai` có ≥ 4 dấu câu `. , ? ! : ; …` / 100 từ (đếm trên phần đoạn văn), trên cùng 18 bài của lần đo đầu; không đạt → báo lại trước READY. (Bản đầu: ≥ 90 % qua validate token-chặt lần đầu → đo 72 %, bài "qua" chỉ ~1 dấu / 100 từ.)
 
 ## Quyết định
 
 - **P1. Phạm vi bài:** một bài cho mỗi Short `rendered` chưa xóa (Short AI, Short thêm CP9; tập Short và khai thị). Soạn theo yêu cầu: nút "Soạn bài" từng Short, nút "Soạn bài cho mọi Short" (bỏ qua Short đã có bài còn hợp lệ). Chạy job ở làn `ai` (CP8.10), Ollama preflight như W4.
 - **P2. Text nguồn** = đúng lời của Short hiện tại, một hàm dùng chung: clip AI không cut → `clip_text` (CP6 G3, bỏ `head_cut`); clip có cut tay / Short thêm → dòng caption thuộc khoảng (CP9 `lines_in`, như `added_titling_input`). `source_sha256` = sha256 của text nguồn → bài `stale` khi text đổi (sửa đầu/cuối, selection chạy lại).
-- **P3. AI chỉ thêm dấu câu / chia đoạn:** prompt mới `post` `v1` (text trong code, có `prompt_sha256`), trả `{"paragraphs": ["…"]}`. Validate deterministic: nối mọi đoạn, tách token, chuẩn hóa như `normalize_word` (NFC, chữ thường, bỏ dấu câu đầu/cuối token) → phải **bằng đúng** dãy token nguồn (không thêm / bớt / đổi / đảo chữ); chỉ cho thêm dấu câu `. , ? ! : ; …` và ngoặc kép, đổi hoa/thường. Mỗi đoạn không rỗng. Sai → retry theo `retries`; hết lượt → bài `origin: raw` (một đoạn = text nguồn, viết hoa chữ đầu, thêm dấu chấm cuối), UI cảnh báo. Text dài (khai thị 4–7 phút): chia khối ≤ `[post] chunk_words` (mặc định 400) theo ranh giới dòng caption, mỗi khối một lần gọi, validate từng khối. Log mỗi lần gọi: `work/<id>/post_log.json` (append, không byte-stable, như CP9 C6).
+- **P3. AI chỉ thêm dấu câu / chia đoạn — chữ luôn là chữ gốc** (sửa đổi HUMAN LEAD 2026-09-29; prompt `v1` + validate token-chặt bị thay): prompt `post` `v2` (text trong code, có `prompt_sha256`), yêu cầu ngắn gọn "thêm dấu câu, chia đoạn, viết hoa đầu câu, giữ nguyên từ ngữ, chỉ trả văn bản"; trả **văn bản thường** (không JSON), đoạn cách nhau dòng trống. Chiếu deterministic (stdlib `difflib.SequenceMatcher`, `autojunk=False`): tách token output AI, chuẩn hóa như `normalize_word` (NFC, chữ thường, bỏ dấu câu đầu/cuối token), gióng với dãy token nguồn. Bài = **đúng dãy token nguồn**, mỗi token gốc nhận từ token AI khớp (khối `equal`): dấu câu đầu/cuối token (chỉ `. , ? ! : ; …` và ngoặc kép), chữ hoa ký tự đầu, ngắt đoạn sau token. Token nguồn không khớp (AI thêm / bớt / đổi chữ) → giữ chữ gốc, không dấu; token AI thừa → bỏ. Sau chiếu: chữ đầu mỗi đoạn và sau `. ? ! …` viết hoa, đoạn cuối kết thúc bằng dấu câu kết (thiếu → thêm `.`). Tỉ lệ khớp = token nguồn khớp / tổng; < 0.9, output rỗng hoặc lỗi HTTP/timeout → retry theo `retries`; hết lượt → `origin: raw` (một đoạn = text nguồn, viết hoa chữ đầu, dấu chấm cuối), UI cảnh báo. Bài `ai` có < 4 dấu / 100 từ → UI nhãn "ít dấu câu" (vẫn là `ai`). Text dài: chia khối ≤ `[post] chunk_words` (mặc định 400) theo ranh giới dòng caption, mỗi khối một lần gọi + chiếu riêng; khối `raw` → cả bài `raw`. Log mỗi lần gọi: `work/<id>/post_log.json` (append, không byte-stable, như CP9 C6) gồm output thô của AI và tỉ lệ khớp.
 - **P4. Bố cục text sao chép** (Q2):
 
   ```text
@@ -94,7 +94,7 @@ Trên thẻ mỗi Short (tập Short và khai thị): bấm "Soạn bài" → c�
 ## Acceptance Criteria
 
 1. Text nguồn P2 đúng cho clip AI (có `head_cut`), clip có cut tay và Short thêm; đổi cut → bài `stale`.
-2. Validate P3: chấp nhận output chỉ thêm dấu câu / chia đoạn / đổi hoa-thường; từ chối thêm, bớt, đổi, đảo chữ; hết lượt → `raw`. Text dài chia khối theo ranh giới dòng, nối lại đúng.
+2. Chiếu P3: output AI thêm / bớt / đổi / đảo chữ → bài vẫn đúng dãy token nguồn, dấu câu / hoa / ngắt đoạn chỉ lấy từ token khớp; tỉ lệ khớp < 0.9 → retry, hết lượt → `raw`; nhãn "ít dấu câu"; text dài chia khối theo ranh giới dòng, nối lại đúng.
 3. `posts.json` đọc / ghi / validate đúng P7; soạn lại giữ `image`, `link`, `posted_at`; file hỏng → `post_error`, không ghi đè.
 4. Ảnh P5: gán ảnh ít dùng nhất, đổi ảnh, ảnh thiếu, tải ảnh, xóa ảnh; tên ngoài thư viện / path traversal → 404.
 5. Link P6: các dạng hợp lệ chuẩn hóa đúng, dạng khác → 422.
@@ -109,7 +109,7 @@ Trên thẻ mỗi Short (tập Short và khai thị): bấm "Soạn bài" → c�
 ## Required verification
 
 - `conda run -n auto-short python -m pytest -q -n auto` — toàn bộ PASS (AC 1–12; test mới cho P2, P3, P5–P7, P5a, P5b, P13, route; test tìm ảnh dùng HTTP server local / opener giả, không ra Internet).
-- Chạy thật với Ollama `qwen3:14b` trên bản sao (không ghi `work/` / `output/` chính): ≥ 10 Short từ ≥ 2 tập Short + 2 Short khai thị; ghi vào Result tỉ lệ qua validate lần đầu / sau retry / `raw`, thời gian mỗi bài, số ký tự (Q4).
+- Chạy thật với Ollama `qwen3:14b` trên bản sao (không ghi `work/` / `output/` chính): ≥ 10 Short từ ≥ 2 tập Short + 2 Short khai thị; ghi vào Result (cùng 18 bài lần đo đầu) số bài `ai` / `raw`, tỉ lệ khớp, dấu câu / 100 từ mỗi bài, thời gian, số ký tự; Q4 đạt theo tiêu chí sửa đổi.
 - Tìm ảnh thật từ 2 link (một trang trong `sources.tsv`, một link ảnh trực tiếp): ghi số ứng viên / bỏ qua theo lý do, thời gian.
 - Mẫu đọc (theo thói quen HUMAN LEAD): gửi text P4 của 3–5 bài (kèm ảnh) để HUMAN LEAD đọc, quyết chất lượng dấu câu / chia đoạn.
 
