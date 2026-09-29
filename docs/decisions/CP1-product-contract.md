@@ -55,23 +55,27 @@ Mỗi mục §1–§11 dưới đây là quyết định cuối. Thay đổi b�
 
 Theo mẫu HUMAN LEAD cung cấp (ảnh chụp Short "HT.Tịnh Không / Thập Thiện Nghiệp Đạo Kinh (tập 14)" — "Các bậc thang tu học Phật pháp").
 
+Bố cục hiện hành (sửa đổi CP8.14, V16 — xem ghi chú cuối mục):
+
 ```text
-┌──────────────────────────┐  nền đen
-│  ┌────────────────────┐  │
-│  │ HEADER (vàng)      │  │  deterministic: speaker / series / tập — không AI
-│  └────────────────────┘  │
-│ ┌──────────────────────┐ │
-│ │                      │ │
-│ │  VIDEO NGUỒN         │ │  full width, crop giữa
-│ │                      │ │
+┌──────────────────────────┐  khung 1080×1920, nền đen
+│ ┌──────────────────────┐ │  HEADER (vàng), đỉnh ở lề 0.02 W
+│ │ HEADER               │ │  deterministic: speaker / series / tập — không AI
 │ └──────────────────────┘ │
-│  ┌────────────────────┐  │
-│  │ TITLE (vàng)       │  │  title/hook AI (CP6)
-│  └────────────────────┘  │
+├──────────────────────────┤  VIDEO NGUỒN: full width, crop giữa
+│                          │
+│  VIDEO NGUỒN             │
+│                          │
+│   ┌──────────────────┐   │  TITLE (vàng) nổi trên đáy video, cao thêm lên trên
+├───│ TITLE            │───┤  đáy video
+│   └──────────────────┘   │  mép dưới title y 1600 — title/hook AI (CP6)
+│                          │  nền đen (vùng giao diện YouTube Shorts)
 └──────────────────────────┘
 ```
 
-Tham số đo từ ảnh mẫu (576×1280), biểu diễn theo chiều rộng khung W để độc lập độ phân giải:
+Bố cục gốc CP1 (lịch sử, theo ảnh mẫu): header → video → title xếp dọc, khối nội dung căn giữa dọc.
+
+Tham số đo từ ảnh mẫu (576×1280), biểu diễn theo chiều rộng khung W để độc lập độ phân giải (bố cục gốc; vị trí, kích thước và cỡ chữ hiện hành theo sửa đổi CP8.14 cuối mục):
 
 | Thành phần | Thông số |
 |---|---|
@@ -88,6 +92,7 @@ Tham số đo từ ảnh mẫu (576×1280), biểu diễn theo chiều rộng kh
 - Sửa đổi HUMAN LEAD 2026-09-26 (CP6): title panel được phép **3 dòng hoặc thu nhỏ chữ** khi title dài hơn sức chứa 2 dòng ở cỡ chữ mẫu (≈ 34–36 ký tự); "tối đa 2 dòng" ở bảng trên không còn là giới hạn cứng. CP7 quyết cách fit với font đã chốt. Header vẫn tối đa 3 dòng.
 - Sửa đổi HUMAN LEAD 2026-09-27 (CP7, P3): title dài → **panel title cao thêm trước** (giữ cỡ chữ mẫu ở 3 dòng, khối nội dung vẫn căn giữa dọc, lề khung ≥ `min_frame_margin` 0.02 W); không đủ mới thu nhỏ chữ. Chiều cao title panel 0.27 W là tối thiểu, không cố định. Rule fit chi tiết (ngắt dòng header kiểu lấp đầy như ảnh mẫu, title ngắt cân): `docs/decisions/CP7-render-contract.md` R5.
 - Ảnh mẫu lưu tại `docs/decisions/assets/cp1-layout-reference.jpg`.
+- **Sửa đổi HUMAN LEAD 2026-09-29 (CP8.14, phương án V16):** title bị giao diện YouTube Shorts che (hàng tên kênh / mô tả ở đáy từ y ≈ 1625, cột nút phải từ x ≈ 905, y ≈ 990 — đo từ ảnh chụp tài khoản xem khác, bảng vùng che ở `docs/tasks/CP8.14-title-layout.md`). Bố cục mới thay bảng thông số trên (bảng giữ làm lịch sử ảnh mẫu): header nhỏ gọn ≈ 0.85 × 0.17 W ở đỉnh khung (lề 0.02 W); video full W cao ≈ 1.16 W ngay dưới header; title panel ≈ 0.75 W, cao ≥ 0.21 W, căn giữa ngang, **mép dưới cố định y 1600**, cao thêm lên trên khi 3 dòng, **vẽ đè lên đáy video**; chữ header ≈ 0.045 W, title ≈ 0.065 W; không còn căn giữa dọc khối nội dung, phần dưới video là nền đen. Chấp nhận: góc phải title (≈ 40 px) bị cột nút đè một chút; chữ burn-in của nguồn có thể lộ phía trên title. Pixel, key `[render]`, fit: `docs/decisions/CP7-render-contract.md` R4, R5.
 
 ## 5. Clip selection boundaries
 

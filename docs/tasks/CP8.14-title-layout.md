@@ -105,8 +105,24 @@ Không chạm database, security model hay public API contract → manual test l
 ## Result
 
 - Main changes:
-- Tests:
+  - `src/auto_short/config.py`: mặc định `[render]` theo L2 (`header_panel_width` 0.85, `header_panel_height` 0.17, `header_font_size` 0.045, `video_height` 1.16, `title_panel_width` 0.75, `title_panel_height` 0.21, `title_font_size` 0.065); thêm `title_bottom` 1.4815 (số, 0.1–2); bỏ `gap_video_title` (key cũ trong `config.toml` bị bỏ qua).
+  - `src/auto_short/render/plan.py`: `Geometry` bỏ `gap_video_title` / `fixed_height`, thêm `title_bottom`, `title_max_h` (trường), `header_y`, `video_y`; `title_max_height(cfg)` = `ceil(block_height(3, px(title_font_size) × line_spacing, panel_padding_y × W) − 1e-9)` — cùng biểu thức với `text.fit_title` (L3, 297 px mặc định); kiểm L4 trong `geometry()`; `layout()` theo L1 (header ở `min_frame_margin`, video ngay dưới, title `y = title_bottom − h`, không căn giữa dọc). Filter graph, `stage.py`, schema `render_manifest.json`, `RENDER_PLAN_VERSION` (vẫn 1) không đổi.
+  - `config.example.toml`, `README.md` (1 dòng: crop 1080x1254 thay 1080x1210 — số cũ sai sau thay đổi).
+  - Docs: CP7 R4 (bảng + luật vị trí + L3 + L4 + lịch sử), R5 (cỡ chữ mẫu, fit 227 / 297), R11 (ví dụ layout, header, `k03`), "Giới hạn đã biết", metadata; CP1 §4 (sơ đồ V16, ghi chú bảng gốc, "Sửa đổi CP8.14"); `AUTO_SHORT_CHECKPOINT_PLAN.md` mục CP8.14. `docs/ai/project-profile.md` không cần pointer mới.
+- Tests: `PYTHONPATH=<worktree>/src conda run -n auto-short python -m pytest -q` → **898 passed** (trước thay đổi: 881; thêm 17 test). Test đổi assert — lý do: hành vi đã duyệt thay đổi (L1–L3), không che lỗi:
+  - `test_render_plan.py`: số layout / geometry mặc định (AC1), filter graph (crop 930×1080, scale 1254, pad y 211, overlay 81:22 / 135:1303, panel 810×297, cỡ 49/70); `test_taller_title_panel_recentres_block` → `…grows_upwards_over_the_video` (L1 bỏ căn giữa dọc); `test_geometry_rejects_block_taller_than_frame` → bảng L4 tham số hóa.
+  - `test_render_text.py`: cỡ mẫu lấy từ config (49/70); các test tái hiện ảnh mẫu CP7 (ngắt header greedy, ngắt cân, tie-break) giữ nguyên số liệu nhưng truyền hình học ảnh mẫu tường minh (`REF_HEADER`, `REF_TITLE_INNER`); title 3 dòng / thu chữ đổi câu mẫu (câu cũ nay 2 dòng / vừa 70 px); ca header thất bại dài hơn (panel mới vẫn thu chữ được câu cũ).
+  - `test_render_stage.py`: header 48 px 2 dòng, title panel 227, cả hai title test 2 dòng ở 70 px; log CLI header; `HASH_KEYS` có `title_bottom`, không `gap_video_title`.
+  - `test_review.py`: xem trước 70 px, panel ≥ 227.
+  - `test_khaithi_ac1.py`: hash `render` mặc định đổi (L2/L5 cố ý; hash cũ ghi trong comment). Các hash khác giữ.
+  - Test mới: AC1 layout + `title_max_h` khớp fit với nhiều cấu hình; AC2 render lavfi title 3 dòng / thu chữ (68 px), pixel vùng title giao video là vàng panel, video phía trên, nền đen dưới, mép dưới 1600; AC3 validate `title_bottom`, key cũ bị bỏ qua, 8 ca L4; AC4 tập render bằng layout cũ giữ nguyên byte sau `set_title`, lần chạy sau `run (config changed)` encode lại cả 2 Short (0 reused); AC5 `preview_title` = dòng / cỡ / panel của manifest.
+- Verification khác:
+  - `node scripts/framework-check.mjs` → PASS (exit 0).
+  - Scratch render thật `rbjfCfFq3Dk` (hard-link `work/`, `review.json` + `manifest.json` chép riêng, `output_dir` scratch): `render: run (config changed)`, 13/13 encoded, 0 reused, 826.2 s Short trong 326 s. Layout gốc: header (81, 22, 918, 184), video (0, 211, 1080, 1254) crop 930×1080 x 255, title (135, 1373, 810, 227); header 48 px 2 dòng; 13/13 title 70 px (5 × 3 dòng panel 297 y 1303, 8 × 2 dòng panel 227 y 1373), mép dưới 1600 cho cả 13. `ffprobe` 13/13: h264 1080×1920 yuv420p 30000/1001, AAC 48 kHz stereo, lệch thời lượng ≤ 0.016 s, sha256 khớp manifest. `k01` / `k04` **byte-identical** với mẫu V16 (sha256 `d4883d8b…` / `3aecf124…`); `render_key` khác mẫu (config hash khác) như dự kiến. Frame `k01` / `k04` (t = 5 s): pixel title trong vùng giao video = `#FEDB00` (±2), dưới video nền đen. `work/` / `output/` chính không đổi (sha256 26 file trước / sau).
 - Review:
 - Important findings / decisions:
-- Known limitations:
-- PR:
+  - AC4 "`auto-short status` báo render `stale`": **không đúng với code hiện tại** — `status` chỉ in trạng thái đã lưu trong `manifest.json` (`done`) và không so `config_hash`; đổi config chỉ được phát hiện khi stage chạy lại (`check_up_to_date` → log `render: run (config changed)`). Hành vi L5 (file cũ giữ nguyên tới khi chạy lại, lúc đó encode lại cả tập) đúng và đã test. Không sửa `status` (ngoài scope); ghi ở CP7 "Giới hạn đã biết".
+  - L4 "header + khe + video ≤ 1920" implement là **đáy video** (`min_frame_margin` + header + khe + video) ≤ 1920 vì header bắt đầu ở `min_frame_margin`; thêm kiểm `title_panel_height` ≤ `title_panel_max_height` (giữ kiểm tương đương của CP7).
+  - L3 với mặc định: title 3 dòng ở 70 px cần 296.1 → panel 297 = tối đa, nên mẫu V16 (tối đa 300) và code cho cùng kết quả với mọi title vừa 3 dòng ở 70 px; `RENDER_PLAN_VERSION` không cần tăng (test AC4: `render_key` đổi theo config).
+- Known limitations: như CP7 "Giới hạn đã biết" (CP8.14): góc phải title ≈ 40 px dưới cột nút phải; chữ Hán burn-in có thể lộ phía trên title; header dòng dài bị ngắt 3 dòng thì thu chữ để vừa 184 px (vd. 53 ký tự → 34 px); sửa title một Short của tập cũ → render lại cả tập (một lần); `status` không báo stale trước khi chạy lại.
+- PR: 

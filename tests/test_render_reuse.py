@@ -131,6 +131,38 @@ def test_force_config_and_plan_version_encode_all(ws, rcfg, monkeypatch):
     assert enc == ["k01", "k02"]  # new plan version: no Short is reused
 
 
+# pre-CP8.14 default sizes (the old layout also had gap_video_title and vertical centring, which no longer exist)
+PRE_CP814 = dict(header_panel_width=0.79, header_panel_height=0.27, header_font_size=0.062, video_height=1.12,
+                 title_panel_width=0.81, title_panel_height=0.27, title_font_size=0.0815)
+
+
+def _files(rcfg):
+    return {p.relative_to(_out(rcfg)).as_posix(): p.read_bytes() for p in _out(rcfg).rglob("*") if p.is_file()}
+
+
+def test_layout_change_rerenders_whole_episode_only_when_rerun(ws, rcfg, caplog):
+    """CP8.14 AC4 / L5: an episode rendered with the old layout keeps its files byte for byte until it runs
+    again; the next run (here after a title edit of one Short) encodes every Short with the new layout."""
+    caplog.set_level(logging.INFO, logger="auto_short")
+    old = replace(rcfg, render=replace(rcfg.render, **PRE_CP814))
+    r, enc = _render(old)
+    assert enc == ["k01", "k02"]
+    before, old_doc = _files(rcfg), _rm(rcfg)
+    assert old_doc["layout"]["header_panel"]["h"] == 292
+
+    set_title(EID, rcfg, "k01", NEW)  # writes review.json only
+    assert _files(rcfg) == before
+    r, enc = _render(rcfg)
+    assert "render: run (config changed)" in caplog.text
+    assert r.ran and enc == ["k01", "k02"] and (r.encoded, r.reused) == (2, 0)
+    doc = _rm(rcfg)
+    assert doc["layout"]["header_panel"] == {"x": 81, "y": 22, "w": 918, "h": 184, "radius": 59}
+    assert all(s["title_font_size"] == 70 and s["layout"]["title_panel"]["y"] + s["layout"]["title_panel"]["h"] == 1600
+               for s in doc["shorts"])
+    assert [s["render_key"] for s in doc["shorts"]] != [s["render_key"] for s in old_doc["shorts"]]
+    assert doc["shorts"][0]["title"] == NEW
+
+
 def test_reuse_requires_matching_file(ws, rcfg):
     _render(rcfg)
     k02 = _out(rcfg) / "shorts/k02.mp4"

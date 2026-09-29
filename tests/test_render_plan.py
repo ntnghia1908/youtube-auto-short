@@ -61,36 +61,75 @@ def test_output_fps():
 # --- R4 -------------------------------------------------------------------------------------------------------
 
 def test_default_geometry_and_layout():
+    """CP8.14 AC1: layout V16 (header at the top margin, video right below, title bottom at 1600 px)."""
     g = plan.geometry(RenderConfig())
-    assert (g.header_w, g.header_h, g.video_h, g.title_w, g.title_h) == (853, 292, 1210, 875, 292)
-    assert (g.gap_header_video, g.gap_video_title, g.radius, g.min_frame_margin) == (5, 11, 59, 22)
-    assert g.title_max_h == 1920 - 2 * 22 - (292 + 5 + 1210 + 11) == 358
+    assert (g.header_w, g.header_h, g.video_h, g.title_w, g.title_h) == (918, 184, 1254, 810, 227)
+    assert (g.gap_header_video, g.radius, g.min_frame_margin, g.title_bottom) == (5, 59, 22, 1600)
+    # L3: 3 lines at the reference size (70 px): ceil(3 x 70 x 1.05 + 2 x 37.8) = ceil(296.1)
+    assert g.title_max_h == 297
+    assert not hasattr(RenderConfig(), "gap_video_title")
     lay = plan.layout(g, g.title_h, 1440, 1080)
     assert lay.as_dict() == {
-        "header_panel": {"x": 113, "y": 55, "w": 853, "h": 292, "radius": 59},
-        "video": {"x": 0, "y": 352, "w": 1080, "h": 1210, "crop": {"w": 964, "h": 1080, "x": 238, "y": 0}},
-        "title_panel": {"x": 102, "y": 1573, "w": 875, "h": 292, "radius": 59},
+        "header_panel": {"x": 81, "y": 22, "w": 918, "h": 184, "radius": 59},
+        "video": {"x": 0, "y": 211, "w": 1080, "h": 1254, "crop": {"w": 930, "h": 1080, "x": 255, "y": 0}},
+        "title_panel": {"x": 135, "y": 1373, "w": 810, "h": 227, "radius": 59},
     }
 
 
-def test_taller_title_panel_recentres_block():
+def test_taller_title_panel_grows_upwards_over_the_video():
+    """CP8.14 L1: no vertical centring; header and video stay put, the title bottom stays at title_bottom."""
     g = plan.geometry(RenderConfig())
-    lay = plan.layout(g, 353, 1440, 1080)
-    top = lay.header.y
-    bottom = lay.title.y + lay.title.h
-    assert top == (1920 - (1518 + 353)) // 2 == 24
-    assert abs(top - (1920 - bottom)) <= 1
-    assert lay.video.y == top + 292 + 5 and lay.title.y == lay.video.y + 1210 + 11
+    base = plan.layout(g, g.title_h, 1440, 1080)
+    lay = plan.layout(g, g.title_max_h, 1440, 1080)
+    assert (lay.header, lay.video, lay.crop) == (base.header, base.video, base.crop)
+    assert (lay.title.x, lay.title.y, lay.title.w, lay.title.h) == (135, 1303, 810, 297)
+    for t in (base.title, lay.title):
+        assert t.y + t.h == 1600 < 1625  # AC2: above the Shorts channel row
+        assert lay.video.y < t.y < lay.video.y + lay.video.h  # the title overlaps the bottom of the video
+    assert lay.video.y + lay.video.h - lay.title.y == 162 and base.video.y + base.video.h - base.title.y == 92
+
+
+def test_title_max_height_matches_the_fit():
+    """L3: title_max_h is exactly what fit_title needs for 3 lines at the reference size (other settings)."""
+    import math
+
+    from auto_short.render.text import block_height
+    for kw in ({}, {"title_font_size": 0.08}, {"line_spacing": 1.2, "panel_padding_y": 0.02},
+               {"title_font_size": 0.0815, "title_panel_height": 0.3}):
+        cfg = replace(RenderConfig(), **kw)
+        size0 = plan.px(cfg.title_font_size)
+        need = block_height(3, size0 * cfg.line_spacing, cfg.panel_padding_y * plan.WIDTH)
+        assert plan.title_max_height(cfg) == math.ceil(need - 1e-9) and need <= plan.title_max_height(cfg)
 
 
 def test_center_crop_other_aspects():
     assert plan.center_crop(1920, 1080, 1080, 1210) == plan.Crop(964, 1080, 478, 0)  # 16:9 keeps ~50 %
     assert plan.center_crop(1080, 1920, 1080, 1210) == plan.Crop(1080, 1210, 0, 355)  # vertical: crop height
+    assert plan.center_crop(1440, 1080, 1080, 1254) == plan.Crop(930, 1080, 255, 0)  # V16, 4:3 source
 
 
-def test_geometry_rejects_block_taller_than_frame():
-    with pytest.raises(plan.PlanError, match="does not fit"):
-        plan.geometry(replace(RenderConfig(), video_height=1.5))
+@pytest.mark.parametrize("kw, match", [
+    ({"title_bottom": 1.8}, "title_bottom gives 1944 px > frame height 1920"),
+    ({"video_height": 1.7}, "video end at 2047 px > frame height 1920"),
+    ({"header_panel_height": 0.4, "min_frame_margin": 0.1, "video_height": 1.3},
+     "video end at 1949 px > frame height 1920"),
+    ({"title_bottom": 0.4}, "above the header bottom 206 px"),
+    ({"header_panel_height": 1.0, "video_height": 0.5, "title_bottom": 1.2}, "above the header bottom 1102 px"),
+    ({"title_panel_height": 0.3}, "title_panel_height gives 324 px > the 297 px"),
+    ({"header_panel_width": 1.05}, "header_panel_width gives 1134 px > frame width 1080"),
+    ({"title_panel_width": 1.01}, "title_panel_width gives 1091 px > frame width 1080"),
+])
+def test_geometry_rejects_impossible_layouts(kw, match):
+    """CP8.14 L4."""
+    with pytest.raises(plan.PlanError, match=match):
+        plan.geometry(replace(RenderConfig(), **kw))
+
+
+def test_geometry_edge_cases_accepted():
+    # title bottom at the frame edge; tallest title touching the header bottom exactly
+    assert plan.geometry(replace(RenderConfig(), title_bottom=1920 / 1080)).title_bottom == 1920
+    g = plan.geometry(replace(RenderConfig(), title_bottom=(22 + 184 + 297) / 1080))
+    assert g.title_bottom - g.title_max_h == g.header_y + g.header_h
 
 
 # --- R6 -------------------------------------------------------------------------------------------------------
@@ -102,26 +141,27 @@ def test_escape_option():
 
 def _graph(segments, **kw):
     g = plan.geometry(RenderConfig())
-    lay = plan.layout(g, 353, 1440, 1080)
+    lay = plan.layout(g, g.title_max_h, 1440, 1080)
     lines = [plan.TextLine(Path("/t/h0.txt"), 100)]
     return plan.filter_graph(segments=segments, fps=NTSC, lay=lay, font_file=Path("/f/font.ttf"),
-                             header_lines=lines, header_size=67, title_lines=lines, title_size=88, **kw)
+                             header_lines=lines, header_size=49, title_lines=lines, title_size=70, **kw)
 
 
 def test_filter_graph_structure():
     graph = _graph([(1100, 2000), (2500, 4000)])
     assert graph.startswith("[0:v]fps=30000/1001,select='between(round(t*30000/1001),33,59)+"
                             "between(round(t*30000/1001),75,119)'")
-    assert "crop=964:1080:238:0,scale=1080:1210:flags=lanczos" in graph
-    assert "pad=1080:1920:0:321" in graph
+    assert "crop=930:1080:255:0,scale=1080:1254:flags=lanczos" in graph
+    assert "pad=1080:1920:0:211" in graph
     assert "[0:a]asplit=2[as0][as1]" in graph
     assert "[as0]atrim=start=1.1:end=2,asetpts=PTS-STARTPTS[a0]" in graph
     assert "[as1]atrim=start=2.5:end=4,asetpts=PTS-STARTPTS[a1]" in graph
     assert "[a0][a1]concat=n=2:v=0:a=1" in graph
-    assert "drawtext=fontfile=/f/font.ttf:textfile=/t/h0.txt:expansion=none:text_shaping=1:fontsize=67" in graph
+    assert "drawtext=fontfile=/f/font.ttf:textfile=/t/h0.txt:expansion=none:text_shaping=1:fontsize=49" in graph
     assert "y_align=baseline:y=100" in graph
-    assert "[vid][hp]overlay=113:24" in graph and "[v1][tp]overlay=102:1542" in graph
-    assert "color=c=0xFEDB00:s=875x353" in graph
+    # video first, then header, then title on top (CP8.14 AC2: the title is drawn over the video)
+    assert graph.index("[vid]") < graph.index("[vid][hp]overlay=81:22") < graph.index("[v1][tp]overlay=135:1303")
+    assert "color=c=0xFEDB00:s=810x297" in graph
     single = _graph([(0, 1000)])
     assert "[0:a]anull[as0]" in single and "concat=n=1" in single
 
@@ -184,8 +224,8 @@ def test_dissolves_manifest_entries():
 
 
 CP7_VIDEO = ("[0:v]fps=30000/1001,select='between(round(t*30000/1001),33,59)+between(round(t*30000/1001),75,119)',"
-             "setpts=N/(30000/1001)/TB,crop=964:1080:238:0,scale=1080:1210:flags=lanczos,setsar=1,"
-             "scale=out_color_matrix=bt709:out_range=tv,format=yuv444p,pad=1080:1920:0:321:color=0x000000[vid];")
+             "setpts=N/(30000/1001)/TB,crop=930:1080:255:0,scale=1080:1254:flags=lanczos,setsar=1,"
+             "scale=out_color_matrix=bt709:out_range=tv,format=yuv444p,pad=1080:1920:0:211:color=0x000000[vid];")
 
 
 def test_filter_graph_dissolve_zero_is_the_cp7_graph():
@@ -201,7 +241,7 @@ def test_filter_graph_dissolve_structure():
     segs = [(1100, 2000), (2500, 4000), (4050, 5000), (5500, 6000)]  # D = 4, 0, 4
     graph = _graph(segs, dissolve=0.15)
     f = "30000/1001"
-    per_frame = ("crop=964:1080:238:0,scale=1080:1210:flags=lanczos,setsar=1,"
+    per_frame = ("crop=930:1080:255:0,scale=1080:1254:flags=lanczos,setsar=1,"
                  "scale=out_color_matrix=bt709:out_range=tv,format=yuv444p")
     assert graph.startswith(f"[0:v]fps={f},split=4[s0][s1][s2][s3];"
                             f"[s0]trim=start_pts=33:end_pts=62,setpts=PTS-STARTPTS,{per_frame}[v0];"
@@ -212,6 +252,6 @@ def test_filter_graph_dissolve_structure():
     assert f"[v0][v1]xfade=transition=fade:duration=0.133467:offset=0.834167[x1]" in graph  # 29 - 4 = 25 frames
     assert f"[x1][v2]concat=n=2:v=1:a=0,settb=1/({f}),setpts=N[x2]" in graph  # 29 + 47 - 4 = 72 frames, + 30
     assert f"[x2][v3]xfade=transition=fade:duration=0.133467:offset=3.269933[x3]" in graph  # 72 + 30 - 4 = 98
-    assert f"[x3]setpts=N/({f})/TB,pad=1080:1920:0:321:color=0x000000[vid];" in graph
+    assert f"[x3]setpts=N/({f})/TB,pad=1080:1920:0:211:color=0x000000[vid];" in graph
     # audio unchanged: hard cuts
     assert "[a0][a1][a2][a3]concat=n=4:v=0:a=1" in graph and "afade" not in graph and "acrossfade" not in graph

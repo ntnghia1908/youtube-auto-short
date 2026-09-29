@@ -3,10 +3,10 @@
 | Metadata | Value |
 |---|---|
 | Status | ACCEPTED |
-| Accepted by | — (R1–R11, P1–P5 duyệt cùng APPROVE TASK 2026-09-27, P3 sửa; font, ngắt dòng header, lề khung HUMAN LEAD 2026-09-27 sau phase 1; sửa P4 `crf` 22; AC4 chấp nhận (cắt thẳng); chuyển cảnh video → CP10; review ACCEPTED). Sửa đổi HUMAN LEAD 2026-09-27 (CP8.1, APPROVE TASK V1–V6, P1, P2): dissolve video 0.15 s ở điểm nối (R6, R11, § Chuyển cảnh). Sửa đổi HUMAN LEAD 2026-09-27 (CP8.2, APPROVE TASK T1–T6): title override `review.json`, tái dùng từng Short (R2, R6, R8, R10, R11). Sửa đổi HUMAN LEAD 2026-09-27 (CP8.5, APPROVE TASK X2): Short bị xóa `skip_reason: "rejected"` (R2, R11) |
+| Accepted by | — (R1–R11, P1–P5 duyệt cùng APPROVE TASK 2026-09-27, P3 sửa; font, ngắt dòng header, lề khung HUMAN LEAD 2026-09-27 sau phase 1; sửa P4 `crf` 22; AC4 chấp nhận (cắt thẳng); chuyển cảnh video → CP10; review ACCEPTED). Sửa đổi HUMAN LEAD 2026-09-27 (CP8.1, APPROVE TASK V1–V6, P1, P2): dissolve video 0.15 s ở điểm nối (R6, R11, § Chuyển cảnh). Sửa đổi HUMAN LEAD 2026-09-27 (CP8.2, APPROVE TASK T1–T6): title override `review.json`, tái dùng từng Short (R2, R6, R8, R10, R11). Sửa đổi HUMAN LEAD 2026-09-27 (CP8.5, APPROVE TASK X2): Short bị xóa `skip_reason: "rejected"` (R2, R11). Sửa đổi HUMAN LEAD 2026-09-29 (CP8.14, APPROVE L1–L6, phương án V16): bố cục video lớn, title nổi trên đáy video tránh giao diện YouTube Shorts; mặc định `[render]` mới, thêm `title_bottom`, bỏ `gap_video_title` (R4, R5, R11, § Giới hạn đã biết) |
 | Checkpoint | CP7 (S2) |
 | Roadmap | `AUTO_SHORT_CHECKPOINT_PLAN.md` §4 CP7 |
-| Task contract | `docs/tasks/CP7-render.md`; sửa đổi CP8.1: `docs/tasks/CP8.1-dissolve.md`; sửa đổi CP8.2: `docs/tasks/CP8.2-title-override.md`; sửa đổi CP8.5: `docs/tasks/CP8.5-web-review.md` |
+| Task contract | `docs/tasks/CP7-render.md`; sửa đổi CP8.1: `docs/tasks/CP8.1-dissolve.md`; sửa đổi CP8.2: `docs/tasks/CP8.2-title-override.md`; sửa đổi CP8.5: `docs/tasks/CP8.5-web-review.md`; sửa đổi CP8.14: `docs/tasks/CP8.14-title-layout.md` |
 | Builds on | `docs/decisions/CP1-product-contract.md` §2, §4, §5, §7, §8, §10; `docs/decisions/CP2-workspace-contract.md` D1–D8; `docs/decisions/CP4-analysis-contract.md` A8; `docs/decisions/CP5-selection-contract.md` B11; `docs/decisions/CP6-titling-contract.md` G2, G5, G6, G7 |
 
 File này là **canonical owner** của layout pixel, font đóng gói, đo chữ / ngắt dòng / fit, cách dựng lệnh `ffmpeg`, vị trí output và schema `render_manifest.json` mà CP8 (end-to-end) và CP9 (review) dùng lại. Nơi khác chỉ trỏ tới đây. Layout mẫu và tỉ lệ gốc: `docs/decisions/CP1-product-contract.md` §4; stage framework (manifest v1, skip/stale, config hash, CLI exit code): `docs/decisions/CP2-workspace-contract.md`. Thay đổi cần decision gate mới với HUMAN LEAD.
@@ -32,37 +32,40 @@ Implementation tham chiếu: `src/auto_short/render/` (`text.py`, `plan.py`, `st
 
 ## R4. Layout
 
-Khung 1080×1920, nền `#000000`, panel `#FEDB00` (CP1 §4). Mọi tỉ lệ là key `[render]` theo W = 1080 (mặc định trong ngoặc; px = `round(tỉ lệ × W)`):
+Khung 1080×1920, nền `#000000`, panel `#FEDB00` (CP1 §4). Mọi tỉ lệ là key `[render]` theo W = 1080 (mặc định trong ngoặc; px = `round(tỉ lệ × W)`). **Sửa đổi CP8.14 (layout V16, HUMAN LEAD 2026-09-29):** thay layout "khối nội dung căn giữa dọc" của CP7; lý do và vùng giao diện YouTube Shorts đo được: `docs/tasks/CP8.14-title-layout.md`.
 
 | Thành phần | Mặc định | px |
 |---|---|---|
-| Header panel | rộng `header_panel_width` 0.79, cao `header_panel_height` 0.27 (cố định) | 853 × 292 |
+| Header panel | rộng `header_panel_width` 0.85, cao `header_panel_height` 0.17 (cố định) | 918 × 184 |
+| Lề trên header | `min_frame_margin` 0.02 | 22 |
 | Khe header → video | `gap_header_video` 0.005 | 5 |
-| Video | full W, cao `video_height` 1.12 (làm tròn lên số chẵn) | 1080 × 1210 |
-| Khe video → title | `gap_video_title` 0.01 | 11 |
-| Title panel | rộng `title_panel_width` 0.81, cao tối thiểu `title_panel_height` 0.27 (P3: cao thêm tới `title_panel_max_height`) | 875 × 292…358 |
+| Video | full W, cao `video_height` 1.16 (làm tròn lên số chẵn) | 1080 × 1254 |
+| Title panel | rộng `title_panel_width` 0.75, cao tối thiểu `title_panel_height` 0.21 (P3: cao thêm tới `title_panel_max_height`) | 810 × 227…297 |
+| Mép dưới title panel | `title_bottom` 1.4815 | 1600 |
 | Bo góc panel | `panel_radius` 0.055 (đo từ ảnh mẫu) | 59 |
-| Lề khung tối thiểu | `min_frame_margin` 0.02 | 22 |
 
-- `title_panel_max_height` **không phải key**: suy ra = `1920 − 2 × min_frame_margin − (header + khe + video + khe)` = 358 px (HUMAN LEAD 2026-09-27: một tham số).
-- Panel căn giữa ngang (`x = (1080 − w) // 2`); khối nội dung (header + video + title) căn giữa dọc (`top = (1920 − khối) // 2`) → layout tính **theo từng clip** (title panel cao thêm thì khối dịch lên). Mặc định: title 292 → top 55; title 353 → top 24; title 358 → top 22.
-- Video: crop giữa nguồn theo tỉ lệ 1080:1210 (nguồn rộng hơn → cắt ngang, ngược lại → cắt dọc; kích thước chẵn) rồi scale lanczos về 1080×1210. Nguồn 1440×1080 → crop 964×1080 tại x 238.
+- Vị trí (không căn giữa dọc): header `y = min_frame_margin`; video `y` = đáy header + `gap_header_video`; title panel `y = title_bottom − chiều cao title` — mép dưới cố định, panel cao thêm **lên trên** khi 3 dòng. Panel căn giữa ngang (`x = (1080 − w) // 2`). Mặc định: header (81, 22, 918, 184); video (0, 211, 1080, 1254); title x 135, y 1373 (227 px) / 1303 (297 px). Chỉ title thay đổi theo clip.
+- Title panel **vẽ đè lên video** (overlay sau video, R6): mặc định đè 92 px (227) / 162 px (297) đáy video. Phần dưới video (y 1465–1920) là nền đen; mép dưới title 1600 nằm trên hàng tên kênh của YouTube Shorts (y ≥ ≈ 1625).
+- `title_panel_max_height` **không phải key** (CP8.14 L3): = chiều cao cần cho 3 dòng ở cỡ chữ mẫu = `ceil(3 × line_spacing × cỡ title mẫu + 2 × panel_padding_y)` (cùng biểu thức với fit R5) = `ceil(296.1)` = 297 px.
+- Kiểm hình học (CP8.14 L4; vi phạm → `PlanError`, stage `failed` / xem trước title báo lỗi): panel rộng ≤ W; `title_bottom` ≤ 1920; đáy video (lề trên + header + khe + video) ≤ 1920; `title_panel_height` ≤ `title_panel_max_height`; đỉnh title cao nhất (`title_bottom − title_panel_max_height`) ≥ đáy header.
+- Video: crop giữa nguồn theo tỉ lệ 1080:1254 (nguồn rộng hơn → cắt ngang, ngược lại → cắt dọc; kích thước chẵn) rồi scale lanczos về 1080×1254. Nguồn 1440×1080 → crop 930×1080 tại x 255.
 - Không vẽ gì ở vùng đen còn lại (subtitle tắt, CP1 §7).
 - Bo góc: alpha panel `255 × clip(r − d + 0.5, 0, 1)` với `d` = khoảng cách tới cung góc (khử răng cưa 1 px).
+- Trước CP8.14 (lịch sử): header 0.79 × 0.27 W, video 1.12 W, khe video → title `gap_video_title` 0.01 W, title 0.81 × ≥ 0.27 W ngay dưới video, khối nội dung căn giữa dọc, `title_panel_max_height` = `1920 − 2 × min_frame_margin − (header + khe + video + khe)` = 358 px.
 
 ## R5. Chữ: đo, ngắt dòng, fit
 
 - Font: **Be Vietnam Pro Regular** (R7). Bề rộng = tổng advance `hmtx` (qua `cmap` format 4/12, `head.unitsPerEm`) của chuỗi NFC, đọc bằng `struct` (không dependency). Ký tự không có glyph → `failed` (lỗi cấu hình font).
-- `ffmpeg drawtext` shape bằng HarfBuzz (kerning), rộng hơn tổng `hmtx` tối đa 0.5 % (đo trên header + 13 title ở 67/88 px). Ngắt dòng so với bề rộng trong × (1 − 0.01) (hằng `WIDTH_SAFETY` trong code).
-- Cỡ chữ mẫu: `header_font_size` 0.062 W = **67 px**, `title_font_size` 0.0815 W = **88 px** — suy từ x-height đo trên ảnh mẫu (0.0330 W / 0.0434 W) chia x-height Be Vietnam Pro (530/1000). Title ≈ 1.33× header.
-- Bước dòng = `line_spacing` 1.05 × cỡ chữ (70.35 / 92.4 px; ảnh mẫu 0.0651 W / 0.0868 W = 70.3 / 93.75 px).
+- `ffmpeg drawtext` shape bằng HarfBuzz (kerning), rộng hơn tổng `hmtx` tối đa 0.5 % (đo ở CP7 trên header + 13 title ở 67/88 px). Ngắt dòng so với bề rộng trong × (1 − 0.01) (hằng `WIDTH_SAFETY` trong code).
+- Cỡ chữ mẫu (CP8.14 V16): `header_font_size` 0.045 W = **49 px**, `title_font_size` 0.065 W = **70 px** (title ≈ 1.43× header). Header mẫu `HT.Tịnh Không / Thập Thiện Nghiệp Đạo Kinh (tập 9)` fit còn 48 px, 2 dòng trong panel 184 px. Trước CP8.14: 0.062 W = 67 px / 0.0815 W = 88 px, suy từ x-height đo trên ảnh mẫu (0.0330 W / 0.0434 W) chia x-height Be Vietnam Pro (530/1000).
+- Bước dòng = `line_spacing` 1.05 × cỡ chữ (51.45 / 73.5 px ở cỡ mẫu; ảnh mẫu 0.0651 W / 0.0868 W = 70.3 / 93.75 px).
 - Lề trong panel: ngang `panel_padding_x` 0.03 W (32 px), dọc `panel_padding_y` 0.035 W (38 px). Bề rộng trong = panel − 2 × padding_x. Khối chữ n dòng cần `n × bước dòng + 2 × padding_y`. (0.04 W ngang như đề xuất phase 1 không cho dòng mẫu "Thập Thiện Nghiệp Đạo" (769 px ở 67 px) vừa panel 853 → ảnh mẫu tự không tái hiện được; 0.03 W tái hiện đúng.)
 - Ngắt dòng chỉ tại khoảng trắng, so trong đơn vị font (số nguyên → tie chính xác):
   - **Header** (HUMAN LEAD 2026-09-27): mỗi dòng logic của `titles.json.header.lines` ngắt kiểu **lấp đầy dòng trên** (greedy) như ảnh mẫu → `HT.Tịnh Không / Thập Thiện Nghiệp Đạo / Kinh (tập 9)`.
   - **Title**: ngắt **cân** — ít dòng nhất, rồi dòng dài nhất ngắn nhất, rồi tie-break tổng bình phương phần thiếu `Σ (bề rộng trong − bề rộng dòng)²` nhỏ nhất (tránh dòng đầu quá ngắn).
 - Fit **header**: panel cố định; từ cỡ mẫu giảm 1 px tới khi tổng dòng ≤ 3 và khối vừa panel; dưới `ceil(min_font_scale × cỡ mẫu)` (0.6) → `failed`. Fit một lần cho episode.
 - Fit **title** (P3):
-  1. Ở cỡ mẫu, ngắt cân (≤ 3 dòng). Nếu có cách ngắt và khối cần ≤ `title_panel_max_height`: panel = `max(title_panel_height, ceil(khối cần))` — 2 dòng giữ 292 px, 3 dòng ở 88 px cần 353 px.
+  1. Ở cỡ mẫu, ngắt cân (≤ 3 dòng). Nếu có cách ngắt và khối cần ≤ `title_panel_max_height`: panel = `max(title_panel_height, ceil(khối cần))` — 2 dòng giữ 227 px, 3 dòng ở 70 px cần 297 px (= `title_panel_max_height`, R4: mọi title ngắt được ≤ 3 dòng ở cỡ mẫu giữ cỡ mẫu).
   2. Ngược lại: panel = `title_panel_max_height`, giảm cỡ 1 px tới khi ≤ 3 dòng và vừa.
   3. Dưới `ceil(min_font_scale × cỡ mẫu)` → `failed` (không cắt chữ).
 - Vị trí dọc: khối cap-height (đỉnh chữ hoa dòng đầu tới baseline dòng cuối, OS/2 `sCapHeight`) căn giữa trong panel (như ảnh mẫu, lệch ≤ 2 px @576); baseline từng dòng làm tròn px, vẽ bằng `drawtext y_align=baseline`. Ngang: mỗi dòng căn giữa theo bề rộng đã shape (`x = (w − text_w)/2`).
@@ -119,25 +122,25 @@ Thứ tự key cố định:
  "render_config_hash": "<config_hash R10>", "title_source": "titles",
  "font": {"family": "Be Vietnam Pro", "file": "fonts/BeVietnamPro-Regular.ttf", "sha256": "cd1ef6e9…"},
  "layout": {"width": 1080, "height": 1920, "background": "#000000", "panel_color": "#FEDB00",
-            "header_panel": {"x": 113, "y": 55, "w": 853, "h": 292, "radius": 59},
-            "video": {"x": 0, "y": 352, "w": 1080, "h": 1210, "crop": {"w": 964, "h": 1080, "x": 238, "y": 0}},
-            "title_panel": {"x": 102, "y": 1573, "w": 875, "h": 292, "radius": 59}},
+            "header_panel": {"x": 81, "y": 22, "w": 918, "h": 184, "radius": 59},
+            "video": {"x": 0, "y": 211, "w": 1080, "h": 1254, "crop": {"w": 930, "h": 1080, "x": 255, "y": 0}},
+            "title_panel": {"x": 135, "y": 1373, "w": 810, "h": 227, "radius": 59}},
  "encode": {"vcodec": "libx264", "crf": 22, "preset": "medium", "pix_fmt": "yuv420p", "fps": "30000/1001",
             "acodec": "aac", "sample_rate": 48000, "channels": 2, "audio_bitrate": "192k", "dissolve": 0.15},
  "header": {"lines": ["HT.Tịnh Không", "Thập Thiện Nghiệp Đạo Kinh (tập 9)"],
-            "display_lines": ["HT.Tịnh Không", "Thập Thiện Nghiệp Đạo", "Kinh (tập 9)"], "font_size": 67},
+            "display_lines": ["HT.Tịnh Không", "Thập Thiện Nghiệp Đạo Kinh (tập 9)"], "font_size": 48},
  "stats": {"clips": 13, "rendered": 13, "skipped": 0, "seconds": 826.196},
  "shorts": [{"clip_id": "k03", "candidate_id": "c00361", "status": "rendered", "skip_reason": null,
              "file": "shorts/k03.mp4", "sha256": "…", "title": "Tâm thiện thì tướng mạo cũng từ bi",
-             "title_display_lines": ["Tâm thiện thì", "tướng mạo", "cũng từ bi"], "title_font_size": 88,
-             "layout": {"header_panel": {"x": 113, "y": 24, …}, "video": {"x": 0, "y": 321, …},
-                        "title_panel": {"x": 102, "y": 1542, "w": 875, "h": 353, "radius": 59}},
+             "title_display_lines": ["Tâm thiện thì tướng", "mạo cũng từ bi"], "title_font_size": 70,
+             "layout": {"header_panel": {"x": 81, "y": 22, …}, "video": {"x": 0, "y": 211, …},
+                        "title_panel": {"x": 135, "y": 1373, "w": 810, "h": 227, "radius": 59}},
              "source_start": 964.228, "source_end": 1087.32, "segments": [[964.228, 966.979], …], "duration": 98.612,
              "dissolves": [{"at": 2.736, "frames": 2}, {"at": 6.607, "frames": 4}, …],
              "title_origin": "ai", "render_key": "…"}]}
 ```
 
-- `layout` gốc = layout mẫu (title panel 0.27 W); `shorts[].layout` = layout thật của clip. `fps` là phân số chuỗi.
+- `layout` gốc = layout mẫu (title panel `title_panel_height`, 0.21 W); `shorts[].layout` = layout thật của clip. CP8.14: chỉ đổi giá trị (title panel có thể giao video), schema và key giữ nguyên. `fps` là phân số chuỗi.
 - Entry `skipped`: `file`, `sha256`, `title_display_lines`, `title_font_size`, `layout` = `null`; `title` = title của `titles.json` (`null` khi `untitled`); `segments`/`duration` vẫn ghi. CP8.5: entry `skip_reason: "rejected"` ghi `title` / `title_origin` = title sẽ dùng khi khôi phục (override nếu có).
 - `file` relative theo `<output_dir>/<episode_id>/`; `stats.seconds` = Σ `duration` clip `rendered` (3 chữ số).
 - CP8.1 (additive, giữ `schema_version: 1`, P1): `encode.dissolve` = giây cấu hình (key cuối của `encode`); `shorts[].dissolves` (sau `duration`) = mỗi điểm nối một phần tử theo thứ tự, `at` = giây trên timeline video của Short tại điểm nối (frame đầu của segment j+1 / fps, 3 chữ số — tâm cửa sổ dissolve), `frames` = `D_j` (0 = cắt thẳng); clip 1 segment → `[]`; entry `skipped` → `null`.
@@ -179,7 +182,9 @@ Hình học R4 giữ mặc định đã duyệt (sai khác số đo ≤ 6 px @10
 
 ## Giới hạn đã biết
 
-- H.264 4:2:0: cạnh panel/video ở tọa độ lẻ (khe 5 và 11 px, title 353 px) để lại viền màu 1 px ngay ngoài cạnh, biên độ ≤ 21/255 — không thấy bằng mắt; kiểm độc lập bỏ qua đúng 1 px sát cạnh, phần nền đen còn lại ≤ 15/255.
+- H.264 4:2:0: cạnh panel/video ở tọa độ lẻ (khe 5 px, title 227 / 297 px; CP7: khe 5 và 11 px, title 353 px) để lại viền màu 1 px ngay ngoài cạnh, biên độ ≤ 21/255 — không thấy bằng mắt; kiểm độc lập bỏ qua đúng 1 px sát cạnh, phần nền đen còn lại ≤ 15/255.
 - Không xét SAR khác 1 của nguồn (pixel không vuông); nguồn test SAR 1.
-- `min_frame_margin` 0.02 W: trên video test title 46–49 ký tự vẫn 3 dòng ở 88 px; hai title 51 ký tự (`k01`, `k02`) không ngắt được ≤ 3 dòng ở 88 px nên panel 358 px và thu nhỏ còn 85 / 86 px.
-- Title không vừa 2 dòng ở 88 px (từ ≈ 34–36 ký tự, tùy chữ) sang 3 dòng; ngắt cân khi đó có thể cho 3 dòng ngắn (vd. "Tâm thiện thì / tướng mạo / cũng từ bi"). Không có luật "thu nhỏ để giữ 2 dòng" (P3 chọn panel cao thêm trước). 9/13 title test là 3 dòng.
+- CP7 (lịch sử, layout trước CP8.14): trên video test title 46–49 ký tự vẫn 3 dòng ở 88 px; hai title 51 ký tự (`k01`, `k02`) thu nhỏ còn 85 / 86 px trong panel 358 px; 9/13 title test là 3 dòng.
+- Title không vừa 2 dòng ở cỡ mẫu sang 3 dòng; ngắt cân khi đó có thể cho 3 dòng ngắn. Không có luật "thu nhỏ để giữ 2 dòng" (P3 chọn panel cao thêm trước). CP8.14: title ngắt được ≤ 3 dòng ở 70 px giữ 70 px (panel 297 = tối đa); chỉ title không ngắt được mới thu chữ. Trên video test (13 title, 28–51 ký tự): cả 13 giữ 70 px, 5 title 3 dòng (panel 297), 8 title 2 dòng (panel 227).
+- CP8.14 (V16, HUMAN LEAD chấp nhận): góc phải title (x ≈ 905–945, ≈ 40 px) bị cột nút phải của YouTube Shorts đè một chút; chữ Hán burn-in của nguồn có thể lộ phía trên title (không che, không phát hiện); header mà dòng dài bị ngắt thành 3 dòng thì thu chữ tới khi vừa 184 px (vd. dòng 2 `Thập Thiện Nghiệp Đạo Kinh Đại Phương Quảng (tập 129)`, 53 ký tự: 3 dòng ở 34 px), dưới `min_font_scale` → `failed`.
+- CP8.14 L5: tập đã render bằng layout cũ giữ file cũ tới khi chạy lại; khi chạy lại (resume, web "Xử lý", sửa title, khôi phục Short) stage `render` chạy lại vì `config_hash` đổi và mọi Short của tập được encode lại một lần (sửa title một Short của tập cũ → render lại cả tập). `auto-short status` hiển thị trạng thái đã lưu (`done`) cho tới lần chạy đó; lý do chạy lại ghi ở log (`render: run (config changed)`).

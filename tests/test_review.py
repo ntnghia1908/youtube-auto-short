@@ -105,8 +105,8 @@ def test_with_and_without_override_keep_clips_order():
 
 def test_set_title_writes_review_and_previews(ws, rcfg):
     p = set_title(EID, rcfg, "k01", f"  {NEW}  ")
-    assert (p.clip_id, p.title, p.origin, p.font_size) == ("k01", NEW, "manual", 88)
-    assert 1 <= len(p.display_lines) <= 3 and " ".join(p.display_lines) == NEW and p.panel_height >= 292
+    assert (p.clip_id, p.title, p.origin, p.font_size) == ("k01", NEW, "manual", 70)
+    assert 1 <= len(p.display_lines) <= 3 and " ".join(p.display_lines) == NEW and p.panel_height >= 227
     assert _review(ws) == {"schema_version": 1, "episode_id": EID,
                            "titles": [{"clip_id": "k01", "candidate_id": "c00001", "title": NEW, "origin": "manual"}]}
     assert (ws.dir / "review.json").read_text(encoding="utf-8").endswith("}\n")
@@ -208,7 +208,7 @@ def test_cli_title(ws, cfg_file, capsys):
     assert main(["title", EID, "k01", "--set", NEW, "--config", cfg_file]) == 0
     out = capsys.readouterr().out.splitlines()
     assert out[0] == f"{EID}\tk01\tmanual\t{NEW}"
-    assert out[1].startswith("  display (88 px, panel ") and NEW.split()[0] in out[1]
+    assert out[1].startswith("  display (70 px, panel ") and NEW.split()[0] in out[1]
 
     assert main(["title", EID, "k01", "--alternative", "2", "--config", cfg_file]) == 0
     assert capsys.readouterr().out.startswith(f"{EID}\tk01\talternative\t{ALTS['k01'][1]}\n")

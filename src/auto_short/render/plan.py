@@ -5,9 +5,12 @@ Canonical contract: docs/decisions/CP7-render-contract.md.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
+
+from auto_short.render.text import MAX_LINES, block_height
 
 WIDTH, HEIGHT = 1080, 1920  # CP1 §2
 BACKGROUND = "#000000"  # CP1 §4
@@ -199,51 +202,66 @@ def center_crop(src_w: int, src_h: int, out_w: int, out_h: int) -> Crop:
 
 @dataclass(frozen=True)
 class Geometry:
-    """Pixel sizes derived from the [render] ratios (R4)."""
+    """Pixel sizes derived from the [render] ratios (R4, layout V16 of CP8.14)."""
 
     header_w: int
     header_h: int
     video_h: int
     title_w: int
-    title_h: int
+    title_h: int  # minimum title panel height
+    title_max_h: int  # tallest title panel: 3 lines at the reference font size (R5)
+    title_bottom: int  # y of the title panel's bottom edge
     gap_header_video: int
-    gap_video_title: int
     radius: int
-    min_frame_margin: int
+    min_frame_margin: int  # y of the header panel's top edge
 
     @property
-    def fixed_height(self) -> int:
-        """Content block height without the title panel."""
-        return self.header_h + self.gap_header_video + self.video_h + self.gap_video_title
+    def header_y(self) -> int:
+        return self.min_frame_margin
 
     @property
-    def title_max_h(self) -> int:
-        """Tallest title panel that keeps the content block inside the frame with ``min_frame_margin``."""
-        return HEIGHT - 2 * self.min_frame_margin - self.fixed_height
+    def video_y(self) -> int:
+        return self.header_y + self.header_h + self.gap_header_video
+
+
+def title_max_height(cfg) -> int:
+    """Height a title panel needs for MAX_LINES lines at the reference font size, computed with the same
+    expressions as the R5 fit (text.block_height / fit_title), so such a title always fits at that size."""
+    need = block_height(MAX_LINES, px(cfg.title_font_size) * cfg.line_spacing, cfg.panel_padding_y * WIDTH)
+    return math.ceil(need - 1e-9)
 
 
 def geometry(cfg) -> Geometry:
     g = Geometry(header_w=px(cfg.header_panel_width), header_h=px(cfg.header_panel_height),
                  video_h=even(px(cfg.video_height)), title_w=px(cfg.title_panel_width),
-                 title_h=px(cfg.title_panel_height), gap_header_video=px(cfg.gap_header_video),
-                 gap_video_title=px(cfg.gap_video_title), radius=px(cfg.panel_radius),
-                 min_frame_margin=px(cfg.min_frame_margin))
-    if g.title_max_h < g.title_h:
-        raise PlanError(f"layout does not fit {WIDTH}x{HEIGHT}: content block {g.fixed_height + g.title_h} px "
-                        f"with min_frame_margin {g.min_frame_margin} px")
+                 title_h=px(cfg.title_panel_height), title_max_h=title_max_height(cfg),
+                 title_bottom=px(cfg.title_bottom), gap_header_video=px(cfg.gap_header_video),
+                 radius=px(cfg.panel_radius), min_frame_margin=px(cfg.min_frame_margin))
     for name, w in (("header_panel_width", g.header_w), ("title_panel_width", g.title_w)):
         if w > WIDTH:
             raise PlanError(f"render.{name} gives {w} px > frame width {WIDTH}")
+    if g.title_bottom > HEIGHT:
+        raise PlanError(f"layout does not fit {WIDTH}x{HEIGHT}: render.title_bottom gives {g.title_bottom} px "
+                        f"> frame height {HEIGHT}")
+    if g.video_y + g.video_h > HEIGHT:
+        raise PlanError(f"layout does not fit {WIDTH}x{HEIGHT}: header (top {g.header_y} px) + gap + video end "
+                        f"at {g.video_y + g.video_h} px > frame height {HEIGHT}")
+    if g.title_max_h < g.title_h:
+        raise PlanError(f"layout does not fit: render.title_panel_height gives {g.title_h} px > the "
+                        f"{g.title_max_h} px a 3-line title needs at the reference font size")
+    if g.title_bottom - g.title_max_h < g.header_y + g.header_h:
+        raise PlanError(f"layout does not fit {WIDTH}x{HEIGHT}: the tallest title panel ({g.title_max_h} px, "
+                        f"bottom {g.title_bottom} px) would start at {g.title_bottom - g.title_max_h} px, above "
+                        f"the header bottom {g.header_y + g.header_h} px")
     return g
 
 
 def layout(g: Geometry, title_h: int, src_w: int, src_h: int) -> Layout:
-    """Content block (header, video, title) centred vertically; panels centred horizontally."""
-    top = (HEIGHT - (g.fixed_height + title_h)) // 2
-    header = Box((WIDTH - g.header_w) // 2, top, g.header_w, g.header_h, g.radius)
-    vy = top + g.header_h + g.gap_header_video
-    video = Box(0, vy, WIDTH, g.video_h)
-    title = Box((WIDTH - g.title_w) // 2, vy + g.video_h + g.gap_video_title, g.title_w, title_h, g.radius)
+    """Layout V16 (R4): header at the top margin, video full width right below it, title panel with its bottom
+    edge at ``title_bottom`` (grows upwards, drawn over the video); panels centred horizontally."""
+    header = Box((WIDTH - g.header_w) // 2, g.header_y, g.header_w, g.header_h, g.radius)
+    video = Box(0, g.video_y, WIDTH, g.video_h)
+    title = Box((WIDTH - g.title_w) // 2, g.title_bottom - title_h, g.title_w, title_h, g.radius)
     return Layout(header, video, center_crop(src_w, src_h, WIDTH, g.video_h), title)
 
 
