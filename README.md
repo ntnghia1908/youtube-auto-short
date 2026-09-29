@@ -225,7 +225,7 @@ Render the Shorts (after titling; system `ffmpeg`, no AI):
 
 ```bash
 # One ffmpeg run per titled clip: the clip's source range minus the silence trims of its candidate,
-# centre-cropped to 1080x1210, header + title panels drawn with the bundled Be Vietnam Pro font.
+# centre-cropped to 1080x1254, header + title panels drawn with the bundled Be Vietnam Pro font.
 # H.264 crf 22 / AAC 192k; ~5 min for 13 clips (826 s of Shorts) on a 48-thread CPU.
 auto-short render <episode_id>    # options: --force, --config PATH
 ```

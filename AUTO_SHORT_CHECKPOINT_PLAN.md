@@ -439,6 +439,14 @@ The bộ kinh page groups episodes by what is left to do: Chưa xử lý / Đang
 
 ---
 
+## CP8.14 — Short Layout V16: Title Clear of the YouTube Shorts UI
+
+> HUMAN LEAD 2026-09-29 (`docs/tasks/CP8.14-title-layout.md`, L1–L6, phương án V16, S2). Contract: `docs/decisions/CP1-product-contract.md` §4 (Sửa đổi CP8.14); `docs/decisions/CP7-render-contract.md` R4, R5, R11.
+
+The title panel was hidden by the YouTube Shorts UI (channel / description row at the bottom). New layout: a compact header at the top of the frame, a taller full-width video right below it, and the title panel floating over the bottom of the video with its bottom edge fixed at y 1600 (it grows upwards for 3 lines); smaller header / title fonts. New `[render]` defaults, `title_bottom` added, `gap_video_title` removed. Existing episodes keep their Shorts until they run again; then every Short of the episode is rendered once with the new layout.
+
+---
+
 ## CP9 — Human Review + Batch Processing
 
 > Re-plan HUMAN LEAD 2026-09-27: phần batch mức playlist (bộ kinh: liệt kê, bấm xử lý từng tập, xếp hàng, trạng thái "Xong" suy ra khi đăng hết) kéo lên CP8.7 (`docs/tasks/CP8.7-playlist.md`, `docs/decisions/CP8.3-web-contract.md` W10). CP9 còn: tự xử lý hàng loạt, approval state, failed-item isolation đầy đủ.

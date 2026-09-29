@@ -24,7 +24,9 @@ PRE_CP89 = {
     "analysis": "f2d2b9cbcc033c6a523b60ed1adf1e6b3ecd80bd5fca778776075215069b4ad9",
     "selection": "0a5b40d77f21706590e87a218288a3a8d1ef354d3701758f4d471a1f579f4d99",
     "titling": "18f9745465037ecc93e6755116ee0cbc38c183c7ff80fe6c8bd6fcd6b3d6886a",
-    "render": "9bbcaa463bf566149158677269a881dde76ca15aa8e77dffe1dccd8652bd8d0f",
+    # CP8.14 (layout V16, L2/L5) changed the [render] defaults on purpose: every episode's render becomes
+    # stale once (pre-CP8.14 value: 9bbcaa463bf566149158677269a881dde76ca15aa8e77dffe1dccd8652bd8d0f).
+    "render": "de0b688d5755f64bf5e1bf2483081492f4e91fdbcfe1bceccbca49631d795cfb",
 }
 PRE_PROMPTS = {
     "v1": "0ff963d1f415c0a74c7b320d772ab8400d282ecc848f4903bfd05141e4bf4d7c",

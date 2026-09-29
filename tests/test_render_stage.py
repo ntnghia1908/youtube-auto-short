@@ -97,9 +97,10 @@ def test_render_writes_shorts_and_manifest(ws, rcfg):
                            "sha256": sha256_file(font_path(RenderConfig()))}
     assert doc["encode"]["fps"] == "30000/1001" and doc["encode"]["preset"] == "ultrafast"
     assert doc["header"] == {"lines": ["HT.Tịnh Không", "Thập Thiện Nghiệp Đạo Kinh (tập 9)"],
-                             "display_lines": ["HT.Tịnh Không", "Thập Thiện Nghiệp Đạo", "Kinh (tập 9)"],
-                             "font_size": 67}
-    assert doc["layout"]["title_panel"]["h"] == 292
+                             "display_lines": ["HT.Tịnh Không", "Thập Thiện Nghiệp Đạo Kinh (tập 9)"],
+                             "font_size": 48}  # CP8.14: 184 px header, 49 px shrinks to 48 px on 2 lines
+    assert doc["layout"]["header_panel"] == {"x": 81, "y": 22, "w": 918, "h": 184, "radius": 59}
+    assert doc["layout"]["title_panel"] == {"x": 135, "y": 1373, "w": 810, "h": 227, "radius": 59}
     assert doc["stats"] == {"clips": 2, "rendered": 2, "skipped": 0, "seconds": 5.1}
     k01, k02 = doc["shorts"]
     assert list(k01) == ["clip_id", "candidate_id", "status", "skip_reason", "file", "sha256", "title",
@@ -111,9 +112,10 @@ def test_render_writes_shorts_and_manifest(ws, rcfg):
     # one junction each, trimmed gaps of 15 / 18 frames -> full 4-frame dissolve (CP8.1 V2, V4)
     assert k01["dissolves"] == [{"at": 0.901, "frames": 4}] and k02["dissolves"] == [{"at": 0.5, "frames": 4}]
     assert k01["segments"] == SEGMENTS["k01"] and k02["segments"] == SEGMENTS["k02"]
-    assert len(k01["title_display_lines"]) == 3 and k01["title_font_size"] == 88
-    assert k01["layout"]["title_panel"]["h"] > 292  # 3 lines: panel grew (P3)
-    assert k02["layout"]["title_panel"]["h"] == 292 and len(k02["title_display_lines"]) == 2
+    # CP8.14: both titles are 2 lines at 70 px (3-line titles: test_title_panel_is_drawn_over_the_video)
+    for s in (k01, k02):
+        assert len(s["title_display_lines"]) == 2 and s["title_font_size"] == 70
+        assert s["layout"] == {k: doc["layout"][k] for k in ("header_panel", "video", "title_panel")}
     for s, clip in zip(doc["shorts"], CLIPS):
         path = out / s["file"]
         assert s["file"] == f"shorts/{clip['id']}.mp4" and sha256_file(path) == s["sha256"]
@@ -184,7 +186,10 @@ def test_resume_skip_config_and_stale(ws, rcfg):
 def test_config_hash_keys():
     assert "output_dir" not in HASH_KEYS and "threads" not in HASH_KEYS
     assert {"font_file", "title_font_size", "min_frame_margin", "crf", "preset", "title_source",
-            "dissolve"} <= set(HASH_KEYS)
+            "dissolve", "title_bottom"} <= set(HASH_KEYS)
+    assert "gap_video_title" not in HASH_KEYS  # CP8.14 L2
+    assert config_hash(used_config(replace(RenderConfig(), title_bottom=1.4), "f" * 64)) != \
+        config_hash(used_config(RenderConfig(), "f" * 64))
     assert config_hash(used_config(replace(RenderConfig(), dissolve=0), "f" * 64)) != \
         config_hash(used_config(RenderConfig(), "f" * 64))
     a = used_config(RenderConfig(), "f" * 64)
@@ -298,7 +303,7 @@ def test_cli_render_and_status(ws, rcfg, tmp_path, capsys):
     assert main(["render", EID, "--config", str(cfg_file)]) == 0
     out = capsys.readouterr()
     assert out.out == f"{EID}\trendered (2/2 clips)\t{_out(rcfg) / 'render_manifest.json'}\n"
-    assert "render: header HT.Tịnh Không / Thập Thiện Nghiệp Đạo / Kinh (tập 9) (67 px)" in out.err
+    assert "render: header HT.Tịnh Không / Thập Thiện Nghiệp Đạo Kinh (tập 9) (48 px)" in out.err
     assert "render: clip k01: " in out.err and "render: font Be Vietnam Pro" in out.err
     assert main(["render", EID, "--config", str(cfg_file)]) == 0
     assert "skipped (up to date)" in capsys.readouterr().out
@@ -308,6 +313,54 @@ def test_cli_render_and_status(ws, rcfg, tmp_path, capsys):
     write_docs(ws, titles={"k01": "Tâm 心", "k02": "x y"})
     assert main(["render", EID, "--config", str(cfg_file)]) == 1
     assert "error: render failed: clip k01: font" in capsys.readouterr().err
+
+
+# --- CP8.14: layout V16 ------------------------------------------------------------------------------------------
+
+THREE_LINES = "Chân tướng sự thật của vũ trụ nhân sinh không thể nói ra"  # 3 lines at 70 px
+SHRINKS = "Thường Trụ Chân Tâm Thanh Tịnh Quang Minh Không Sinh Diệt"  # 3 lines only at 68 px
+
+
+def _frame_rgb(path: Path) -> bytes:
+    return subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-frames:v", "1", "-f", "rawvideo",
+                           "-pix_fmt", "rgb24", "-"], capture_output=True, check=True).stdout
+
+
+def _px(frame: bytes, x: int, y: int) -> tuple[int, int, int]:
+    i = (y * 1080 + x) * 3
+    return frame[i], frame[i + 1], frame[i + 2]
+
+
+def test_title_panel_is_drawn_over_the_video(ws, rcfg):
+    """AC1/AC2: 3-line titles keep 70 px in a 297 px panel (or shrink in it); the panel bottom is at 1600 and
+    it covers the bottom of the video (overlap pixels are panel yellow). AC5: the title preview gives the same
+    lines / size / panel height as the render."""
+    from auto_short.review import preview_title
+    write_docs(ws, titles={"k01": THREE_LINES, "k02": SHRINKS})
+    run_render(EID, rcfg)
+    doc = _rm(rcfg)
+    k01, k02 = doc["shorts"]
+    assert (len(k01["title_display_lines"]), k01["title_font_size"]) == (3, 70)
+    assert (len(k02["title_display_lines"]), k02["title_font_size"]) == (3, 68)
+    for s in (k01, k02):
+        video, title = s["layout"]["video"], s["layout"]["title_panel"]
+        assert video == doc["layout"]["video"] == {"x": 0, "y": 211, "w": 1080, "h": 1254,
+                                                    "crop": {"w": 930, "h": 1080, "x": 255, "y": 0}}
+        assert title == {"x": 135, "y": 1303, "w": 810, "h": 297, "radius": 59}
+        assert title["y"] + title["h"] == 1600 < 1625
+        p = preview_title(EID, rcfg, s["clip_id"], s["title"])
+        assert (p.display_lines, p.font_size, p.panel_height) == \
+            (s["title_display_lines"], s["title_font_size"], title["h"])
+    frame = _frame_rgb(_out(rcfg) / k01["file"])
+    yellow = (254, 219, 0)
+    # inside the panel where it overlaps the video (y 1303-1465): top padding row, left padding column
+    for x, y in ((540, 1312), (150, 1400), (930, 1440), (540, 1460)):
+        assert all(abs(a - b) <= 12 for a, b in zip(_px(frame, x, y), yellow)), (x, y, _px(frame, x, y))
+    # video right above the panel and beside it; black below the video beside the panel
+    assert any(max(_px(frame, x, 1290)) > 40 for x in range(135, 945, 10))
+    assert any(max(_px(frame, x, 1400)) > 40 for x in range(0, 120, 5))
+    assert all(max(_px(frame, x, y)) <= 20 for x in (20, 100, 1000, 1060) for y in (1480, 1700, 1900))
+    assert all(max(_px(frame, x, 1620)) <= 20 for x in range(0, 1080, 20))  # nothing below the title
 
 
 # --- CP8.1: video dissolve (V2-V5) ----------------------------------------------------------------------------

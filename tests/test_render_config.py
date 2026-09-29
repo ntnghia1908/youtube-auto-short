@@ -27,6 +27,7 @@ def test_render_config_parsing():
     {"crf": 60}, {"crf": 1.5}, {"audio_bitrate": "192"}, {"line_spacing": 3}, {"min_font_scale": 0},
     {"header_panel_width": 1.5}, {"threads": -1}, {"output_dir": ""},
     {"dissolve": -0.1}, {"dissolve": 2}, {"dissolve": "0.15"},
+    {"title_bottom": 0}, {"title_bottom": 2.5}, {"title_bottom": "1600"}, {"title_bottom": True},
 ])
 def test_render_config_invalid(data):
     with pytest.raises(ConfigError, match="render"):
@@ -37,3 +38,14 @@ def test_render_encode_defaults():
     cfg = RenderConfig()
     assert (cfg.crf, cfg.preset, cfg.audio_bitrate) == (22, "medium", "192k")  # P4 as amended 2026-09-27
     assert cfg.dissolve == 0.15  # CP8.1 V1/P2: on by default
+
+
+def test_render_layout_defaults_v16():
+    """CP8.14 L2: new defaults, title_bottom added, gap_video_title removed (an old key is ignored)."""
+    cfg = RenderConfig()
+    assert (cfg.header_panel_width, cfg.header_panel_height, cfg.header_font_size, cfg.video_height,
+            cfg.title_panel_width, cfg.title_panel_height, cfg.title_font_size, cfg.title_bottom,
+            cfg.min_frame_margin, cfg.gap_header_video) == (0.85, 0.17, 0.045, 1.16, 0.75, 0.21, 0.065, 1.4815,
+                                                            0.02, 0.005)
+    assert from_dict({"render": {"title_bottom": 1.45}}).render.title_bottom == 1.45
+    assert from_dict({"render": {"gap_video_title": 0.01}}).render == RenderConfig()
