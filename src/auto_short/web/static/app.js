@@ -1,5 +1,5 @@
 /* Auto Short web UI (CP8.3; CP8.5 delete / restore, "Đã đăng", episode delete; CP8.6 storage tab, archived
-   episodes, low-disk banner). Plain JS, no build step. */
+   episodes, low-disk banner; CP9 "Thêm Short" + "Sửa đầu/cuối"). Plain JS, no build step. */
 "use strict";
 
 const AutoShort = (() => {
@@ -323,6 +323,7 @@ const AutoShort = (() => {
       applyFilter();
     }));
     $("#show-deleted").addEventListener("click", () => { showDeleted = !showDeleted; applyFilter(); });
+    initAddDialog(); // CP9 C7
     refreshEpisode();
     checkDisk();
   }
@@ -598,7 +599,8 @@ const AutoShort = (() => {
 
   function cardKey(s) {
     return JSON.stringify([s.status, s.sha256, s.title, s.pending_title, s.override, s.rendering, s.editable,
-      s.alternatives.length, s.deleted, s.rejected, s.published, s.published_stale, s.download_name, archived]);
+      s.alternatives.length, s.deleted, s.rejected, s.published, s.published_stale, s.download_name, archived,
+      s.origin, s.cut]);
   }
 
   // Filter + "Short đã xóa" toggle only hide / show cards (no rebuild: a playing video keeps playing).
@@ -639,6 +641,10 @@ const AutoShort = (() => {
     if (d.zip_url) { zip.href = d.zip_url; zip.setAttribute("download", d.zip_name || ""); }
     if (!zip.dataset.bound) { zip.dataset.bound = "1"; zip.addEventListener("click", () => setTimeout(refreshEpisode, 2000)); }
     $("#header-lines").textContent = d.header ? "Header: " + d.header.join(" / ") : "";
+    // CP9 C7: "Thêm Short" once the episode has a render and titles (not on an archived episode)
+    const addBtn = $("#add-short");
+    addBtn.hidden = !d.shorts.length || !!d.titles_error || archived;
+    addBtn.textContent = d.kind === "khaithi" ? "+ Thêm video khai thị" : "+ Thêm Short";
     const notes = [];
     if (d.shorts.length && d.render_status !== "done") {
       notes.push(`Đang hiển thị bản dựng trước (bước ${stageLabel("render")}: ${STATUS_LABELS[d.render_status] || d.render_status}).`);
@@ -676,6 +682,9 @@ const AutoShort = (() => {
 
   function setEditsLocked(locked) {
     editsLocked = locked;
+    $("#add-short").disabled = locked;
+    document.querySelectorAll("#add-dialog .needs-idle").forEach((b) => { b.disabled = locked || b.dataset.invalid === "1"; });
+    document.querySelectorAll("#add-dialog .lock-note").forEach((n) => { n.hidden = !locked; });
     document.querySelectorAll(".short .needs-idle").forEach((b) => { b.disabled = locked || b.dataset.invalid === "1"; });
     document.querySelectorAll(".short .lock-note").forEach((n) => { n.hidden = !locked; });
   }
@@ -704,6 +713,8 @@ const AutoShort = (() => {
       el("div", { class: "short-head" },
         el("span", { class: "clip-id", text: s.clip_id }),
         title.origin ? el("span", { class: "badge " + title.origin, text: TITLE_SOURCE_LABELS[title.origin] || title.origin }) : null,
+        s.origin === "added" ? el("span", { class: "badge added", text: "thêm tay" }) : null,
+        s.cut ? el("span", { class: "badge cut", text: "đã sửa đầu/cuối" }) : null,
         el("span", { class: "muted small", text: fmtSeconds(s.duration) })),
       el("div", { class: "title-row" },
         el("p", { class: "short-title", text: title.text || "(không có tiêu đề)" }),
@@ -717,7 +728,8 @@ const AutoShort = (() => {
         s.download_url ? downloadLink(s) : null,
         video ? loopButton(s.clip_id, video) : null,
         s.editable && !(archived && s.deleted) ? deleteButton(s) : null),
-      s.editable && !s.deleted && !archived ? titleEditor(s) : el("div", { class: "title-edit", hidden: true }));
+      s.editable && !s.deleted && !archived ? titleEditor(s) : el("div", { class: "title-edit", hidden: true }),
+      s.editable && !s.deleted && !archived ? cutEditor(s) : null);
     card.append(body);
     return card;
   }
@@ -947,6 +959,351 @@ const AutoShort = (() => {
     if (reset) reset.addEventListener("click", () => send({ reset: true }));
     setValid(false);
     return box;
+  }
+
+  // --- CP9: "Sửa đầu/cuối" + "Thêm Short" -------------------------------------------------------------
+
+  function fmtClock(t) {
+    const neg = t < 0;
+    t = Math.abs(t);
+    const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), sec = t % 60;
+    const ss = sec.toFixed(1).padStart(4, "0");
+    return (neg ? "−" : "") + (h ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`);
+  }
+  function fmtNudge(n) { return n ? ` (${n > 0 ? "+" : "−"}${Math.abs(n).toFixed(1)} s)` : ""; }
+
+  // "Nghe thử": the source video (Range) between a and b via a media fragment (#t=a,b stops at b), in a small
+  // floating player shared by the cut editors and the "Thêm Short" dialog. play() runs inside the click (phones).
+  function playSource(a, b, label) {
+    const box = $("#source-float"), v = $("#source-video");
+    const t0 = Math.max(0, a), t1 = Math.max(t0 + 0.5, b);
+    $("#source-label").textContent = `${label}: ${fmtClock(t0)} → ${fmtClock(t1)}`;
+    box.hidden = false;
+    v.src = `/files/${encodeURIComponent(episodeId)}/source.mp4#t=${t0.toFixed(2)},${t1.toFixed(2)}`;
+    const p = v.play();
+    if (p && p.catch) p.catch(() => { /* the user presses play on the player */ });
+  }
+  function listenButtons(get) { // get() -> {start, end} | null
+    const bs = el("button", { class: "btn small", type: "button", text: "▶ Nghe 5 s đầu" });
+    const be = el("button", { class: "btn small", type: "button", text: "▶ Nghe 5 s cuối" });
+    bs.addEventListener("click", () => { const r = get(); if (r) playSource(r.start, Math.min(r.start + 5, r.end), "5 s đầu"); });
+    be.addEventListener("click", () => { const r = get(); if (r) playSource(Math.max(r.end - 5, r.start), r.end, "5 s cuối"); });
+    return [bs, be];
+  }
+
+  async function loadTranscript() {
+    return api("/api/episodes/" + encodeURIComponent(episodeId) + "/transcript");
+  }
+  async function previewCut(body) {
+    return api("/api/episodes/" + encodeURIComponent(episodeId) + "/cut/preview", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+  }
+  function speechStep(segs, i, dir) {
+    let j = i + dir;
+    while (j >= 0 && j < segs.length && segs[j].kind !== "speech") j += dir;
+    return j >= 0 && j < segs.length ? j : i;
+  }
+  function rangeInfo(p, limits) {
+    const nodes = [el("span", { text: `Thời lượng: ${fmtSeconds(p.duration)} (${p.duration.toFixed(1)} s)` +
+      (limits ? `, cần ${limits}` : "") })];
+    if (p.error) nodes.push(el("div", { class: "error", text: "Không lưu được: " + p.error }));
+    for (const w of p.warnings || []) nodes.push(el("div", { class: "warn", text: "Lưu ý: " + w }));
+    return nodes;
+  }
+  function limitsText(tr) { return tr && tr.min_duration ? `${fmtSeconds(tr.min_duration)}–${fmtSeconds(tr.max_duration)}` : ""; }
+
+  // One Short: first / last caption line with [+ dòng] [− dòng] [−0.2 s] [+0.2 s], new duration, "Nghe thử",
+  // "Lưu + render lại", "Về như AI chọn" (C7). The server computes every range (preview), the page only steps.
+  function cutEditor(s) {
+    const box = el("div", { class: "cut-edit" });
+    const toggle = el("button", { class: "btn small", type: "button", text: "Sửa đầu/cuối" });
+    const panel = el("div", { class: "cut-panel", hidden: true });
+    box.append(toggle, panel);
+    let st = null;
+    toggle.addEventListener("click", async () => {
+      if (!panel.hidden) { panel.hidden = true; toggle.textContent = "Sửa đầu/cuối"; return; }
+      panel.hidden = false;
+      toggle.textContent = "Đóng sửa đầu/cuối";
+      panel.replaceChildren(el("p", { class: "muted small", text: "Đang tải phụ đề…" }));
+      try { open(await loadTranscript()); } catch (e) { panel.replaceChildren(el("p", { class: "error small", text: e.message })); }
+    });
+
+    function edgeRow(label, which) {
+      const text = el("div", { class: "cut-text" });
+      const time = el("span", { class: "muted small" });
+      const more = el("button", { class: "btn small", type: "button", text: "+ dòng", title: which === "a" ? "Thêm dòng phía trước" : "Thêm dòng phía sau" });
+      const less = el("button", { class: "btn small", type: "button", text: "− dòng", title: "Bớt một dòng" });
+      const minus = el("button", { class: "btn small", type: "button", text: "−0.2 s" });
+      const plus = el("button", { class: "btn small", type: "button", text: "+0.2 s" });
+      more.addEventListener("click", () => step(which, which === "a" ? -1 : 1));
+      less.addEventListener("click", () => step(which, which === "a" ? 1 : -1));
+      minus.addEventListener("click", () => nudge(which, -1));
+      plus.addEventListener("click", () => nudge(which, 1));
+      const row = el("div", { class: "cut-row" }, el("div", { class: "cut-label" }, el("b", { text: label }), " ", time), text,
+        el("div", { class: "cut-buttons" }, more, less, minus, plus));
+      return { row, text, time, more, less, minus, plus };
+    }
+
+    function open(tr) {
+      const me = tr.shorts.find((x) => x.clip_id === s.clip_id);
+      if (!me || !me.start_segment) {
+        panel.replaceChildren(el("p", { class: "error small", text: "Không tìm thấy dòng phụ đề của Short này." }));
+        return;
+      }
+      const idx = new Map(tr.segments.map((g, i) => [g.id, i]));
+      st = { tr, me, a: idx.get(me.start_segment), b: idx.get(me.end_segment), dn0: 0, dn1: 0, seq: 0, p: null };
+      st.ra = edgeRow("Đầu", "a");
+      st.rb = edgeRow("Cuối", "b");
+      st.info = el("div", { class: "cut-info small" });
+      const [ls, le] = listenButtons(() => st.p);
+      st.save = el("button", { class: "btn primary small needs-idle", type: "button", text: "Lưu + render lại" });
+      st.save.addEventListener("click", () => send(false));
+      st.reset = me.cut ? el("button", { class: "btn small needs-idle", type: "button", text: "Về như AI chọn" }) : null;
+      if (st.reset) st.reset.addEventListener("click", () => send(true));
+      const lockNote = el("p", { class: "lock-note muted small", text: "Đang có job chạy — đợi xong để lưu.", hidden: !editsLocked });
+      panel.replaceChildren(st.ra.row, st.rb.row, st.info, el("div", { class: "edit-actions" }, ls, le),
+        el("div", { class: "edit-actions" }, st.save, st.reset), lockNote);
+      update();
+    }
+    function step(which, dir) {
+      const segs = st.tr.segments;
+      if (which === "a") { const j = speechStep(segs, st.a, dir); if (j <= st.b) { st.a = j; st.dn0 = 0; } }
+      else { const j = speechStep(segs, st.b, dir); if (j >= st.a) { st.b = j; st.dn1 = 0; } }
+      update();
+    }
+    function nudge(which, dir) {
+      const key = which === "a" ? "dn0" : "dn1";
+      st[key] = Math.max(-10, Math.min(10, st[key] + dir)); // steps of 0.2 s, at most ±2.0 s (C3)
+      update();
+    }
+    function body() {
+      return { start_segment: st.tr.segments[st.a].id, end_segment: st.tr.segments[st.b].id,
+        start_nudge: +(st.dn0 * 0.2).toFixed(1), end_nudge: +(st.dn1 * 0.2).toFixed(1) };
+    }
+    function setSave(ok) { st.save.dataset.invalid = ok ? "0" : "1"; st.save.disabled = !ok || editsLocked; }
+    async function update() {
+      const segs = st.tr.segments;
+      st.ra.text.textContent = segs[st.a].text;
+      st.rb.text.textContent = segs[st.b].text;
+      st.ra.minus.disabled = st.dn0 <= -10; st.ra.plus.disabled = st.dn0 >= 10;
+      st.rb.minus.disabled = st.dn1 <= -10; st.rb.plus.disabled = st.dn1 >= 10;
+      setSave(false);
+      const my = ++st.seq;
+      st.info.replaceChildren(el("span", { class: "muted", text: "Đang tính…" }));
+      try {
+        const p = await previewCut({ clip_id: s.clip_id, ...body() });
+        if (my !== st.seq) return;
+        st.p = p;
+        st.ra.time.textContent = fmtClock(p.start) + fmtNudge(st.dn0 * 0.2);
+        st.rb.time.textContent = fmtClock(p.end) + fmtNudge(st.dn1 * 0.2);
+        const nodes = rangeInfo(p, limitsText(st.tr));
+        if (!p.changed) nodes.push(el("div", { class: "muted", text: "Chưa đổi gì so với bản hiện tại." }));
+        else if (p.original) nodes.push(el("div", { class: "muted", text: "Trở về đúng đoạn AI chọn." }));
+        st.info.replaceChildren(...nodes);
+        setSave(!p.error && p.changed);
+      } catch (e) {
+        if (my !== st.seq) return;
+        st.p = null;
+        st.info.replaceChildren(el("div", { class: "error", text: e.message }));
+      }
+    }
+    async function send(reset) {
+      st.save.disabled = true;
+      if (st.reset) st.reset.disabled = true;
+      try {
+        await api(`/api/episodes/${encodeURIComponent(episodeId)}/shorts/${encodeURIComponent(s.clip_id)}/cut`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(reset ? { reset: true } : body()),
+        });
+        st.info.replaceChildren(el("div", { text: "Đã lưu, đang render lại…" }));
+        refreshEpisode();
+      } catch (e) {
+        st.info.replaceChildren(el("div", { class: "error", text: e.message }));
+        setSave(!!st.p && !st.p.error && st.p.changed);
+        if (st.reset) st.reset.disabled = editsLocked;
+      }
+    }
+    return box;
+  }
+
+  // "Thêm Short" dialog: tab "Đề xuất AI (n)" (remaining proposals) and tab "Chọn trên transcript".
+  const add = { tr: null, props: null, a: null, b: null, seq: 0, p: null };
+
+  function initAddDialog() {
+    $("#add-short").addEventListener("click", openAdd);
+    $("#add-close").addEventListener("click", closeAdd);
+    $("#tab-proposals").addEventListener("click", () => showTab("proposals"));
+    $("#tab-transcript").addEventListener("click", () => showTab("transcript"));
+    $("#tr-search").addEventListener("input", filterLines);
+    $("#source-close").addEventListener("click", () => { const v = $("#source-video"); v.pause(); $("#source-float").hidden = true; });
+    $("#tr-clear").addEventListener("click", () => { add.a = add.b = null; paintSelection(); updateBar(); });
+    $("#tr-add").addEventListener("click", () => submitAdd({ start_segment: add.tr.segments[add.a].id, end_segment: add.tr.segments[add.b].id }, $("#tr-add")));
+    const [ls, le] = listenButtons(() => add.p);
+    $("#tr-listen").replaceChildren(ls, le);
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("#add-dialog").hidden) closeAdd(); });
+  }
+  function showTab(name) {
+    $("#tab-proposals").classList.toggle("active", name === "proposals");
+    $("#tab-transcript").classList.toggle("active", name === "transcript");
+    $("#tab-proposals").setAttribute("aria-selected", name === "proposals" ? "true" : "false");
+    $("#tab-transcript").setAttribute("aria-selected", name === "transcript" ? "true" : "false");
+    $("#pane-proposals").hidden = name !== "proposals";
+    $("#pane-transcript").hidden = name !== "transcript";
+    $("#tr-bar").hidden = name !== "transcript";
+  }
+  function closeAdd() {
+    $("#add-dialog").hidden = true;
+    document.body.classList.remove("modal-open");
+  }
+  async function openAdd() {
+    const kt = lastData && lastData.kind === "khaithi";
+    $("#add-title").textContent = kt ? "Thêm video khai thị" : "Thêm Short";
+    $("#add-dialog").hidden = false;
+    document.body.classList.add("modal-open");
+    $("#add-error").hidden = true;
+    add.a = add.b = null; add.p = null;
+    $("#n-proposals").textContent = "…";
+    $("#pane-proposals").replaceChildren(el("p", { class: "muted", text: "Đang tải…" }));
+    $("#tr-lines").replaceChildren(el("li", { class: "muted", text: "Đang tải phụ đề…" }));
+    showTab("proposals");
+    updateBar();
+    try {
+      const [props, tr] = await Promise.all([
+        api("/api/episodes/" + encodeURIComponent(episodeId) + "/proposals"), loadTranscript()]);
+      add.props = props.proposals; add.tr = tr;
+      renderProposals();
+      renderLines();
+      if (!add.props.length) showTab("transcript");
+    } catch (e) {
+      $("#pane-proposals").replaceChildren(el("p", { class: "error", text: e.message }));
+      $("#tr-lines").replaceChildren(el("li", { class: "error", text: e.message }));
+    }
+    setEditsLocked(editsLocked);
+  }
+  const PROPOSAL_STATUS = { overlapped: "trùng một Short đã chọn", over_limit: "vượt số Short tối đa", ineligible: "AI không chọn" };
+  function renderProposals() {
+    $("#n-proposals").textContent = String(add.props.length);
+    const pane = $("#pane-proposals");
+    if (!add.props.length) {
+      pane.replaceChildren(el("p", { class: "muted", text: "Không còn đề xuất AI nào (mọi đề xuất đã thành Short). Chọn trên transcript." }));
+      return;
+    }
+    pane.replaceChildren(...add.props.map((p) => {
+      const btn = el("button", { class: "btn primary small needs-idle", type: "button", text: "Thêm đoạn này" });
+      btn.dataset.invalid = p.error ? "1" : "0";
+      btn.disabled = !!p.error || editsLocked;
+      btn.addEventListener("click", () => submitAdd({ candidate_id: p.candidate_id }, btn));
+      const [ls, le] = listenButtons(() => p);
+      return el("article", { class: "proposal" },
+        el("div", { class: "proposal-head" },
+          el("b", { text: p.topic || p.candidate_id }),
+          el("span", { class: "muted small", text: ` · điểm ${p.score ?? "?"}/10 · ${PROPOSAL_STATUS[p.status] || p.status}` })),
+        p.reason ? el("p", { class: "small", text: p.reason }) : null,
+        el("p", { class: "small muted", text: `${fmtClock(p.start)} → ${fmtClock(p.end)} · ${fmtSeconds(p.duration)} (${p.duration.toFixed(1)} s)` +
+          (p.reject_reason ? ` · ${p.reject_reason}` : "") }),
+        el("p", { class: "small quote", text: `“${p.start_text || ""} … ${p.end_text || ""}”` }),
+        p.added_as.length ? el("p", { class: "small warn", text: `Đã thêm thành ${p.added_as.join(", ")}` }) : null,
+        ...rangeInfo(p, limitsText(add.tr)).slice(1).map((n) => { n.classList.add("small"); return n; }),
+        el("div", { class: "edit-actions" }, ls, le, btn));
+    }));
+  }
+  function renderLines() {
+    const tr = add.tr;
+    const owner = new Array(tr.segments.length).fill(null);
+    const firsts = new Map();
+    for (const sh of tr.shorts) {
+      if (sh.rejected) continue;
+      tr.segments.forEach((g, i) => {
+        const mid = (g.start + g.end) / 2;
+        if (g.kind === "speech" && mid >= sh.start && mid <= sh.end) owner[i] = owner[i] ? owner[i] + "," + sh.clip_id : sh.clip_id;
+      });
+      if (sh.start_segment) firsts.set(sh.start_segment, (firsts.get(sh.start_segment) || []).concat(sh.clip_id));
+    }
+    const out = [];
+    const c0 = tr.content.start, c1 = tr.content.end;
+    tr.segments.forEach((g, i) => {
+      const outside = g.end <= c0 || g.start >= c1;
+      const li = el("li", { class: "tr-line" + (g.kind !== "speech" ? " ns" : "") + (owner[i] ? " in-short" : "") + (outside ? " outside" : ""),
+        "data-i": String(i) },
+        el("span", { class: "tr-time", text: fmtClock(g.start) }),
+        firsts.has(g.id) ? el("span", { class: "tr-tag", text: firsts.get(g.id).join(",") }) : null,
+        el("span", { class: "tr-text", text: g.text }));
+      if (g.kind === "speech" && !outside) li.addEventListener("click", () => pickLine(i));
+      out.push(li);
+    });
+    $("#tr-lines").replaceChildren(...out);
+    $("#tr-hint").textContent = `Bấm dòng đầu rồi dòng cuối. Dòng tô vàng thuộc ${noun()} đã có (chồng lấn được, chỉ cảnh báo). ` +
+      `Thời lượng cần ${limitsText(tr)} sau khi rút khoảng lặng.`;
+    filterLines();
+  }
+  function strip(t) { return t.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/đ/g, "d").replace(/Đ/g, "D").toLowerCase(); }
+  function filterLines() {
+    const q = strip($("#tr-search").value.trim());
+    document.querySelectorAll("#tr-lines .tr-line").forEach((li) => {
+      li.hidden = !!q && !strip(li.querySelector(".tr-text").textContent).includes(q);
+    });
+  }
+  function pickLine(i) {
+    if (add.a === null || add.b !== null) { add.a = i; add.b = null; }
+    else if (i < add.a) { add.b = add.a; add.a = i; }
+    else add.b = i;
+    paintSelection();
+    updateBar();
+  }
+  function paintSelection() {
+    const lo = add.a, hi = add.b === null ? add.a : add.b;
+    document.querySelectorAll("#tr-lines .tr-line").forEach((li) => {
+      const i = Number(li.dataset.i);
+      li.classList.toggle("sel", lo !== null && i >= lo && i <= hi);
+      li.classList.toggle("sel-edge", i === add.a || i === add.b);
+    });
+  }
+  async function updateBar() {
+    const info = $("#tr-info"), btn = $("#tr-add");
+    btn.dataset.invalid = "1";
+    btn.disabled = true;
+    add.p = null;
+    $("#tr-clear").hidden = add.a === null;
+    if (!add.tr || add.a === null) { info.replaceChildren(el("span", { class: "muted", text: "Chưa chọn dòng nào." })); return; }
+    const segs = add.tr.segments;
+    if (add.b === null) {
+      info.replaceChildren(el("div", {}, el("b", { text: "Đầu: " }), segs[add.a].text), el("span", { class: "muted", text: "Bấm dòng cuối." }));
+      return;
+    }
+    const my = ++add.seq;
+    info.replaceChildren(el("span", { class: "muted", text: "Đang tính…" }));
+    try {
+      const p = await previewCut({ start_segment: segs[add.a].id, end_segment: segs[add.b].id });
+      if (my !== add.seq) return;
+      add.p = p;
+      info.replaceChildren(
+        el("div", {}, el("b", { text: `Đầu ${fmtClock(p.start)}: ` }), segs[add.a].text),
+        el("div", {}, el("b", { text: `Cuối ${fmtClock(p.end)}: ` }), segs[add.b].text),
+        ...rangeInfo(p, limitsText(add.tr)));
+      btn.dataset.invalid = p.error ? "1" : "0";
+      btn.disabled = !!p.error || editsLocked;
+    } catch (e) {
+      if (my !== add.seq) return;
+      info.replaceChildren(el("div", { class: "error", text: e.message }));
+    }
+  }
+  async function submitAdd(body, btn) {
+    const err = $("#add-error");
+    err.hidden = true;
+    btn.disabled = true;
+    try {
+      const r = await api("/api/episodes/" + encodeURIComponent(episodeId) + "/shorts", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      });
+      closeAdd();
+      setJobStatus(`Đã thêm ${r.clip_id}: AI đang đặt tiêu đề, rồi dựng ${noun()}…`, "busy");
+      refreshEpisode();
+    } catch (e) {
+      err.textContent = e.message;
+      err.hidden = false;
+      btn.disabled = btn.dataset.invalid === "1" || editsLocked;
+    }
   }
 
   // --- storage page (CP8.6) ---------------------------------------------------------------------

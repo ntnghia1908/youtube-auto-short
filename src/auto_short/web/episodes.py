@@ -190,6 +190,9 @@ def _short_view(episode_id: str, short: dict, titles: dict | None, *, name: str 
         "ai_title": None, "alternatives": [], "override": None,
         "pending_title": None,  # title the next render will use, when it differs from the file's
         "rendering": False,
+        # CP9 C5: "ai" | "added" (Short added by hand) and the manual cut in the file ({start, end} | None)
+        "origin": short.get("origin") or "ai",
+        "cut": short.get("cut"),
     }
     if titles is not None:
         view.update(ai_title=titles["ai_title"], alternatives=titles["alternatives"], override=titles["override"],
@@ -336,6 +339,28 @@ def short_file(config: Config, episode_id: str, clip_id: str) -> tuple[Path, str
         if cid == clip_id:
             return path, name
     return None
+
+
+def source_file(config: Config, episode_id: str) -> Path | None:
+    """CP9 C7: the episode's source video for "Nghe thử" — the manifest ``source.path``, only when it is a file
+    directly inside ``work/<id>/`` (a YouTube download; a local source outside the workspace is not served) and
+    the episode is not archived (CP8.6: the file is gone)."""
+    ws = Workspace(Path(config.workspace.dir), episode_id)
+    try:
+        manifest = ws.load_manifest()
+    except WorkspaceError:
+        return None
+    rel = ((manifest or {}).get("source") or {}).get("path")
+    if not isinstance(rel, str) or not rel or read_archive(ws.dir) is not None:
+        return None
+    path = ws.dir / rel
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return None
+    if resolved.parent != ws.dir.resolve() or not resolved.name.startswith("source.") or not resolved.is_file():
+        return None
+    return resolved
 
 
 def zip_download_name(config: Config, episode_id: str) -> str:
