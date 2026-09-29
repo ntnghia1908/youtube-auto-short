@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: IN_PROGRESS
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -84,8 +84,36 @@ Chạm public API contract (route web mới) → manual test là gate trước i
 ## Result
 
 - Main changes:
-- Tests:
-- Review:
+  - `src/auto_short/review/logic.py`: `review.json` `cuts` / `added` (C1: đọc / ghi / validate, thứ tự key, chỉ ghi khi không rỗng), `resolve_cuts` (khóa `(clip_id, candidate_id)`), origin suy ra của title Short thêm, `next_added_id`.
+  - `src/auto_short/review/cuts.py` (mới, thuần): điểm C3 theo CP4 A6, tinh chỉnh ±0.2 s (≤ ±2.0 s, content, ≤ 2 s vào dòng kề), dòng thuộc khoảng, C4, trims C5 (`analysis.candidates.plan_trims`).
+  - `src/auto_short/review/shorts.py` (mới): `transcript_view`, `list_proposals`, `preview_cut`, `set_cut`, `reset_cut`, `add_short`, `added_titling_input`, `set_added_ai_title`; `ArchivedError` khi đã dọn nguồn. `review/titles.py`: sửa title / phương án / reset / xóa / khôi phục Short thêm.
+  - `src/auto_short/titling/added.py` (mới): title AI một Short thêm bằng prompt / validate / retry CP6, log `review_titling_log.json` (C6).
+  - `src/auto_short/render/stage.py`: `render_targets` (clip `clips.json` rồi Short thêm, C2), khoảng tay với trims từ `silences.json` (C5), manifest thêm `origin`, `cut` (key cuối), R9 theo targets; `render_key` không đổi cách tính.
+  - `src/auto_short/web/`: route C7 (`transcript`, `proposals`, `cut/preview`, `shorts/{clip}/cut`, `shorts`, `files/{id}/source.mp4`), job `add` (làn `ai` → `render`), `origin` / `cut` trong `shorts[]`; UI trang tập (Short + khai thị): "+ Thêm Short" (2 tab), "Sửa đầu/cuối", trình phát "Nghe thử".
+  - Docs canonical (C9): CP8.2 T1 + T8 mới + hàm dùng chung + quyết định khi implement; CP7 R2, R3, R9, R11; CP8.3 W5, W6, W7, W8; CP1 §8; project profile; `AUTO_SHORT_CHECKPOINT_PLAN.md` CP9.
+- Tests: `PYTHONPATH=src python -m pytest -q` (conda env `auto-short`) → **961 passed** (trước CP9: 898). Mới: `tests/test_review_cp9.py` (C1 schema, round-trip byte-identical, C3/C4/C5, hàm theo episode, archived, selection chạy lại, khai thị), `tests/test_render_cp9.py` (ffmpeg thật: cut → 1 encode + reuse byte-identical, reset → byte-identical, Short thêm sau clip, untitled / xóa / khôi phục / cut Short thêm, cut stale bị bỏ qua, silences không khớp), `tests/test_titling_added_cp9.py`, `tests/test_web_cp9.py` (route, 409 job / archived, 422, 503, job `add`, lanes + serial). Test cũ sửa vì schema đổi theo contract: `test_render_stage.py` (+ `origin`, `cut`), `test_review.py` (+ `added`).
+- Chạy thật (2026-09-29, bản sao trong scratch, config test riêng; không ghi `work/` / `output/` chính; qua web app + render thật + Ollama `qwen3:14b` thật; máy có render nền `youtube:rerender` chạy song song):
+
+  | Tập | Bước | Thời gian job | Encode / reuse | sha256 (12) |
+  |---|---|---|---|---|
+  | `7axON1RpRjo` (12 clip, 11 Short) | `k02` sửa đầu/cuối: đầu −0.2 s, cuối + 1 dòng ("hôm nay"): 159.588–210.122 → 159.388–215.751, 41.4 → 43.5 s | 22.2 s | 1 / 10 | `9ae5348ec29c` |
+  | | "Về như AI chọn" | 20.2 s | 1 / 10 | `9ed2bed020a8` = bản gốc (byte-identical) |
+  | | thêm từ đề xuất AI (`overlapped`, chồng lấn `k03`) → `m01` "tại gia có nhiều bồ tát hơn xuất gia", 46.0 s | 28.3 s (title 5.3 s) | 1 / 11 | `d6bc3d9ad1b1` |
+  | | thêm từ transcript `s00037`–`s00056` → `m02` "Tại sao nói pháp ở mọi nơi, từ vũ trụ đến một sợi lông?", 63.6 s | 34.2 s (title 3.1 s) | 1 / 12 | `8a4cd65e3ef8` |
+  | `4oOZz2CBz3g.kt` (6 video, 4–7 phút) | `k01` đầu −0.2 s, cuối + 1 dòng: 243.1 → 245.9 s | 113.1 s | 1 / 5 | `8adf32e7623f` |
+  | | "Về như AI chọn" | 113.0 s | 1 / 5 | `9b038af3d0b7` = bản gốc (byte-identical) |
+  | | thêm từ đề xuất AI (`overlapped`, chồng lấn `k05`) → `m01` "muốn thành công trên đường tu, điều kiện đầu tiên là gì?", 277.4 s | 149.8 s | 1 / 6 | `b5e96c377fe6` |
+  | | thêm từ transcript `s00014`–`s00252` → `m02` "tâm có vọng tưởng là thế gian pháp", 419.0 s | 175.3 s | 1 / 7 | `964b0c9215f6` |
+
+  Sau mọi bước, mọi Short gốc không đổi byte (11/11 và 6/6). Số `S<NN>` / `KT<NN>` của Short cũ giữ nguyên, Short thêm là `S12`/`S13`, `KT07`/`KT08` (theo vị trí trong manifest). Mẫu nghe (scratch của phiên IMPLEMENTER, `…/scratchpad/cp9/samples/`): `7axON1RpRjo_before_k02.mp4`, `7axON1RpRjo_after_cut_k02.mp4`, `7axON1RpRjo_added_m01.mp4`, `7axON1RpRjo_added_m02.mp4`, `4oOZz2CBz3g.kt_before_k01.mp4`, `4oOZz2CBz3g.kt_after_cut_k01.mp4`, `4oOZz2CBz3g.kt_added_m01.mp4`, `4oOZz2CBz3g.kt_added_m02.mp4`.
+- Review: chờ ORCHESTRATOR.
 - Important findings / decisions:
+  - Quyết định khi implement (ORCHESTRATOR chấp nhận, ghi ở CP8.2 § Quyết định khi implement): title Short thêm lưu ở `added[].title`, origin suy ra; text AI = các dòng thuộc khoảng; khoảng đề xuất gồm head cut B11 của đề xuất, trims luôn tính lại; `cut/preview` trả lỗi C4 trong `error` (200); AI lỗi → Short `untitled`, render vẫn chạy, job `failed`; `m<NN>` không dùng lại (review + publish + render manifest); "Nghe thử" = media fragment trên nguồn (5 s đầu / cuối, chưa rút khoảng lặng).
+  - Chạy thật thấy hai lỗi ở luật dòng (đã sửa + test hồi quy): (1) điểm C3 chọn nhầm khoảng lặng của dòng trước khi mốc caption của dòng nằm trong khoảng lặng đó → nay chỉ xét khoảng lặng kết thúc trước `a.end` / bắt đầu sau `b.start` như A6; (2) dòng thuộc khoảng xét theo trung điểm caption để sót dòng ngắn bị caption kéo dài qua khoảng lặng ("nhân sinh" của `k02`) → nay theo khoảng lời nói căn audio của chính dòng đó. Trước khi sửa, "+ dòng" ở cuối `k02` không đổi điểm cuối.
 - Known limitations:
-- PR:
+  - Tổng số Short vượt 99 do thêm → độ rộng số tải về đổi (`S<NN>` → `S<NNN>`) cho mọi Short (W8).
+  - Mốc caption tự động gần đúng; điểm C3 có thể lệch lời nói, dùng ±0.2 s + "Nghe thử". "Nghe thử" phát nguồn chưa rút khoảng lặng.
+  - Title AI có thể bắt đầu chữ thường (`4oOZz2CBz3g.kt` `m02`); CP6 G5 không bắt luật này — sửa tay được.
+  - `GET /transcript` tập khai thị dài ~1.7 s (tính dòng thuộc khoảng cho mọi Short); chấp nhận.
+  - Manual test checklist (điện thoại + desktop) chưa làm — gate trước integration.
+- PR: chưa (không push).
