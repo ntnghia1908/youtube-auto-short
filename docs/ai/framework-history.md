@@ -10,7 +10,7 @@ File này chỉ ghi lịch sử; rule hiện hành nằm ở canonical owner c�
 ## Quy ước
 
 - Mỗi thay đổi framework (core, adapter, checker) thêm một entry mới: ngày, thay đổi, lý do, PR/commit.
-- Version tăng khi rule trong Framework Core thay đổi. Thay đổi chỉ ở adapter hoặc checker ghi entry dưới version hiện tại, không tăng version.
+- Version tăng khi rule trong Framework Core thay đổi, hoặc khi HUMAN LEAD quyết một đợt thay đổi adapter / project policy đủ lớn để đánh version mới (vd v4.2). Thay đổi nhỏ chỉ ở adapter hoặc checker ghi entry dưới version hiện tại, không tăng version.
 - Heading version có dạng `## v<Version>`, khớp giá trị `Version` trong metadata của `docs/ai/workflow.md`; `scripts/framework-check.mjs` kiểm tra điều này.
 
 ## v4
@@ -37,10 +37,14 @@ File này chỉ ghi lịch sử; rule hiện hành nằm ở canonical owner c�
 - Task: `docs/tasks/FW-v4.1-session-scope.md`
 - PR: #4 (merge `5edeb1f`).
 
-### v4.1 — FW-implementer-speed: test policy + adapter IMPLEMENTER
+## v4.2
+
+Đánh version lại (HUMAN LEAD 2026-09-29): đợt FW-implementer-speed thực chất là bản cập nhật của v4.1 (IMPLEMENTER + tối ưu chạy test) nên ghi thành v4.2 thay vì entry phụ dưới v4.1. Framework Core (`docs/ai/workflow.md` §1–§9) không đổi nội dung; chỉ đổi metadata `Version` và quy ước tăng version ở trên.
+
+### v4.2 — FW-implementer-speed: test policy + adapter IMPLEMENTER
 
 - Ngày: 2026-09-29
-- Thay đổi: adapter Claude Code (`.claude/agents/implementer.md`) khai `model: sonnet` và hướng dẫn làm việc gọn; project policy "Test policy" (`docs/ai/project-profile.md` §8); dev dependency `pytest-xdist`. Không đổi Framework Core nên không tăng version.
+- Thay đổi: adapter Claude Code (`.claude/agents/implementer.md`) khai `model: sonnet` và hướng dẫn làm việc gọn; project policy "Test policy" (`docs/ai/project-profile.md` §8); dev dependency `pytest-xdist`. Không đổi rule Framework Core; lúc merge ghi dưới v4.1, đánh lại thành v4.2 theo quyết định trên.
 - Lý do: đo 22 lần chạy IMPLEMENTER cho thấy suite tuần tự 3 phút 30 giây chạy 10–32 lần mỗi task và subagent kế thừa model đắt của session chính.
 - Task: `docs/tasks/FW-implementer-speed.md`
 - PR: #31 (merge `6516638`).
