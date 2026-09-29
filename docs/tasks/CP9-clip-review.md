@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -106,7 +106,7 @@ Chạm public API contract (route web mới) → manual test là gate trước i
   | | thêm từ transcript `s00014`–`s00252` → `m02` "tâm có vọng tưởng là thế gian pháp", 419.0 s | 175.3 s | 1 / 7 | `964b0c9215f6` |
 
   Sau mọi bước, mọi Short gốc không đổi byte (11/11 và 6/6). Số `S<NN>` / `KT<NN>` của Short cũ giữ nguyên, Short thêm là `S13`/`S14` (sau 12 clip, gồm `k01` bỏ qua `untitled`), `KT07`/`KT08` — kiểm bằng tên tải về (vd `Tập7_S13_tại gia có nhiều bồ tát hơn xuất gia.mp4`). Mẫu nghe (scratch của phiên IMPLEMENTER, `…/scratchpad/cp9/samples/`): `7axON1RpRjo_before_k02.mp4`, `7axON1RpRjo_after_cut_k02.mp4`, `7axON1RpRjo_added_m01.mp4`, `7axON1RpRjo_added_m02.mp4`, `4oOZz2CBz3g.kt_before_k01.mp4`, `4oOZz2CBz3g.kt_after_cut_k01.mp4`, `4oOZz2CBz3g.kt_added_m01.mp4`, `4oOZz2CBz3g.kt_added_m02.mp4`.
-- Review: chờ ORCHESTRATOR.
+- Review: ACCEPTED (ORCHESTRATOR 2026-09-29): diff theo contract C1–C9, AC 1–9; pytest chạy lại 961 passed; quyết định khi implement (CP8.2 T8) chấp nhận. Manual test checklist (public API) là gate trước integration.
 - Important findings / decisions:
   - Quyết định khi implement (ORCHESTRATOR chấp nhận, ghi ở CP8.2 § Quyết định khi implement): title Short thêm lưu ở `added[].title`, origin suy ra; text AI = các dòng thuộc khoảng; khoảng đề xuất gồm head cut B11 của đề xuất, trims luôn tính lại; `cut/preview` trả lỗi C4 trong `error` (200); AI lỗi → Short `untitled`, render vẫn chạy, job `failed`; `m<NN>` không dùng lại (review + publish + render manifest); "Nghe thử" = media fragment trên nguồn (5 s đầu / cuối, chưa rút khoảng lặng).
   - Chạy thật thấy hai lỗi ở luật dòng (đã sửa + test hồi quy): (1) điểm C3 chọn nhầm khoảng lặng của dòng trước khi mốc caption của dòng nằm trong khoảng lặng đó → nay chỉ xét khoảng lặng kết thúc trước `a.end` / bắt đầu sau `b.start` như A6; (2) dòng thuộc khoảng xét theo trung điểm caption để sót dòng ngắn bị caption kéo dài qua khoảng lặng ("nhân sinh" của `k02`) → nay theo khoảng lời nói căn audio của chính dòng đó. Trước khi sửa, "+ dòng" ở cuối `k02` không đổi điểm cuối.
