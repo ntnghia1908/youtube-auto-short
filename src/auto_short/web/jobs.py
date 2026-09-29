@@ -38,6 +38,7 @@ ACTIVE = (QUEUED, RUNNING)
 LOG_LINES = 200
 KIND_PIPELINE = "pipeline"
 KIND_RENDER = "render"
+KIND_ADD = "add"  # CP9 C7: AI title of a Short added by hand (lane ai), then render (lane render)
 
 MODE_LANES, MODE_SERIAL = "lanes", "serial"
 PREPARE, AI, RENDER = "prepare", "ai", "render"
@@ -468,3 +469,63 @@ def render_target(config: Config, *, render: Callable = run_render) -> Callable[
             job.summary = "render up to date (nothing to encode)"
 
     return target
+
+
+# --- add-Short job (CP9 C6, C7) ------------------------------------------------------------------------------
+
+class AddShortTarget:
+    """Job target after a Short was added to ``review.json`` (C1): lane ``ai`` = Ollama preflight + the AI title
+    of that one Short (C6), lane ``render`` = render (every other Short reused, CP8.2 T5). When the AI gives no
+    title (preflight / connection / no valid option) the Short stays ``untitled``; the render still runs so it
+    shows up (skipped, waiting for a manual title) and the job ends ``failed`` with the AI error, if any.
+    Called directly (``queue_mode = "serial"``): both steps."""
+
+    def __init__(self, config: Config, clip_id: str, *, render: Callable = run_render,
+                 preflight: Callable[[Config], None] | None = ollama_preflight, titler: Callable | None = None):
+        self.config, self.clip_id, self.render_fn, self.preflight = config, clip_id, render, preflight
+        self.titler = titler
+        self.title_error: str | None = None
+        self.title: str | None = None
+
+    def ai(self, job: Job) -> None:
+        if self.titler is None:
+            from ..titling.added import title_added
+            titler = title_added
+        else:
+            titler = self.titler
+        try:
+            if self.preflight is not None:
+                job.stage = "preflight"
+                self.preflight(self.config)
+            job.stage = "titling"
+            t0 = time.monotonic()
+            result = titler(job.episode_id, self.config, self.clip_id)
+            job.stages.append({"stage": "titling", "ran": True, "seconds": round(time.monotonic() - t0, 3)})
+            self.title = result.title
+            if result.error:
+                self.title_error = f"titling {self.clip_id}: {result.error}"
+            elif result.title is None:
+                self.title_error = f"titling {self.clip_id}: AI không đưa ra tiêu đề hợp lệ"
+        except PreflightError as exc:
+            self.title_error = f"ollama preflight: {exc}"
+        job.stage = "render"
+
+    def render(self, job: Job) -> None:
+        render_target(self.config, render=self.render_fn)(job)
+        if self.title_error:
+            raise JobFailed(f"{self.title_error} — Short {self.clip_id} đã thêm nhưng chưa có tiêu đề: gõ tiêu đề tay")
+        job.summary = f"{self.clip_id}: {self.title!r}; {job.summary}"
+
+    def __call__(self, job: Job) -> None:
+        self.ai(job)
+        self.render(job)
+
+    def lane_steps(self) -> list[Step]:
+        return [Step(AI, self.ai), Step(RENDER, self.render)]
+
+
+def add_short_target(config: Config, clip_id: str, *, render: Callable = run_render,
+                     preflight: Callable[[Config], None] | None = ollama_preflight,
+                     titler: Callable | None = None) -> AddShortTarget:
+    """See :class:`AddShortTarget`."""
+    return AddShortTarget(config, clip_id, render=render, preflight=preflight, titler=titler)

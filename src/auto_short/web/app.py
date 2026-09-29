@@ -30,10 +30,11 @@ from ..review import (ArchivedError, EpisodeNotFound, ReviewError, TitlePreview,
                       list_tombstones, mark_downloaded, remove_tombstone,
                       delete_episode, is_archived, preview_title, reject_archived_clip, reject_clip, reset_title,
                       restore_clip, set_alternative, set_published, set_title)
+from ..review import shorts as review_shorts
 from . import episodes as ep
 from .auth import COOKIE_NAME, SessionSigner, load_or_create_secret
 from .storage import BLOCK_MESSAGE, StorageCache
-from .jobs import KIND_PIPELINE, KIND_RENDER, JobRunner, pipeline_target, render_target
+from .jobs import KIND_ADD, KIND_PIPELINE, KIND_RENDER, JobRunner, add_short_target, pipeline_target, render_target
 from .playlists import LIST_TIMEOUT, PlaylistError, PlaylistStore, ytdlp_list
 from .urls import ASK, PLAYLIST, UrlError, canonical_url, classify_url, valid_playlist_id
 
@@ -82,6 +83,42 @@ class TitleIn(BaseModel):
     set: str | None = Field(default=None, max_length=1000)
     alternative: int | None = None
     reset: bool = False
+
+
+SEGMENT_ID = Field(default=None, max_length=32)
+SOURCE_TYPES = {".mp4": "video/mp4", ".m4v": "video/mp4", ".webm": "video/webm", ".mkv": "video/x-matroska",
+                ".mov": "video/quicktime"}
+
+
+class CutPreviewIn(BaseModel):
+    """CP9 C7: range of caption lines ``start_segment`` .. ``end_segment`` + nudges (s, ±0.2 steps, ≤ ±2.0);
+    ``clip_id`` = the Short being edited (its current range is the base), absent = a new Short."""
+
+    clip_id: str | None = Field(default=None, max_length=32)
+    start_segment: str = Field(max_length=32)
+    end_segment: str = Field(max_length=32)
+    start_nudge: Any = 0
+    end_nudge: Any = 0
+
+
+class CutIn(BaseModel):
+    """``{start_segment, end_segment, start_nudge, end_nudge}`` or ``{reset: true}`` ("Về như AI chọn")."""
+
+    start_segment: str | None = SEGMENT_ID
+    end_segment: str | None = SEGMENT_ID
+    start_nudge: Any = 0
+    end_nudge: Any = 0
+    reset: bool = False
+
+
+class AddIn(BaseModel):
+    """A new Short: ``{candidate_id}`` (remaining AI proposal) or ``{start_segment, end_segment[, nudges]}``."""
+
+    candidate_id: str | None = Field(default=None, max_length=32)
+    start_segment: str | None = SEGMENT_ID
+    end_segment: str | None = SEGMENT_ID
+    start_nudge: Any = 0
+    end_nudge: Any = 0
 
 
 def _preview_dict(p: TitlePreview | None) -> dict | None:
@@ -154,11 +191,12 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                pipeline: Callable = run_pipeline, render: Callable = run_render,
                secret: bytes | None = None, disk_usage: Callable = shutil.disk_usage,
                clock: Callable[[], float] = time.time, playlist_lister: Callable = ytdlp_list,
-               playlist_timeout: float = LIST_TIMEOUT) -> FastAPI:
+               playlist_timeout: float = LIST_TIMEOUT, titler: Callable | None = None) -> FastAPI:
     """``preflight`` / ``pipeline`` / ``render`` are injectable for tests (defaults: CP8 ``ollama_preflight`` /
     ``run_pipeline``, CP7/CP8.2 ``run_render``); so are ``disk_usage`` (``shutil.disk_usage``) and ``clock`` (epoch
     seconds, ages of the storage recommendations) for CP8.6; ``playlist_lister`` (yt-dlp flat listing) and
-    ``playlist_timeout`` for CP8.7."""
+    ``playlist_timeout`` for CP8.7; ``titler`` (AI title of an added Short, default
+    :func:`auto_short.titling.added.title_added`) for CP9."""
     runner = runner or JobRunner(config.web.queue_mode)
     storage = StorageCache(config, disk_usage=disk_usage, clock=clock)
     playlists = PlaylistStore(config, lister=playlist_lister, timeout=playlist_timeout)
@@ -546,7 +584,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                     "stages": [], "header": None, "shorts": [], "rendered": 0, "deleted": 0, "published": 0,
                     "zip_url": None, "zip_name": None, "archived": None}
         view["job"] = _job_view(job)
-        if job is not None and job.active and job.kind == KIND_RENDER:
+        if job is not None and job.active and job.kind in (KIND_RENDER, KIND_ADD):
             for short in view["shorts"]:
                 short["rendering"] = short["clip_id"] in job.clip_ids
         return view
@@ -630,6 +668,119 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     @app.post("/api/episodes/{episode_id}/shorts/{clip_id}/restore")
     def api_short_restore(episode_id: str, clip_id: str):
         return _review_render(episode_id, clip_id, restore_clip, "restore Short")
+
+    # --- CP9: cut points + added Shorts ---------------------------------------------------------------
+
+    def _episode_or_404(episode_id: str) -> JSONResponse | None:
+        if not ep.valid_episode_id(episode_id):
+            return JSONResponse({"detail": "không có episode này"}, status_code=404)
+        return None
+
+    def _busy(episode_id: str) -> JSONResponse | None:
+        current = runner.latest(episode_id)
+        if current is not None and current.active:
+            return JSONResponse({"detail": "episode đang có job chạy/đợi; thử lại sau khi job xong",
+                                 "job": _job_view(current)}, status_code=409)
+        return None
+
+    @app.get("/api/episodes/{episode_id}/transcript")
+    def api_transcript(episode_id: str):
+        """C7: caption lines + the current range of every Short (read-only, allowed while a job runs)."""
+        if (bad := _episode_or_404(episode_id)) is not None:
+            return bad
+        try:
+            return review_shorts.transcript_view(episode_id, config)
+        except ReviewError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=422)
+
+    @app.get("/api/episodes/{episode_id}/proposals")
+    def api_proposals(episode_id: str):
+        """C7: AI proposals not selected (overlapped / over_limit / ineligible) that map to a candidate."""
+        if (bad := _episode_or_404(episode_id)) is not None:
+            return bad
+        try:
+            return review_shorts.list_proposals(episode_id, config)
+        except ReviewError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=422)
+
+    @app.post("/api/episodes/{episode_id}/cut/preview")
+    def api_cut_preview(episode_id: str, body: CutPreviewIn):
+        """C7: range + duration + C4 error / warnings of lines + nudges; nothing written, allowed during a job."""
+        if (bad := _episode_or_404(episode_id)) is not None:
+            return bad
+        if body.clip_id is not None and not ep.valid_clip_id(body.clip_id):
+            return JSONResponse({"detail": "không có Short này"}, status_code=404)
+        try:
+            return review_shorts.preview_cut(episode_id, config, clip_id=body.clip_id,
+                                             start_segment=body.start_segment, end_segment=body.end_segment,
+                                             start_nudge=body.start_nudge, end_nudge=body.end_nudge)
+        except ReviewError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=422)
+
+    @app.post("/api/episodes/{episode_id}/shorts/{clip_id}/cut")
+    def api_cut(episode_id: str, clip_id: str, body: CutIn):
+        """C7: save the cut points of one Short (or ``reset``) + render job for it; 409 while a job runs or when
+        the source video was cleaned up; 422 invalid range (review.json unchanged)."""
+        if (bad := _check_clip(episode_id, clip_id)) is not None:
+            return bad
+        has_range = body.start_segment is not None and body.end_segment is not None
+        if body.reset == has_range or (not has_range and (body.start_segment or body.end_segment)):
+            return JSONResponse({"detail": "cần start_segment + end_segment, hoặc reset: true"}, status_code=422)
+        with submit_lock:
+            if (busy := _busy(episode_id)) is not None:
+                return busy
+            try:
+                if body.reset:
+                    preview = review_shorts.reset_cut(episode_id, config, clip_id)
+                else:
+                    preview = review_shorts.set_cut(episode_id, config, clip_id, start_segment=body.start_segment,
+                                                    end_segment=body.end_segment, start_nudge=body.start_nudge,
+                                                    end_nudge=body.end_nudge)
+            except ArchivedError as exc:
+                return JSONResponse({"detail": str(exc)}, status_code=409)
+            except ReviewError as exc:
+                return JSONResponse({"detail": str(exc)}, status_code=422)
+            job, _ = runner.submit(episode_id, KIND_RENDER, render_target(config, render=render),
+                                   clip_ids=[clip_id])
+        log.info("web: cut %s [%s]: %s %.3f-%.3f (%.1f s) -> render job %s", clip_id, episode_id,
+                 "reset" if body.reset else "set", preview["start"], preview["end"], preview["duration"], job.id)
+        return JSONResponse({"preview": preview, "job": _job_view(job)}, status_code=202)
+
+    @app.post("/api/episodes/{episode_id}/shorts")
+    def api_add_short(episode_id: str, body: AddIn):
+        """C7: add a Short (C1) -> job: AI title (lane ai, C6) then render. 409 while a job runs / archived;
+        503 Ollama preflight (W4); 422 invalid range or proposal (nothing written)."""
+        if (bad := _episode_or_404(episode_id)) is not None:
+            return bad
+        if (busy := _busy(episode_id)) is not None:
+            return busy
+        if is_archived(Path(config.workspace.dir) / episode_id):
+            return JSONResponse({"detail": str(ArchivedError(episode_id))}, status_code=409)
+        if preflight is not None:
+            try:
+                preflight(config)
+            except PreflightError as exc:
+                return JSONResponse({"detail": f"ollama preflight: {exc}"}, status_code=503)
+        with submit_lock:
+            if (busy := _busy(episode_id)) is not None:
+                return busy
+            try:
+                added = review_shorts.add_short(episode_id, config, candidate_id=body.candidate_id,
+                                                start_segment=body.start_segment, end_segment=body.end_segment,
+                                                start_nudge=body.start_nudge, end_nudge=body.end_nudge)
+            except ArchivedError as exc:
+                return JSONResponse({"detail": str(exc)}, status_code=409)
+            except ReviewError as exc:
+                return JSONResponse({"detail": str(exc)}, status_code=422)
+            job, _ = runner.submit(episode_id, KIND_ADD,
+                                   add_short_target(config, added.clip_id, render=render, preflight=preflight,
+                                                    titler=titler),
+                                   clip_ids=[added.clip_id])
+        log.info("web: added Short %s [%s] %.3f-%.3f (%.1f s, %s) -> job %s", added.clip_id, episode_id,
+                 added.preview["start"], added.preview["end"], added.preview["duration"],
+                 body.candidate_id or "transcript", job.id)
+        return JSONResponse({"clip_id": added.clip_id, "preview": added.preview, "job": _job_view(job)},
+                            status_code=202)
 
     @app.post("/api/episodes/{episode_id}/shorts/{clip_id}/published")
     def api_short_published(episode_id: str, clip_id: str, body: PublishedIn):
@@ -735,6 +886,13 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                 _zip_stream(items), media_type="application/zip",
                 headers={"Content-Disposition": content_disposition(ep.zip_download_name(config, episode_id)),
                          "Cache-Control": "no-store"})
+        if name == "source.mp4":  # CP9 C7: "Nghe thử" around a cut point (Range; never ticks, never a download)
+            found_src = ep.source_file(config, episode_id)
+            if found_src is None:
+                return JSONResponse({"detail": "không có video nguồn"}, status_code=404)
+            return FileResponse(found_src, media_type=SOURCE_TYPES.get(found_src.suffix.lower(),
+                                                                       "application/octet-stream"),
+                                headers={"Cache-Control": "private, no-cache"})
         clip_id = name[:-4] if name.endswith(".mp4") else ""
         if not ep.valid_clip_id(clip_id):
             return JSONResponse({"detail": "không có file này"}, status_code=404)

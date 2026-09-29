@@ -132,6 +132,8 @@ Workspace: `work/<episode_id>/` (đã gitignore). Mỗi stage một artifact, c�
 | selection | `clips.json` | **AI** + validate | CP5 |
 | titling | `titles.json` | **AI** + validate | CP6 |
 | review | `review.json` (approve/reject/edit) | người | CP9 |
+
+- Sửa đổi (CP8.2, CP8.5, CP9 — HUMAN LEAD 2026-09-27/29): `review.json` hiện gồm title tay (CP8.2), Short bị xóa (CP8.5), điểm cắt tay theo dòng caption và Short thêm tay từ đề xuất AI còn lại / đoạn chọn trên transcript (CP9); không phải stage (không có entry manifest). Title của Short thêm tay do AI đặt (prompt / validate CP6, ngoài stage titling), sửa tay được; approve từng Short và sửa header: không làm. Canonical: `docs/decisions/CP8.2-title-override-contract.md` T1, T7, T8.
 | render | `render_manifest.json`, `shorts/*.mp4` | có | CP7 |
 
 - Stage bỏ qua khi artifact tồn tại và input hash + config hash khớp; lệch → stage và downstream stale.

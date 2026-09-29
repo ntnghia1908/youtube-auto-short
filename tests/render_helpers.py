@@ -51,12 +51,13 @@ def make_source(path: Path, size: str = "1440x1080", rate: str = "30000/1001", s
 
 def write_docs(ws: Workspace, *, clips: list[dict] | None = None, titles: dict | None = None,
                candidates: list[dict] | None = None, header: list[str] | None = None,
-               alternatives: dict | None = None) -> None:
+               alternatives: dict | None = None, cand_extra: dict | None = None) -> None:
     """(Re)write candidates.json, clips.json and titles.json with consistent sha256 links.
     ``titles`` maps clip id -> title (None = untitled); default TITLES. ``alternatives`` maps clip id -> list of
-    alternative titles (default none)."""
+    alternative titles (default none). ``cand_extra`` = more candidates.json keys (CP9: ``params``,
+    ``silences_sha256``)."""
     cand_doc = {"schema_version": 1, "episode_id": ws.episode_id, "params": {},
-                "candidates": CANDIDATES if candidates is None else candidates}
+                "candidates": CANDIDATES if candidates is None else candidates, **(cand_extra or {})}
     clips = CLIPS if clips is None else clips
     clips_doc = {"schema_version": 1, "episode_id": ws.episode_id, "candidates_sha256": sha(cand_doc),
                  "clips": clips}

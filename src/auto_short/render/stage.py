@@ -1,7 +1,8 @@
 """Render stage (CP7): titling done -> ``<output_dir>/<episode_id>/shorts/<clip_id>.mp4`` + ``render_manifest.json``.
 
 Canonical contract: docs/decisions/CP7-render-contract.md; title overrides and deleted Shorts (``review.json``) and
-per-Short reuse (``render_key``): docs/decisions/CP8.2-title-override-contract.md.
+per-Short reuse (``render_key``): docs/decisions/CP8.2-title-override-contract.md; manual cut points and Shorts
+added by hand (``review.json`` ``cuts`` / ``added``, CP9): same contract T1, T8.
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ from ..workspace import (
     validate_episode_id,
 )
 from ..review import archive as review_archive
+from ..review import cuts as review_cuts
 from ..review import logic as review_logic
 from . import plan
 from .text import MAX_LINES, Font, TextError, TextFit, baselines, fit_header, fit_title, nfc
@@ -43,6 +45,7 @@ METADATA_NAME = "metadata.json"
 CANDIDATES_NAME = "candidates.json"
 CLIPS_NAME = "clips.json"
 TITLES_NAME = "titles.json"
+SILENCES_NAME = "silences.json"
 REVIEW_NAME = review_logic.REVIEW_NAME
 RENDER_MANIFEST_NAME = "render_manifest.json"
 SHORTS_DIR = "shorts"
@@ -185,7 +188,7 @@ def verify_output(path: Path, fps: Fraction, planned_frames: int, run: Runner) -
 
 @dataclass
 class ClipPlan:
-    clip: dict
+    clip: dict  # render target (see render_targets)
     text: str | None  # title rendered (T4: override > AI title); None = untitled without override
     origin: str | None  # ai | manual | alternative
     segments: list[tuple[int, int]]
@@ -210,19 +213,76 @@ def check_inputs(clips_doc: dict, titles_doc: dict, cand_doc: dict) -> None:
         raise RenderError("titles.json header must have 1-3 non-empty lines; re-run 'auto-short titling'")
 
 
-def plan_clips(clips_doc: dict, titles: list[review_logic.ResolvedTitle], cand_doc: dict, *, font: Font,
-               cfg: RenderConfig, geo: plan.Geometry, src_w: int, src_h: int) -> list[ClipPlan]:
-    """``titles``: the title of each clip after overrides (T4), in clips.json order."""
+def load_silences(ws: Workspace, cand_doc: dict) -> list[tuple[float, float]]:
+    """CP9 C5: ``silences.json`` for the trims of manual ranges; it must be the one candidates.json was built
+    from (``silences_sha256``, like CP5 B8)."""
+    doc = _read_json(ws.dir / SILENCES_NAME, "analysis")
+    if cand_doc.get("silences_sha256") != _sha(doc):
+        raise RenderError("silences.json does not match candidates.json (silences_sha256); "
+                          "re-run 'auto-short analysis'")
+    return [(x["start"], x["end"]) for x in doc.get("silences", [])]
+
+
+def render_targets(clips_doc: dict, review: dict, cand_doc: dict,
+                   silences: Callable[[], list[tuple[float, float]]]) -> tuple[list[dict], list[str]]:
+    """Every Short of the episode in render order (CP9 C2: clips.json clips, then the Shorts added by hand in
+    creation order) with its range and kept segments (ms): a clip without manual cut keeps R3 (candidate trims);
+    a manual range (cut or added Short) gets its trims from ``silences.json`` by CP4 A8 (C5). ``silences`` is
+    called only when a manual range exists. Returns (targets, warnings of ignored cuts)."""
     trims = {c["id"]: c.get("trims", []) for c in cand_doc.get("candidates", [])}
-    out = []
-    for clip, rt in zip(clips_doc["clips"], titles):
-        if clip["candidate_id"] not in trims:
-            raise RenderError(f"clip {clip['id']}: candidate {clip['candidate_id']} not in candidates.json")
+    added = review.get(review_logic.ADDED_KEY, [])
+    keys = [(c["id"], c["candidate_id"]) for c in clips_doc["clips"]] + [(a["clip_id"], a["candidate_id"])
+                                                                        for a in added]
+    cuts, warnings = review_logic.resolve_cuts(keys, review)
+    sils: list | None = None
+
+    def manual(clip_id: str, start: float, end: float) -> list[tuple[int, int]]:
+        nonlocal sils
+        if sils is None:
+            sils = silences()
         try:
-            segs = plan.kept_segments(clip["source_start"], clip["source_end"], trims[clip["candidate_id"]])
-            plan.check_duration(clip["id"], segs, clip["duration"])
+            max_pause = cand_doc["params"]["max_pause"]
+        except (KeyError, TypeError) as exc:
+            raise RenderError("candidates.json has no params.max_pause; re-run 'auto-short analysis'") from exc
+        try:
+            return review_cuts.kept_segments_ms(start, end, sils, max_pause)
         except plan.PlanError as exc:
-            raise RenderError(str(exc)) from exc
+            raise RenderError(f"clip {clip_id}: {exc}") from exc
+
+    out = []
+    for clip in clips_doc["clips"]:
+        cid = clip["id"]
+        if clip["candidate_id"] not in trims:
+            raise RenderError(f"clip {cid}: candidate {clip['candidate_id']} not in candidates.json")
+        if cid in cuts:
+            start, end = cuts[cid]
+            segs = manual(cid, start, end)
+        else:
+            start, end = clip["source_start"], clip["source_end"]
+            try:
+                segs = plan.kept_segments(start, end, trims[clip["candidate_id"]])
+                plan.check_duration(cid, segs, clip["duration"])
+            except plan.PlanError as exc:
+                raise RenderError(str(exc)) from exc
+        out.append({"id": cid, "candidate_id": clip["candidate_id"], "source_start": start, "source_end": end,
+                    "duration": plan.total_ms(segs) / 1000 if cid in cuts else clip["duration"], "segments": segs,
+                    "origin": review_logic.ORIGIN_AI,
+                    "cut": {"start": start, "end": end} if cid in cuts else None})
+    for a in added:
+        cid = a["clip_id"]
+        start, end = cuts.get(cid) or (a["start"], a["end"])
+        segs = manual(cid, start, end)
+        out.append({"id": cid, "candidate_id": a["candidate_id"], "source_start": start, "source_end": end,
+                    "duration": plan.total_ms(segs) / 1000, "segments": segs, "origin": review_logic.ORIGIN_ADDED,
+                    "cut": {"start": start, "end": end} if cid in cuts else None})
+    return out, warnings
+
+
+def plan_clips(targets: list[dict], titles: list[review_logic.ResolvedTitle], *, font: Font, cfg: RenderConfig,
+               geo: plan.Geometry, src_w: int, src_h: int) -> list[ClipPlan]:
+    """``titles``: the title of each target after overrides (T4), in the same order."""
+    out = []
+    for clip, rt in zip(targets, titles):
         fit = lay = None
         if rt.title is not None and not rt.rejected:
             try:
@@ -230,7 +290,7 @@ def plan_clips(clips_doc: dict, titles: list[review_logic.ResolvedTitle], cand_d
             except TextError as exc:
                 raise RenderError(f"clip {clip['id']}: {exc}") from exc
             lay = plan.layout(geo, fit.panel_height, src_w, src_h)
-        out.append(ClipPlan(clip, rt.title, rt.origin, segs, fit, lay, rt.rejected))
+        out.append(ClipPlan(clip, rt.title, rt.origin, clip["segments"], fit, lay, rt.rejected))
     return out
 
 
@@ -257,31 +317,31 @@ def _write_lines(tmp: Path, tag: str, lines: list[str], bases: list[int]) -> lis
 
 # --- validation (R9) ---------------------------------------------------------------------------------------------
 
-def validate_render(doc: dict, clips_doc: dict, cand_doc: dict, out_dir: Path, *,
+def validate_render(doc: dict, targets: list[dict], out_dir: Path, *,
                     staged: dict[str, Path] | None = None, removing: frozenset[Path] = frozenset()) -> None:
-    """R9 on the state after commit: ``staged`` maps the ``file`` of a Short encoded by this run to the .part
-    holding it; ``removing`` = previous output files the commit deletes (T5)."""
+    """R9 on the state after commit: ``targets`` = :func:`render_targets` (clips.json clips then added Shorts,
+    CP9); ``staged`` maps the ``file`` of a Short encoded by this run to the .part holding it; ``removing`` =
+    previous output files the commit deletes (T5)."""
     staged = staged or {}
 
     def exists_after(rel: str) -> bool:
         p = out_dir / rel
         return rel in staged or (p.exists() and p.resolve() not in removing)
 
-    clips = clips_doc["clips"]
     fps = Fraction(doc["encode"]["fps"])
     shorts = doc["shorts"]
-    if [(s["clip_id"], s["candidate_id"]) for s in shorts] != [(c["id"], c["candidate_id"]) for c in clips]:
-        raise RenderError("render_manifest shorts do not match clips.json (ids/order)")
-    trims = {c["id"]: c.get("trims", []) for c in cand_doc.get("candidates", [])}
+    if [(s["clip_id"], s["candidate_id"]) for s in shorts] != [(c["id"], c["candidate_id"]) for c in targets]:
+        raise RenderError("render_manifest shorts do not match clips.json + added Shorts (ids/order)")
     if len(doc["header"]["display_lines"]) > MAX_LINES:
         raise RenderError("header has more than 3 display lines")
-    for s, c in zip(shorts, clips):
-        segs = plan.segments_seconds(plan.kept_segments(c["source_start"], c["source_end"], trims[c["candidate_id"]]))
-        if s["segments"] != segs or s["duration"] != c["duration"]:
+    for s, c in zip(shorts, targets):
+        if s["segments"] != plan.segments_seconds(c["segments"]) or s["duration"] != c["duration"] \
+                or (s["source_start"], s["source_end"]) != (c["source_start"], c["source_end"]):
             raise RenderError(f"clip {s['clip_id']}: segments do not match R3")
+        if (s["origin"], s["cut"]) != (c["origin"], c["cut"]):
+            raise RenderError(f"clip {s['clip_id']}: origin / cut do not match review.json")
         if s["status"] == RENDERED:
-            planned = plan.dissolves(plan.kept_segments(c["source_start"], c["source_end"], trims[c["candidate_id"]]),
-                                     fps, doc["encode"]["dissolve"])
+            planned = plan.dissolves(c["segments"], fps, doc["encode"]["dissolve"])
             if s["dissolves"] != planned:
                 raise RenderError(f"clip {s['clip_id']}: dissolves do not match the plan")
             path = staged.get(s["file"], out_dir / s["file"])
@@ -455,8 +515,10 @@ def _render_all(ws: Workspace, cfg: RenderConfig, fpath: Path, font_sha: str, me
         review = review_logic.read_review(review_path, ws.episode_id)
     except review_logic.ReviewError as exc:
         raise RenderError(f"{exc}; fix it or reset the override with 'auto-short title … --reset'") from exc
-    resolved, warnings = review_logic.resolve_titles(titles_doc["titles"], review)
-    for w in warnings:
+    resolved, warnings = review_logic.resolve_titles(titles_doc["titles"] + review_logic.added_entries(review),
+                                                     review)
+    targets, cut_warnings = render_targets(clips_doc, review, cand_doc, lambda: load_silences(ws, cand_doc))
+    for w in warnings + cut_warnings:
         log.warning("%s: WARNING: %s", STAGE, w)
 
     font = Font(fpath)
@@ -478,7 +540,7 @@ def _render_all(ws: Workspace, cfg: RenderConfig, fpath: Path, font_sha: str, me
                             min_font_scale=cfg.min_font_scale)
     except TextError as exc:
         raise RenderError(str(exc)) from exc
-    plans = plan_clips(clips_doc, resolved, cand_doc, font=font, cfg=cfg, geo=geo, src_w=src_w, src_h=src_h)
+    plans = plan_clips(targets, resolved, font=font, cfg=cfg, geo=geo, src_w=src_w, src_h=src_h)
     base_layout = plan.layout(geo, geo.title_h, src_w, src_h)
 
     log.info("%s: font %s (%s), fps %s, source %dx%d, dissolve %g s (%d frames)", STAGE, font.family,
@@ -504,7 +566,12 @@ def _render_all(ws: Workspace, cfg: RenderConfig, fpath: Path, font_sha: str, me
                       "title_display_lines": None, "title_font_size": None, "layout": None,
                       "source_start": clip["source_start"], "source_end": clip["source_end"],
                       "segments": plan.segments_seconds(cp.segments), "duration": clip["duration"],
-                      "dissolves": None, "title_origin": cp.origin, "render_key": None}
+                      "dissolves": None, "title_origin": cp.origin, "render_key": None,
+                      "origin": clip["origin"], "cut": clip["cut"]}  # CP9 C5 (last keys)
+            if clip["cut"] is not None or clip["origin"] != review_logic.ORIGIN_AI:
+                log.info("%s: clip %s: %s range %.3f-%.3f (%.3f s)", STAGE, clip["id"],
+                         "manual cut" if clip["cut"] else "added", clip["source_start"], clip["source_end"],
+                         clip["duration"])
             if cp.rejected:
                 record["skip_reason"] = REJECTED
                 log.info("%s: clip %s skipped: rejected (deleted in review)", STAGE, clip["id"])
@@ -577,7 +644,7 @@ def _render_all(ws: Workspace, cfg: RenderConfig, fpath: Path, font_sha: str, me
     manifest_path = out_dir / RENDER_MANIFEST_NAME
     keep = {(out_dir / s["file"]).resolve() for s in rendered} | {manifest_path.resolve()}
     removing = [p for p in old_outputs if p.resolve() not in keep]
-    validate_render(doc, clips_doc, cand_doc, out_dir, staged=files.staged,
+    validate_render(doc, targets, out_dir, staged=files.staged,
                     removing=frozenset(p.resolve() for p in removing))
 
     files.committing = True

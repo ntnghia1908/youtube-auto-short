@@ -49,7 +49,10 @@
   <section class="card">
     <div class="shorts-head">
       <h2><span id="shorts-label">Shorts</span> <span id="shorts-count" class="muted"></span></h2>
-      <a id="zip" class="btn" hidden>Tải tất cả (.zip)</a>
+      <div class="head-actions">
+        <button id="add-short" class="btn" type="button" hidden>+ Thêm Short</button>
+        <a id="zip" class="btn" hidden>Tải tất cả (.zip)</a>
+      </div>
     </div>
     <p id="header-lines" class="muted small"></p>
     <p id="shorts-note" class="note small" hidden></p>
@@ -63,6 +66,38 @@
     <div id="shorts" class="shorts-grid"></div>
   </section>
 </main>
+<div id="add-dialog" class="modal" role="dialog" aria-modal="true" aria-labelledby="add-title" hidden>
+  <div class="modal-box">
+    <div class="modal-head">
+      <h2 id="add-title">Thêm Short</h2>
+      <button id="add-close" class="btn small" type="button">Đóng</button>
+    </div>
+    <div class="tabs" role="tablist">
+      <button id="tab-proposals" class="btn small tab active" type="button" role="tab" aria-selected="true">Đề xuất AI (<span id="n-proposals">…</span>)</button>
+      <button id="tab-transcript" class="btn small tab" type="button" role="tab" aria-selected="false">Chọn trên transcript</button>
+    </div>
+    <p id="add-error" class="error small" hidden></p>
+    <p class="lock-note muted small" hidden>Đang có job chạy — đợi xong để thêm.</p>
+    <div id="pane-proposals" class="pane"></div>
+    <div id="pane-transcript" class="pane" hidden>
+      <input id="tr-search" type="search" placeholder="Tìm chữ trong phụ đề…" aria-label="Tìm trong phụ đề">
+      <p id="tr-hint" class="muted small"></p>
+      <ol id="tr-lines" class="tr-lines"></ol>
+    </div>
+    <div id="tr-bar" class="tr-bar" hidden>
+      <div id="tr-info" class="small"></div>
+      <div class="edit-actions">
+        <span id="tr-listen" class="edit-actions"></span>
+        <button id="tr-clear" class="btn small" type="button" hidden>Bỏ chọn</button>
+        <button id="tr-add" class="btn primary small needs-idle" type="button" disabled>Thêm đoạn này</button>
+      </div>
+    </div>
+  </div>
+</div>
+<div id="source-float" class="source-float" hidden>
+  <div class="source-head"><span id="source-label" class="small"></span><button id="source-close" class="btn small" type="button">✕</button></div>
+  <video id="source-video" controls playsinline preload="none"></video>
+</div>
 <script src="/static/app.js"></script>
 <script>AutoShort.initEpisode();</script>
 </body>

@@ -105,7 +105,8 @@ def test_render_writes_shorts_and_manifest(ws, rcfg):
     k01, k02 = doc["shorts"]
     assert list(k01) == ["clip_id", "candidate_id", "status", "skip_reason", "file", "sha256", "title",
                          "title_display_lines", "title_font_size", "layout", "source_start", "source_end",
-                         "segments", "duration", "dissolves", "title_origin", "render_key"]
+                         "segments", "duration", "dissolves", "title_origin", "render_key", "origin", "cut"]
+    assert (k01["origin"], k01["cut"]) == ("ai", None)  # CP9 C5: not added, no manual cut
     assert (k01["title_origin"], k02["title_origin"]) == ("ai", "ai")  # CP8.2 T4: no review.json
     assert len(k01["render_key"]) == 64 and k01["render_key"] != k02["render_key"]
     assert doc["encode"]["dissolve"] == 0.15 and list(doc["encode"])[-1] == "dissolve"
