@@ -4,7 +4,7 @@
 |---|---|
 | Status | CURRENT |
 | Version | 4 |
-| Accepted by | CP0 framework adoption |
+| Accepted by | CP0 framework adoption; FW-starter-kit: HUMAN LEAD 2026-09-29 |
 
 Profile chỉ **thêm** ràng buộc thực thi, không nới lỏng workflow. Decision gate, task boundary, một writer/branch, required verification, không claim PASS, quyền integrate và điều kiện dừng thuộc workflow.
 
@@ -36,6 +36,6 @@ task contract → diff → acceptance criteria → verification evidence → fin
 
 Không áp dụng ranh giới micro-fix giữa ORCHESTRATOR và IMPLEMENTER vì là cùng một tác nhân.
 
-## Project policy
+## Adapter và vendor
 
-Project cho phép cả `single-agent` và `dual-agent`. Không hard-code tên vendor/model trong framework core. Tool adapter quyết định cách một tool cụ thể thực hiện profile.
+Không hard-code tên vendor/model trong framework core. Tool adapter quyết định cách một tool cụ thể thực hiện profile.

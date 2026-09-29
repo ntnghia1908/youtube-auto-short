@@ -1,0 +1,13 @@
+{
+  "frameworkVersion": "4.2",
+  "adapters": ["claude-code", "copilot"],
+  "requiredFiles": ["README.md", "docs/decisions/CP1-product-contract.md"],
+  "requiredTokens": {
+    "docs/ai/project-profile.md": [
+      "youtube-vietnamese-dubber",
+      "planned module boundaries"
+    ]
+  },
+  "taskDir": "docs/tasks",
+  "decisionDir": "docs/decisions"
+}
