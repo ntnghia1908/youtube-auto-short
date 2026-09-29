@@ -53,4 +53,4 @@ CP0 checker is intended to prove structural adoption. Behavioral pilot of each e
 
 ## Starter kit
 
-This repository uses the starter kit `ntnghia1908/ai-dev-framework` tag `v4.2` (kit content at commit `e667b60`; the tag will be attached after the kit PR is merged). Core and the checker are copies from the kit and must not be edited in place. Repository-specific checks are configured in `framework.config.json`. Upgrade by following the kit's `docs/upgrade.md`.
+This repository uses the starter kit `ntnghia1908/ai-dev-framework` tag `v4.2` (kit content at commit `855944d`; the tag will be attached after the kit PR is merged). Core and the checker are copies from the kit and must not be edited in place. Repository-specific checks are configured in `framework.config.json`. Upgrade by following the kit's `docs/upgrade.md`.

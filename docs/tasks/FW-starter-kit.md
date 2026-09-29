@@ -2,13 +2,13 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: CHANGE
 - Change class: S2
 - Owner: HUMAN LEAD
 - Execution profile: dual-agent
 - Base commit / branch: `bb0824b` (`origin/main`, sau PR #33 v4.2) / `feature/fw-starter-kit` (worktree `../youtube-auto-short-fw-kit`); repo kit: xem D1
-- Human Lead approval: accepted (HUMAN LEAD 2026-09-29: APPROVE TASK; D1 = repo riêng `ntnghia1908/ai-dev-framework`, ORCHESTRATOR tự tạo repo, tạo private trong lúc dựng; HUMAN LEAD cho phép chuyển **public** khi kiểm không còn thông tin riêng của `dang-vu-spring` (kiểm ở review, trước READY); D2 = C, sửa đổi cùng ngày: **A + pilot ngay với Copilot Free** ("Pilot bản free luôn để có pro thì sài luôn"); D3–D7 như đề xuất; D8 = A; D9 như đề xuất; D10 (sửa đổi cùng ngày): Copilot là IMPLEMENTER thứ hai, ORCHESTRATOR chọn IMPLEMENTER theo từng task — "Tôi đồng ý. Nhưng nếu có bản pro thì nhắc tôi đo lại cho chính xác")
+- Human Lead approval: accepted (HUMAN LEAD 2026-09-29: APPROVE TASK; D1 = repo riêng `ntnghia1908/ai-dev-framework`, ORCHESTRATOR tự tạo repo, tạo private trong lúc dựng; HUMAN LEAD cho phép chuyển **public** khi kiểm không còn thông tin riêng của `dang-vu-spring` (kiểm ở review, trước READY); D2 = C, sửa đổi cùng ngày: **A + pilot ngay với Copilot Free** ("Pilot bản free luôn để có pro thì sài luôn"); D3–D7 như đề xuất; D8 = A; D9 như đề xuất; D10 (sửa đổi cùng ngày): Copilot là IMPLEMENTER thứ hai, ORCHESTRATOR chọn IMPLEMENTER theo từng task — "Tôi đồng ý. Nhưng nếu có bản pro thì nhắc tôi đo lại cho chính xác"; D11 (sửa đổi cùng ngày): adapter Codex dạng template chưa kiểm chứng — "Đồng ý D11")
 - Implementation authorized: YES
 
 Lifecycle: `DRAFT → APPROVED → IN_PROGRESS → READY`. DONE suy ra từ Git sau khi merge.
@@ -209,6 +209,13 @@ Giải thích **vì sao** và **chạy thế nào**, không tạo rule mới —
   - Repo này: `_template.md` thêm field `Implementer` (giống kit). Danh sách IMPLEMENTER của repo này trong `project-profile.md` §7 → **follow-up sau khi CP8.15 merge** (file ngoài scope).
   - Checker: không bắt buộc field `Implementer` (contract cũ không có); chưa kiểm giá trị.
 
+### D11 — Adapter Codex dạng template (HUMAN LEAD 2026-09-29: đồng ý)
+
+- HUMAN LEAD chưa có gói Codex trả phí → không pilot; adapter ghi **CHƯA KIỂM CHỨNG**.
+- Sự kiện đã tra (2026-09-29): Codex CLI đọc `AGENTS.md`; có `codex exec` non-interactive (https://learn.chatgpt.com/docs/codex/cli); Codex CLI có từ gói Plus trở lên, hoặc dùng API key tính theo token (https://learn.chatgpt.com/docs/pricing). Cờ sandbox / approval của `codex exec` phải lấy từ tài liệu chính thức lúc viết, không đoán; chưa xác minh được thì ghi "cần xác minh".
+- Kit: `adapters/codex/` (README: điều kiện gói, cách ORCHESTRATOR giao việc qua `codex exec` trong worktree, chặn commit / push, mẫu delegation prompt, checklist pilot); checker nhận adapter `codex` (kiểm `AGENTS.md` — đã luôn bắt buộc — nên adapter không thêm file bắt buộc, trừ khi tài liệu Codex yêu cầu file riêng); ví dụ trong Danh sách IMPLEMENTER mẫu và `mechanism.md` §4.
+- Repo này: không bật `codex` trong `framework.config.json`, không đưa vào Danh sách IMPLEMENTER tới khi pilot đạt.
+
 ## Implementation approach
 
 - Tách Core trong repo này (D4) trước, rồi dựng kit từ đó; Core kit = Core repo, kiểm bằng `diff`.
@@ -231,6 +238,7 @@ Giải thích **vì sao** và **chạy thế nào**, không tạo rule mới —
 9. Repo này: `framework-history.md` có entry dưới `## v4.2`; `FRAMEWORK_ADOPTION.md` ghi repo kit + tag + commit.
 10. Không file Out of scope nào của repo này bị sửa.
 11. D10: kit có mục Danh sách IMPLEMENTER (template §7), field `Implementer` ở `_template.md` (kit + repo này, giống nhau), adapter Claude Code / Copilot và `mechanism.md` §4 mô tả cơ chế chọn; không đổi Core.
+12. D11: kit có `adapters/codex/` (CHƯA KIỂM CHỨNG, nguồn + ngày), checker chấp nhận adapter `codex` (có test), repo này không bật `codex`.
 
 ## Required verification
 
@@ -258,8 +266,18 @@ Không chạm database, security model hoặc public API contract; manual test l
 ## Result
 
 - Main changes:
-- Tests:
-- Review:
+  - Repo kit `ntnghia1908/ai-dev-framework` (branch `feature/v4.2-kit`, `e667b60` + `855944d`): Core v4.2, templates Project Layer (FILL; project-profile §7 có Danh sách IMPLEMENTER, §8 có Test policy mẫu), adapter `claude-code` / `copilot` (đã kiểm chứng trên Free) / `codex` (CHƯA KIỂM CHỨNG), checker dùng chung + 28 test `node --test`, `docs/mechanism.md`, hướng dẫn cài (project mới / có sẵn / nâng version), CHANGELOG.
+  - Repo này: Core bỏ 2 đoạn project-specific (D4, giống byte-for-byte kit); checker = bản sao kit; `framework.config.json` (adapters `claude-code`, `copilot`; kiểm riêng cũ qua `requiredFiles` / `requiredTokens`); `.github/agents/implementer.agent.md`; field `Implementer` trong `_template.md`; `FRAMEWORK_ADOPTION.md` mục Starter kit; history entry dưới `## v4.2`.
+- Tests: kit `node --test` → 28 pass / 0 fail. Cài thử vào thư mục tạm (bật 3 adapter): chưa điền FILL → FAIL, điền đủ → exit 0, trả lại 1 FILL → FAIL đúng file. Repo này `node scripts/framework-check.mjs` → exit 0; so với checker `bb0824b`: mọi PASS cũ còn, thêm `PASS: framework.config.json`, `PASS: .github/agents/implementer.agent.md`. `cmp` Core / checker / `_template.md` với kit → giống. `git diff --stat bb0824b` trên `project-profile.md`, `README.md`, `current-state.md`, `src/`, `tests/` → rỗng. Grep riêng tư trong kit (`dang-vu|spring|mysql|react|/home/|@gmail|ntnghia`) → 0 hit.
+- Review: ORCHESTRATOR review diff-first 3 lượt (kit vòng 1, dogfood, kit vòng 2): ACCEPTED, 0 blocking, không micro-fix.
+- Pilot Copilot (D2, phần 2 dogfood): **PASS**. Copilot CLI 1.0.89, gói Free, model tự chọn `gpt-6-luna`, 134 s, 1 premium request, 37 tool call (19 view, 17 bash, 1 apply_patch), 7 file đúng plan, 0 vi phạm boundary (không commit / push, không file ngoài scope), READY report đủ 4 mục, verification tự chạy đúng. Vấn đề: 3 lệnh chỉ-đọc (`find`, `cmp`, `sha256sum` / `test`) bị chặn do allowlist thiếu → đã đưa vào khuyến nghị allowlist ở adapter. So sánh: IMPLEMENTER Claude (Sonnet) phần 1 ≈ 4 phút / 21 tool call, vòng 2 ≈ 1,2 phút.
 - Important findings / decisions:
+  - v4.2 khác v4.1 chỉ ở adapter + project policy; Core nội dung = v4.1.
+  - Core của repo này là bản rút gọn của framework v4 gốc; lỗ hổng (class A/B không định nghĩa, thiếu danh sách đóng S0, rule IMPLEMENTER không commit / push, mẫu READY report, duyệt theo chuỗi…) ghi ở `docs/mechanism.md` §11 của kit, dự kiến v4.3 (D8 = A).
+  - Lệnh đúng trên Node 24 là `node --test` (không `node --test tests/`).
 - Known limitations:
+  - Repo này chưa có Danh sách IMPLEMENTER (`project-profile.md` §7) và chưa đồng bộ `.claude/rules/execution.md` với adapter kit (mục "Chọn IMPLEMENTER") → follow-up sau khi CP8.15 merge (cùng lúc, để pointer không trỏ vào mục chưa có).
+  - Adapter Codex chưa kiểm chứng (cần gói Plus hoặc API key); cờ sandbox / approval của `codex exec` chưa xác minh.
+  - Số đo Copilot là của gói Free, một task nhỏ; đo lại khi có Pro (manual checklist).
+  - Tag `v4.2` của kit gắn sau khi PR kit merge; repo kit đang private, chuyển public chờ HUMAN LEAD xác nhận ở READY.
 - PR:

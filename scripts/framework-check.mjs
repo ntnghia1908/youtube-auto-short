@@ -30,7 +30,7 @@ function finish() {
 
 // ---- Config -------------------------------------------------------------
 const CONFIG = 'framework.config.json';
-const KNOWN_ADAPTERS = ['claude-code', 'copilot'];
+const KNOWN_ADAPTERS = ['claude-code', 'copilot', 'codex'];
 
 if (!exists(CONFIG)) { fail(`missing ${CONFIG}`); finish(); }
 let config;
@@ -75,6 +75,7 @@ const coreFiles = [
 const adapterFiles = {
   'claude-code': ['CLAUDE.md', '.claude/rules/execution.md', '.claude/agents/implementer.md'],
   copilot: ['.github/copilot-instructions.md', '.github/agents/implementer.agent.md'],
+  codex: [], // Codex CLI đọc AGENTS.md (luôn bắt buộc); không cần file riêng
 };
 const required = [...new Set([
   CONFIG,
