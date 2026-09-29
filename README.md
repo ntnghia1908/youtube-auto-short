@@ -51,8 +51,10 @@ cp config.example.toml config.toml   # local, gitignored; edit as needed
 Run tests (no network needed):
 
 ```bash
-pytest -q
+pytest -q -n auto    # parallel (pytest-xdist); plain `pytest -q` runs serially
 ```
+
+Test policy for contributors and agents: `docs/ai/project-profile.md` §8.
 
 ## Usage
 

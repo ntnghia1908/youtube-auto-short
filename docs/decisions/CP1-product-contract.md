@@ -159,12 +159,14 @@ Nguyên tắc: stdlib trước; không thêm dependency ngoài danh sách dướ
 | `fastapi` (pin `0.141.1`; kéo theo `starlette`, `pydantic`) | web MVP: routing, API JSON, phát file có `Range` (CP8.3) | optional extra `[web]` |
 | `uvicorn` (pin `0.54.0`, không extra `[standard]`) | HTTP server chạy web MVP (CP8.3) | optional extra `[web]` |
 | `httpx` | `TestClient` cho test web (CP8.3; đã có transitive trong env) | dev only |
+| `pytest-xdist` (không pin) | chạy toàn bộ suite song song `pytest -n auto` (FW-implementer-speed) | dev only |
 
 - Config dùng **TOML / `tomllib`**.
 - Đã cân nhắc, không chọn: `uv`, `.venv` system Python, `youtube-transcript-api`, `openai-whisper`, PySceneDetect, `ollama` python client.
 - Sửa đổi HUMAN LEAD 2026-09-26 (sau review CP2): runtime đổi từ `.venv` system Python sang conda env riêng (không dùng base); `yt-dlp` pin phiên bản theo `docs/decisions/CP2-workspace-contract.md` D2.
 - Sửa đổi HUMAN LEAD 2026-09-26 (sau review CP3): `pyyaml` được phép dùng khi cần (bỏ loại trừ trước đó); config vẫn là TOML.
 - Sửa đổi HUMAN LEAD 2026-09-27 (APPROVE TASK CP8.3, W1): thêm `fastapi` + `uvicorn` ở optional extra `[web]` và `httpx` ở `dev`; CLI pipeline không phụ thuộc web. Scope: web MVP trong LAN có mật khẩu (re-plan CP8.3); boundary, auth và API: `docs/decisions/CP8.3-web-contract.md`. Đã cân nhắc, không chọn: stdlib `http.server`, Flask, `python-multipart`.
+- Sửa đổi HUMAN LEAD 2026-09-29 (FW-implementer-speed, D1): thêm `pytest-xdist` (dev only, không vào runtime / extra `[web]`) để chạy suite song song; test phải độc lập giữa các process. Đã cân nhắc, không chọn: marker `slow` + chạy tập con. Test policy: `docs/ai/project-profile.md` §8.
 
 ## 11. Local GPU / Ollama assumptions
 

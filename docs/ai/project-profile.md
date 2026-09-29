@@ -81,3 +81,12 @@ Runtime, packaging, dependency được duyệt và giả định GPU/Ollama: xe
 Cài đặt môi trường (conda env `auto-short`, `pip install -e ".[dev]"`, `config.toml`, `ffmpeg`) và cách chạy CLI: xem `README.md` (Setup / Usage).
 
 Framework checker: `node scripts/framework-check.mjs`.
+
+### Test policy
+
+Canonical owner; áp dụng cho mọi IMPLEMENTER bất kể tool (HUMAN LEAD 2026-09-29, FW-implementer-speed D2).
+
+- Trong vòng sửa: chạy test liên quan tới thay đổi (file hoặc `-k`), nên dùng `-x --tb=short`.
+- Toàn bộ suite: một lần trước khi báo READY và một lần sau mỗi vòng fix review; không chạy toàn bộ sau từng lần sửa.
+- Lệnh chuẩn: `python -m pytest -q -n auto` (cần `pytest-xdist`, extra `dev`); chạy tuần tự (không `-n`) vẫn hợp lệ.
+- Không nới `docs/ai/workflow.md` §7: required verification trong task contract vẫn phải chạy và PASS trước READY.

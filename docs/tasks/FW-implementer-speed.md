@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: IN_PROGRESS
 - Type: CHANGE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -119,9 +119,9 @@ Không chạm database, security model hoặc public API contract; manual test l
 
 ## Result
 
-- Main changes:
-- Tests:
+- Main changes: `pytest-xdist` (dev, cài được 3.8.0, execnet 2.1.2) trong `pyproject.toml` + CP1 §10 (dòng bảng + sửa đổi HUMAN LEAD); Test policy ở `docs/ai/project-profile.md` §8; `.claude/agents/implementer.md` (`model: sonnet`, hướng dẫn gọn, pointer tới Test policy); README; entry `framework-history.md` dưới `## v4.1`.
+- Tests: tuần tự `python -m pytest -q`: 898 passed, 183.7 s (3 phút 3 giây). Song song `-n auto` ×3: 898 passed mỗi lần, 61.9 s / 61.8 s / 60.8 s (≈ 3× nhanh hơn). Không có test nào fail riêng khi song song → không sửa test / fixture. `python -c "import xdist"` OK.
 - Review:
-- Important findings / decisions:
+- Important findings / decisions: chạy `-n auto` có 48 warning (lặp `StarletteDeprecationWarning` mỗi worker, tuần tự là 1); không ảnh hưởng kết quả.
 - Known limitations:
 - PR:

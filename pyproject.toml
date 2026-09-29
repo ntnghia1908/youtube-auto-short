@@ -20,6 +20,8 @@ dev = [
     "pytest",
     # TestClient for the web tests (CP8.3); already a transitive dependency of the env.
     "httpx",
+    # Parallel full-suite runs `pytest -n auto` (FW-implementer-speed D1); dev only.
+    "pytest-xdist",
 ]
 # Web MVP `auto-short web` (CP8.3, docs/decisions/CP8.3-web-contract.md): pip install -e ".[dev,web]".
 web = [
