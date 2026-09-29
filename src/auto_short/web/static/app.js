@@ -1212,12 +1212,12 @@ const AutoShort = (() => {
     const tr = add.tr;
     const owner = new Array(tr.segments.length).fill(null);
     const firsts = new Map();
-    for (const sh of tr.shorts) {
-      if (sh.rejected) continue;
-      tr.segments.forEach((g, i) => {
-        const mid = (g.start + g.end) / 2;
-        if (g.kind === "speech" && mid >= sh.start && mid <= sh.end) owner[i] = owner[i] ? owner[i] + "," + sh.clip_id : sh.clip_id;
-      });
+    const pos = new Map(tr.segments.map((g, i) => [g.id, i]));
+    for (const sh of tr.shorts) { // lines of a Short = its first .. last line as the server computes them (T8)
+      if (sh.rejected || !sh.start_segment) continue;
+      for (let i = pos.get(sh.start_segment); i <= pos.get(sh.end_segment); i++) {
+        if (tr.segments[i].kind === "speech") owner[i] = owner[i] ? owner[i] + "," + sh.clip_id : sh.clip_id;
+      }
       if (sh.start_segment) firsts.set(sh.start_segment, (firsts.get(sh.start_segment) || []).concat(sh.clip_id));
     }
     const out = [];

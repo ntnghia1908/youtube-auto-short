@@ -150,6 +150,18 @@ def test_line_timed_inside_a_pause_still_moves_the_edge():
     assert C.base_start(ep, 2) == 29900 and C.base_start(ep, 1) == 24000
 
 
+def test_line_stretched_over_the_pause_belongs_to_the_range():
+    """Real data (7axON1RpRjo k02): "nhân sinh" (s54) is captioned 208.86–211.519 but spoken before the silence at
+    209.822; the AI clip ends at 210.122 and contains it. By the audio-aligned span it is the Short's last line, so
+    "+ dòng" goes to the next line (s55) and really moves the end."""
+    segs = [{"id": "s53", "start": 204.86, "end": 208.86, "kind": "speech", "text": "chân tướng"},
+            {"id": "s54", "start": 208.86, "end": 211.519, "kind": "speech", "text": "nhân sinh"},
+            {"id": "s55", "start": 213.8, "end": 216.019, "kind": "speech", "text": "hôm nay"}]
+    ep = C.Episode(segs, [(204.109, 205.4), (209.822, 214.584), (215.451, 216.742)], dict(PARAMS), (0.0, 999.0))
+    assert C.range_segments(ep, 159.588, 210.122) == ("s53", "s54")
+    assert C.resolve_range(ep, "s53", "s55", current=(159.588, 210.122)) == (159588, 215751)
+
+
 def test_resolve_range_nudges_and_limits():
     ep = _ep()
     a, b = seg(ep.segments, 2)["id"], seg(ep.segments, 9)["id"]

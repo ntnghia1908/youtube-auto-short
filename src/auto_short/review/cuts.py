@@ -27,6 +27,7 @@ from .logic import ReviewError
 NUDGE_STEP_MS = 200  # C3: ±0.2 s
 MAX_NUDGE_MS = 2000  # C3: at most ±2.0 s from the base point
 MAX_INTO_LINE_MS = 2000  # C3: never more than 2.0 s into the neighbouring line
+NEAR_MS = 15000  # lines_in: captions further than this from the range are not looked at
 
 
 def ms(seconds: float) -> int:
@@ -69,7 +70,7 @@ class Range:
     source_duration: float
     duration: float  # after trimming silences (C5)
     trims: list[list[float]]
-    start_segment: str | None  # first / last caption line (midpoint rule, see range_segments)
+    start_segment: str | None  # first / last caption line (see lines_in)
     end_segment: str | None
     error: str | None  # C4 violation (the range cannot be saved), None when valid
     warnings: list[str]  # shot change near an edge (overlaps are added by the caller)
@@ -85,13 +86,30 @@ def check_nudge(value: object, what: str) -> int:
     return round(steps) * NUDGE_STEP_MS
 
 
-def range_segments(ep: Episode, start: float, end: float) -> tuple[str | None, str | None]:
-    """First / last speech line of ``[start, end]``: speech segments whose midpoint lies inside (caption timing is
-    approximate and consecutive captions touch, so the midpoint is the robust test)."""
+def line_span(ep: Episode, n: int) -> tuple[int, int]:
+    """Where the speech of line ``segments[n]`` really is (ms): its own C3 start / end points. Auto captions often
+    stretch a short line over the pause after it; the silences put it back on the audio."""
+    return base_start(ep, n), base_end(ep, n)
+
+
+def lines_in(ep: Episode, start: float, end: float) -> list[int]:
+    """Indices of the speech lines of ``[start, end]``: lines whose audio-aligned span (:func:`line_span`) has its
+    midpoint inside. Only lines whose caption comes near the range are looked at."""
     s0, s1 = ms(start), ms(end)
-    inside = [s["id"] for s in ep.segments
-              if s["kind"] == SPEECH and s0 <= (ms(s["start"]) + ms(s["end"])) // 2 <= s1]
-    return (inside[0], inside[-1]) if inside else (None, None)
+    out = []
+    for n, s in enumerate(ep.segments):
+        if s["kind"] != SPEECH or ms(s["end"]) < s0 - NEAR_MS or ms(s["start"]) > s1 + NEAR_MS:
+            continue
+        a, b = line_span(ep, n)
+        if s0 <= (a + b) // 2 <= s1:
+            out.append(n)
+    return out
+
+
+def range_segments(ep: Episode, start: float, end: float) -> tuple[str | None, str | None]:
+    """First / last speech line of ``[start, end]`` (see :func:`lines_in`)."""
+    inside = lines_in(ep, start, end)
+    return (ep.segments[inside[0]]["id"], ep.segments[inside[-1]]["id"]) if inside else (None, None)
 
 
 def _silences_ms(ep: Episode) -> list[tuple[int, int]]:

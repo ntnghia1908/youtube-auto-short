@@ -324,9 +324,7 @@ def added_titling_input(episode_id: str, config: Config, clip_id: str) -> dict:
     if a is None:
         raise ReviewError(f"không có Short thêm {clip_id!r} trong tập {ctx.episode_id}")
     r = C.evaluate(ctx.rng, C.ms(a["start"]), C.ms(a["end"]))
-    s0, s1 = C.ms(a["start"]), C.ms(a["end"])
-    text = " ".join(s["text"] for s in ctx.rng.segments
-                    if s["kind"] == "speech" and s0 <= (C.ms(s["start"]) + C.ms(s["end"])) // 2 <= s1)
+    text = " ".join(ctx.rng.segments[n]["text"] for n in C.lines_in(ctx.rng, a["start"], a["end"]))
     try:
         meta = json.loads((ctx.ep.ws.dir / "metadata.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
