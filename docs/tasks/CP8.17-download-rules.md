@@ -141,7 +141,7 @@ Chạm public API contract (route `all.zip`, field mới, tên file) và luật 
 - Known limitations:
   - Dấu theo từng thiết bị / trình duyệt (D1); tải ảnh hỏng hoặc bị hủy vẫn tính là đã tải.
   - Sau khi bỏ tick tự động cũ, "Xong" / gợi ý dọn cần tick từng Short hoặc tick tay (D3).
-- PR:
+- PR: #38 (https://github.com/ntnghia1908/youtube-auto-short/pull/38)
 
 ### Review (ORCHESTRATOR)
 
