@@ -15,7 +15,7 @@ from pathlib import Path
 
 from .. import hashing
 from ..config import Config, TitlingConfig
-from ..selection.client import ChatClient, ChatError, OllamaClient, resolve_host
+from ..selection.client import ChatClient, ChatError, ChatUnavailable, OllamaClient, resolve_host
 from ..selection.stage import backoff_before
 from ..workspace import (
     DONE,
@@ -131,6 +131,10 @@ def _title_clip(client: ChatClient, cfg: TitlingConfig, messages: list[dict], cl
                                 "prompt_eval_count": res.prompt_eval_count, "total_duration": res.total_duration,
                                 **res.extra}
             parsed = parse_response(res.content, cfg.n_options)
+        except ChatUnavailable as exc:  # FIX-ollama-wait O2: unreachable Ollama stops the stage, no retry
+            call["seconds"] = round(time.monotonic() - t0, 3)
+            call["error"] = str(exc)
+            raise TitlingError(f"clip {clip_id}: {exc} (Ollama unavailable, not retried)") from exc
         except (ChatError, ResponseError) as exc:
             call["seconds"] = round(time.monotonic() - t0, 3)
             call["error"] = str(exc)

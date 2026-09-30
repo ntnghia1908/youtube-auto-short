@@ -69,7 +69,7 @@ const AutoShort = (() => {
   function laneLabel(job) {
     if (!job || job.status !== "running" || !job.lane) return null;
     const pos = job.queue_position ? ` (vị trí ${job.queue_position})` : "";
-    if (job.waiting && job.lane === "ai") return "đợi GPU" + pos;
+    if (job.waiting && job.lane === "ai") return (job.gpu_wait ? "đợi GPU (mất kết nối)" : "đợi GPU") + pos;
     if (job.waiting && job.lane === "render") return "đợi render" + pos;
     if (!job.waiting && job.lane === "prepare") return "đang tải trước";
     return null;
@@ -97,6 +97,23 @@ const AutoShort = (() => {
       document.createTextNode(`Ổ đĩa server sắp đầy: còn ${fmtBytes(st.free)} trống. ` +
         (st.block ? "Đang CHẶN gửi video mới (dưới 3 GB). " : "") + "Xem gợi ý dọn ở "),
       el("a", { href: "/storage", text: "tab Bộ nhớ" }), document.createTextNode("."));
+  }
+
+  // FIX-ollama-wait O7: warning strip under the disk banner while the ai lane cannot reach Ollama (``gpu`` of the
+  // list / episode / bộ kinh API; the pages poll while a job is active, so it also disappears by itself).
+  function showGpu(gpu) {
+    const anchor = $("#disk-banner");
+    if (!anchor) return;
+    let box = $("#gpu-banner");
+    if (!gpu || gpu.state !== "down") { if (box) box.hidden = true; return; }
+    if (!box) {
+      box = el("div", { id: "gpu-banner", class: "disk-banner gpu-banner" });
+      anchor.after(box);
+    }
+    const t = gpu.since ? new Date(gpu.since) : null;
+    const hhmm = t && !isNaN(t) ? t.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }) : "?";
+    box.textContent = `Mất kết nối GPU (Ollama) từ ${hhmm} — tập vẫn được tải / chuẩn bị, phần AI tự chạy tiếp khi GPU có lại (kiểm lại mỗi 60 s).`;
+    box.hidden = false;
   }
 
   // ``opts`` (CP8.9 A1.1): {kinds: ["short", "khaithi"] (absent = both), min, max (khai thị minutes)}.
@@ -267,6 +284,7 @@ const AutoShort = (() => {
       list.replaceChildren(el("li", { class: "error", text: e.message }));
       return;
     }
+    showGpu(data.gpu);
     const single = data.episodes.filter((e) => !e.in_playlist); // CP8.7: episodes of a bộ kinh are on its page
     // CP8.9 A1.5: a khai thị episode whose Short episode is listed is shown under it, not as its own row
     const ids = new Set(single.map((e) => e.id));
@@ -515,6 +533,7 @@ const AutoShort = (() => {
       pollTimer = setTimeout(refreshEpisode, POLL_MS * 4);
       return;
     }
+    showGpu(data.gpu);
     renderEpisode(data);
     const running = jobActive(data.job) || data.stages.some((s) => s.status === "running");
     if (running) pollTimer = setTimeout(refreshEpisode, POLL_MS);
@@ -1201,6 +1220,7 @@ const AutoShort = (() => {
     const j = g.view.post_job;
     if (!j) return null;
     if (j.status === "queued") return { text: `${g.label}: đang đợi soạn bài (vị trí ${j.queue_position || "?"})`, cls: "busy" };
+    if (j.status === "running" && j.waiting) return { text: `${g.label}: soạn bài — ${laneLabel(j) || "đợi GPU"}`, cls: "busy" };
     if (j.status === "running") return { text: `${g.label}: đang soạn bài…`, cls: "busy" };
     if (j.status === "failed") return { text: `${g.label}: soạn bài lỗi — ${j.error}. Bấm "Soạn bài còn thiếu" hoặc "Soạn lại" để thử lại.`, cls: "error" };
     return null;
@@ -1281,6 +1301,7 @@ const AutoShort = (() => {
     }
     postsPage.groups = groups;
     postsPage.loaded = true;
+    showGpu((groups[0] && groups[0].view || {}).gpu);
     renderPostsPage();
     if (!postsPage.autoTried) { // R2b: once per page load, for each episode that lacks / needs posts
       postsPage.autoTried = true;
@@ -2258,6 +2279,7 @@ const AutoShort = (() => {
       $("#pl-title").textContent = e.message;
       return;
     }
+    showGpu(d.gpu);
     document.title = `${d.title || d.id} — Auto Short`;
     $("#pl-title").textContent = d.title || d.id;
     if (htTags === null) htLoad(d); // not while the user edits

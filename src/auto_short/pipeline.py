@@ -48,6 +48,11 @@ class PreflightError(Exception):
     """Ollama is unreachable or a configured model is missing; no stage ran."""
 
 
+class OllamaUnavailable(PreflightError):
+    """FIX-ollama-wait O1: Ollama cannot be reached (connection error / timeout / HTTP 502-504), as opposed to a
+    missing model or bad response (plain :class:`PreflightError`). The web waits for the GPU on this."""
+
+
 @dataclass(frozen=True)
 class StageRun:
     stage: str
@@ -105,13 +110,14 @@ def _tags(host: str, opener: Opener, timeout: float) -> list[str]:
         with opener(urllib.request.Request(url, method="GET"), timeout=timeout) as resp:
             raw = resp.read()
     except urllib.error.HTTPError as exc:
-        raise PreflightError(f"HTTP {exc.code} from {url}") from exc
+        raise (OllamaUnavailable if exc.code in (502, 503, 504) else PreflightError)(
+            f"HTTP {exc.code} from {url}") from exc
     except (socket.timeout, TimeoutError) as exc:
-        raise PreflightError(f"timeout after {timeout:g} s calling {url}") from exc
+        raise OllamaUnavailable(f"timeout after {timeout:g} s calling {url}") from exc
     except urllib.error.URLError as exc:
-        raise PreflightError(f"cannot reach Ollama at {host}: {exc.reason}") from exc
+        raise OllamaUnavailable(f"cannot reach Ollama at {host}: {exc.reason}") from exc
     except OSError as exc:
-        raise PreflightError(f"error calling {url}: {exc}") from exc
+        raise OllamaUnavailable(f"error calling {url}: {exc}") from exc
     try:
         models = json.loads(raw)["models"]
         names = []

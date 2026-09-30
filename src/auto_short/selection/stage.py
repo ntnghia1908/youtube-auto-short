@@ -25,7 +25,7 @@ from ..workspace import (
     run_stage,
     validate_episode_id,
 )
-from .client import ChatClient, ChatError, OllamaClient, resolve_host
+from .client import ChatClient, ChatError, ChatUnavailable, OllamaClient, resolve_host
 from .logic import (
     SELECTED,
     VALID,
@@ -140,6 +140,10 @@ def _call_window(client: ChatClient, cfg: SelectionConfig, messages: list[dict],
                                 "prompt_eval_count": res.prompt_eval_count, "total_duration": res.total_duration,
                                 **res.extra}
             proposals = parse_response(res.content)
+        except ChatUnavailable as exc:  # FIX-ollama-wait O2: unreachable Ollama is not retried
+            call["seconds"] = round(time.monotonic() - t0, 3)
+            call["error"] = str(exc)
+            raise SelectionError(f"window {window.id}: {exc} (Ollama unavailable, not retried)") from exc
         except (ChatError, ResponseError) as exc:
             call["seconds"] = round(time.monotonic() - t0, 3)
             call["error"] = str(exc)

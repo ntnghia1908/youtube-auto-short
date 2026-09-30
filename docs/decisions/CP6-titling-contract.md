@@ -77,6 +77,7 @@ Quyết định: `docs/tasks/CP8.11-series-recognition.md` D1–D7.
 ## G6. Response lỗi, retry, untitled
 
 - Mỗi clip tối đa `1 + retries` lần gọi (mặc định `retries = 2`), backoff như CP5 B5 (`retry_backoff` mặc định `[5, 15]`, lặp giá trị cuối, hàm `selection.stage.backoff_before` import lại; sleep inject được).
+- **Sửa đổi FIX-ollama-wait (HUMAN LEAD 2026-09-30, O2, O3):** mất kết nối Ollama (`ChatUnavailable`, định nghĩa ở CP5 B5) **không** thử lại: dừng cả stage `failed` ngay (không đánh clip `untitled` rồi đi tiếp); title AI một Short thêm tay (CP9 C6) chỉ bỏ retry (Short `untitled` như lỗi preflight). Lỗi khác retry như trên. Canonical: `docs/tasks/FIX-ollama-wait.md`.
 - Lỗi được thử lại: HTTP lỗi, timeout, không kết nối, envelope Ollama sai, content không phải JSON, sai schema (không có mảng `options`, số option ≠ `n_options`, phần tử không phải object, `evidence`/`title` thiếu hoặc không phải chuỗi) — và response đúng schema nhưng **không option nào valid** (`error = "no valid option"`, option vẫn ghi log).
 - Hết lượt:
   - nếu **ít nhất một** lần gọi trả response đúng schema (tức mọi lần thất bại còn lại là "no valid option" hoặc lỗi tạm thời xen giữa) → clip `untitled` (`title`/`evidence` = `null`, `alternatives` = `[]`) + cảnh báo stderr, stage vẫn `done` (P3). CP7 không render clip `untitled` cho tới khi CP9 sửa;

@@ -98,6 +98,7 @@ summary { cursor: pointer; color: var(--muted); }
 .disk-banner { background: var(--err); color: #fff; padding: .6rem .75rem; font-weight: 600; }
 .disk-banner a { color: #fff; }
 .disk-banner[hidden] { display: none; }
+.gpu-banner { background: var(--busy); }
 .disk { margin: .4rem 0; }
 .bar { height: .7rem; background: #eee; border-radius: 999px; overflow: hidden; margin-top: .25rem; }
 .bar-used { height: 100%; background: var(--accent); }

@@ -115,9 +115,9 @@ Chạm public API contract (W4 bỏ 503, field `gpu` / `gpu_wait`) và job model
 
 ## Result
 
-- Main changes:
-- Tests:
+- Main changes: `ChatUnavailable` / `OllamaUnavailable` (client, `ollama_preflight`, `post.stage.preflight`; timeout → `/api/tags` re-check); selection / titling / soạn bài / `added` không retry lỗi mất kết nối (soạn bài không ghi `raw`); route gửi link + soạn bài không còn 503 (giữ 503 "Thêm Short"); `JobRunner` trạng thái `gpu_down` (đợi 60 s bằng `Condition.wait`, job về đầu hàng `ai`, `add` không đợi, bỏ `PREFETCH_LIMIT` khi down, dừng server → `interrupted while waiting for GPU`); field `gpu` + `gpu_wait`; dải cảnh báo + nhãn UI; docs CP8.3 / CP8 E8 / CP5 B5 / CP6 G6 / CP8.15.
+- Tests: mới `tests/test_ollama_wait_client.py` (AC1–AC2), `tests/test_ollama_wait_runner.py` (AC3–AC7). Sửa theo O4 (kỳ vọng 503 lúc gửi link / soạn bài đổi thành 202 + job): `test_web_app.py::test_submit_preflight_error_no_job` (đổi tên `…_still_queues_job`), `test_web_khaithi_cp89.py::test_submit_preflight_and_disk` (khối 503 → 202, hai job `failed`), `test_web_post_cp815.py::test_compose_preflight_failure_503` (đổi tên `…_queues_job`, cả `lanes` / `serial`). Chưa chạy thật trên 8081 và manual test (ORCHESTRATOR).
 - Review:
 - Important findings / decisions:
-- Known limitations:
+- Known limitations: `job.stages` của lần chạy làn `ai` bị hủy (đợi GPU) được xóa trước khi chạy lại làn; mất kết nối giữa chừng làm lại stage lỗi từ đầu (selection: E3); trạng thái `gpu` chỉ cập nhật khi làn `ai` chạy / kiểm lại (không tự dò khi rảnh).
 - PR:

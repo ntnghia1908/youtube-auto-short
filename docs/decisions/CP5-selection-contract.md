@@ -53,6 +53,7 @@ Implementation tham chiếu: `src/auto_short/selection/` (`client.py`, `prompt.p
 
 - **Backoff (Sửa B5, HUMAN LEAD 2026-09-26):** chờ `retry_backoff[0]` = 5 s trước lần thử 2, `retry_backoff[1]` = 15 s trước lần thử 3; lần sau nữa (khi `retries` > 2) lặp giá trị cuối; không chờ trước lần đầu, không chờ sau lần cuối. `retry_backoff` là tham số thực thi `[selection]` (list số 0–3600 s, rỗng = thử lại ngay), **không** vào `config_hash`. Thời gian chờ ghi ở `ai_calls[].backoff_seconds`; hàm sleep inject được (test không chờ thật).
 - Mỗi window tối đa `1 + retries` lần gọi (mặc định `retries = 2`). Lỗi được thử lại: HTTP lỗi, timeout, không kết nối được, envelope Ollama sai, content không phải JSON, sai schema (thiếu/sai kiểu trường, `score` ngoài 1–10, `clips` không phải mảng). Retry dùng **cùng** request (seed cố định) — hữu ích cho lỗi tạm thời; lỗi do model lặp lại sẽ lặp lại.
+- **Sửa đổi FIX-ollama-wait (HUMAN LEAD 2026-09-30, O2, O3):** mất kết nối Ollama (`ChatUnavailable`: không kết nối được / bị ngắt, HTTP 502 / 503 / 504, timeout mà `GET /api/tags` 10 s cũng lỗi) **không** được thử lại và không backoff: `SelectionError` ngay sau lần gọi đó. Các lỗi khác (kể cả timeout khi `/api/tags` vẫn trả lời) thử lại như trên. Canonical: `docs/tasks/FIX-ollama-wait.md`.
 - Hết lượt → stage `failed`, `error` = `window <w>: <lỗi> (after N attempts)`; không để artifact (xóa cả hai file).
 
 ## B6. Chọn cuối (deterministic)

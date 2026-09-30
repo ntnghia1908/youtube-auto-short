@@ -17,6 +17,15 @@ class ChatError(Exception):
     """The chat request failed (HTTP error, timeout, unreachable host, invalid envelope)."""
 
 
+class ChatUnavailable(ChatError):
+    """FIX-ollama-wait O1: Ollama is unreachable (connection error, HTTP 502/503/504, or a timeout whose
+    ``/api/tags`` re-check also fails). Callers must not retry; the web waits for the GPU."""
+
+
+UNAVAILABLE_HTTP = (502, 503, 504)
+TAGS_TIMEOUT = 10.0
+
+
 @dataclass(frozen=True)
 class ChatResult:
     content: str
@@ -57,6 +66,16 @@ class OllamaClient:
         self.host = host.rstrip("/")
         self.timeout = timeout
 
+    def _timeout_error(self, exc: BaseException) -> ChatError:
+        """O3: after a chat timeout, ``GET /api/tags`` (10 s) decides unavailable vs. a genuinely slow model."""
+        msg = f"timeout after {self.timeout:g} s calling {self.host}/api/chat"
+        try:
+            with urllib.request.urlopen(f"{self.host}/api/tags", timeout=TAGS_TIMEOUT) as resp:
+                resp.read()
+        except Exception as tags_exc:  # noqa: BLE001 - any failure of the probe means unreachable
+            return ChatUnavailable(f"{msg}; Ollama not responding ({tags_exc})")
+        return ChatError(msg)
+
     def chat(self, *, model: str, messages: list[dict], format: dict | None, options: dict,
              think: bool) -> ChatResult:
         body = json.dumps(request_body(model=model, messages=messages, format=format, options=options,
@@ -68,13 +87,16 @@ class OllamaClient:
                 raw = resp.read()
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", "replace")[:500]
-            raise ChatError(f"HTTP {exc.code} from {self.host}/api/chat: {detail}") from exc
+            msg = f"HTTP {exc.code} from {self.host}/api/chat: {detail}"
+            raise (ChatUnavailable if exc.code in UNAVAILABLE_HTTP else ChatError)(msg) from exc
         except (socket.timeout, TimeoutError) as exc:
-            raise ChatError(f"timeout after {self.timeout:g} s calling {self.host}/api/chat") from exc
+            raise self._timeout_error(exc) from exc
         except urllib.error.URLError as exc:
-            raise ChatError(f"cannot reach Ollama at {self.host}: {exc.reason}") from exc
-        except OSError as exc:
-            raise ChatError(f"error calling {self.host}/api/chat: {exc}") from exc
+            if isinstance(exc.reason, (socket.timeout, TimeoutError)):
+                raise self._timeout_error(exc) from exc
+            raise ChatUnavailable(f"cannot reach Ollama at {self.host}: {exc.reason}") from exc
+        except OSError as exc:  # ConnectionError, RemoteDisconnected, other socket errors
+            raise ChatUnavailable(f"error calling {self.host}/api/chat: {exc}") from exc
         try:
             data = json.loads(raw)
             message = data["message"]
