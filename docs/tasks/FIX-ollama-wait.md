@@ -121,4 +121,4 @@ Chạm public API contract (W4 bỏ 503, field `gpu` / `gpu_wait`) và job model
 - Review: round 1 ACCEPTED (ORCHESTRATOR, diff `2b98ca6..80135cb` theo AC 1–8), không blocking finding. Note: (1) `submit()` gộp yêu cầu soạn bài mới vào job `post` đang đợi GPU (thay vì `again`) — trong scope O5, tránh soạn hai lượt; (2) dừng server đúng lúc job làn `ai` vừa nhận lỗi mất kết nối có thể ghi `failed` thay vì `interrupted` (cửa sổ rất hẹp, gửi lại là chạy tiếp).
 - Important findings / decisions: base là `2c5027d` (gồm cả CP8.17) thay vì merge commit CP8.16. Manual test checklist: **không chạy** — HUMAN LEAD 2026-09-30 bỏ qua gate manual test, duyệt push + PR ("không cần test"); các ô checklist để trống. "Thêm Short" 503 lúc GPU tắt và O6 (4 job) chỉ kiểm bằng test tự động, chưa chạy thật.
 - Known limitations: `job.stages` của lần chạy làn `ai` bị hủy (đợi GPU) được xóa trước khi chạy lại làn; mất kết nối giữa chừng làm lại stage lỗi từ đầu (selection: E3); trạng thái `gpu` chỉ cập nhật khi làn `ai` chạy / kiểm lại (không tự dò khi rảnh).
-- PR:
+- PR: #39 (https://github.com/ntnghia1908/youtube-auto-short/pull/39)
