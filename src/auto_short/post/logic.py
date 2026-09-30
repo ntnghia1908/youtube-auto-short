@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, urlsplit
 _VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 _WATCH_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com"}
 _SHORT_HOST = "youtu.be"
+_SPEAKER_DOT_RE = re.compile(r"\.(?=[^\W\d_])")
 MAX_LINK_LENGTH = 2000
 
 
@@ -81,6 +82,8 @@ def header_line(fields: dict | None) -> str | None:
         tail = f"{series} tập {episode}"
     else:
         tail = series or (f"tập {episode}" if episode else None)
+    if isinstance(speaker, str):  # CP8.16 R5: "HT.Tịnh Không" -> "HT. Tịnh Không" (this post line only)
+        speaker = _SPEAKER_DOT_RE.sub(". ", speaker)
     bits = [b for b in (speaker, tail) if b]
     return "— " + ", ".join(bits) if bits else None
 

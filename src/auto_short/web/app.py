@@ -327,6 +327,13 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             return JSONResponse({"detail": "không có episode này"}, status_code=404)
         return FileResponse(STATIC_DIR / "episode.html", headers={"Cache-Control": "no-cache"})
 
+    @app.get("/episodes/{episode_id}/posts")
+    async def episode_posts_page(episode_id: str):
+        """CP8.16 R1: tab "Bài đăng" of a video (same HTML for the Short episode and its khai thị episode)."""
+        if not ep.valid_episode_id(episode_id):
+            return JSONResponse({"detail": "không có episode này"}, status_code=404)
+        return FileResponse(STATIC_DIR / "posts.html", headers={"Cache-Control": "no-cache"})
+
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     # --- API ---------------------------------------------------------------------------------------
@@ -618,6 +625,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                     "stages": [], "header": None, "shorts": [], "rendered": 0, "deleted": 0, "published": 0,
                     "zip_url": None, "zip_name": None, "archived": None}
         view["job"] = _job_view(job)
+        view["post_job"] = _job_view(runner.latest_post(episode_id))  # CP8.16 R3 (job stays the episode's own job)
         if job is not None and job.active and job.kind in (KIND_RENDER, KIND_ADD):
             for short in view["shorts"]:
                 short["rendering"] = short["clip_id"] in job.clip_ids
@@ -832,6 +840,29 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
 
     # --- CP8.15: community post text ------------------------------------------------------------------------
 
+    def _auto_post(job) -> None:
+        """CP8.16 R2a: an episode job that ran the render step has ended (done / failed) → queue the ``auto``
+        compose job of the episode when R4 selects at least one Short (empty set = no job)."""
+        eid = job.episode_id
+        order = [cid for cid, _ in post_stage.rendered_clip_ids(config, eid)]
+        if not order:
+            return
+        try:
+            ep_src = post_source.load(eid, config)
+            with post_lock:
+                doc = post_store.read_posts(_posts_path(eid), eid)
+        except (post_source.PostSourceError, post_store.PostsError):
+            return
+        if not post_stage.auto_clips(ep_src, doc, order):
+            return
+        posted, created = runner.submit(eid, KIND_POST,
+                                        post_compose_target(config, "auto", compose=post_compose,
+                                                            preflight=post_preflight, lock=post_lock))
+        log.info("web: tự soạn bài [%s] sau job %s -> job %s%s", eid, job.id, posted.id,
+                 "" if created else " (đã có)")
+
+    runner.on_finished = _auto_post
+
     def _post_now() -> str:
         return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -914,16 +945,17 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
 
     def _post_clips(body: PostComposeIn) -> "list[str] | str | JSONResponse":
         raw = body.clips
-        if raw == "all":
-            return "all"
+        if raw in ("all", "auto"):  # "auto": CP8.16 R4
+            return raw
         if not isinstance(raw, list) or not raw or not all(isinstance(c, str) and ep.valid_clip_id(c) for c in raw):
-            return JSONResponse({"detail": 'clips phải là "all" hoặc một danh sách clip_id không rỗng'},
+            return JSONResponse({"detail": 'clips phải là "all", "auto" hoặc một danh sách clip_id không rỗng'},
                                 status_code=422)
         return raw
 
     @app.post("/api/episodes/{episode_id}/posts")
     def api_posts_compose(episode_id: str, body: PostComposeIn):
-        """P1: soạn / soạn lại bài (lane ai) -> 202 job; 409 khi episode đang có job; 503 Ollama preflight."""
+        """P1 (CP8.16 R3): soạn / soạn lại bài (lane ai) -> 202 job (job soạn bài đang đợi -> trả job đó); 409 khi
+        episode đang có job ``pipeline``; 503 Ollama preflight. Không bị khóa bởi job render / add."""
         if (bad := _episode_or_404(episode_id)) is not None:
             return bad
         clips = _post_clips(body)
@@ -935,12 +967,15 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             except PreflightError as exc:
                 return JSONResponse({"detail": f"ollama preflight: {exc}"}, status_code=503)
         with submit_lock:
-            if (busy := _busy(episode_id)) is not None:
-                return busy
+            current = runner.latest(episode_id)
+            if current is not None and current.active and current.kind == KIND_PIPELINE:
+                return JSONResponse({"detail": "episode đang chạy pipeline; soạn bài sau khi job xong",
+                                     "job": _job_view(current)}, status_code=409)
             job, _created = runner.submit(episode_id, KIND_POST,
                                           post_compose_target(config, clips, compose=post_compose,
                                                               preflight=post_preflight, lock=post_lock))
-        log.info("web: soạn bài %s [%s] -> job %s", clips if clips == "all" else ",".join(clips), episode_id, job.id)
+        log.info("web: soạn bài %s [%s] -> job %s", clips if isinstance(clips, str) else ",".join(clips), episode_id,
+                 job.id)
         return JSONResponse({"job": _job_view(job)}, status_code=202)
 
     @app.put("/api/episodes/{episode_id}/posts/{clip}")
@@ -1098,6 +1133,8 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             return JSONResponse({"detail": "không có episode này"}, status_code=404)
         with submit_lock:
             current = runner.latest(episode_id)
+            if current is None or not current.active:
+                current = runner.latest_post(episode_id)  # CP8.16 R3: a compose job also blocks the deletion
             if current is not None and current.active:
                 return JSONResponse({"detail": "episode đang có job chạy/đợi; xóa sau khi job xong",
                                      "job": _job_view(current)}, status_code=409)

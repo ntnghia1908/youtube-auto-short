@@ -17,6 +17,8 @@ Implementation tham chiếu: `src/auto_short/post/` (`source.py`, `validate.py`,
 
 Một bài cho mỗi Short `rendered` chưa xóa của một episode (Short AI, Short thêm CP9; tập Short và khai thị dùng chung route). Soạn theo yêu cầu (không tự chạy sau render): nút "Soạn bài" một Short, nút "Soạn bài cho mọi Short" (bỏ qua Short đã có bài còn hợp lệ — `source_sha256` khớp text nguồn hiện tại). Job chạy ở làn `ai` (CP8.10 W5); preflight Ollama trước khi chạy job (như W4) nhưng chỉ kiểm model `[post] model` (không kiểm `[selection]`/`[titling]`) — hàm riêng `post.stage.preflight`, dùng lại `PreflightError` của `pipeline.py` để route áp cùng luật 503. Một episode chỉ có tối đa một job đang `queued`/`running` (kể cả job soạn bài) — quy tắc chung của job runner (CP8.10); gửi soạn bài khi episode đang có job khác → 409.
 
+**Sửa đổi CP8.16** (task `docs/tasks/CP8.16-post-tab-auto.md`, HUMAN LEAD 2026-09-30 APPROVE R1–R5; canonical R2–R4 ở file task đó): (R2) bài được soạn **tự động** thay cho "theo yêu cầu" — sau mỗi job `pipeline` / `render` / `add` của episode kết thúc (`done` hoặc `failed`) server xếp job `post` `auto`; trang tab "Bài đăng" tự gửi `auto` một lần mỗi lần tải trang cho tập có bài thiếu / cần soạn lại; nút "Soạn bài cho mọi Short" thay bằng "Soạn bài còn thiếu" (`auto`). (R3) job `post` chạy dưới khóa runner riêng `<episode_id>#post` (làn `ai` như cũ): không còn chiếm khóa "một job mỗi episode" nên sửa title / cut / thêm / xóa Short không bị 409 vì nó; tối đa một job `post` đợi / chạy mỗi episode (gửi lại khi đang đợi → trả job đó; trigger tự động khi đang chạy → thêm một lượt `auto`); gửi tay khi episode có job `pipeline` → 409; xóa tập xét cả hai khóa. (R4) `clips: "auto"` = Short `rendered` chưa có bài, hoặc bài `stale` chưa tick "Đã đăng bài" và `origin` khác `manual` (`post.stage.auto_clips`); `"all"` và danh sách clip giữ nghĩa cũ.
+
 ## P2. Text nguồn
 
 Đúng lời của Short hiện tại, đọc trực tiếp artifact của episode (`clips.json`, `candidates.json`, `transcript.json`, `silences.json`, `review.json`; `post/source.py`, không sửa `review/`):
@@ -44,6 +46,8 @@ Bản đầu (prompt `v1` + validate token-chặt: dãy token AI phải bằng �
 Log mỗi lần gọi AI: `work/<id>/post_log.json` (append, không byte-stable — có timestamp mỗi entry, như `review_titling_log.json` CP9 C6): model, prompt, từng lần gọi (request/response/lỗi/valid), khối, `origin`, thời gian.
 
 ## P4. Bố cục text sao chép
+
+**Sửa đổi CP8.16 (R5):** trong dòng nguồn, một dấu `.` đứng ngay trước chữ cái được chèn một dấu cách (`HT.Tịnh Không` → `HT. Tịnh Không`; đã có dấu cách thì giữ nguyên) — chỉ trong bài đăng (`post/logic.header_line`), không đổi `titles.json`, `[titling] speaker`, header video hay `render_key`; áp lúc đọc API nên không đổi `source_sha256` / `stale`.
 
 Server tính (`post/logic.compose_copy_text`; API `text`/`chars` của một bài, P7), UI hiện số ký tự (giới hạn ký tự bài đăng cộng đồng chưa kiểm — không cắt, HUMAN LEAD xác nhận khi đăng thử):
 
@@ -108,6 +112,8 @@ State người dùng, **không** là input stage nào (như `publish.json`, CP8.
   - `GET /api/post-images` → `{images: [{name, width, height, bytes, used, source}], image_sources}`; `GET /files/post-images/{name}` (`?download=1` → tải về; tên ngoài thư viện / path traversal → 404).
   - `POST /api/post-images?name=<tên gốc>` (body thô P5a) → 200 `{image, duplicate}`; `DELETE /api/post-images/{name}` → 200 `{used}` (404 tên không có / path traversal).
   - `POST /api/post-images/search {url}` → 202 `{job}` (job runner id `_post_images`); `GET /api/post-images/search/{job}` → `{status, found, added: [tên], duplicate: [tên có sẵn], skipped: {reason: count}}`; 409 khi đang có job tìm ảnh; 404 job id không có / không phải job tìm ảnh.
+
+**Sửa đổi CP8.16 (R1, R3):** khu "Bài đăng cộng đồng" trên thẻ Short và "Soạn bài cho mọi Short" của trang tập được thay bằng tab "Bài đăng": trang `GET /episodes/{id}/posts` (cùng HTML cho tập Short `<vid>` và khai thị `<vid>.kt`), thanh chuyển [Shorts | Khai thị | Bài đăng] ở cả ba view, hai nhóm Short / Khai thị, editor mở sẵn, hộp thoại "Thư viện ảnh" chuyển sang trang này. `POST /api/episodes/{id}/posts` nhận thêm `clips: "auto"`; `GET /api/episodes/{id}` thêm `post_job` (job `post` mới nhất, hoặc `null`); 409 khi episode có job `pipeline` (không phải mọi job) — thay câu "409 khi episode đang có job — kể cả job khác" ở trên.
 
 ## P10. Không CLI mới
 

@@ -246,9 +246,10 @@ body.modal-open { overflow: hidden; }
 }
 
 /* CP8.15: community post text + image library */
-.post-edit { display: grid; gap: .4rem; }
+.posts-list { display: grid; gap: .8rem; margin-top: .6rem; }
+.post-card { display: grid; gap: .4rem; border: 1px solid var(--border); border-radius: 8px; padding: .6rem; }
 .post-panel { display: grid; gap: .5rem; border-top: 1px dashed var(--border); padding-top: .4rem; }
-.post-panel[hidden] { display: none; }
+#posts-jobs p { margin: .2rem 0; } #posts-jobs .busy { color: var(--busy); } #posts-jobs .error { color: var(--err); }
 .post-badges { display: flex; flex-wrap: wrap; gap: .3rem; }
 .badge.stale-badge { background: #fdecea; color: var(--err); }
 .post-textarea { width: 100%; min-height: 6rem; padding: .45rem; font-size: .95rem; border: 1px solid var(--border);

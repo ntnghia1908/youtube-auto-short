@@ -8,8 +8,9 @@ the AI of one episode overlaps with the render (CPU) of another and the next epi
 ``queue_mode = "serial"``: one worker runs each job through all six stages (W5 before CP8.10).
 
 An episode has at most one queued/running job (also while it waits between two lanes), so two jobs never write the
-same manifest. The queue lives in memory: a server restart forgets it (manifests stay; resubmitting resumes, CP8
-E3). Contract: docs/decisions/CP8.3-web-contract.md W5.
+same manifest. The community-post compose job (``post``, CP8.16 R3) is the exception: it runs under its own key
+:func:`post_key` (at most one per episode too), so it never blocks editing a Short. The queue lives in memory: a
+server restart forgets it (manifests stay; resubmitting resumes, CP8 E3). Contract: docs/decisions/CP8.3-web-contract.md W5.
 """
 
 from __future__ import annotations
@@ -44,6 +45,12 @@ KIND_ADD = "add"  # CP9 C7: AI title of a Short added by hand (lane ai), then re
 KIND_POST = "post"  # CP8.15 P1: compose / recompose community post text (lane ai; no render)
 KIND_POST_SEARCH = "post_search"  # CP8.15 P5b: find images from a link (lane prepare; no Ollama)
 POST_IMAGES_KEY = "_post_images"  # CP8.15 P9: pseudo episode id for the (single, global) image search job
+EPISODE_KINDS = (KIND_PIPELINE, KIND_RENDER, KIND_ADD)  # jobs of an episode that run the render step (CP8.16 R2a)
+
+
+def post_key(episode_id: str) -> str:
+    """CP8.16 R3: the runner key of the ``post`` job of an episode (separate from the episode's own job)."""
+    return f"{episode_id}#post"
 
 MODE_LANES, MODE_SERIAL = "lanes", "serial"
 PREPARE, AI, RENDER = "prepare", "ai", "render"
@@ -90,6 +97,8 @@ class Job:
     lane: str | None = None
     waiting: bool = False  # running, waiting between two lanes
     steps: list[Step] = field(default_factory=list, repr=False)
+    key: str = ""  # runner key: the episode id, or :func:`post_key` for a ``post`` job (CP8.16 R3)
+    again: bool = field(default=False, repr=False)  # post job: a new trigger arrived while running (R3)
     step: int = field(default=0, repr=False)  # index of the running / next step
     t0: float = field(default=0.0, repr=False)  # monotonic start
 
@@ -160,6 +169,9 @@ class JobRunner:
         self._jobs: dict[str, Job] = {}
         self._latest: dict[str, Job] = {}  # episode_id -> newest job
         self._ids = itertools.count(1)
+        # CP8.16 R2a: called (on the lane worker thread) with an episode job (pipeline / render / add) that ended
+        # ``done`` or ``failed``; set by the web app, which submits the ``post`` job.
+        self.on_finished: Callable[[Job], None] | None = None
         self._stopping = False
         self._handler = _JobLogHandler(self)
 
@@ -224,27 +236,52 @@ class JobRunner:
             return list(lane_steps())
         return [Step(RENDER if kind == KIND_RENDER else PREPARE, target)]
 
+    def _enqueue_locked(self, episode_id: str, kind: str, target: Callable[[Job], None],
+                        clip_ids: list[str] | None) -> Job:
+        key = post_key(episode_id) if kind == KIND_POST else episode_id
+        job = Job(id=str(next(self._ids)), episode_id=episode_id, kind=kind, target=target, key=key,
+                  clip_ids=list(clip_ids or []), steps=self._steps(kind, target))
+        self._jobs[job.id] = job
+        self._latest[key] = job
+        self._queues[job.steps[0].lane].append(job)
+        self._lock.notify_all()
+        return job
+
     def submit(self, episode_id: str, kind: str, target: Callable[[Job], None], *,
                clip_ids: list[str] | None = None) -> tuple[Job, bool]:
         """Queue a job; returns ``(job, True)``, or ``(existing active job, False)`` for a duplicate. In lanes mode
         a target with ``lane_steps()`` (:class:`PipelineTarget`) runs lane by lane; any other callable is one step in
-        the render lane (``render`` job) or the prepare lane."""
+        the render lane (``render`` job) or the prepare lane.
+
+        A ``post`` job is keyed by :func:`post_key` (CP8.16 R3), independent of the episode's own job. A second
+        ``post`` request never gets lost: while the job *waits* its ``clips`` are merged into that job; while it
+        *runs* they are kept for one more pass (``auto`` + those clips) queued right after it. The existing job is
+        returned either way."""
+        key = post_key(episode_id) if kind == KIND_POST else episode_id
         with self._lock:
-            latest = self._latest.get(episode_id)
+            latest = self._latest.get(key)
             if latest is not None and latest.active:
+                new = getattr(target, "clips", None)
+                if latest.kind == KIND_POST and new is not None:
+                    if latest.status == QUEUED:
+                        latest.target.merge(new)
+                    elif latest.status == RUNNING:
+                        latest.again = True
+                        latest.target.merge_pending(new)
                 return latest, False
-            job = Job(id=str(next(self._ids)), episode_id=episode_id, kind=kind, target=target,
-                      clip_ids=list(clip_ids or []), steps=self._steps(kind, target))
-            self._jobs[job.id] = job
-            self._latest[episode_id] = job
-            self._queues[job.steps[0].lane].append(job)
-            self._lock.notify_all()
+            job = self._enqueue_locked(episode_id, kind, target, clip_ids)
         log.info("web: queued %s job %s [%s]", kind, job.id, episode_id)
         return job, True
 
     def latest(self, episode_id: str) -> Job | None:
+        """The newest job of the episode itself (pipeline / render / add), not its ``post`` job."""
         with self._lock:
             return self._latest.get(episode_id)
+
+    def latest_post(self, episode_id: str) -> Job | None:
+        """The newest ``post`` job of the episode (CP8.16 R3)."""
+        with self._lock:
+            return self._latest.get(post_key(episode_id))
 
     def job(self, job_id: str) -> Job | None:
         with self._lock:
@@ -254,10 +291,12 @@ class JobRunner:
         """Drop the finished jobs of a deleted episode (CP8.5 X3) so it leaves every view; refused (False) while
         one of its jobs is queued/running."""
         with self._lock:
-            latest = self._latest.get(episode_id)
-            if latest is not None and latest.active:
-                return False
+            for key in (episode_id, post_key(episode_id)):
+                latest = self._latest.get(key)
+                if latest is not None and latest.active:
+                    return False
             self._latest.pop(episode_id, None)
+            self._latest.pop(post_key(episode_id), None)
             for job_id in [j.id for j in self._jobs.values() if j.episode_id == episode_id]:
                 del self._jobs[job_id]
         return True
@@ -351,10 +390,23 @@ class JobRunner:
                     job.status = DONE
                     log.info("web: job %s done in %.1f s [%s]%s", job.id, time.monotonic() - job.t0,
                              job.episode_id, f": {job.summary}" if job.summary else "")
+                if last and job.kind in EPISODE_KINDS and job.status in (DONE, FAILED) \
+                        and self.on_finished is not None and not self._stopping:
+                    # before the lane is released: ``wait_idle`` never sees a gap between the job and its follow-up
+                    try:
+                        self.on_finished(job)
+                    except Exception:  # a bug in the hook must not kill the worker
+                        log.exception("web: on_finished hook failed for job %s [%s]", job.id, job.episode_id)
+                follow = None
                 with self._lock:
                     self._current[lane] = None
                     if last:
                         job.finished_at, job.lane, job.waiting = _now(), None, False
+                        if job.again and job.kind == KIND_POST and job.status != INTERRUPTED and not self._stopping:
+                            follow = getattr(job.target, "followup", None)
+                            follow = follow() if follow is not None else None
+                            if follow is not None:  # R3: one more pass for the trigger that arrived meanwhile
+                                self._enqueue_locked(job.episode_id, KIND_POST, follow, None)
                     else:  # tail of the next lane's queue
                         job.step += 1
                         nxt = job.steps[job.step].lane
@@ -554,6 +606,21 @@ class PostComposeTarget:
         self.preflight = preflight
         self.lock = lock
         self.result: post_stage.ComposeSummary | None = None
+        self._compose_kw = compose
+        self.pending: "list[str] | str" = []  # requests that arrived while running (R3), for the follow-up pass
+
+    def merge(self, clips: "list[str] | str") -> None:
+        """R3: a request that arrived while the job still waits joins it (the set is resolved when it starts)."""
+        self.clips = post_stage.merge_clips(self.clips, clips)
+
+    def merge_pending(self, clips: "list[str] | str") -> None:
+        self.pending = post_stage.merge_clips(self.pending, clips)
+
+    def followup(self) -> "PostComposeTarget":
+        """R3: the extra pass queued when a request arrived while this job ran: ``auto`` plus the explicit clips /
+        ``"all"`` asked meanwhile."""
+        return PostComposeTarget(self.config, post_stage.merge_clips("auto", self.pending), compose=self._compose_kw,
+                                 preflight=self.preflight, lock=self.lock)
 
     def run(self, job: Job) -> None:
         try:

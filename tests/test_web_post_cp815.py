@@ -50,7 +50,15 @@ class FakeComposeAI:
         if not order:
             raise post_stage.PostComposeError(f"tập {episode_id} chưa có Short nào dựng xong")
         ep = post_source.load(episode_id, config)
-        todo = order if clips == "all" else list(clips)
+        tokens = [clips] if isinstance(clips, str) else list(clips)
+        if any(t in ("all", "auto") for t in tokens):  # CP8.16 R4 / R3 (merged request)
+            try:
+                cur = post_store.read_posts(config.workspace.dir / episode_id / post_store.POSTS_NAME, episode_id)
+            except post_store.PostsError:
+                cur = post_store.empty_posts(episode_id)
+            todo = post_stage.resolve_todo(ep, cur, order, tokens)
+        else:
+            todo = list(tokens)
         for cid in todo:
             text = post_source.source_text(ep, cid)
             paragraphs = [text[0].upper() + text[1:] + "."]
@@ -103,7 +111,7 @@ def test_compose_one_clip_then_get(tcfg, ws):
         assert p["clip_id"] == "k01" and p["origin"] == "ai" and p["stale"] is False
         assert p["image"] is None and p["image_missing"] is False and p["link"] is None and p["posted"] is False
         assert p["text"].startswith("Tiêu đề k01\n\n")  # P4: title first
-        assert "— HT.Tịnh Không, Kinh Test tập 9" in p["text"]
+        assert "— HT. Tịnh Không, Kinh Test tập 9" in p["text"]  # CP8.16 R5
         assert p["chars"] == len(p["text"])
 
 
@@ -151,7 +159,7 @@ def test_compose_preflight_failure_503(tcfg, ws):
         assert r.status_code == 503
 
 
-def test_compose_409_while_job_active(tcfg, ws):
+def test_compose_returns_waiting_job_while_job_active(tcfg, ws):  # CP8.16 R3 (was 409, CP8.15 P1)
     gate = None
     import threading
 
@@ -168,7 +176,7 @@ def test_compose_409_while_job_active(tcfg, ws):
         r1 = c.post(f"{API}/posts", json={"clips": ["k01"]})
         assert r1.status_code == 202
         r2 = c.post(f"{API}/posts", json={"clips": ["k02"]})
-        assert r2.status_code == 409
+        assert r2.status_code == 202 and r2.json()["job"]["id"] == r1.json()["job"]["id"]  # one job per episode
         gate.set()
         _wait(app)
 
