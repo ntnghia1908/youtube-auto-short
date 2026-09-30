@@ -2,13 +2,13 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: IN_PROGRESS
 - Type: CHANGE
 - Change class: S2
 - Owner: HUMAN LEAD
 - Execution profile: dual-agent
 - Implementer: `.claude/agents/implementer` (Sonnet) — mặc định dual-agent của project; task chạm job runner nhiều thread, cần review diff riêng.
-- Base commit / branch: `origin/main` **sau khi CP8.16 merge** (PR CP8.16 từ `feature/cp8.16-post-tab-auto`, READY, chưa merge; `origin/main` hiện tại = `bddc0f9`) / `fix/ollama-wait` (worktree `../youtube-auto-short-ollama-wait`). Phụ thuộc: CP8.16 đổi `web/jobs.py` (khóa `<id>#post`, `on_finished`, `PostComposeTarget.followup`) — IMPLEMENTER chỉ bắt đầu khi CP8.16 đã merge; branch được rebase lên merge commit đó, ORCHESTRATOR ghi SHA base vào đây trước khi giao.
+- Base commit / branch: `2c5027d` (`origin/main` 2026-09-30, gồm CP8.16 PR #37 `d0c1517` và CP8.17 PR #38) / `fix/ollama-wait` (worktree `../youtube-auto-short-ollama-wait`). Phụ thuộc CP8.16 (`web/jobs.py`: khóa `<id>#post`, `on_finished`, `PostComposeTarget.followup`) đã thỏa: branch đã rebase lên `2c5027d`.
 - Human Lead approval: accepted (HUMAN LEAD 2026-09-30: APPROVE O1–O8 theo đề xuất)
 - Implementation authorized: YES
 
