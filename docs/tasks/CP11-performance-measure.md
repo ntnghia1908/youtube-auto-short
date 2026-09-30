@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: CHANGE
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -101,9 +101,9 @@ Task không chạm database, security model hay public API contract → manual t
 
 ## Result
 
-- Main changes:
-- Tests:
-- Review:
-- Important findings / decisions:
-- Known limitations:
+- Main changes: `scripts/cp11_bench.py` (E1–E6, `hashes`, `setup`, `--quick`; chỉ ghi vào thư mục bench); `docs/decisions/CP11-performance-data.md` (số liệu thô); `docs/decisions/CP11-performance-report.md` (khuyến nghị R1–R4, PROPOSED).
+- Tests: `pytest -q -n auto` 1199 passed, 1 skipped (một lượt trước đó 1 fail `test_lanes_artifacts_identical_to_serial` — flaky đã biết, chạy riêng PASS); `framework-check` PASS; `git diff --stat 224f166 -- src pyproject.toml config.example.toml` rỗng; `manifest.json` 3 tập đo ở `work/` chính giữ nguyên sha256 + mtime; mọi thí nghiệm chạy `--quick` được.
+- Review: ORCHESTRATOR round 1 ACCEPTED (số liệu nhất quán giữa các lượt, guard thư mục bench, hash kiểm bằng code).
+- Important findings / decisions: R1 render song song p=4 (Short −92 s, khai thị ≈ −400 s, không đổi hash); R2 Whisper `cpu_threads=24` (−41%, text giống hệt); R3 Whisper batched (−20% thêm, segfault ≥ 28 luồng); R4 analysis song song (−20 s). Không khuyến nghị đổi preset / threads / selection. Selection không lặp lại hoàn toàn sau khi Ollama nạp lại model. Ngoài scope: render production lỗi kiểm frame rate ở `jr8mue8TJA0`, `VlLxSpVCcws` (+ `.kt`) — báo HUMAN LEAD, không sửa.
+- Known limitations: E2 chỉ trên một tập Short; E3 đoạn 300 s ngoại suy tuyến tính; khai thị p=4 nội suy; E5 chưa đo hai render + Whisper. Dữ liệu bench ≈ 1.3 GB ở `~/.cache/auto-short-cp11-bench/` (xóa khi xong).
 - PR:
