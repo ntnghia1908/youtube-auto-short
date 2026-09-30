@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bài đăng — Auto Short</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/">&larr; Auto Short</a>
+  <nav class="topnav"><a href="/storage">Bộ nhớ</a>
+  <form method="post" action="/logout"><button class="btn link" type="submit">Đăng xuất</button></form></nav>
+</header>
+<div id="disk-banner" class="disk-banner" hidden></div>
+<main class="container">
+  <nav id="kind-bar" class="kind-bar" aria-label="Short / khai thị / bài đăng của video này">
+    <span class="kind-btn">Shorts</span>
+    <span class="kind-btn">Khai thị</span>
+    <span class="kind-btn">Bài đăng</span>
+  </nav>
+  <p id="kind-note" class="note small kind-note" role="status" hidden></p>
+  <section class="card">
+    <h2 id="posts-title">Bài đăng cộng đồng</h2>
+    <p id="posts-meta" class="muted small"></p>
+    <div class="shorts-head">
+      <span id="posts-count" class="muted small"></span>
+      <button id="posts-compose-missing" class="btn small" type="button" hidden>Soạn bài còn thiếu</button>
+    </div>
+    <div id="posts-jobs" class="small"></div>
+    <p id="posts-msg" class="small" hidden></p>
+  </section>
+  <div id="post-groups"></div>
+</main>
+<div id="image-dialog" class="modal" role="dialog" aria-modal="true" aria-labelledby="image-title" hidden>
+  <div class="modal-box">
+    <div class="modal-head">
+      <h2 id="image-title">Thư viện ảnh</h2>
+      <button id="image-close" class="btn small" type="button">Đóng</button>
+    </div>
+    <div class="pane">
+      <div class="edit-actions">
+        <label class="btn small" for="image-upload-input">Tải ảnh lên
+          <input id="image-upload-input" type="file" accept="image/jpeg,image/png" hidden></label>
+        <input id="image-search-url" type="url" placeholder="Dán link ảnh hoặc trang có ảnh…" aria-label="Link tìm ảnh">
+        <button id="image-search-btn" class="btn small" type="button">Tìm ảnh</button>
+      </div>
+      <div id="image-quick-links" class="edit-actions" hidden></div>
+      <p id="image-msg" class="small" hidden></p>
+      <div id="image-grid" class="img-grid"></div>
+    </div>
+  </div>
+</div>
+<script src="/static/app.js"></script>
+<script>AutoShort.initPosts();</script>
+</body>
+</html>

@@ -324,8 +324,7 @@ const AutoShort = (() => {
     }));
     $("#show-deleted").addEventListener("click", () => { showDeleted = !showDeleted; applyFilter(); });
     initAddDialog(); // CP9 C7
-    initImageDialog(); // CP8.15
-    refreshEpisode().then(refreshPostsHead);
+    refreshEpisode();
     checkDisk();
   }
 
@@ -428,6 +427,12 @@ const AutoShort = (() => {
     return b;
   }
 
+  // CP8.16 R1: the third button "Bài đăng" links to ``/episodes/<id>/posts`` (the same page for both episodes).
+  function postsButton(id, current) {
+    return current ? kindButton("Bài đăng", { current: true })
+      : kindButton("Bài đăng", { href: "/episodes/" + encodeURIComponent(id) + "/posts" });
+  }
+
   function renderKindBar(d) {
     const isKt = d.kind === "khaithi";
     const ktBoxShown = !isKt && !!d.source_url;
@@ -451,7 +456,7 @@ const AutoShort = (() => {
     }
     if (key !== kindBarKey) { // rebuilt only when it changes: polling keeps focus / hover on the buttons
       kindBarKey = key;
-      $("#kind-bar").replaceChildren(kindButton("Shorts", shorts), kindButton("Khai thị", kt));
+      $("#kind-bar").replaceChildren(kindButton("Shorts", shorts), kindButton("Khai thị", kt), postsButton(d.id, false));
       if (!(isKt && baseCheck && baseCheck.state === "gone")) showKindNote("");
     }
     $("#shorts-label").textContent = isKt ? "Video khai thị" : "Shorts";
@@ -688,8 +693,6 @@ const AutoShort = (() => {
     document.querySelectorAll("#add-dialog .lock-note").forEach((n) => { n.hidden = !locked; });
     document.querySelectorAll(".short .needs-idle").forEach((b) => { b.disabled = locked || b.dataset.invalid === "1"; });
     document.querySelectorAll(".short .lock-note").forEach((n) => { n.hidden = !locked; });
-    const composeAllBtn = $("#posts-compose-all"); // CP8.15: not inside .short
-    if (composeAllBtn) composeAllBtn.disabled = locked;
   }
 
   // One card per Short; ``.title-edit`` holds the title editor (CP8.2 functions via the API).
@@ -732,8 +735,7 @@ const AutoShort = (() => {
         video ? loopButton(s.clip_id, video) : null,
         s.editable && !(archived && s.deleted) ? deleteButton(s) : null),
       s.editable && !s.deleted && !archived ? titleEditor(s) : el("div", { class: "title-edit", hidden: true }),
-      s.editable && !s.deleted && !archived ? cutEditor(s) : null,
-      s.status === "rendered" ? postPanel(s) : null);
+      s.editable && !s.deleted && !archived ? cutEditor(s) : null);
     card.append(body);
     return card;
   }
@@ -1131,106 +1133,220 @@ const AutoShort = (() => {
     return box;
   }
 
-  // --- CP8.15: community post text ("Bài đăng cộng đồng") + image library ------------------------------------
+  // --- CP8.15 / CP8.16: tab "Bài đăng" (community post text of every Short + khai thị of one video) ------------
 
-  function postsUrl(suffix) { return `/api/episodes/${encodeURIComponent(episodeId)}/posts${suffix || ""}`; }
+  function postsUrlFor(id, suffix) { return `/api/episodes/${encodeURIComponent(id)}/posts${suffix || ""}`; }
 
-  async function fetchPosts() { return api(postsUrl()); }
+  function jsonBody(method, obj) {
+    return { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(obj) };
+  }
 
   function postBadges(p) {
     const nodes = [];
     if (p.origin === "raw") nodes.push(el("span", { class: "badge stale-badge", text: "AI không chắc — kiểm lại" }));
     if (p.low_punctuation) nodes.push(el("span", { class: "badge stale-badge", text: "Ít dấu câu — kiểm lại" }));
-    if (p.stale) nodes.push(el("span", { class: "badge stale-badge", text: "Text nguồn đã đổi — soạn lại" }));
+    if (p.stale) {
+      nodes.push(el("span", { class: "badge stale-badge", text: p.posted
+        ? "Text nguồn đã đổi (bài đã đăng, giữ nguyên)" : "Text nguồn đã đổi — soạn lại" }));
+    }
     if (p.image_missing) nodes.push(el("span", { class: "badge stale-badge", text: "Thiếu ảnh" }));
     return nodes;
   }
 
-  // "Soạn bài cho mọi Short" (episode-level) + "Bài đã đăng x / y" count.
-  async function refreshPostsHead() {
-    const head = $("#posts-head");
-    if (!lastData || !lastData.shorts.some((s) => s.status === "rendered")) { head.hidden = true; return; }
-    head.hidden = false;
-    const btn = $("#posts-compose-all");
-    btn.disabled = editsLocked;
-    if (!btn.dataset.bound) {
-      btn.dataset.bound = "1";
-      btn.addEventListener("click", () => composeAll(btn));
-    }
-    try {
-      const d = await fetchPosts();
-      const posted = d.posts.filter((p) => p.posted).length;
-      $("#posts-count").textContent = `Bài đăng cộng đồng đã đăng: ${posted}/${d.posts.length || 0}`;
-    } catch (_) { $("#posts-count").textContent = ""; }
-  }
+  const postsPage = { vid: null, groups: [], autoTried: false, timer: null, nodes: new Map(), loaded: false };
 
-  async function composeAll(btn) {
-    const msg = $("#posts-msg");
-    btn.disabled = true;
-    msg.hidden = true;
-    try {
-      await api(postsUrl(), { method: "POST", headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({ clips: "all" }) });
-      msg.textContent = "Đang soạn bài…";
-      msg.className = "small";
-      msg.hidden = false;
-      await pollEpisodeJob();
-      msg.textContent = "Đã soạn bài xong.";
-      await refreshPostsHead();
-    } catch (e) {
-      msg.textContent = e.message;
-      msg.className = "small error";
-      msg.hidden = false;
-    }
-    btn.disabled = editsLocked;
-  }
+  function renderedOf(g) { return g.view.shorts.filter((s) => s.status === "rendered"); }
 
-  // Polls the episode's job until it is no longer active (a compose / add-Short job just queued by this page).
-  async function pollEpisodeJob() {
-    for (let i = 0; i < 120; i++) {
-      let d;
-      try { d = await api("/api/episodes/" + encodeURIComponent(episodeId)); } catch (_) { return; }
-      if (!jobActive(d.job)) return;
-      await new Promise((res) => setTimeout(res, 700));
-    }
-  }
-
-  // One Short's post: "Soạn bài" (none yet) or the editor (paragraphs, image, link, copy, "Đã đăng bài").
-  function postPanel(s) {
-    const box = el("div", { class: "post-edit" });
-    const toggle = el("button", { class: "btn small", type: "button", text: "Bài đăng cộng đồng" });
-    const panel = el("div", { class: "post-panel", hidden: true });
-    box.append(toggle, panel);
-    let cur = null;
-
-    toggle.addEventListener("click", async () => {
-      if (!panel.hidden) { panel.hidden = true; toggle.textContent = "Bài đăng cộng đồng"; return; }
-      panel.hidden = false;
-      toggle.textContent = "Đóng bài đăng cộng đồng";
-      panel.replaceChildren(el("p", { class: "muted small", text: "Đang tải…" }));
-      await load();
+  // Decides only whether the page *asks* the server to compose (R2b); which Shorts get composed is the server's
+  // canonical ``clips: "auto"`` set (CP8.16 R4), so over-asking is harmless (the job composes nothing).
+  function needsCompose(g) {
+    const byClip = new Map(g.posts.map((p) => [p.clip_id, p]));
+    return renderedOf(g).some((s) => {
+      const p = byClip.get(s.clip_id);
+      return !p || (p.stale && !p.posted && p.origin !== "manual");
     });
+  }
 
-    async function load() {
+  function pipelineActive(g) { return jobActive(g.view.job) && g.view.job.kind === "pipeline"; }
+
+  async function fetchPostGroup(id, label) {
+    let view;
+    try { view = await api("/api/episodes/" + encodeURIComponent(id)); } catch (e) {
+      if (e.status === 404) return null;
+      throw e;
+    }
+    const g = { id, label, view, posts: [], postError: null };
+    if (view.shorts.some((s) => s.status === "rendered")) {
+      const d = await api(postsUrlFor(id));
+      g.posts = d.posts;
+      g.postError = d.post_error;
+    }
+    return g;
+  }
+
+  function postsMsg(text, cls) {
+    const m = $("#posts-msg");
+    m.textContent = text || "";
+    m.className = "small " + (cls || "");
+    m.hidden = !text;
+  }
+
+  function postJobLine(g) {
+    const j = g.view.post_job;
+    if (!j) return null;
+    if (j.status === "queued") return { text: `${g.label}: đang đợi soạn bài (vị trí ${j.queue_position || "?"})`, cls: "busy" };
+    if (j.status === "running") return { text: `${g.label}: đang soạn bài…`, cls: "busy" };
+    if (j.status === "failed") return { text: `${g.label}: soạn bài lỗi — ${j.error}. Bấm "Soạn bài còn thiếu" hoặc "Soạn lại" để thử lại.`, cls: "error" };
+    return null;
+  }
+
+  function anyPostWork() {
+    return postsPage.groups.some((g) => jobActive(g.view.post_job) || jobActive(g.view.job));
+  }
+
+  function updatePostsHead() {
+    const groups = postsPage.groups;
+    const total = groups.reduce((n, g) => n + renderedOf(g).length, 0);
+    const posted = groups.reduce((n, g) => n + g.posts.filter((p) => p.posted).length, 0);
+    $("#posts-count").textContent = total ? `Đã đăng ${posted} / ${total}` : "";
+    const btn = $("#posts-compose-missing");
+    btn.hidden = !total;
+    btn.disabled = groups.some((g) => jobActive(g.view.post_job));
+    const lines = groups.map(postJobLine).filter(Boolean);
+    $("#posts-jobs").replaceChildren(...lines.map((l) => el("p", { class: l.cls, text: l.text })));
+    const titles = groups.map((g) => g.view.title).filter(Boolean);
+    $("#posts-meta").textContent = titles.length ? titles[0] : postsPage.vid;
+  }
+
+  function postsKindBar() {
+    const groups = postsPage.groups;
+    const shortG = groups.find((g) => g.id === postsPage.vid);
+    const ktG = groups.find((g) => g.id !== postsPage.vid);
+    const shorts = shortG ? { href: "/episodes/" + encodeURIComponent(postsPage.vid) }
+      : { disabled: true, title: "Không có tập Short của video này" };
+    const kt = ktG ? { href: "/episodes/" + encodeURIComponent(ktG.id) }
+      : { disabled: true, title: "Chưa có video khai thị" };
+    $("#kind-bar").replaceChildren(kindButton("Shorts", shorts), kindButton("Khai thị", kt), postsButton(episodeId, true));
+  }
+
+  function renderPostsPage() {
+    postsKindBar();
+    updatePostsHead();
+    const root = $("#post-groups");
+    const groups = postsPage.groups.filter((g) => renderedOf(g).length);
+    if (!groups.length) {
+      postsPage.nodes.clear();
+      root.replaceChildren(el("section", { class: "card" }, el("p", { class: "muted",
+        text: "Chưa có Short nào dựng xong để soạn bài đăng." })));
+      return;
+    }
+    const seen = new Set();
+    const sections = groups.map((g) => {
+      const byClip = new Map(g.posts.map((p) => [p.clip_id, p]));
+      const cards = renderedOf(g).map((s) => {
+        const cur = byClip.get(s.clip_id) || null;
+        const id = g.id + "|" + s.clip_id;
+        seen.add(id);
+        const key = JSON.stringify([cur, s.title && s.title.text, s.video_url, jobActive(g.view.post_job)]);
+        const old = postsPage.nodes.get(id);
+        if (old && old.key === key) return old.node;
+        const node = postCard(g, s, cur);
+        postsPage.nodes.set(id, { key, node });
+        return node;
+      });
+      const head = el("div", { class: "shorts-head" }, el("h2", { text: g.label }),
+        g.postError ? el("p", { class: "error small", text: "Lỗi đọc bài đăng: " + g.postError }) : null);
+      return el("section", { class: "card" }, head, el("div", { class: "posts-list" }, ...cards));
+    });
+    for (const id of [...postsPage.nodes.keys()]) if (!seen.has(id)) postsPage.nodes.delete(id);
+    root.replaceChildren(...sections);
+  }
+
+  async function loadPostsPage() {
+    clearTimeout(postsPage.timer);
+    let groups;
+    try {
+      groups = (await Promise.all([fetchPostGroup(postsPage.vid, "Shorts"),
+        fetchPostGroup(postsPage.vid + ".kt", "Khai thị")])).filter(Boolean);
+    } catch (e) {
+      postsMsg(e.message, "error");
+      postsPage.timer = setTimeout(loadPostsPage, POLL_MS * 4);
+      return;
+    }
+    postsPage.groups = groups;
+    postsPage.loaded = true;
+    renderPostsPage();
+    if (!postsPage.autoTried) { // R2b: once per page load, for each episode that lacks / needs posts
+      postsPage.autoTried = true;
+      if (await autoCompose(groups, false)) return;
+    }
+    if (anyPostWork()) postsPage.timer = setTimeout(loadPostsPage, POLL_MS);
+  }
+
+  // Sends ``clips: "auto"`` for every episode that needs it and has no active compose job (nor a running pipeline,
+  // which would answer 409 and triggers the compose itself when it ends). Returns true when it queued a job (the
+  // page was reloaded).
+  async function autoCompose(groups, report) {
+    let queued = false;
+    const errors = [];
+    for (const g of groups) {
+      if (!renderedOf(g).length || jobActive(g.view.post_job) || pipelineActive(g) || !needsCompose(g)) continue;
       try {
-        const d = await fetchPosts();
-        cur = d.posts.find((p) => p.clip_id === s.clip_id) || null;
-        render(d.post_error);
-      } catch (e) {
-        panel.replaceChildren(el("p", { class: "error small", text: e.message }));
-      }
+        await api(postsUrlFor(g.id), jsonBody("POST", { clips: "auto" }));
+        queued = true;
+      } catch (e) { errors.push(`${g.label}: ${e.message}`); }
+    }
+    if (errors.length) postsMsg("Không soạn được bài: " + errors.join("; "), "error");
+    else if (report) postsMsg(queued ? "Đã xếp soạn bài." : "Không có bài nào cần soạn.", "");
+    if (queued) await loadPostsPage();
+    return queued;
+  }
+
+  async function composeMissing() {
+    const btn = $("#posts-compose-missing");
+    btn.disabled = true;
+    postsMsg("");
+    try { await autoCompose(postsPage.groups, true); } finally { updatePostsHead(); }
+  }
+
+  function initPosts() {
+    episodeId = decodeURIComponent(location.pathname.split("/").filter(Boolean)[1] || "");
+    postsPage.vid = episodeId.endsWith(".kt") ? episodeId.slice(0, -3) : episodeId;
+    initImageDialog();
+    $("#posts-compose-missing").addEventListener("click", composeMissing);
+    checkDisk();
+    loadPostsPage();
+  }
+
+  // One Short's post card: title + "Xem Short" + the editor (paragraphs, image, link, copy, "Soạn lại", "Đã đăng bài"),
+  // always open. ``cur`` = the stored post (view of ``GET …/posts``) or null (not composed yet).
+  function postCard(g, s, cur) {
+    const url = (suffix) => `${postsUrlFor(g.id)}/${encodeURIComponent(s.clip_id)}${suffix || ""}`;
+    const card = el("article", { class: "post-card", "data-clip": s.clip_id });
+    const head = el("div", { class: "short-head" },
+      el("span", { class: "clip-id", text: s.clip_id }),
+      s.video_url ? el("a", { class: "btn small", href: s.video_url, target: "_blank", rel: "noopener",
+        text: "Xem Short" }) : null);
+    card.append(head, el("p", { class: "short-title", text: (s.title && s.title.text) || "(không có tiêu đề)" }));
+    const panel = el("div", { class: "post-panel" });
+    card.append(panel);
+
+    function changed(next) { // keep the page state (count, next poll) in step with an edit
+      cur = next;
+      const i = g.posts.findIndex((p) => p.clip_id === s.clip_id);
+      if (i >= 0) g.posts[i] = next; else g.posts.push(next);
+      updatePostsHead();
     }
 
-    function render(loadError) {
-      const nodes = [];
-      if (loadError) nodes.push(el("p", { class: "error small", text: "Lỗi đọc bài đăng: " + loadError }));
+    function render() {
       if (!cur) {
-        const btn = el("button", { class: "btn primary small needs-idle", type: "button", text: "Soạn bài" });
-        btn.disabled = editsLocked;
+        const busy = jobActive(g.view.post_job);
+        const btn = el("button", { class: "btn primary small", type: "button", text: "Soạn bài" });
+        btn.disabled = busy;
         const msg = el("p", { class: "error small", hidden: true });
         btn.addEventListener("click", () => compose(btn, msg));
-        nodes.push(el("p", { class: "muted small", text: "Chưa có bài đăng cho Short này." }), btn, msg);
-        panel.replaceChildren(...nodes);
+        panel.replaceChildren(...[el("p", { class: "muted small", text: busy ? "Đang đợi / đang soạn bài…" : "Chưa có bài đăng cho Short này." }),
+          busy ? null : btn, msg].filter(Boolean));
         return;
       }
       const textarea = el("textarea", { class: "post-textarea", "aria-label": "Các đoạn của bài đăng" });
@@ -1248,6 +1364,9 @@ const AutoShort = (() => {
       }
       const changeImg = el("button", { class: "btn small", type: "button", text: "Đổi ảnh" });
       changeImg.addEventListener("click", () => openImageDialog((name) => setImage(name)));
+      const download = cur.image && !cur.image_missing
+        ? el("a", { class: "btn small", href: `/files/post-images/${encodeURIComponent(cur.image)}?download=1`,
+          text: "Tải ảnh" }) : null;
 
       const link = el("input", { type: "url", value: cur.link || "", placeholder: "Dán link Short (tùy chọn)",
         "aria-label": "Link Short" });
@@ -1256,8 +1375,8 @@ const AutoShort = (() => {
       linkSave.addEventListener("click", () => saveLink(link, linkSave, linkMsg));
 
       const copyBtn = copyTitleButton(cur.text);
-      const composeAgain = el("button", { class: "btn small needs-idle", type: "button", text: "Soạn lại" });
-      composeAgain.disabled = editsLocked;
+      copyBtn.querySelector(".copy-btn").textContent = "Sao chép bài";
+      const composeAgain = el("button", { class: "btn small", type: "button", text: "Soạn lại" });
       const composeMsg = el("p", { class: "error small", hidden: true });
       composeAgain.addEventListener("click", () => compose(composeAgain, composeMsg));
 
@@ -1265,31 +1384,28 @@ const AutoShort = (() => {
       const postedLabel = el("label", { class: "publish-label" }, postedInput, " Đã đăng bài");
       postedInput.addEventListener("change", () => togglePosted(postedInput));
 
-      nodes.push(
-        postBadges(cur).length ? el("div", { class: "post-badges" }, ...postBadges(cur)) : null,
+      const badges = postBadges(cur);
+      panel.replaceChildren(...[
+        badges.length ? el("div", { class: "post-badges" }, ...badges) : null,
         el("label", { class: "small" }, "Các đoạn (một dòng trống giữa hai đoạn)"),
         textarea, el("div", { class: "edit-actions" }, save, saveMsg),
-        el("div", { class: "post-image-row" }, img, changeImg),
+        el("div", { class: "post-image-row" }, img, changeImg, download),
         el("div", { class: "edit-actions" }, link, linkSave, linkMsg),
         el("p", { class: "muted small", text: `${cur.chars} ký tự (bài đầy đủ, kể cả tiêu đề / link / hashtag)` }),
         el("div", { class: "edit-actions" }, copyBtn, composeAgain, postedLabel),
-        composeMsg);
-      panel.replaceChildren(...nodes);
+        composeMsg].filter(Boolean));
     }
 
     async function compose(btn, msg) {
       btn.disabled = true;
       msg.hidden = true;
       try {
-        await api(postsUrl(), { method: "POST", headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ clips: [s.clip_id] }) });
-        await pollEpisodeJob();
-        await load();
-        refreshPostsHead();
+        await api(postsUrlFor(g.id), jsonBody("POST", { clips: [s.clip_id] }));
+        await loadPostsPage();
       } catch (e) {
         msg.textContent = e.message;
         msg.hidden = false;
-        btn.disabled = editsLocked;
+        btn.disabled = false;
       }
     }
 
@@ -1297,25 +1413,20 @@ const AutoShort = (() => {
       const paragraphs = textarea.value.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
       btn.disabled = true;
       try {
-        cur = await api(`${postsUrl()}/${encodeURIComponent(s.clip_id)}`, {
-          method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ paragraphs }),
-        });
-        msg.textContent = "Đã lưu";
-        msg.className = "small";
+        changed(await api(url(), jsonBody("PUT", { paragraphs })));
         render();
+        return;
       } catch (e) {
         msg.textContent = e.message;
         msg.className = "small error";
+        msg.hidden = false;
       }
-      msg.hidden = false;
       btn.disabled = false;
     }
 
     async function setImage(name) {
       try {
-        cur = await api(`${postsUrl()}/${encodeURIComponent(s.clip_id)}`, {
-          method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ image: name }),
-        });
+        changed(await api(url(), jsonBody("PUT", { image: name })));
         render();
       } catch (e) { alert(e.message); }
     }
@@ -1323,29 +1434,24 @@ const AutoShort = (() => {
     async function saveLink(input, btn, msg) {
       btn.disabled = true;
       try {
-        cur = await api(`${postsUrl()}/${encodeURIComponent(s.clip_id)}`, {
-          method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ link: input.value }),
-        });
-        msg.textContent = "Đã lưu";
-        msg.className = "small";
+        changed(await api(url(), jsonBody("PUT", { link: input.value })));
         render();
+        return;
       } catch (e) {
         msg.textContent = e.message;
         msg.className = "small error";
+        msg.hidden = false;
       }
-      msg.hidden = false;
       btn.disabled = false;
     }
 
     async function togglePosted(input) {
       input.disabled = true;
       try {
-        const r = await api(`${postsUrl()}/${encodeURIComponent(s.clip_id)}/posted`, {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ value: input.checked }),
-        });
-        cur = { ...cur, posted: r.posted, posted_at: r.posted_at };
-        refreshPostsHead();
+        const r = await api(url("/posted"), jsonBody("POST", { value: input.checked }));
+        changed({ ...cur, posted: r.posted, posted_at: r.posted_at });
+        render();
+        return;
       } catch (e) {
         input.checked = !input.checked;
         alert(e.message);
@@ -1353,7 +1459,8 @@ const AutoShort = (() => {
       input.disabled = false;
     }
 
-    return box;
+    render();
+    return card;
   }
 
   // --- image library (P5, P5a, P5b): a modal shared by every "Đổi ảnh" button --------------------------------
@@ -2133,5 +2240,5 @@ const AutoShort = (() => {
     if (busy) plTimer = setTimeout(loadPlaylist, POLL_MS * 2);
   }
 
-  return { initIndex, initEpisode, initStorage, initPlaylist };
+  return { initIndex, initEpisode, initStorage, initPlaylist, initPosts };
 })();

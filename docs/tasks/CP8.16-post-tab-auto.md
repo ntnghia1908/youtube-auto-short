@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: CHANGE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -107,4 +107,51 @@ Chạm public API contract (route trang mới, `clips: "auto"`, `post_job`) và 
 
 ## Result
 
-(chưa thực hiện)
+Implementer: Sonnet (dual-agent). Base `bddc0f9` + contract `7eb90cf`.
+
+### Main changes
+
+- `post/stage.py`: `auto_clips(ep, doc, order)` (R4, pure) + `compose_posts(..., clips="auto")` (broken `posts.json` reads as empty like `all`, never overwritten). `post/logic.header_line`: R5 (`\.(?=[^\W\d_])` -> `". "`, post line only; `titles.json` / header video / `render_key` untouched).
+- `web/jobs.py`: `post_key()` (`<id>#post`), `Job.key` / `Job.again`, `JobRunner.submit(..., rerun=)`, `latest_post()`, `forget()` and `on_finished` hook (called after `pipeline` / `render` / `add` ends `done` or `failed`, before the lane is released so `wait_idle` never sees a gap); `PostComposeTarget.followup()` = the one extra `auto` pass when a trigger arrived while the job ran (queued as a new job right after the running one; not for `interrupted` / stopping).
+- `web/app.py`: page route `GET /episodes/{id}/posts`; `clips: "auto"`; `post_job` in `GET /api/episodes/{id}`; manual compose 409 only for a `pipeline` job (a waiting `post` job is returned, 202); `_busy` / title / cut / add / delete / restore use only the episode's own job; delete-episode also checks the `#post` job; `_auto_post` hook (R2a, empty R4 set or unreadable source -> no job).
+- `web/static/`: new `posts.html` (3-button bar, two groups Shorts / Khai thị, editors always open, "Xem Short", "Sao chép bài", "Tải ảnh", head with `Đã đăng x / y`, per-episode compose job status, "Soạn bài còn thiếu", image library dialog moved here); `app.js` `initPosts()` (R2b: one `auto` per page load per episode that lacks / needs posts, only when no `post` job is active and no `pipeline` job runs), `renderKindBar` 3 buttons; removed `postPanel`, `#posts-head`, `#posts-msg`, image dialog from `episode.html` / Short card; CSS for `.post-card`.
+- Docs: CP8.15 decision record (amendment notes at P1, P4, P9), CP8.3 W5 / W6 / W7 pointers, `docs/ai/project-profile.md` web/ row, `AUTO_SHORT_CHECKPOINT_PLAN.md` (CP8.16 section). `docs/workflow/current-state.md` not touched (ORCHESTRATOR).
+
+### Tests
+
+- New: `tests/test_post_auto_cp816.py` (AC1, AC4), `tests/test_web_post_cp816.py` (AC2, AC3, AC5; lanes + serial).
+- CP8.15 tests changed only where behaviour changed (AC6):
+  - `tests/test_post_backend.py::test_header_line`, `::test_compose_copy_text_full`: speaker line now `HT. Tịnh Không` (R5); added cases for already-spaced speaker and a dot before a digit.
+  - `tests/test_web_post_cp815.py::test_compose_one_clip_then_get`: assertion `— HT. Tịnh Không, ...` (R5).
+  - `tests/test_web_post_cp815.py::test_compose_409_while_job_active` -> `test_compose_returns_waiting_job_while_job_active`: second submit while a post job is active now returns that job (202, same id) instead of 409 (R3).
+  - `tests/test_web_post_cp815.py::FakeComposeAI`: supports `clips == "auto"` via `post_stage.auto_clips` (test double only, R4).
+- Full suite: `PYTHONPATH=$PWD/src conda run -n auto-short python -m pytest -q -n auto` -> 1144 passed, 1 skipped (serial-mode skip of a lanes-only race test), 0 failed (one run; `test_lanes_artifacts_identical_to_serial` did not flake). `node scripts/framework-check.mjs` -> exit 0 (all PASS).
+- JS: no browser / JS test framework in the repo; `node --check app.js` OK, plus a throw-away fake-DOM harness (not committed) running `initPosts()` against the live 8081 server: kind bar links, 2 groups, 10 / 25 cards, failed-job text, R2b auto request. Real layout / touch behaviour = manual test.
+
+### Real run (scratch data, server 8081, `queue_mode = "lanes"`, Ollama `qwen3:14b`)
+
+Data: `~/.cache/auto-short-cp816-test/` (config.toml, work/, output/, images/, server.log; copies of `E4QhRRXFbIM` + `.kt` and `tHtxw6ykUmM` + `.kt` from the main repo, no write to main `work/` / `output/`; server stopped; 8080 untouched). Login password `cp816test` was env-only.
+
+Substitution (contract allows): sending a brand-new video was not attempted (55 min source download + Whisper); instead `E4QhRRXFbIM` (+ `.kt`) had no output and its manifest `render` stage removed, then the URL was submitted through the normal `POST /api/episodes` (both kinds): ingest / transcript / analysis / selection / titling up to date, render ran for real.
+
+- Short episode `E4QhRRXFbIM`: pipeline job 3 done 01:10:44 (10/10 Shorts) -> post job 5 auto-queued and started immediately (lane ai idle), done 01:11:17 in 32.9 s: 10 `ai`, 0 `raw`, every call valid on first attempt.
+- Edit during post job: at 01:10:54, with post job 5 running, `POST .../shorts/k01/title` -> 202 (CP8.15 answered 409). That title render (job 6) ended without any post job (nothing stale) as required.
+- Khai thị `E4QhRRXFbIM.kt`: pipeline job 4 done ~01:19:45 (5/5, 770 s) -> post job 9 auto-queued but waiting behind post job 8 (`tHtxw6ykUmM.kt`, same ai lane); while it was `queued` (position 1) `POST .../shorts/k01/title` -> 202. A later render (job 10) trigger returned job 9 ("đã có"): one job.
+- Old episode without posts: opened the Bài đăng page of `tHtxw6ykUmM` (harness) -> R2b sent `auto` for Short + khai thị: job 7 done in 55.2 s (20 `ai`, 0 `raw`), job 8 (khai thị) composed k01-k04 `ai` (2 calls each valid).
+- Cut edit of `E4QhRRXFbIM` k02 (01:20:06, 202) -> render job 11 done -> post job 12 auto-queued (`tự soạn bài ... sau job 11 -> job 12`). NOT verified end-to-end: from ~01:18 the remote Ollama at 127.0.0.1:11437 (a tunnel not owned by this session) stopped answering (k05 of `tHtxw6ykUmM.kt` hit the 600 s timeout 3 times, then connection refused, still down at 02:03). Job 9 and job 12 ended `failed` with `ollama preflight: cannot reach Ollama ...` (correct R2 behaviour: no auto retry, page shows the error and "Soạn bài còn thiếu"); the "stale post recomposed after a cut" outcome is covered only by `test_stale_post_recomposed_after_cut_render` (fake compose). The scratch data is left so the manual test can redo it when Ollama is back (k02 of `E4QhRRXFbIM` is stale; k05 of `tHtxw6ykUmM.kt` has no post).
+- Required verification therefore is NOT fully PASS for the one live check "sửa cut -> bài soạn lại" (blocked by the Ollama outage); everything else in the list ran.
+
+### Decisions when implementing
+
+- `Job.episode_id` of a `post` job stays the real episode id (so lists / storage `active` set / logs behave as before); only the runner key differs (`Job.key`). `forget` removes both keys.
+- The extra pass (R3) is a follow-up `post` job created by the runner when the running job ends with `again` set (not a loop inside the target), so it is visible in `post_job` and cannot lose a trigger to a finish race. Manual submits (no `rerun`) while running return the running job, as before.
+- R2b "needs compose" is decided in JS from `GET .../posts` fields (missing post, or `stale` && !`posted` && origin != `manual`); the server's `auto` set (`auto_clips`, R4) remains canonical, so over-asking only yields an empty job. No extra field was added to `GET .../posts` (keeps the CP8.15 response shape).
+- `Đã đăng x / y`: y = number of `rendered` Shorts of both episodes (a Short without a post counts as not posted).
+- Manual compose is refused with 409 only for a `pipeline` job (per R3); with `render` / `add` running it is accepted (the following R2a trigger fixes staleness).
+- In `serial` mode the single worker runs a compose job like any other job, so edit jobs queue behind it (still no 409 from the compose job itself).
+
+### Known limitations / findings outside scope
+
+- The compose job holds the ai lane while Ollama is slow / down: each hung chunk waits `[post] timeout` = 600 s x (retries + 1) (seen live: ~30 min for one Short), delaying `selection` of other videos. Not changed (CP8.15 P11 config). Consider a shorter default `[post] timeout` or aborting the whole job after the first connection failure.
+- Queue is in memory: a restart loses waiting post jobs (R2b recovers them on the next visit of the tab).
+- Manual test checklist above: not run (HUMAN LEAD, scratch server data kept).

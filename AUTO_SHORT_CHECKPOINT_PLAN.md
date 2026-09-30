@@ -461,6 +461,17 @@ from the original CP9 scope is delivered here, scoped to one Short at a time (no
 
 ---
 
+## CP8.16 — Post Tab + Automatic Compose
+
+> HUMAN LEAD 2026-09-30 (`docs/tasks/CP8.16-post-tab-auto.md`, R1–R5, S2). Amends `docs/decisions/CP8.15-community-post-contract.md` P1, P4, P9 and `docs/decisions/CP8.3-web-contract.md` W5, W6, W7.
+
+The community post moves out of each Short card into a "Bài đăng" tab of the video (bar [Shorts | Khai thị | Bài đăng],
+Short and khai thị posts together). Posts are composed automatically after a Short is rendered (and recomposed when the
+source text changes, unless ticked "Đã đăng bài" or hand-edited); the compose job has its own runner key so it never
+blocks editing a Short. The source line reads "HT. Tịnh Không". No new dependency, `posts.json` schema unchanged.
+
+---
+
 ## CP9 — Human Review + Batch Processing
 
 > Re-plan HUMAN LEAD 2026-09-27: phần batch mức playlist (bộ kinh: liệt kê, bấm xử lý từng tập, xếp hàng, trạng thái "Xong" suy ra khi đăng hết) kéo lên CP8.7 (`docs/tasks/CP8.7-playlist.md`, `docs/decisions/CP8.3-web-contract.md` W10). CP9 còn: tự xử lý hàng loạt, approval state, failed-item isolation đầy đủ.

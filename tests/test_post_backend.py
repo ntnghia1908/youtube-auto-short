@@ -241,18 +241,23 @@ def test_normalize_link_invalid(raw):
 
 
 def test_header_line():
+    # CP8.16 R5: "HT.Tịnh Không" -> "HT. Tịnh Không" in the post line only
     assert header_line({"speaker": "HT.Tịnh Không", "series": "Kinh A", "episode": "9"}) == \
-        "— HT.Tịnh Không, Kinh A tập 9"
+        "— HT. Tịnh Không, Kinh A tập 9"
+    assert header_line({"speaker": "HT. Tịnh Không", "series": "Kinh A", "episode": "9"}) == \
+        "— HT. Tịnh Không, Kinh A tập 9"  # already spaced: unchanged
+    assert header_line({"speaker": "Ông A.  B", "series": "K", "episode": "1"}) == "— Ông A.  B, K tập 1"
+    assert header_line({"speaker": "v1.5x"}) == "— v1.5x"  # a dot before a digit is not a name dot
     assert header_line(None) is None
     assert header_line({}) is None
-    assert header_line({"speaker": "HT.Tịnh Không"}) == "— HT.Tịnh Không"
+    assert header_line({"speaker": "HT.Tịnh Không"}) == "— HT. Tịnh Không"
 
 
 def test_compose_copy_text_full():
     text = compose_copy_text(title="Tâm và cảnh", paragraphs=["Đoạn một.", "Đoạn hai."],
                              header_fields={"speaker": "HT.Tịnh Không", "series": "Kinh A", "episode": "9"},
                              link="https://youtube.com/shorts/AbCdEfGhIjK", hashtags=["#KinhA", "#TịnhKhông"])
-    assert text == ("Tâm và cảnh\n\nĐoạn một.\n\nĐoạn hai.\n\n— HT.Tịnh Không, Kinh A tập 9\n\n"
+    assert text == ("Tâm và cảnh\n\nĐoạn một.\n\nĐoạn hai.\n\n— HT. Tịnh Không, Kinh A tập 9\n\n"
                     "▶ Xem video: https://youtube.com/shorts/AbCdEfGhIjK\n\n#KinhA #TịnhKhông")
 
 

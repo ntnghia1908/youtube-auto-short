@@ -232,6 +232,20 @@ def compute_stale(ep: "source.SourceEpisode", entry: dict) -> bool:
     return source.source_sha256(text) != entry["source_sha256"]
 
 
+def auto_clips(ep: "source.SourceEpisode", doc: dict, order: list[str]) -> list[str]:
+    """CP8.16 R4 (``clips: "auto"``): every ``rendered`` Short in ``order`` that (i) has no post yet, or (ii) has a
+    ``stale`` post that is not ticked "Đã đăng bài" and whose ``origin`` is not ``manual`` (hand-edited text is kept).
+    Pure: reads only ``ep`` and ``doc``."""
+    out = []
+    for cid in order:
+        entry = store.find(doc, cid)
+        if entry is None:
+            out.append(cid)
+        elif entry["posted_at"] is None and entry["origin"] != store.MANUAL and compute_stale(ep, entry):
+            out.append(cid)
+    return out
+
+
 @dataclass
 class ComposeSummary:
     clip_ids: list[str]
@@ -244,7 +258,8 @@ def compose_posts(episode_id: str, config: Config, clips: "list[str] | str", *, 
                   sleep: Callable[[float], None] = time.sleep,
                   lock: AbstractContextManager | None = None) -> ComposeSummary:
     """P1: compose (or recompose) the post of ``clips`` (a list of clip ids) or every eligible Short that has no
-    valid, non-stale post yet (``clips == "all"``, "bỏ qua Short đã có bài còn hợp lệ"). Each clip's AI work runs
+    valid, non-stale post yet (``clips == "all"``, "bỏ qua Short đã có bài còn hợp lệ"), or the CP8.16 R4 set
+    (``clips == "auto"``, :func:`auto_clips`). Each clip's AI work runs
     outside ``lock``; only the read-modify-write of ``posts.json`` for that one clip is serialized by ``lock`` (a
     no-op by default) so a concurrent manual edit of another clip is never lost."""
     cfg = config.post
@@ -260,12 +275,15 @@ def compose_posts(episode_id: str, config: Config, clips: "list[str] | str", *, 
     except source.PostSourceError as exc:
         raise PostComposeError(str(exc)) from exc
 
-    if clips == "all":
+    if clips in ("all", "auto"):
         try:
             doc = store.read_posts(posts_path, episode_id)
         except store.PostsError:
             doc = store.empty_posts(episode_id)
-        todo = [cid for cid in order if store.find(doc, cid) is None or compute_stale(ep, store.find(doc, cid))]
+        if clips == "auto":
+            todo = auto_clips(ep, doc, order)
+        else:
+            todo = [cid for cid in order if store.find(doc, cid) is None or compute_stale(ep, store.find(doc, cid))]
     else:
         todo = list(clips)
         unknown = [c for c in todo if c not in cand_by_clip]
