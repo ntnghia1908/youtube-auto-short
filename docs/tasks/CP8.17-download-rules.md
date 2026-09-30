@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: CHANGE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -142,3 +142,9 @@ Chạm public API contract (route `all.zip`, field mới, tên file) và luật 
   - Dấu theo từng thiết bị / trình duyệt (D1); tải ảnh hỏng hoặc bị hủy vẫn tính là đã tải.
   - Sau khi bỏ tick tự động cũ, "Xong" / gợi ý dọn cần tick từng Short hoặc tick tay (D3).
 - PR:
+
+### Review (ORCHESTRATOR)
+
+- Round 1 (diff `874e1be..cda684d`): **ACCEPTED**, 0 blocking. Khớp D1–D5 + Q1 (a); không đụng `web/jobs.py`, `post/`, file framework; ba test cũ chỉ sửa theo D3 / D4; không có ghi nhận duyệt tự bịa trong code / docs. ORCHESTRATOR chạy lại `pytest -q -n auto` → 1160 passed, 1 skipped; `framework-check` exit 0; `node --check app.js` OK.
+- Non-blocking: (1) dấu của bài bị xóa trước khi gọi `POST …/posted`; request lỗi → hiện `alert`, phải làm lại hai thao tác hoặc tick tay; (2) `episode_view` gọi `all_zip` mỗi lần poll (đọc thêm manifest của tập còn lại) — rẻ, không đo thấy vấn đề.
+- Chưa kiểm: giao diện trên trình duyệt / điện thoại (tự tick, nút zip) — manual test checklist là gate trước integration.
