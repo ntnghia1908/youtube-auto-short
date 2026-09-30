@@ -12,7 +12,7 @@ Auto Short: CP8–CP8.15 + CP9 đã merge (trừ CP8.4; CP8.15 PR #35, `2622de8`
 
 Chinese Learning (CL1, bản đồ: `docs/tasks/CL1-roadmap.md`): CL1.1 MERGED (PR #12); CL1.2 MERGED (PR #15, `38d828f`). G6A (Pinyin authority) và G6B (model dịch): PENDING HUMAN LEAD DECISION — chưa chọn model. CL1.3: PENDING G6A/G6B + C10. CL1.4: PENDING CL1.3.
 
-Web chạy cho HUMAN LEAD trong tmux `youtube:web` từ worktree `../youtube-auto-short-web` (detached, ghim `2622de8` = CP8.15, `[web] queue_mode` mặc định `lanes`, `PYTHONPATH=<worktree>/src`, `--config` của repo chính → `work/`, `output/`, `models/` repo chính); mật khẩu chỉ qua env của pane, không lưu.
+Web chạy cho HUMAN LEAD trong tmux `youtube:web` từ worktree `../youtube-auto-short-web` (detached, ghim `0eaf1a8` = CP8.16 chưa merge (HUMAN LEAD 2026-09-30: manual test CP8.16 trên 8080 với dữ liệu thật; quay lại được `2622de8`, `posts.json` không đổi schema), `[web] queue_mode` mặc định `lanes`, `PYTHONPATH=<worktree>/src`, `--config` của repo chính → `work/`, `output/`, `models/` repo chính); mật khẩu chỉ qua env của pane, không lưu.
 
 Framework: FW-implementer-speed đã merge (PR #31, `6516638`): `pytest-xdist` (`pytest -q -n auto`), Test policy `docs/ai/project-profile.md` §8, IMPLEMENTER `model: sonnet`. Task S1/S2 kế tiếp kiểm checklist trong `docs/tasks/FW-implementer-speed.md` (transcript IMPLEMENTER = Sonnet; số lần chạy toàn bộ suite ≈ 2–3; review không tăng blocking finding bất thường).
 
