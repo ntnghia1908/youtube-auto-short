@@ -155,3 +155,14 @@ Substitution (contract allows): sending a brand-new video was not attempted (55 
 - The compose job holds the ai lane while Ollama is slow / down: each hung chunk waits `[post] timeout` = 600 s x (retries + 1) (seen live: ~30 min for one Short), delaying `selection` of other videos. Not changed (CP8.15 P11 config). Consider a shorter default `[post] timeout` or aborting the whole job after the first connection failure.
 - Queue is in memory: a restart loses waiting post jobs (R2b recovers them on the next visit of the tab).
 - Manual test checklist above: not run (HUMAN LEAD, scratch server data kept).
+
+### Round 2 (review round 1: B1)
+
+B1: a manual compose request (`clips: [ids]` / `"all"`) that met an active `post` job was dropped (the returned job runs `auto`, which skips valid / ticked / `manual` posts). Fix, keeping R3 ("return that job", at most one `post` job per episode):
+
+- `post/stage.py`: `merge_clips` (union of two `clips` specs) and `resolve_todo` (spec -> clip ids in `render_manifest` order: `"all"` = CP8.15 rule, `"auto"` = R4, explicit id composed even when its post is valid). `compose_posts` accepts a list mixing tokens and ids (e.g. `["auto", "k03"]`).
+- `web/jobs.py`: `submit` on an active `post` job: while `queued` the new request is merged into that job's target (resolved when it starts); while `running` it sets `again` and is kept in `pending`, so the runner's follow-up pass is `auto` + those clips / `"all"`. The existing job is returned (202). The `rerun` parameter is gone (an automatic trigger is just a merged `"auto"`).
+- Unknown clip id: chosen = dropped with a log warning when the request carries `auto` / `all` (merged), so one bad id never fails the whole job; a pure explicit list keeps the CP8.15 `PostComposeError` ("không có Short đã dựng").
+- Tests (lanes + serial): `test_manual_clip_merged_into_waiting_auto_job` (waiting auto job + POST `[k02]` -> same job id, one compose call with `["auto", "k02"]`), `test_manual_clip_while_running_gets_one_extra_pass` (running job + POST `[k02]` -> exactly one extra job, whose pass is `["auto", "k02"]` and composes k02), `test_merge_clips_and_resolve_todo_pure`, `test_merged_unknown_clip_is_dropped_not_fatal`. `FakeComposeAI` (CP8.15 test double) now resolves token lists through `post_stage.resolve_todo`.
+- Full suite once after the fix: 1151 passed, 1 skipped; `framework-check` unaffected (docs only). No live re-run for B1 (scratch data / 8081 unchanged).
+- Non-blocking noted: `on_finished` also fires for a `pipeline` job that failed before render; harmless, unchanged.

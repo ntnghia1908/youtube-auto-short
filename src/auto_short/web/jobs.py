@@ -248,20 +248,26 @@ class JobRunner:
         return job
 
     def submit(self, episode_id: str, kind: str, target: Callable[[Job], None], *,
-               clip_ids: list[str] | None = None, rerun: bool = False) -> tuple[Job, bool]:
+               clip_ids: list[str] | None = None) -> tuple[Job, bool]:
         """Queue a job; returns ``(job, True)``, or ``(existing active job, False)`` for a duplicate. In lanes mode
         a target with ``lane_steps()`` (:class:`PipelineTarget`) runs lane by lane; any other callable is one step in
         the render lane (``render`` job) or the prepare lane.
 
-        A ``post`` job is keyed by :func:`post_key` (CP8.16 R3), independent of the episode's own job. ``rerun``
-        (an automatic trigger, R2a) on a ``post`` job that is already *running* asks for one more ``auto`` pass right
-        after it (the duplicate is still returned): the trigger is not lost."""
+        A ``post`` job is keyed by :func:`post_key` (CP8.16 R3), independent of the episode's own job. A second
+        ``post`` request never gets lost: while the job *waits* its ``clips`` are merged into that job; while it
+        *runs* they are kept for one more pass (``auto`` + those clips) queued right after it. The existing job is
+        returned either way."""
         key = post_key(episode_id) if kind == KIND_POST else episode_id
         with self._lock:
             latest = self._latest.get(key)
             if latest is not None and latest.active:
-                if rerun and latest.status == RUNNING:
-                    latest.again = True
+                new = getattr(target, "clips", None)
+                if latest.kind == KIND_POST and new is not None:
+                    if latest.status == QUEUED:
+                        latest.target.merge(new)
+                    elif latest.status == RUNNING:
+                        latest.again = True
+                        latest.target.merge_pending(new)
                 return latest, False
             job = self._enqueue_locked(episode_id, kind, target, clip_ids)
         log.info("web: queued %s job %s [%s]", kind, job.id, episode_id)
@@ -601,11 +607,20 @@ class PostComposeTarget:
         self.lock = lock
         self.result: post_stage.ComposeSummary | None = None
         self._compose_kw = compose
+        self.pending: "list[str] | str" = []  # requests that arrived while running (R3), for the follow-up pass
+
+    def merge(self, clips: "list[str] | str") -> None:
+        """R3: a request that arrived while the job still waits joins it (the set is resolved when it starts)."""
+        self.clips = post_stage.merge_clips(self.clips, clips)
+
+    def merge_pending(self, clips: "list[str] | str") -> None:
+        self.pending = post_stage.merge_clips(self.pending, clips)
 
     def followup(self) -> "PostComposeTarget":
-        """R3: the extra ``auto`` pass queued when a trigger arrived while this job ran."""
-        return PostComposeTarget(self.config, "auto", compose=self._compose_kw, preflight=self.preflight,
-                                 lock=self.lock)
+        """R3: the extra pass queued when a request arrived while this job ran: ``auto`` plus the explicit clips /
+        ``"all"`` asked meanwhile."""
+        return PostComposeTarget(self.config, post_stage.merge_clips("auto", self.pending), compose=self._compose_kw,
+                                 preflight=self.preflight, lock=self.lock)
 
     def run(self, job: Job) -> None:
         try:

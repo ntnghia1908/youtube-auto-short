@@ -246,6 +246,32 @@ def auto_clips(ep: "source.SourceEpisode", doc: dict, order: list[str]) -> list[
     return out
 
 
+def merge_clips(a: "list[str] | str", b: "list[str] | str") -> "list[str] | str":
+    """CP8.16 R3 (merge of requests into one ``post`` job): union of two ``clips`` specs (each ``"all"`` / ``"auto"`` /
+    a list of clip ids, or a list mixing those tokens with ids), order-preserving, no duplicates. A single token comes
+    back as the plain string."""
+    out: list[str] = []
+    for item in ([a] if isinstance(a, str) else list(a)) + ([b] if isinstance(b, str) else list(b)):
+        if item not in out:
+            out.append(item)
+    return out[0] if len(out) == 1 and out[0] in ("all", "auto") else out
+
+
+def resolve_todo(ep: "source.SourceEpisode", doc: dict, order: list[str], clips: "list[str] | str") -> list[str]:
+    """The clip ids a ``clips`` spec selects, in ``order`` (``render_manifest`` order), each once: ``"all"`` = the
+    CP8.15 rule (no post yet or stale), ``"auto"`` = :func:`auto_clips` (R4), any other item = that clip id (composed
+    even when its post is still valid). Ids not in ``order`` are left out (the caller reports them)."""
+    want: set[str] = set()
+    for item in ([clips] if isinstance(clips, str) else clips):
+        if item == "all":
+            want |= {cid for cid in order if store.find(doc, cid) is None or compute_stale(ep, store.find(doc, cid))}
+        elif item == "auto":
+            want |= set(auto_clips(ep, doc, order))
+        else:
+            want.add(item)
+    return [cid for cid in order if cid in want]
+
+
 @dataclass
 class ComposeSummary:
     clip_ids: list[str]
@@ -275,15 +301,16 @@ def compose_posts(episode_id: str, config: Config, clips: "list[str] | str", *, 
     except source.PostSourceError as exc:
         raise PostComposeError(str(exc)) from exc
 
-    if clips in ("all", "auto"):
+    tokens = [clips] if isinstance(clips, str) else list(clips)
+    if any(t in ("all", "auto") for t in tokens):
         try:
             doc = store.read_posts(posts_path, episode_id)
         except store.PostsError:
             doc = store.empty_posts(episode_id)
-        if clips == "auto":
-            todo = auto_clips(ep, doc, order)
-        else:
-            todo = [cid for cid in order if store.find(doc, cid) is None or compute_stale(ep, store.find(doc, cid))]
+        # a merged request (R3): an unknown explicit id is dropped with a warning, not a failure of the whole job
+        for cid in [t for t in tokens if t not in ("all", "auto") and t not in cand_by_clip]:
+            log.warning("post: [%s] bỏ qua clip %s: không có Short đã dựng", episode_id, cid)
+        todo = resolve_todo(ep, doc, order, tokens)
     else:
         todo = list(clips)
         unknown = [c for c in todo if c not in cand_by_clip]

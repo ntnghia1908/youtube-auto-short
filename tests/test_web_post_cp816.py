@@ -361,3 +361,82 @@ def test_compose_error_ends_post_job_failed_not_retried(tcfg, ws):  # R2: no aut
         d = c.get(API).json()
         assert d["post_job"]["status"] == "failed" and "Ollama" in d["post_job"]["error"]
         assert len([j for j in app.state.runner.jobs() if j.kind == "post"]) == 1
+
+
+# --- round 2 (B1): a manual request is never lost behind an auto job ---------------------------------------------------
+
+
+def _seed_all(c, app):
+    c.post(f"{API}/posts", json={"clips": "all"})
+    _wait(app)
+
+
+def _updated(tcfg, clip):
+    doc = post_store.read_posts(tcfg.workspace.dir / EID / post_store.POSTS_NAME, EID)
+    return post_store.find(doc, clip)["updated_at"]
+
+
+def test_manual_clip_merged_into_waiting_auto_job(tcfg, ws):  # B1 (a)
+    make_post_episode(tcfg.workspace.dir, tcfg.render.output_dir, episode_id=EID2)
+    gate = threading.Event()
+    comp = GatedCompose(gate, block={EID2})
+    c, app = make_client(tcfg, compose=comp)
+    with c:
+        _login(c)
+        _seed_all(c, app)  # k01 / k02 valid, so ``auto`` alone would compose nothing
+        comp.calls.clear()
+        assert c.post(f"/api/episodes/{EID2}/posts", json={"clips": "auto"}).status_code == 202
+        assert comp.started.wait(10)  # ai lane / serial worker busy: the next job waits
+        r1 = c.post(f"{API}/posts", json={"clips": "auto"})
+        assert r1.json()["job"]["status"] == "queued"
+        r2 = c.post(f"{API}/posts", json={"clips": ["k02"]})
+        assert r2.status_code == 202 and r2.json()["job"]["id"] == r1.json()["job"]["id"]
+        gate.set()
+        _wait(app)
+        mine = [call for call in comp.calls if call[0] == EID]
+        assert len(mine) == 1 and mine[0][1] == ["auto", "k02"]
+        assert len([j for j in app.state.runner.jobs() if j.episode_id == EID and j.kind == "post"]) == 2  # seed + this
+
+
+def test_manual_clip_while_running_gets_one_extra_pass(tcfg, ws):  # B1 (b)
+    gate = threading.Event()
+    comp = GatedCompose(gate, block={EID})
+    c, app = make_client(tcfg, compose=comp)
+    with c:
+        _login(c)
+        assert c.post(f"{API}/posts", json={"clips": "auto"}).status_code == 202
+        assert comp.started.wait(10)
+        r = c.post(f"{API}/posts", json={"clips": ["k02"]})
+        assert r.status_code == 202 and r.json()["job"]["status"] == "running"
+        gate.set()
+        _wait(app)
+        posts = [j for j in app.state.runner.jobs() if j.kind == "post"]
+        assert len(posts) == 2 and all(j.status == "done" for j in posts)
+        assert [call[1] for call in comp.calls] == ["auto", ["auto", "k02"]]  # k02 composed by the extra pass
+        assert c.get(f"{API}/posts").json()["posts"][1]["clip_id"] == "k02"
+
+
+def test_merge_clips_and_resolve_todo_pure(tcfg, ws):
+    from auto_short.post import source
+    assert post_stage.merge_clips("auto", "auto") == "auto"
+    assert post_stage.merge_clips("auto", ["k01"]) == ["auto", "k01"]
+    assert post_stage.merge_clips(["k01"], ["k01", "k02"]) == ["k01", "k02"]
+    assert post_stage.merge_clips([], "all") == "all"
+    ep = source.load(EID, tcfg)
+    doc = post_store.empty_posts(EID)
+    assert post_stage.resolve_todo(ep, doc, ["k01", "k02"], ["k02", "auto"]) == ["k01", "k02"]
+    assert post_stage.resolve_todo(ep, doc, ["k01", "k02"], ["k02", "nope"]) == ["k02"]
+
+
+def test_merged_unknown_clip_is_dropped_not_fatal(tmp_path):
+    from auto_short.post import store
+    from test_post_stage import FakeClient, sleep_noop
+    make_post_episode(tmp_path / "work", tmp_path / "output")
+    cfg = Config(workspace=WorkspaceConfig(dir=tmp_path / "work"), render=RenderConfig(output_dir=tmp_path / "output"),
+                 post=PostConfig(image_dir=tmp_path / "images", retries=1, retry_backoff=(0.0,)))
+    s = post_stage.compose_posts(EID, cfg, ["auto", "k99"], client=FakeClient(), sleep=sleep_noop)
+    assert s.clip_ids == ["k01", "k02"]
+    import pytest as _p
+    with _p.raises(post_stage.PostComposeError):  # a pure explicit list keeps the CP8.15 error
+        post_stage.compose_posts(EID, cfg, ["k99"], client=FakeClient(), sleep=sleep_noop)
+    assert store.find(store.read_posts(tmp_path / "work" / EID / "posts.json", EID), "k01") is not None

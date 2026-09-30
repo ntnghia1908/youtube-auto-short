@@ -50,14 +50,15 @@ class FakeComposeAI:
         if not order:
             raise post_stage.PostComposeError(f"tập {episode_id} chưa có Short nào dựng xong")
         ep = post_source.load(episode_id, config)
-        if clips == "auto":  # CP8.16 R4
+        tokens = [clips] if isinstance(clips, str) else list(clips)
+        if any(t in ("all", "auto") for t in tokens):  # CP8.16 R4 / R3 (merged request)
             try:
                 cur = post_store.read_posts(config.workspace.dir / episode_id / post_store.POSTS_NAME, episode_id)
             except post_store.PostsError:
                 cur = post_store.empty_posts(episode_id)
-            todo = post_stage.auto_clips(ep, cur, order)
+            todo = post_stage.resolve_todo(ep, cur, order, tokens)
         else:
-            todo = order if clips == "all" else list(clips)
+            todo = list(tokens)
         for cid in todo:
             text = post_source.source_text(ep, cid)
             paragraphs = [text[0].upper() + text[1:] + "."]

@@ -857,8 +857,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             return
         posted, created = runner.submit(eid, KIND_POST,
                                         post_compose_target(config, "auto", compose=post_compose,
-                                                            preflight=post_preflight, lock=post_lock),
-                                        rerun=True)
+                                                            preflight=post_preflight, lock=post_lock))
         log.info("web: tự soạn bài [%s] sau job %s -> job %s%s", eid, job.id, posted.id,
                  "" if created else " (đã có)")
 
