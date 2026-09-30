@@ -99,6 +99,8 @@ Tất cả required verification phải chạy và PASS trước READY.
 
 Chạm public API contract (route trang mới, `clips: "auto"`, `post_job`) và job model → manual test là gate trước integration. Server test 8081, dữ liệu bản sao.
 
+HUMAN LEAD 2026-09-30: manual test làm trên 8080 (dữ liệu thật, worktree web ghim `0eaf1a8`), kết quả chung: "đã ổn" (không báo từng mục; ô dưới không tick riêng). Góp ý mới → CP8.17 PROPOSED (`docs/workflow/current-state.md`).
+
 - [ ] Điện thoại: thanh [Shorts | Khai thị | Bài đăng] ở cả ba view; chuyển qua lại đúng tập.
 - [ ] Gửi một video mới: không bấm gì, bài đăng của mọi Short + khai thị có sẵn sau khi dựng xong; trong lúc đợi soạn, sửa title một Short được.
 - [ ] Tab Bài đăng: sửa đoạn, đổi ảnh, dán link, "Sao chép bài" (dòng nguồn "HT. Tịnh Không"), tick "Đã đăng bài".
@@ -173,3 +175,4 @@ B1: a manual compose request (`clips: [ids]` / `"all"`) that met an active `post
 - Round 2 (diff `61bc2aa`): **ACCEPTED**. B1 sửa đúng chữ R3 (trả job đang có; đang đợi → gộp clip vào job; đang chạy → lượt thêm `auto` ∪ clip); merge / `again` đều dưới lock của runner. ORCHESTRATOR chạy lại `pytest -q -n auto` → 1151 passed, 1 skipped; `framework-check` exit 0.
 - Chưa kiểm trên server thật (Ollama sập lúc chạy): "sửa đầu/cuối → bài tự soạn lại" — thuộc manual test checklist.
 - Chạy thật bổ sung (ORCHESTRATOR 2026-09-30 10:03–10:05, sau khi GPU/Ollama `11437` lên lại; server 8081, cùng dữ liệu bản sao, `qwen3:14b`): tập `E4QhRRXFbIM`, trước: k02 `stale` chưa tick. Tick "Đã đăng bài" k04; sửa tay đoạn k05 (→ `manual`). Sửa cut k03 (bớt một dòng cuối) → job `render` 34 s → job `post` `auto` tự xếp, soạn **k02 + k03** (2 `ai`, 0 `raw`). Sửa cut k04 (đã tick) và k05 (`manual`) → render xong, **không** xếp job `post` mới; sau cùng k04 `stale` + giữ tick, k05 `manual` + `stale`, giữ chữ sửa tay; mọi bài khác không `stale`. Khớp R2a / R4. Dữ liệu bản sao giữ các thay đổi này (tick k04, k05 sửa tay, cut k03–k05) cho manual test. Ghi chú: `tHtxw6ykUmM.kt` k05 là `raw` (soạn lúc Ollama chập chờn) — theo R2 không tự thử lại, bấm "Soạn lại" tay.
+- Manual test: HUMAN LEAD 2026-09-30 trên 8080 (dữ liệu thật, `0eaf1a8`): "đã ổn". Góp ý ngoài scope CP8.16 (→ CP8.17 PROPOSED): tự tick "Đã đăng bài" sau khi sao chép bài + tải ảnh; tải zip cả tập không tự tick "Đã đăng"; tên zip rõ Short / khai thị của tập nào hoặc nút tải cả hai (hai thư mục).
