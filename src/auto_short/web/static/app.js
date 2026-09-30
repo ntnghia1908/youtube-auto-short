@@ -324,7 +324,8 @@ const AutoShort = (() => {
     }));
     $("#show-deleted").addEventListener("click", () => { showDeleted = !showDeleted; applyFilter(); });
     initAddDialog(); // CP9 C7
-    refreshEpisode();
+    initImageDialog(); // CP8.15
+    refreshEpisode().then(refreshPostsHead);
     checkDisk();
   }
 
@@ -687,6 +688,8 @@ const AutoShort = (() => {
     document.querySelectorAll("#add-dialog .lock-note").forEach((n) => { n.hidden = !locked; });
     document.querySelectorAll(".short .needs-idle").forEach((b) => { b.disabled = locked || b.dataset.invalid === "1"; });
     document.querySelectorAll(".short .lock-note").forEach((n) => { n.hidden = !locked; });
+    const composeAllBtn = $("#posts-compose-all"); // CP8.15: not inside .short
+    if (composeAllBtn) composeAllBtn.disabled = locked;
   }
 
   // One card per Short; ``.title-edit`` holds the title editor (CP8.2 functions via the API).
@@ -729,7 +732,8 @@ const AutoShort = (() => {
         video ? loopButton(s.clip_id, video) : null,
         s.editable && !(archived && s.deleted) ? deleteButton(s) : null),
       s.editable && !s.deleted && !archived ? titleEditor(s) : el("div", { class: "title-edit", hidden: true }),
-      s.editable && !s.deleted && !archived ? cutEditor(s) : null);
+      s.editable && !s.deleted && !archived ? cutEditor(s) : null,
+      s.status === "rendered" ? postPanel(s) : null);
     card.append(body);
     return card;
   }
@@ -1125,6 +1129,372 @@ const AutoShort = (() => {
       }
     }
     return box;
+  }
+
+  // --- CP8.15: community post text ("Bài đăng cộng đồng") + image library ------------------------------------
+
+  function postsUrl(suffix) { return `/api/episodes/${encodeURIComponent(episodeId)}/posts${suffix || ""}`; }
+
+  async function fetchPosts() { return api(postsUrl()); }
+
+  function postBadges(p) {
+    const nodes = [];
+    if (p.origin === "raw") nodes.push(el("span", { class: "badge stale-badge", text: "AI không chắc — kiểm lại" }));
+    if (p.low_punctuation) nodes.push(el("span", { class: "badge stale-badge", text: "Ít dấu câu — kiểm lại" }));
+    if (p.stale) nodes.push(el("span", { class: "badge stale-badge", text: "Text nguồn đã đổi — soạn lại" }));
+    if (p.image_missing) nodes.push(el("span", { class: "badge stale-badge", text: "Thiếu ảnh" }));
+    return nodes;
+  }
+
+  // "Soạn bài cho mọi Short" (episode-level) + "Bài đã đăng x / y" count.
+  async function refreshPostsHead() {
+    const head = $("#posts-head");
+    if (!lastData || !lastData.shorts.some((s) => s.status === "rendered")) { head.hidden = true; return; }
+    head.hidden = false;
+    const btn = $("#posts-compose-all");
+    btn.disabled = editsLocked;
+    if (!btn.dataset.bound) {
+      btn.dataset.bound = "1";
+      btn.addEventListener("click", () => composeAll(btn));
+    }
+    try {
+      const d = await fetchPosts();
+      const posted = d.posts.filter((p) => p.posted).length;
+      $("#posts-count").textContent = `Bài đăng cộng đồng đã đăng: ${posted}/${d.posts.length || 0}`;
+    } catch (_) { $("#posts-count").textContent = ""; }
+  }
+
+  async function composeAll(btn) {
+    const msg = $("#posts-msg");
+    btn.disabled = true;
+    msg.hidden = true;
+    try {
+      await api(postsUrl(), { method: "POST", headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ clips: "all" }) });
+      msg.textContent = "Đang soạn bài…";
+      msg.className = "small";
+      msg.hidden = false;
+      await pollEpisodeJob();
+      msg.textContent = "Đã soạn bài xong.";
+      await refreshPostsHead();
+    } catch (e) {
+      msg.textContent = e.message;
+      msg.className = "small error";
+      msg.hidden = false;
+    }
+    btn.disabled = editsLocked;
+  }
+
+  // Polls the episode's job until it is no longer active (a compose / add-Short job just queued by this page).
+  async function pollEpisodeJob() {
+    for (let i = 0; i < 120; i++) {
+      let d;
+      try { d = await api("/api/episodes/" + encodeURIComponent(episodeId)); } catch (_) { return; }
+      if (!jobActive(d.job)) return;
+      await new Promise((res) => setTimeout(res, 700));
+    }
+  }
+
+  // One Short's post: "Soạn bài" (none yet) or the editor (paragraphs, image, link, copy, "Đã đăng bài").
+  function postPanel(s) {
+    const box = el("div", { class: "post-edit" });
+    const toggle = el("button", { class: "btn small", type: "button", text: "Bài đăng cộng đồng" });
+    const panel = el("div", { class: "post-panel", hidden: true });
+    box.append(toggle, panel);
+    let cur = null;
+
+    toggle.addEventListener("click", async () => {
+      if (!panel.hidden) { panel.hidden = true; toggle.textContent = "Bài đăng cộng đồng"; return; }
+      panel.hidden = false;
+      toggle.textContent = "Đóng bài đăng cộng đồng";
+      panel.replaceChildren(el("p", { class: "muted small", text: "Đang tải…" }));
+      await load();
+    });
+
+    async function load() {
+      try {
+        const d = await fetchPosts();
+        cur = d.posts.find((p) => p.clip_id === s.clip_id) || null;
+        render(d.post_error);
+      } catch (e) {
+        panel.replaceChildren(el("p", { class: "error small", text: e.message }));
+      }
+    }
+
+    function render(loadError) {
+      const nodes = [];
+      if (loadError) nodes.push(el("p", { class: "error small", text: "Lỗi đọc bài đăng: " + loadError }));
+      if (!cur) {
+        const btn = el("button", { class: "btn primary small needs-idle", type: "button", text: "Soạn bài" });
+        btn.disabled = editsLocked;
+        const msg = el("p", { class: "error small", hidden: true });
+        btn.addEventListener("click", () => compose(btn, msg));
+        nodes.push(el("p", { class: "muted small", text: "Chưa có bài đăng cho Short này." }), btn, msg);
+        panel.replaceChildren(...nodes);
+        return;
+      }
+      const textarea = el("textarea", { class: "post-textarea", "aria-label": "Các đoạn của bài đăng" });
+      textarea.value = cur.paragraphs.join("\n\n");
+      const save = el("button", { class: "btn small", type: "button", text: "Lưu đoạn" });
+      const saveMsg = el("span", { class: "small", hidden: true });
+      save.addEventListener("click", () => saveParagraphs(textarea, save, saveMsg));
+
+      const img = el("div", { class: "post-image" });
+      if (cur.image && !cur.image_missing) {
+        img.append(el("img", { src: `/files/post-images/${encodeURIComponent(cur.image)}`, alt: "" }));
+      } else {
+        img.append(el("span", { class: "muted small",
+          text: cur.image_missing ? "Ảnh đã bị xóa khỏi thư viện" : "Chưa có ảnh trong thư viện" }));
+      }
+      const changeImg = el("button", { class: "btn small", type: "button", text: "Đổi ảnh" });
+      changeImg.addEventListener("click", () => openImageDialog((name) => setImage(name)));
+
+      const link = el("input", { type: "url", value: cur.link || "", placeholder: "Dán link Short (tùy chọn)",
+        "aria-label": "Link Short" });
+      const linkSave = el("button", { class: "btn small", type: "button", text: "Lưu link" });
+      const linkMsg = el("span", { class: "small", hidden: true });
+      linkSave.addEventListener("click", () => saveLink(link, linkSave, linkMsg));
+
+      const copyBtn = copyTitleButton(cur.text);
+      const composeAgain = el("button", { class: "btn small needs-idle", type: "button", text: "Soạn lại" });
+      composeAgain.disabled = editsLocked;
+      const composeMsg = el("p", { class: "error small", hidden: true });
+      composeAgain.addEventListener("click", () => compose(composeAgain, composeMsg));
+
+      const postedInput = el("input", { type: "checkbox", checked: cur.posted });
+      const postedLabel = el("label", { class: "publish-label" }, postedInput, " Đã đăng bài");
+      postedInput.addEventListener("change", () => togglePosted(postedInput));
+
+      nodes.push(
+        postBadges(cur).length ? el("div", { class: "post-badges" }, ...postBadges(cur)) : null,
+        el("label", { class: "small" }, "Các đoạn (một dòng trống giữa hai đoạn)"),
+        textarea, el("div", { class: "edit-actions" }, save, saveMsg),
+        el("div", { class: "post-image-row" }, img, changeImg),
+        el("div", { class: "edit-actions" }, link, linkSave, linkMsg),
+        el("p", { class: "muted small", text: `${cur.chars} ký tự (bài đầy đủ, kể cả tiêu đề / link / hashtag)` }),
+        el("div", { class: "edit-actions" }, copyBtn, composeAgain, postedLabel),
+        composeMsg);
+      panel.replaceChildren(...nodes);
+    }
+
+    async function compose(btn, msg) {
+      btn.disabled = true;
+      msg.hidden = true;
+      try {
+        await api(postsUrl(), { method: "POST", headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ clips: [s.clip_id] }) });
+        await pollEpisodeJob();
+        await load();
+        refreshPostsHead();
+      } catch (e) {
+        msg.textContent = e.message;
+        msg.hidden = false;
+        btn.disabled = editsLocked;
+      }
+    }
+
+    async function saveParagraphs(textarea, btn, msg) {
+      const paragraphs = textarea.value.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+      btn.disabled = true;
+      try {
+        cur = await api(`${postsUrl()}/${encodeURIComponent(s.clip_id)}`, {
+          method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ paragraphs }),
+        });
+        msg.textContent = "Đã lưu";
+        msg.className = "small";
+        render();
+      } catch (e) {
+        msg.textContent = e.message;
+        msg.className = "small error";
+      }
+      msg.hidden = false;
+      btn.disabled = false;
+    }
+
+    async function setImage(name) {
+      try {
+        cur = await api(`${postsUrl()}/${encodeURIComponent(s.clip_id)}`, {
+          method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ image: name }),
+        });
+        render();
+      } catch (e) { alert(e.message); }
+    }
+
+    async function saveLink(input, btn, msg) {
+      btn.disabled = true;
+      try {
+        cur = await api(`${postsUrl()}/${encodeURIComponent(s.clip_id)}`, {
+          method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ link: input.value }),
+        });
+        msg.textContent = "Đã lưu";
+        msg.className = "small";
+        render();
+      } catch (e) {
+        msg.textContent = e.message;
+        msg.className = "small error";
+      }
+      msg.hidden = false;
+      btn.disabled = false;
+    }
+
+    async function togglePosted(input) {
+      input.disabled = true;
+      try {
+        const r = await api(`${postsUrl()}/${encodeURIComponent(s.clip_id)}/posted`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ value: input.checked }),
+        });
+        cur = { ...cur, posted: r.posted, posted_at: r.posted_at };
+        refreshPostsHead();
+      } catch (e) {
+        input.checked = !input.checked;
+        alert(e.message);
+      }
+      input.disabled = false;
+    }
+
+    return box;
+  }
+
+  // --- image library (P5, P5a, P5b): a modal shared by every "Đổi ảnh" button --------------------------------
+
+  let imagePickCallback = null;
+
+  function initImageDialog() {
+    $("#image-close").addEventListener("click", closeImageDialog);
+    $("#image-upload-input").addEventListener("change", (e) => {
+      const f = e.target.files[0];
+      if (f) uploadImageFile(f);
+      e.target.value = "";
+    });
+    $("#image-search-btn").addEventListener("click", () => runImageSearch($("#image-search-url").value));
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && !$("#image-dialog").hidden) closeImageDialog();
+    });
+  }
+
+  function closeImageDialog() {
+    $("#image-dialog").hidden = true;
+    document.body.classList.remove("modal-open");
+    imagePickCallback = null;
+  }
+
+  async function openImageDialog(onPick) {
+    imagePickCallback = onPick || null;
+    $("#image-dialog").hidden = false;
+    document.body.classList.add("modal-open");
+    $("#image-msg").hidden = true;
+    await loadImageGrid();
+  }
+
+  function imgMsg(text, cls) {
+    const m = $("#image-msg");
+    m.textContent = text || "";
+    m.className = "small " + (cls || "");
+    m.hidden = !text;
+  }
+
+  async function loadImageGrid() {
+    const grid = $("#image-grid");
+    grid.replaceChildren(el("p", { class: "muted small", text: "Đang tải…" }));
+    try {
+      const d = await api("/api/post-images");
+      renderImageGrid(d.images);
+      renderQuickLinks(d.image_sources || []);
+    } catch (e) {
+      grid.replaceChildren(el("p", { class: "error small", text: e.message }));
+    }
+  }
+
+  function renderQuickLinks(sources) {
+    const box = $("#image-quick-links");
+    box.hidden = !sources.length;
+    box.replaceChildren(...sources.map((url) => {
+      const short = url.length > 36 ? url.slice(0, 33) + "…" : url;
+      const b = el("button", { class: "btn small", type: "button", title: url, text: short });
+      b.addEventListener("click", () => { $("#image-search-url").value = url; runImageSearch(url); });
+      return b;
+    }));
+  }
+
+  function renderImageGrid(images) {
+    const grid = $("#image-grid");
+    if (!images.length) {
+      grid.replaceChildren(el("p", { class: "muted small", text: "Thư viện chưa có ảnh." }));
+      return;
+    }
+    grid.replaceChildren(...images.map((img) => imageCard(img)));
+  }
+
+  function imageCard(img) {
+    const card = el("div", { class: "img-card" });
+    card.append(el("img", { src: `/files/post-images/${encodeURIComponent(img.name)}`, alt: "", loading: "lazy" }));
+    if (imagePickCallback) {
+      const pick = el("button", { class: "btn primary small", type: "button", text: "Chọn" });
+      pick.addEventListener("click", () => { imagePickCallback(img.name); closeImageDialog(); });
+      card.append(pick);
+    }
+    card.append(el("p", { class: "muted small", text: `${img.width}×${img.height} · dùng ${img.used} bài` }));
+    const del = el("button", { class: "btn danger small", type: "button", text: "Xóa khỏi thư viện" });
+    del.addEventListener("click", () => deleteImageFromLibrary(img));
+    card.append(del);
+    return card;
+  }
+
+  async function deleteImageFromLibrary(img) {
+    if (img.used && !confirm(`Ảnh này đang dùng ở ${img.used} bài đăng. Xóa khỏi thư viện? ` +
+      'Các bài đó sẽ hiện "thiếu ảnh" (vẫn giữ text / link / tick).')) return;
+    try {
+      await api(`/api/post-images/${encodeURIComponent(img.name)}`, { method: "DELETE" });
+      await loadImageGrid();
+    } catch (e) { alert(e.message); }
+  }
+
+  async function uploadImageFile(file) {
+    imgMsg("Đang tải lên…");
+    try {
+      const buf = await file.arrayBuffer();
+      const r = await api(`/api/post-images?name=${encodeURIComponent(file.name)}`, {
+        method: "POST", headers: { "Content-Type": file.type || "application/octet-stream" }, body: buf,
+      });
+      imgMsg(r.duplicate ? "Ảnh đã có trong thư viện." : "Đã tải ảnh lên.");
+      await loadImageGrid();
+    } catch (e) { imgMsg(e.message, "error"); }
+  }
+
+  async function runImageSearch(url) {
+    if (!url || !url.trim()) { imgMsg("Dán một link trước.", "error"); return; }
+    const btn = $("#image-search-btn");
+    btn.disabled = true;
+    imgMsg("Đang tìm ảnh…");
+    try {
+      const r = await api("/api/post-images/search", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }),
+      });
+      await pollImageSearch(r.job.id);
+    } catch (e) {
+      imgMsg(e.message, "error");
+    }
+    btn.disabled = false;
+  }
+
+  async function pollImageSearch(jobId) {
+    for (let i = 0; i < 60; i++) {
+      const r = await api(`/api/post-images/search/${encodeURIComponent(jobId)}`);
+      if (r.status !== "queued" && r.status !== "running") {
+        if (r.status === "done") {
+          const skippedN = Object.values(r.skipped || {}).reduce((a, b) => a + b, 0);
+          imgMsg(`Đã thêm ${r.added.length} ảnh` + (r.duplicate.length ? `, ${r.duplicate.length} đã có` : "") +
+            (skippedN ? `, bỏ qua ${skippedN}` : "") + ".");
+        } else {
+          imgMsg("Tìm ảnh lỗi.", "error");
+        }
+        await loadImageGrid();
+        return;
+      }
+      await new Promise((res) => setTimeout(res, 600));
+    }
+    imgMsg("Đang tìm ảnh lâu hơn dự kiến — mở lại thư viện sau.", "error");
   }
 
   // "Thêm Short" dialog: tab "Đề xuất AI (n)" (remaining proposals) and tab "Chọn trên transcript".

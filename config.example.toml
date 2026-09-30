@@ -175,6 +175,27 @@ window_words_per_minute = 400        # window = max([selection] max_window_words
 # (seconds) is a pause, not a hard break, so a khai thị video may run across it (Shorts are unchanged)
 soft_label_max_seconds = 5.0
 
+[post]
+# Community post text of a Short (docs/decisions/CP8.15-community-post-contract.md): AI adds punctuation /
+# paragraph breaks only (never changes words) to the Short's caption text via Ollama, plus the image library
+# and link fetching. posts.json is not a stage artifact: no key here re-runs a pipeline stage.
+model = "qwen3:14b"          # chosen by HUMAN LEAD 2026-09-29 (Q4)
+think = false
+temperature = 0
+seed = 42
+num_ctx = 8192
+prompt_version = "v2"        # free-form AI + projection onto source words (post/prompt.py); "v1" kept for reference
+retries = 2                  # extra attempts per chunk on HTTP/timeout/empty output/match ratio < 0.9
+chunk_words = 400            # text longer than this (words) is punctuated in several AI calls (caption line boundaries)
+# Image library (P5): copy the candidate images into this directory by hand (not created by code); JPEG/PNG only,
+# top level, served whole (no resize / crop / text overlay). Outside the repo: not committed, not backed up here.
+image_dir = "~/.local/share/auto-short/post-images"
+image_sources = []            # quick "tìm ảnh" links offered on the image library tab ([] = none)
+# Execution-only (not part of any hash). Env OLLAMA_HOST overrides ollama_host.
+ollama_host = "http://127.0.0.1:11437"
+timeout = 600
+retry_backoff = [5, 15]
+
 [learning]
 # Chinese Learning: `auto-short learn <url>` (docs/decisions/CL1-chinese-learning-contract.md).
 # Artifacts go to <workspace dir>/_learning/<video id>/.

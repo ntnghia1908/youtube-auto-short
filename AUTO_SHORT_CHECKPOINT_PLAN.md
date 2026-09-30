@@ -447,6 +447,20 @@ The title panel was hidden by the YouTube Shorts UI (channel / description row a
 
 ---
 
+## CP8.15 — Community Post Text From a Short
+
+> HUMAN LEAD 2026-09-29 (`docs/tasks/CP8.15-community-post.md`, P1–P13, S2). Contract: `docs/decisions/CP8.15-community-post-contract.md`; sửa đổi `docs/decisions/CP8.3-web-contract.md` W5, W6, W7.
+
+Every rendered Short (and khai thị video) gets an optional YouTube community-post companion: its literal caption
+text, punctuated by Ollama (never allowed to change a word, deterministically validated, falling back to raw text
+on failure), an image from a library outside the repo (upload or found from a link), an optional link back to the
+Short, assembled into a copy-paste post, and its own "Đã đăng bài" tick independent of the Short's "Đã đăng". No
+new dependency (image bytes sniffed by hand, HTML parsed with stdlib `html.parser`, links fetched with
+`urllib.request` behind an SSRF-safe check). Re-plan 2026-09-29 note (below, CP9): the batch / community-post idea
+from the original CP9 scope is delivered here, scoped to one Short at a time (no "process the whole bộ kinh" step).
+
+---
+
 ## CP9 — Human Review + Batch Processing
 
 > Re-plan HUMAN LEAD 2026-09-27: phần batch mức playlist (bộ kinh: liệt kê, bấm xử lý từng tập, xếp hàng, trạng thái "Xong" suy ra khi đăng hết) kéo lên CP8.7 (`docs/tasks/CP8.7-playlist.md`, `docs/decisions/CP8.3-web-contract.md` W10). CP9 còn: tự xử lý hàng loạt, approval state, failed-item isolation đầy đủ.

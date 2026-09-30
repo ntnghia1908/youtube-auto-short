@@ -28,7 +28,8 @@ class ChatResult:
 
 
 class ChatClient(Protocol):
-    def chat(self, *, model: str, messages: list[dict], format: dict, options: dict, think: bool) -> ChatResult:
+    def chat(self, *, model: str, messages: list[dict], format: dict | None, options: dict,
+            think: bool) -> ChatResult:
         ...
 
 
@@ -40,19 +41,24 @@ def resolve_host(config_host: str) -> str:
     return host
 
 
-def request_body(*, model: str, messages: list[dict], format: dict, options: dict, think: bool) -> dict:
-    return {"model": model, "messages": messages, "format": format, "options": options,
-            "think": think, "stream": False}
+def request_body(*, model: str, messages: list[dict], format: dict | None, options: dict, think: bool) -> dict:
+    body = {"model": model, "messages": messages}
+    if format:  # CP8.15 P3: free-form text response (post/prompt.py v2) omits the format key entirely
+        body["format"] = format
+    body["options"], body["think"], body["stream"] = options, think, False
+    return body
 
 
 class OllamaClient:
-    """``POST <host>/api/chat`` with ``stream: false`` and a JSON schema ``format``."""
+    """``POST <host>/api/chat`` with ``stream: false``; ``format`` is a JSON schema for structured output, or
+    ``None``/``{}`` for free-form text (CP8.15 P3)."""
 
     def __init__(self, host: str, timeout: float = DEFAULT_TIMEOUT):
         self.host = host.rstrip("/")
         self.timeout = timeout
 
-    def chat(self, *, model: str, messages: list[dict], format: dict, options: dict, think: bool) -> ChatResult:
+    def chat(self, *, model: str, messages: list[dict], format: dict | None, options: dict,
+             think: bool) -> ChatResult:
         body = json.dumps(request_body(model=model, messages=messages, format=format, options=options,
                                        think=think), ensure_ascii=False).encode("utf-8")
         req = urllib.request.Request(f"{self.host}/api/chat", data=body, method="POST",

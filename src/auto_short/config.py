@@ -225,6 +225,28 @@ class KhaithiConfig:
 
 
 @dataclass(frozen=True)
+class PostConfig:
+    """Community post text of a Short (docs/decisions/CP8.15-community-post-contract.md P11): AI punctuation /
+    paragraphs via Ollama (P3), the image library (P5) and link fetching (P5b)."""
+
+    model: str = "qwen3:14b"  # chosen by HUMAN LEAD 2026-09-29 (Q4)
+    think: bool = False
+    temperature: float = 0.0
+    seed: int = 42
+    num_ctx: int = 8192
+    prompt_version: str = "v2"  # free-form AI + deterministic projection (P3 amendment, HUMAN LEAD 2026-09-29)
+    retries: int = 2
+    chunk_words: int = 400  # P3: text longer than this (words) is punctuated in several AI calls
+    # P5: outside the repo, not committed.
+    image_dir: Path = field(default_factory=lambda: Path("~/.local/share/auto-short/post-images").expanduser())
+    image_sources: tuple[str, ...] = ()  # P5b: quick-link buttons ([] = none)
+    # Execution-only settings (not part of any hash; posts.json is not a stage artifact); env OLLAMA_HOST overrides.
+    ollama_host: str = "http://127.0.0.1:11437"
+    timeout: float = 600.0
+    retry_backoff: tuple[float, ...] = (5.0, 15.0)
+
+
+@dataclass(frozen=True)
 class LearningConfig:
     """Chinese Learning application (docs/decisions/CL1-chinese-learning-contract.md C6, C7, C10)."""
 
@@ -258,6 +280,7 @@ class Config:
     web: WebConfig = field(default_factory=WebConfig)
     learning: LearningConfig = field(default_factory=LearningConfig)
     khaithi: KhaithiConfig = field(default_factory=KhaithiConfig)
+    post: PostConfig = field(default_factory=PostConfig)
 
 
 def _section(data: dict, name: str) -> dict:
@@ -599,6 +622,33 @@ def _khaithi(data: dict) -> KhaithiConfig:
     return cfg
 
 
+def _post(data: dict) -> PostConfig:
+    po = _section(data, "post")
+    d, w = PostConfig(), "post"
+    backoff = po.get("retry_backoff", list(d.retry_backoff))
+    if not isinstance(backoff, list) or not all(
+            isinstance(x, (int, float)) and not isinstance(x, bool) and 0 <= x <= 3600 for x in backoff):
+        raise ConfigError(f"{w}.retry_backoff must be a list of numbers between 0 and 3600 (seconds)")
+    sources = po.get("image_sources", list(d.image_sources))
+    if not isinstance(sources, list) or not all(isinstance(x, str) and x for x in sources):
+        raise ConfigError(f"{w}.image_sources must be a list of non-empty strings")
+    return PostConfig(
+        model=_str(po, "model", d.model, w),
+        think=_bool(po, "think", d.think, w),
+        temperature=_number(po, "temperature", d.temperature, w, lo=0, hi=2),
+        seed=_int(po, "seed", d.seed, w, lo=0),
+        num_ctx=_int(po, "num_ctx", d.num_ctx, w, lo=512),
+        prompt_version=_str(po, "prompt_version", d.prompt_version, w),
+        retries=_int(po, "retries", d.retries, w, lo=0),
+        chunk_words=_int(po, "chunk_words", d.chunk_words, w, lo=20, hi=5000),
+        image_dir=Path(_str(po, "image_dir", str(d.image_dir), w)).expanduser(),
+        image_sources=tuple(sources),
+        ollama_host=_str(po, "ollama_host", d.ollama_host, w),
+        timeout=_number(po, "timeout", d.timeout, w, lo=1),
+        retry_backoff=tuple(float(x) for x in backoff),
+    )
+
+
 def _hashtags(section: dict, default: tuple[str, ...]) -> tuple[str, ...]:
     value = section.get("hashtags", list(default))
     if not isinstance(value, list) or not all(isinstance(x, str) for x in value):
@@ -629,6 +679,7 @@ def from_dict(data: dict) -> Config:
         web=_web(data),
         learning=_learning(data),
         khaithi=_khaithi(data),
+        post=_post(data),
     )
 
 

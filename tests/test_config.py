@@ -127,3 +127,33 @@ def test_learning_config():
 def test_learning_config_invalid(data):
     with pytest.raises(ConfigError):
         config_mod.from_dict(data)
+
+
+def test_post_config():
+    d = config_mod.Config().post
+    assert (d.model, d.chunk_words, d.retries, d.prompt_version) == ("qwen3:14b", 400, 2, "v2")
+    assert d.image_dir.is_absolute() and "~" not in str(d.image_dir)
+    p = config_mod.from_dict({"post": {
+        "model": "qwen3:30b", "chunk_words": 250, "retries": 1, "image_dir": "/tmp/post-images",
+        "image_sources": ["https://example.com/a"],
+    }}).post
+    assert (p.model, p.chunk_words, p.retries) == ("qwen3:30b", 250, 1)
+    assert str(p.image_dir) == "/tmp/post-images"
+    assert p.image_sources == ("https://example.com/a",)
+    # other sections are unaffected
+    assert config_mod.from_dict({"post": {"model": "x"}}).titling == config_mod.Config().titling
+
+
+@pytest.mark.parametrize("data", [
+    {"post": {"chunk_words": 10}},
+    {"post": {"chunk_words": "400"}},
+    {"post": {"retries": -1}},
+    {"post": {"model": ""}},
+    {"post": {"image_dir": ""}},
+    {"post": {"image_sources": ["", "x"]}},
+    {"post": {"image_sources": "x"}},
+    {"post": []},
+])
+def test_post_config_invalid(data):
+    with pytest.raises(ConfigError):
+        config_mod.from_dict(data)
