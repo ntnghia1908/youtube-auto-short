@@ -472,6 +472,17 @@ blocks editing a Short. The source line reads "HT. Tịnh Không". No new depend
 
 ---
 
+## CP8.17 — Download Rules
+
+> HUMAN LEAD 2026-09-30 (`docs/tasks/CP8.17-download-rules.md`, D1–D5, S2). Amends `docs/decisions/CP8.3-web-contract.md` W6, W7, W8 and `docs/decisions/CP8.15-community-post-contract.md` P8, P9.
+
+A community post ticks "Đã đăng bài" by itself once its text was copied and its image downloaded (tracked in the
+browser). Downloading a whole zip no longer ticks "Đã đăng" (only the single Short download does). Zip names carry the
+bộ kinh (`<series>_Tập<N>_Shorts.zip` / `…_KhaiThị.zip`) and a "Tải cả hai" button downloads one zip with `Shorts/` and
+`KhaiThị/`. No new dependency, `publish.json` / `posts.json` schema unchanged.
+
+---
+
 ## CP9 — Human Review + Batch Processing
 
 > Re-plan HUMAN LEAD 2026-09-27: phần batch mức playlist (bộ kinh: liệt kê, bấm xử lý từng tập, xếp hàng, trạng thái "Xong" suy ra khi đăng hết) kéo lên CP8.7 (`docs/tasks/CP8.7-playlist.md`, `docs/decisions/CP8.3-web-contract.md` W10). CP9 còn: tự xử lý hàng loạt, approval state, failed-item isolation đầy đủ.

@@ -114,8 +114,31 @@ Chạm public API contract (route `all.zip`, field mới, tên file) và luật 
 ## Result
 
 - Main changes:
+  - `review/names.py`: `zip_name(episode, *, khaithi, series, both)` — series qua `clean_part` + `truncate_utf8(…, 80)`; tên "cả hai" `…_Shorts+KhaiThị.zip`; không series → tên cũ.
+  - `web/episodes.py`: `_zip_series` (series của chính tập; tập khai thị không có thì của tập Short gốc), `zip_download_name` dùng series, `all_zip()` (entry `Shorts/…` rồi `KhaiThị/…`, tên theo tập Short gốc), `zip_all_url` / `zip_all_name` trong `episode_view` (`null` khi thiếu một loại).
+  - `web/app.py`: bỏ `_mark_downloaded` ở `shorts.zip` (D3); route `all.zip` (dùng lại `_zip_stream`, 404 khi thiếu một loại, cùng auth); view dự phòng có `zip_all_*: null`. Tải lẻ `?download=1` giữ nguyên tick.
+  - `web/static/app.js` + `episode.html`: nhãn "Tải tất cả Short (.zip)" / "Tải tất cả khai thị (.zip)", nút "Tải cả hai (.zip)", bỏ làm mới sau khi bấm zip; `copyTitleButton(text, onCopied)`; kho dấu `autoShort.postMarks` (localStorage + dự phòng bộ nhớ) và `markPostStep` tự gọi `POST …/posted` khi đủ điều kiện D1/D2, xóa dấu sau khi tick.
+  - Docs: CP8.3 W6/W7/W8 + Accepted by/Task contract, CP8.15 P8/P9, CP8.9 K8, project-profile (dòng `web/`), `AUTO_SHORT_CHECKPOINT_PLAN.md`.
 - Tests:
-- Review:
+  - Mới `tests/test_web_cp817.py` (9 test): `zip_name` thuần (series, cả hai, làm sạch, cắt 80 byte), zip không tick + tải lẻ vẫn tick + tick có sẵn giữ nguyên, tên zip API / header (có / không series, fallback khai thị, series riêng của khai thị), `all.zip` gọi bằng `<vid>` và `<vid>.kt` (thứ tự entry, `ZIP_STORED`, cờ UTF-8, sha256), 404 khi thiếu một loại / Short đã xóa không có / 401 / id sai, nhãn UI + không còn làm mới sau zip.
+  - Test cũ sửa (chỉ theo D3–D4):
+    1. `tests/test_playlist_cp87.py::test_download_ticks_published`: đoạn "zip ticks every Short" → zip KHÔNG tick (`published == []`), rồi tải lẻ từng Short mới tick đủ 3 và `complete` (D3).
+    2. `tests/test_playlist_cp87.py::test_tombstone_on_delete_playlist_stats_and_reprocess`: tiền điều kiện "Xong" tạo bằng tải lẻ 2 Short thay vì `shorts.zip` (D3); assertion sau đó không đổi.
+    3. `tests/test_web_khaithi_cp89.py::test_header_episode_label_and_playlist_hashtags`: `zip_name` `Tập29_KhaiThị.zip` → `Kinh A_Tập29_KhaiThị.zip` (titles.json của tập có series "Kinh A", D4).
+  - Logic JS D1/D2: harness tạm ngoài repo (node, không commit) chạy hàm dấu trên chính `app.js` với localStorage thật và localStorage lỗi: thiếu một dấu → chưa; đủ theo cả hai thứ tự → có; text / ảnh đổi → mất hiệu lực; xóa dấu sau khi tick; bài không ảnh / `image_missing` chỉ cần sao chép — PASS. Repo không có khung test JS.
+  - `pytest -q -n auto` toàn bộ: 1160 passed, 1 skipped (56 s). `node scripts/framework-check.mjs`: exit 0. `node --check app.js`: OK.
+- Chạy thật (server test 127.0.0.1:8081, dữ liệu bản sao `~/.cache/auto-short-cp817-test/`, video `4oOZz2CBz3g` 7 Short + `.kt` 6 Short, không có `publish.json` lúc đầu; đã tắt server, giữ dữ liệu):
+  - `shorts.zip` `<vid>`: `Thái Thượng Cảm Ứng Thiên_Tập1_Shorts.zip`, 7 entry `Tập1_S01_…`; `<vid>.kt`: `…_Tập1_KhaiThị.zip`, 6 entry `Tập1_KT01_…`.
+  - `all.zip` (gọi bằng `<vid>` và `<vid>.kt`): `Thái Thượng Cảm Ứng Thiên_Tập1_Shorts+KhaiThị.zip`, 13 entry = 7 `Shorts/` + 6 `KhaiThị/`, `ZIP_STORED`, `testzip` OK, sha256 entry = manifest; API có `zip_all_url` / `zip_all_name`; không cookie → 401.
+  - `publish.json` trước và sau cả 4 lần tải zip: không tồn tại (không đổi) ở cả hai tập; sau `GET /files/<vid>/k01.mp4?download=1`: `publish.json` có đúng `k01`.
+  - Phần giao diện (nút, tự tick trên điện thoại): chưa chạy trình duyệt — gate là manual test checklist.
+- Review: (ORCHESTRATOR)
 - Important findings / decisions:
+  - Khóa dấu = `<g.id>/<clip_id>` (`g.id` là episode id của nhóm Short hoặc khai thị trên trang Bài đăng).
+  - Dấu *đã tải ảnh* đặt khi bấm link "Tải ảnh" (trình duyệt không báo tải xong).
+  - Khi bài đã tick, bấm sao chép / tải ảnh không ghi dấu (để bỏ tick tay không tự tick lại).
+  - Tập khai thị không có `header.fields.episode` trong titles.json của nó vẫn dùng nhãn cũ (id gốc), chỉ series có fallback về tập Short gốc (đúng D4).
 - Known limitations:
+  - Dấu theo từng thiết bị / trình duyệt (D1); tải ảnh hỏng hoặc bị hủy vẫn tính là đã tải.
+  - Sau khi bỏ tick tự động cũ, "Xong" / gợi ý dọn cần tick từng Short hoặc tick tay (D3).
 - PR:

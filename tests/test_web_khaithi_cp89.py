@@ -242,7 +242,7 @@ def test_header_episode_label_and_playlist_hashtags(tcfg, tmp_path):
         _login(c)
         k = c.get(f"/api/episodes/{KT}").json()
         assert k["shorts"][0]["download_name"] == "Tập29_KT01_Khai thị một.mp4"
-        assert k["zip_name"] == "Tập29_KhaiThị.zip"
+        assert k["zip_name"] == "Kinh A_Tập29_KhaiThị.zip"  # CP8.17 D4: series of the khai thị titles.json
         assert k["shorts"][0]["hashtags"] == ["#BộKinhA", "#TịnhĐộ"]  # CP8.8 H4 via the base video
         items = {i["id"]: i for i in c.get("/api/episodes").json()["episodes"]}
         assert items[KT]["in_playlist"] is True and items[EID]["in_playlist"] is True  # not in "Tập lẻ"

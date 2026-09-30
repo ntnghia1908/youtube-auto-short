@@ -645,7 +645,11 @@ const AutoShort = (() => {
     const zip = $("#zip");
     zip.hidden = !d.zip_url;
     if (d.zip_url) { zip.href = d.zip_url; zip.setAttribute("download", d.zip_name || ""); }
-    if (!zip.dataset.bound) { zip.dataset.bound = "1"; zip.addEventListener("click", () => setTimeout(refreshEpisode, 2000)); }
+    // CP8.17 D3/D4: a zip no longer ticks "Đã đăng" (nothing to refresh); the label says what the zip holds
+    zip.textContent = d.kind === "khaithi" ? "Tải tất cả khai thị (.zip)" : "Tải tất cả Short (.zip)";
+    const zipAll = $("#zip-all"); // CP8.17 D5: Shorts/ + KhaiThị/ in one zip (hidden when either kind is missing)
+    zipAll.hidden = !d.zip_all_url;
+    if (d.zip_all_url) { zipAll.href = d.zip_all_url; zipAll.setAttribute("download", d.zip_all_name || ""); }
     $("#header-lines").textContent = d.header ? "Header: " + d.header.join(" / ") : "";
     // CP9 C7: "Thêm Short" once the episode has a render and titles (not on an archived episode)
     const addBtn = $("#add-short");
@@ -771,7 +775,8 @@ const AutoShort = (() => {
     return legacyCopy(text);
   }
 
-  function copyTitleButton(text) {
+  // ``onCopied`` (CP8.17 D1) runs only when the copy really succeeded (not in the "Giữ vào ô để copy" fallback).
+  function copyTitleButton(text, onCopied) {
     const wrap = el("span", { class: "copy-wrap" });
     const btn = el("button", { class: "btn small copy-btn", type: "button", text: "Copy", title: "Copy tiêu đề" });
     const note = el("span", { class: "copy-note small", hidden: true });
@@ -782,6 +787,7 @@ const AutoShort = (() => {
         note.textContent = "Đã copy";
         note.hidden = false;
         setTimeout(() => { note.hidden = true; }, 1500);
+        if (onCopied) onCopied();
         return;
       }
       // Could not copy: show the title selected so the user can long-press -> Copy.
@@ -1318,6 +1324,46 @@ const AutoShort = (() => {
     loadPostsPage();
   }
 
+  // --- CP8.17 D1/D2: "Đã đăng bài" ticks itself once the post text was copied AND its image downloaded -----------
+  // Marks live in the browser (localStorage, memory fallback): per post ``{copy: <text copied>, image: <image
+  // downloaded>}``; a mark only counts while the post still has that text / image. No image to download -> the
+  // copy alone is enough (D2 = a). The marks of a post are cleared once it ticks, so an un-tick by hand sticks.
+  const POST_MARKS_KEY = "autoShort.postMarks";
+  let postMarksMem = {};
+
+  function readPostMarks() {
+    try {
+      const raw = localStorage.getItem(POST_MARKS_KEY);
+      const v = raw ? JSON.parse(raw) : {};
+      if (v && typeof v === "object" && !Array.isArray(v)) postMarksMem = v;
+    } catch (_) { /* keep the in-memory marks */ }
+    return postMarksMem;
+  }
+
+  function writePostMarks(marks) {
+    postMarksMem = marks;
+    try { localStorage.setItem(POST_MARKS_KEY, JSON.stringify(marks)); } catch (_) { /* memory only */ }
+  }
+
+  function setPostMark(key, kind, value) {
+    const marks = readPostMarks();
+    marks[key] = { ...(marks[key] || {}), [kind]: value };
+    writePostMarks(marks);
+  }
+
+  function clearPostMark(key) {
+    const marks = readPostMarks();
+    if (key in marks) { delete marks[key]; writePostMarks(marks); }
+  }
+
+  // True when the marks of ``key`` cover ``post`` (the stored post: text, image, image_missing).
+  function postMarksDone(key, post) {
+    const mark = readPostMarks()[key] || {};
+    if (!post || typeof post.text !== "string" || mark.copy !== post.text) return false;
+    const hasImage = !!post.image && !post.image_missing;
+    return !hasImage || mark.image === post.image;
+  }
+
   // One Short's post card: title + "Xem Short" + the editor (paragraphs, image, link, copy, "Soạn lại", "Đã đăng bài"),
   // always open. ``cur`` = the stored post (view of ``GET …/posts``) or null (not composed yet).
   function postCard(g, s, cur) {
@@ -1367,6 +1413,7 @@ const AutoShort = (() => {
       const download = cur.image && !cur.image_missing
         ? el("a", { class: "btn small", href: `/files/post-images/${encodeURIComponent(cur.image)}?download=1`,
           text: "Tải ảnh" }) : null;
+      if (download) download.addEventListener("click", () => markPostStep("image", cur.image));
 
       const link = el("input", { type: "url", value: cur.link || "", placeholder: "Dán link Short (tùy chọn)",
         "aria-label": "Link Short" });
@@ -1374,7 +1421,7 @@ const AutoShort = (() => {
       const linkMsg = el("span", { class: "small", hidden: true });
       linkSave.addEventListener("click", () => saveLink(link, linkSave, linkMsg));
 
-      const copyBtn = copyTitleButton(cur.text);
+      const copyBtn = copyTitleButton(cur.text, () => markPostStep("copy", cur.text));
       copyBtn.querySelector(".copy-btn").textContent = "Sao chép bài";
       const composeAgain = el("button", { class: "btn small", type: "button", text: "Soạn lại" });
       const composeMsg = el("p", { class: "error small", hidden: true });
@@ -1443,6 +1490,20 @@ const AutoShort = (() => {
         msg.hidden = false;
       }
       btn.disabled = false;
+    }
+
+    // CP8.17 D1: remember a step of this post (copy / image download); tick "Đã đăng bài" once both are done.
+    async function markPostStep(kind, value) {
+      if (!cur || cur.posted) return; // a ticked post is left alone
+      const key = `${g.id}/${s.clip_id}`;
+      setPostMark(key, kind, value);
+      if (!postMarksDone(key, cur)) return;
+      clearPostMark(key);
+      try {
+        const r = await api(url("/posted"), jsonBody("POST", { value: true }));
+        changed({ ...cur, posted: r.posted, posted_at: r.posted_at });
+        render();
+      } catch (e) { alert(e.message); }
     }
 
     async function togglePosted(input) {

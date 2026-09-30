@@ -295,9 +295,12 @@ def test_download_ticks_published(tcfg):
         c.post(f"/api/episodes/{eid}/shorts/k01/published", json={"value": False})
         c.get(f"/files/{eid}/k01.mp4")
         assert _publish(tcfg, eid)["published"] == []
-        # zip ticks every Short in it
+        # CP8.17 D3: the zip does NOT tick; only the single "Tải về" of each Short does
         with zipfile.ZipFile(io.BytesIO(c.get(f"/files/{eid}/shorts.zip").content)) as zf:
             assert len(zf.namelist()) == 3
+        assert _publish(tcfg, eid)["published"] == []
+        for clip in ("k01", "k02", "k03"):
+            c.get(f"/files/{eid}/{clip}.mp4?download=1")
         assert [e["clip_id"] for e in _publish(tcfg, eid)["published"]] == ["k01", "k02", "k03"]
         assert c.get(f"/api/episodes/{eid}").json()["complete"] is True
     # re-render k02 -> stale; downloading again re-ticks with the new sha256
@@ -416,7 +419,8 @@ def test_tombstone_on_delete_playlist_stats_and_reprocess(tcfg):
     with client(tcfg) as c:
         _login(c)
         _playlist_with(c, [done_id, todo_id, VIDS[2]])
-        c.get(f"/files/{done_id}/shorts.zip")  # download = published -> Xong
+        for clip in ("k01", "k02"):  # single download = published -> Xong (CP8.17 D3: a zip no longer ticks)
+            c.get(f"/files/{done_id}/{clip}.mp4?download=1")
         c.post(f"/api/episodes/{todo_id}/shorts/k01/published", json={"value": True})
         # delete via the storage "Làm" path (recommendation for the Xong episode) and via the episode page
         recs = c.get("/api/storage").json()["recommendations"]
