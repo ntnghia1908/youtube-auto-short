@@ -148,15 +148,19 @@ def test_compose_no_rendered_short_fails_job_cleanly(tcfg):
         assert job.status == "failed" and "chưa có Short" in job.error
 
 
-def test_compose_preflight_failure_503(tcfg, ws):
+def test_compose_preflight_failure_queues_job(tcfg, ws):
+    # FIX-ollama-wait O4 (was: 503): 202 + job; the ai lane reports a missing model as a failed job
     def bad_preflight(_cfg):
         raise PreflightError("model missing")
 
-    c, _app = make_client(tcfg, post_preflight=bad_preflight)
+    c, app = make_client(tcfg, post_preflight=bad_preflight)
     with c:
         _login(c)
         r = c.post(f"{API}/posts", json={"clips": ["k01"]})
-        assert r.status_code == 503
+        assert r.status_code == 202
+        assert app.state.runner.wait_idle(10)
+        job = app.state.runner.job(r.json()["job"]["id"])
+        assert job.status == "failed" and job.error == "ollama preflight: model missing"
 
 
 def test_compose_returns_waiting_job_while_job_active(tcfg, ws):  # CP8.16 R3 (was 409, CP8.15 P1)

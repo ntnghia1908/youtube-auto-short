@@ -123,15 +123,19 @@ def test_submit_invalid_url_422_no_job(wcfg, url):
         assert c.post("/api/episodes", json={}).status_code == 422
 
 
-def test_submit_preflight_error_no_job(wcfg):
+def test_submit_preflight_error_still_queues_job(wcfg):
+    # FIX-ollama-wait O4 (was: 503 + no job): the link is accepted; the ai lane reports / waits for the GPU
     def bad(cfg):
-        raise PreflightError("cannot reach Ollama at http://127.0.0.1:1")
+        raise PreflightError("model 'x' ([selection] model) is not available")
 
     with make_client(wcfg, preflight=bad) as c:
         login(c)
         r = c.post("/api/episodes", json={"url": f"https://youtu.be/{VID}"})
-        assert r.status_code == 503 and r.json()["detail"].startswith("ollama preflight: cannot reach")
-        assert c.app.state.runner.jobs() == []
+        assert r.status_code == 202 and r.json()["job"]["kind"] == "pipeline"
+        runner = c.app.state.runner
+        assert runner.wait_idle(10)
+        job = runner.latest(VID)
+        assert job.status == "failed" and job.error.startswith("ollama preflight: model 'x'")
 
 
 def test_submit_runs_pipeline_and_episode_view(wcfg):

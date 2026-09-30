@@ -10,7 +10,9 @@ the AI of one episode overlaps with the render (CPU) of another and the next epi
 An episode has at most one queued/running job (also while it waits between two lanes), so two jobs never write the
 same manifest. The community-post compose job (``post``, CP8.16 R3) is the exception: it runs under its own key
 :func:`post_key` (at most one per episode too), so it never blocks editing a Short. The queue lives in memory: a
-server restart forgets it (manifests stay; resubmitting resumes, CP8 E3). Contract: docs/decisions/CP8.3-web-contract.md W5.
+server restart forgets it (manifests stay; resubmitting resumes, CP8 E3). FIX-ollama-wait: when Ollama is
+unreachable the ``ai`` lane does not fail jobs; it keeps them at the head of its queue and re-checks every
+``GPU_RETRY_SECONDS`` (docs/tasks/FIX-ollama-wait.md O5). Contract: docs/decisions/CP8.3-web-contract.md W5.
 """
 
 from __future__ import annotations
@@ -29,10 +31,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..config import Config
-from ..pipeline import PIPELINE_STAGES, PipelineError, PreflightError, StageRun, ollama_preflight, run_pipeline
+from ..pipeline import (PIPELINE_STAGES, OllamaUnavailable, PipelineError, PreflightError, StageRun,
+                        ollama_preflight, run_pipeline)
 from ..post import fetch as post_fetch
 from ..post import stage as post_stage
 from ..render import RenderError, run_render
+from ..selection.client import ChatUnavailable
 
 log = logging.getLogger("auto_short")
 
@@ -58,6 +62,8 @@ LANES = (PREPARE, AI, RENDER)
 LANE_STAGES: dict[str, tuple[str, ...]] = {
     PREPARE: ("ingest", "transcript", "analysis"), AI: ("selection", "titling"), RENDER: ("render",)}
 PREFETCH_LIMIT = 2  # Q2: prepare starts no new job while this many prepared jobs wait for the ai lane
+GPU_RETRY_SECONDS = 60.0  # FIX-ollama-wait O5: the ai lane re-checks Ollama this often while it is down
+GPU_OK, GPU_DOWN = "ok", "down"
 _SERIAL = "serial"  # internal lane of queue_mode "serial" (reported as lane null)
 
 
@@ -67,6 +73,31 @@ def _now() -> str:
 
 class JobFailed(Exception):
     """Raised by a job target to finish the job as ``failed`` with this message."""
+
+
+class StageFailed(JobFailed):
+    """A pipeline stage failed (as opposed to the preflight)."""
+
+
+class GpuUnavailable(JobFailed):
+    """FIX-ollama-wait O5: raised by a target of the ``ai`` lane when Ollama is unreachable. In lanes mode the runner
+    puts the job back at the head of the ``ai`` queue and waits for the GPU; anywhere else it is a plain failure."""
+
+
+def run_preflight(job: "Job", preflight: Callable[[Config], None], config: Config) -> None:
+    """Run ``preflight`` for a job of the ``ai`` lane and tell the runner whether Ollama answered (the GPU is back
+    on success or on a "model missing" error; :class:`OllamaUnavailable` propagates)."""
+    reachable = getattr(job, "reachable", None)  # test doubles of Job may lack it
+    try:
+        preflight(config)
+    except OllamaUnavailable:
+        raise
+    except PreflightError:
+        if reachable is not None:
+            reachable()
+        raise
+    if reachable is not None:
+        reachable()
 
 
 @dataclass(frozen=True)
@@ -98,6 +129,8 @@ class Job:
     waiting: bool = False  # running, waiting between two lanes
     steps: list[Step] = field(default_factory=list, repr=False)
     key: str = ""  # runner key: the episode id, or :func:`post_key` for a ``post`` job (CP8.16 R3)
+    gpu_wait: bool = False  # O7: waiting in the ai queue while Ollama is unreachable
+    _reachable: Callable[[], None] | None = field(default=None, repr=False)  # set by the runner (ai lane)
     again: bool = field(default=False, repr=False)  # post job: a new trigger arrived while running (R3)
     step: int = field(default=0, repr=False)  # index of the running / next step
     t0: float = field(default=0.0, repr=False)  # monotonic start
@@ -106,12 +139,19 @@ class Job:
     def active(self) -> bool:
         return self.status in ACTIVE
 
+    def reachable(self) -> None:
+        """A target of the ``ai`` lane got an answer from Ollama (preflight passed / model missing)."""
+        cb = self._reachable
+        if cb is not None:
+            cb()
+
     def to_dict(self, *, logs: bool = True) -> dict:
         out = {
             "id": self.id, "episode_id": self.episode_id, "kind": self.kind, "status": self.status,
             "created_at": self.created_at, "started_at": self.started_at, "finished_at": self.finished_at,
             "stage": self.stage, "stages": list(self.stages), "error": self.error, "summary": self.summary,
             "clip_ids": list(self.clip_ids), "lane": self.lane, "waiting": self.waiting,
+            "gpu_wait": self.gpu_wait,
         }
         if logs:
             out["logs"] = list(self.logs)
@@ -156,7 +196,7 @@ def _interrupt(thread_ident: int) -> None:
 class JobRunner:
     """``mode`` = ``[web] queue_mode``: ``"lanes"`` (CP8.10) or ``"serial"`` (one worker, whole job)."""
 
-    def __init__(self, mode: str = MODE_LANES) -> None:
+    def __init__(self, mode: str = MODE_LANES, *, gpu_retry_seconds: float = GPU_RETRY_SECONDS) -> None:
         if mode not in (MODE_LANES, MODE_SERIAL):
             raise ValueError(f"unknown queue mode {mode!r}")
         self.mode = mode
@@ -174,6 +214,11 @@ class JobRunner:
         self.on_finished: Callable[[Job], None] | None = None
         self._stopping = False
         self._handler = _JobLogHandler(self)
+        # FIX-ollama-wait O5: state of the ai lane's Ollama connection (under ``_lock``); "down" only after a job of
+        # the lane hit OllamaUnavailable, back to "ok" as soon as a later check gets an answer.
+        self.gpu_retry_seconds = gpu_retry_seconds
+        self._gpu: dict = {"state": GPU_OK, "since": None, "error": None, "next_check": None}
+        self._gpu_next = 0.0  # monotonic deadline of the next check while down
 
     # --- lifecycle -----------------------------------------------------------------------------
 
@@ -219,9 +264,11 @@ class JobRunner:
         with self._lock:
             for queue in self._queues.values():
                 for job in queue:
-                    if job.status == RUNNING:  # waiting between two lanes
-                        job.status, job.error = INTERRUPTED, f"interrupted while waiting for {job.lane}"
-                        job.finished_at, job.waiting = _now(), False
+                    if job.status == RUNNING:  # waiting between two lanes (or for the GPU)
+                        job.status = INTERRUPTED
+                        job.error = "interrupted while waiting for GPU" if job.gpu_wait \
+                            else f"interrupted while waiting for {job.lane}"
+                        job.finished_at, job.waiting, job.gpu_wait = _now(), False, False
             self._lock.notify_all()
         log.removeHandler(self._handler)
         self._threads = {}
@@ -244,6 +291,7 @@ class JobRunner:
         self._jobs[job.id] = job
         self._latest[key] = job
         self._queues[job.steps[0].lane].append(job)
+        self._sync_gpu_wait_locked()
         self._lock.notify_all()
         return job
 
@@ -263,8 +311,8 @@ class JobRunner:
             if latest is not None and latest.active:
                 new = getattr(target, "clips", None)
                 if latest.kind == KIND_POST and new is not None:
-                    if latest.status == QUEUED:
-                        latest.target.merge(new)
+                    if latest.status == QUEUED or (latest.status == RUNNING and latest.waiting):
+                        latest.target.merge(new)  # not started yet (or back in the queue waiting for the GPU)
                     elif latest.status == RUNNING:
                         latest.again = True
                         latest.target.merge_pending(new)
@@ -338,12 +386,69 @@ class JobRunner:
 
     # --- workers -------------------------------------------------------------------------------
 
+    # --- FIX-ollama-wait: GPU state --------------------------------------------------------------
+
+    def gpu_status(self) -> dict:
+        """O7: ``{state, since, error, next_check}`` of the ai lane's last Ollama check (``ok`` at start)."""
+        with self._lock:
+            return dict(self._gpu)
+
+    def _gpu_down(self) -> bool:
+        return self._gpu["state"] == GPU_DOWN
+
+    def _sync_gpu_wait_locked(self) -> None:
+        down = self._gpu_down()
+        for j in self._queues.get(AI, ()):
+            j.gpu_wait = down
+
+    def _set_gpu_down_locked(self, error: str) -> None:
+        if not self._gpu_down():
+            self._gpu["since"] = _now()
+            log.warning("web: ollama unavailable (%s); ai lane waits for the GPU, re-checking every %g s", error,
+                        self.gpu_retry_seconds)
+        self._gpu["state"], self._gpu["error"] = GPU_DOWN, error
+        self._gpu_next = time.monotonic() + self.gpu_retry_seconds
+        self._gpu["next_check"] = datetime.fromtimestamp(time.time() + self.gpu_retry_seconds, timezone.utc) \
+            .strftime("%Y-%m-%dT%H:%M:%SZ")
+        self._sync_gpu_wait_locked()
+
+    def _gpu_reachable(self) -> None:
+        with self._lock:
+            if not self._gpu_down():
+                return
+            self._gpu.update(state=GPU_OK, since=None, error=None, next_check=None)
+            log.info("web: ollama is back")
+            self._sync_gpu_wait_locked()
+            self._lock.notify_all()  # the prepare lane's prefetch limit applies again
+
+    # --- workers -------------------------------------------------------------------------------
+
     def _can_start(self, lane: str) -> bool:
         if not self._queues[lane]:
             return False
-        if lane == PREPARE:  # Q2: bounded prefetch
-            return len(self._queues[AI]) < PREFETCH_LIMIT
+        if lane == PREPARE:  # Q2: bounded prefetch (O6: not while the GPU is down)
+            return len(self._queues[AI]) < PREFETCH_LIMIT or self._gpu_down()
         return True
+
+    def _take_locked(self, lane: str) -> Job | None:
+        """Next job for ``lane`` (blocks); None when stopping. While the ai lane is down it waits until the next
+        check time (``Condition.wait``, so ``stop()`` never waits it out), but an ``add`` job (CP9) never waits."""
+        queue = self._queues[lane]
+        while not self._stopping:
+            if lane == AI and queue and self._gpu_down():
+                add = next((j for j in queue if j.kind == KIND_ADD), None)
+                if add is not None:
+                    queue.remove(add)
+                    return add
+                left = self._gpu_next - time.monotonic()
+                if left > 0:
+                    self._lock.wait(left)
+                    continue
+                return queue.popleft()
+            if self._can_start(lane):
+                return queue.popleft()
+            self._lock.wait()
+        return None
 
     def _work(self, lane: str) -> None:
         self._idents[threading.get_ident()] = lane
@@ -355,19 +460,19 @@ class JobRunner:
     def _loop(self, lane: str) -> None:
         while True:
             with self._lock:
-                while not self._stopping and not self._can_start(lane):
-                    self._lock.wait()
-                if self._stopping:
+                job = self._take_locked(lane)
+                if job is None:
                     return
-                job = self._queues[lane].popleft()
                 first = job.status == QUEUED
                 if first:
                     job.status, job.started_at, job.t0 = RUNNING, _now(), time.monotonic()
                 job.lane = None if lane == _SERIAL else lane
-                job.waiting = False
+                job.waiting, job.gpu_wait = False, False
+                job._reachable = self._gpu_reachable if lane == AI else None
                 self._current[lane] = job
                 self._lock.notify_all()  # a shorter ai queue may let the prepare lane start (Q2)
             ok = False
+            requeue: str | None = None
             try:
                 if first:
                     log.info("web: start %s job %s [%s]", job.kind, job.id, job.episode_id)
@@ -378,6 +483,13 @@ class JobRunner:
             except KeyboardInterrupt:
                 job.status, job.error = INTERRUPTED, f"interrupted during {job.stage or 'start'}"
                 log.info("web: job %s interrupted [%s]", job.id, job.episode_id)
+            except GpuUnavailable as exc:
+                if lane == AI and not self._stopping:  # O5: back to the head of the queue, wait for the GPU
+                    requeue = str(exc)
+                    log.info("web: job %s [%s] waits for the GPU: %s", job.id, job.episode_id, exc)
+                else:
+                    job.status, job.error = FAILED, str(exc)
+                    log.error("web: job %s failed [%s]: %s", job.id, job.episode_id, exc)
             except JobFailed as exc:
                 job.status, job.error = FAILED, str(exc)
                 log.error("web: job %s failed [%s]: %s", job.id, job.episode_id, exc)
@@ -385,35 +497,52 @@ class JobRunner:
                 job.status, job.error = FAILED, f"{type(exc).__name__}: {exc}"
                 log.exception("web: job %s crashed [%s]", job.id, job.episode_id)
             finally:
-                last = not ok or job.step + 1 >= len(job.steps)
-                if ok and last:
-                    job.status = DONE
-                    log.info("web: job %s done in %.1f s [%s]%s", job.id, time.monotonic() - job.t0,
-                             job.episode_id, f": {job.summary}" if job.summary else "")
-                if last and job.kind in EPISODE_KINDS and job.status in (DONE, FAILED) \
-                        and self.on_finished is not None and not self._stopping:
-                    # before the lane is released: ``wait_idle`` never sees a gap between the job and its follow-up
-                    try:
-                        self.on_finished(job)
-                    except Exception:  # a bug in the hook must not kill the worker
-                        log.exception("web: on_finished hook failed for job %s [%s]", job.id, job.episode_id)
-                follow = None
-                with self._lock:
-                    self._current[lane] = None
-                    if last:
-                        job.finished_at, job.lane, job.waiting = _now(), None, False
-                        if job.again and job.kind == KIND_POST and job.status != INTERRUPTED and not self._stopping:
-                            follow = getattr(job.target, "followup", None)
-                            follow = follow() if follow is not None else None
-                            if follow is not None:  # R3: one more pass for the trigger that arrived meanwhile
-                                self._enqueue_locked(job.episode_id, KIND_POST, follow, None)
-                    else:  # tail of the next lane's queue
-                        job.step += 1
-                        nxt = job.steps[job.step].lane
-                        job.lane, job.waiting = nxt, True
-                        job.stage = LANE_STAGES[nxt][0]
-                        self._queues[nxt].append(job)
-                    self._lock.notify_all()
+                if requeue is not None:
+                    self._requeue(lane, job, requeue)
+                else:
+                    self._after(lane, job, ok)
+
+    def _requeue(self, lane: str, job: Job, error: str) -> None:
+        with self._lock:
+            self._current[lane] = None
+            job.lane, job.waiting, job._reachable = lane, True, None
+            if job.kind == KIND_PIPELINE:
+                job.stage = LANE_STAGES[lane][0]
+            self._queues[lane].appendleft(job)
+            self._set_gpu_down_locked(error)
+            self._lock.notify_all()
+
+    def _after(self, lane: str, job: Job, ok: bool) -> None:
+        last = not ok or job.step + 1 >= len(job.steps)
+        job._reachable = None
+        if ok and last:
+            job.status = DONE
+            log.info("web: job %s done in %.1f s [%s]%s", job.id, time.monotonic() - job.t0,
+                     job.episode_id, f": {job.summary}" if job.summary else "")
+        if last and job.kind in EPISODE_KINDS and job.status in (DONE, FAILED) \
+                and self.on_finished is not None and not self._stopping:
+            # before the lane is released: ``wait_idle`` never sees a gap between the job and its follow-up
+            try:
+                self.on_finished(job)
+            except Exception:  # a bug in the hook must not kill the worker
+                log.exception("web: on_finished hook failed for job %s [%s]", job.id, job.episode_id)
+        with self._lock:
+            self._current[lane] = None
+            if last:
+                job.finished_at, job.lane, job.waiting = _now(), None, False
+                if job.again and job.kind == KIND_POST and job.status != INTERRUPTED and not self._stopping:
+                    follow = getattr(job.target, "followup", None)
+                    follow = follow() if follow is not None else None
+                    if follow is not None:  # R3: one more pass for the trigger that arrived meanwhile
+                        self._enqueue_locked(job.episode_id, KIND_POST, follow, None)
+            else:  # tail of the next lane's queue
+                job.step += 1
+                nxt = job.steps[job.step].lane
+                job.lane, job.waiting = nxt, True
+                job.stage = LANE_STAGES[nxt][0]
+                self._queues[nxt].append(job)
+                self._sync_gpu_wait_locked()
+            self._lock.notify_all()
 
 
 # --- pipeline job (W4) ---------------------------------------------------------------------------
@@ -439,7 +568,7 @@ class PipelineTarget:
     def _run(self, job: Job, stages: tuple[str, ...] | None, *, preflight: bool, episode_id: str | None):
         def checked_preflight(cfg: Config) -> None:
             job.stage = "preflight"
-            self.preflight(cfg)
+            run_preflight(job, self.preflight, cfg)
             job.stage = (stages or PIPELINE_STAGES)[0]
 
         def on_stage(run: StageRun) -> None:
@@ -455,13 +584,15 @@ class PipelineTarget:
             result = self.pipeline(self.url, self.config, series=self.series, episode=self.episode,
                                    preflight=checked_preflight if preflight and self.preflight is not None else None,
                                    on_stage=on_stage, **kw)
+        except OllamaUnavailable as exc:
+            raise GpuUnavailable(f"ollama preflight: {exc}") from exc
         except PreflightError as exc:
             raise JobFailed(f"ollama preflight: {exc}") from exc
         except PipelineError as exc:
             raise JobFailed(str(exc)) from exc
         if not result.ok:
             job.stage = result.failed_stage
-            raise JobFailed(f"{result.failed_stage}: {result.error}")
+            raise StageFailed(f"{result.failed_stage}: {result.error}")
         return result
 
     def _finish(self, job: Job, result) -> None:
@@ -490,7 +621,19 @@ class PipelineTarget:
         return self._resolved or job.episode_id
 
     def ai(self, job: Job) -> None:
-        self._run(job, LANE_STAGES[AI], preflight=True, episode_id=self._later_id(job))
+        # a run after waiting for the GPU repeats the lane: forget the stages the interrupted run reported
+        job.stages[:] = [st for st in job.stages if st["stage"] not in LANE_STAGES[AI]]
+        try:
+            self._run(job, LANE_STAGES[AI], preflight=True, episode_id=self._later_id(job))
+        except StageFailed as exc:  # O5: a stage failed - was it Ollama going away, or a real error?
+            if self.preflight is not None:
+                try:
+                    run_preflight(job, self.preflight, self.config)
+                except OllamaUnavailable as pre:
+                    raise GpuUnavailable(f"{exc} (ollama preflight: {pre})") from exc
+                except PreflightError:
+                    pass
+            raise
 
     def render(self, job: Job) -> None:
         self._finish(job, self._run(job, LANE_STAGES[RENDER], preflight=False, episode_id=self._later_id(job)))
@@ -557,7 +700,7 @@ class AddShortTarget:
         try:
             if self.preflight is not None:
                 job.stage = "preflight"
-                self.preflight(self.config)
+                run_preflight(job, self.preflight, self.config)
             job.stage = "titling"
             t0 = time.monotonic()
             result = titler(job.episode_id, self.config, self.clip_id)
@@ -626,11 +769,22 @@ class PostComposeTarget:
         try:
             if self.preflight is not None:
                 job.stage = "preflight"
-                self.preflight(self.config)
+                run_preflight(job, self.preflight, self.config)
             job.stage = "post"
             self.result = self.compose(job.episode_id, self.config, self.clips, lock=self.lock)
+        except OllamaUnavailable as exc:
+            raise GpuUnavailable(f"ollama preflight: {exc}") from exc
         except PreflightError as exc:
             raise JobFailed(f"ollama preflight: {exc}") from exc
+        except ChatUnavailable as exc:  # O2 / O5: Ollama went away mid-compose (nothing written for that Short)
+            if self.preflight is not None:
+                try:
+                    run_preflight(job, self.preflight, self.config)
+                except OllamaUnavailable as pre:
+                    raise GpuUnavailable(f"{exc} (ollama preflight: {pre})") from exc
+                except PreflightError:
+                    pass
+            raise JobFailed(f"post: {exc}") from exc
         except post_stage.PostComposeError as exc:
             raise JobFailed(str(exc)) from exc
         job.stage = None

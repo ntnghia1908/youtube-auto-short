@@ -364,7 +364,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             item["publish_group"] = ep.publish_group(item)
             # CP8.7: home page "Tập lẻ" = not in a bộ kinh; CP8.9 K8: a khai thị episode follows its base video
             item["in_playlist"] = (item.get("base_episode_id") or item["id"]) in in_playlists
-        return {"episodes": items}
+        return {"episodes": items, "gpu": runner.gpu_status()}  # FIX-ollama-wait O7
 
     def _kinds(body: SubmitIn) -> list[str] | JSONResponse:
         """CP8.9 A1.1: ``kinds`` (absent = Short + khai thị), always in the order Short then khai thị."""
@@ -423,13 +423,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                 item.update(error=BLOCK_MESSAGE, status=507)
             items.append(item)
         todo = [i for i in items if "job" not in i and "error" not in i]
-        if todo and preflight is not None:  # once for the whole request
-            try:
-                preflight(config)
-            except PreflightError as exc:
-                for i in todo:
-                    i.update(error=f"ollama preflight: {exc}", status=503)
-                todo = []
+        # FIX-ollama-wait O4: no Ollama preflight here - the ai lane checks it and waits for the GPU
         with submit_lock:
             for i in todo:  # Short first, then khai thị (K5 reuses the Short's source + transcript)
                 current = runner.latest(i["episode_id"])
@@ -523,6 +517,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         if doc is None:
             return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
         view = playlists.view(doc, _jobs_by_episode())
+        view["gpu"] = runner.gpu_status()  # FIX-ollama-wait O7
         kc = config.khaithi  # CP8.9 A2.2: defaults of the kind bar ("Khai thị [min]–[max] phút")
         view["khaithi_defaults"] = {"min_minutes": kc.default_min_minutes, "max_minutes": kc.default_max_minutes,
                                     "max_minutes_limit": kc.max_minutes_limit}
@@ -626,6 +621,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                     "zip_url": None, "zip_name": None, "zip_all_url": None, "zip_all_name": None,
                     "archived": None}
         view["job"] = _job_view(job)
+        view["gpu"] = runner.gpu_status()  # FIX-ollama-wait O7
         view["post_job"] = _job_view(runner.latest_post(episode_id))  # CP8.16 R3 (job stays the episode's own job)
         if job is not None and job.active and job.kind in (KIND_RENDER, KIND_ADD):
             for short in view["shorts"]:
@@ -956,18 +952,13 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     @app.post("/api/episodes/{episode_id}/posts")
     def api_posts_compose(episode_id: str, body: PostComposeIn):
         """P1 (CP8.16 R3): soạn / soạn lại bài (lane ai) -> 202 job (job soạn bài đang đợi -> trả job đó); 409 khi
-        episode đang có job ``pipeline``; 503 Ollama preflight. Không bị khóa bởi job render / add."""
+        episode đang có job ``pipeline`` (không còn 503 Ollama, FIX-ollama-wait O4). Không bị khóa bởi job render / add."""
         if (bad := _episode_or_404(episode_id)) is not None:
             return bad
         clips = _post_clips(body)
         if isinstance(clips, JSONResponse):
             return clips
-        if post_preflight is not None:
-            try:
-                post_preflight(config)
-            except PreflightError as exc:
-                return JSONResponse({"detail": f"ollama preflight: {exc}"}, status_code=503)
-        with submit_lock:
+        with submit_lock:  # FIX-ollama-wait O4: no preflight in the request; the ai lane waits for the GPU
             current = runner.latest(episode_id)
             if current is not None and current.active and current.kind == KIND_PIPELINE:
                 return JSONResponse({"detail": "episode đang chạy pipeline; soạn bài sau khi job xong",

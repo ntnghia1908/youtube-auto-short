@@ -20,8 +20,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..config import Config, PostConfig
-from ..pipeline import PreflightError
-from ..selection.client import ChatClient, ChatError, OllamaClient, resolve_host
+from ..pipeline import OllamaUnavailable, PreflightError
+from ..selection.client import ChatClient, ChatError, ChatUnavailable, OllamaClient, resolve_host
 from ..workspace import atomic_write_json
 from . import images, source, store
 from .logic import chunk_lines
@@ -88,12 +88,15 @@ def preflight(config: Config, *, opener: Callable[..., object] | None = None,
         with open_(urllib.request.Request(url, method="GET"), timeout=timeout) as resp:
             data = json.loads(resp.read())
     except urllib.error.HTTPError as exc:
-        raise PreflightError(f"HTTP {exc.code} from {url}") from exc
+        raise (OllamaUnavailable if exc.code in (502, 503, 504) else PreflightError)(
+            f"HTTP {exc.code} from {url}") from exc
     except (socket.timeout, TimeoutError) as exc:
-        raise PreflightError(f"timeout after {timeout:g} s calling {url}") from exc
+        raise OllamaUnavailable(f"timeout after {timeout:g} s calling {url}") from exc
     except urllib.error.URLError as exc:
-        raise PreflightError(f"cannot reach Ollama at {host}: {exc.reason}") from exc
-    except (OSError, ValueError) as exc:
+        raise OllamaUnavailable(f"cannot reach Ollama at {host}: {exc.reason}") from exc
+    except OSError as exc:
+        raise OllamaUnavailable(f"error calling {url}: {exc}") from exc
+    except ValueError as exc:
         raise PreflightError(f"error calling {url}: {exc}") from exc
     names = [m.get("name") for m in (data.get("models") or []) if isinstance(m, dict)]
     model = cfg.model
@@ -129,6 +132,10 @@ def _punctuate_chunk(client: ChatClient, cfg: PostConfig, chunk_text: str, clog:
             call["response"] = {"content": res.content, "thinking": res.thinking, "eval_count": res.eval_count,
                                 "prompt_eval_count": res.prompt_eval_count, "total_duration": res.total_duration,
                                 **res.extra}
+        except ChatUnavailable as exc:  # FIX-ollama-wait O2: no retry, no `raw` fallback; the job stops
+            call["seconds"] = round(time.monotonic() - t0, 3)
+            call["error"] = str(exc)
+            raise
         except ChatError as exc:
             call["seconds"] = round(time.monotonic() - t0, 3)
             call["error"] = str(exc)

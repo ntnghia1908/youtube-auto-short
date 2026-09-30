@@ -176,9 +176,12 @@ def test_submit_preflight_and_disk(tcfg):
 
     with client(tcfg, preflight=down) as c:
         _login(c)
+        # FIX-ollama-wait O4 (was: 503 for both episodes, nothing written): accepted, the ai lane reports the error
         r = c.post("/api/episodes", json={"url": f"https://youtu.be/{EID}"})
-        assert r.status_code == 503 and [e["status"] for e in r.json()["episodes"]] == [503, 503]
-        assert not (Path(tcfg.workspace.dir) / KT / "khaithi.json").exists()
+        assert r.status_code == 202 and all("status" not in e for e in r.json()["episodes"])
+        assert (Path(tcfg.workspace.dir) / KT / "khaithi.json").exists()
+        assert c.app.state.runner.wait_idle(10)
+        assert all(c.app.state.runner.latest(e).status == "failed" for e in (EID, KT))
     with client(tcfg, disk=lambda p: (100 * 10**9, 99 * 10**9, 10**9)) as c:
         _login(c)
         r = c.post("/api/episodes", json={"url": f"https://youtu.be/{EID}", "kinds": ["khaithi"]})

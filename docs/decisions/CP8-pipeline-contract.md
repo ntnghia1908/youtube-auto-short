@@ -3,7 +3,7 @@
 | Metadata | Value |
 |---|---|
 | Status | ACCEPTED |
-| Accepted by | — (E1–E8, P1–P4 duyệt cùng APPROVE TASK 2026-09-27; P4 sửa: có preflight Ollama; review ACCEPTED). Sửa đổi HUMAN LEAD 2026-09-28 (CP8.10, `docs/tasks/CP8.10-queue-lanes.md`): E7 tham số `stages` |
+| Accepted by | — (E1–E8, P1–P4 duyệt cùng APPROVE TASK 2026-09-27; P4 sửa: có preflight Ollama; review ACCEPTED). Sửa đổi HUMAN LEAD 2026-09-28 (CP8.10, `docs/tasks/CP8.10-queue-lanes.md`): E7 tham số `stages`. Sửa đổi HUMAN LEAD 2026-09-30 (FIX-ollama-wait): E8 |
 | Checkpoint | CP8 (S2) |
 | Roadmap | `AUTO_SHORT_CHECKPOINT_PLAN.md` §4 CP8 |
 | Task contract | `docs/tasks/CP8-pipeline.md` |
@@ -59,6 +59,7 @@ Implementation tham chiếu: `src/auto_short/pipeline.py` (`run_pipeline`, `olla
 - Trước ingest: `GET <host>/api/tags` (stdlib `urllib`, timeout 10 s) cho host của `[selection]` và `[titling]` (`resolve_host`: env `OLLAMA_HOST` ghi đè config, như stage); cùng host chỉ gọi một lần. `[selection] model` và `[titling] model` phải có trong `models[].name` / `models[].model` (tên không có tag khớp `<tên>:latest`).
 - Lỗi (không kết nối, timeout, HTTP lỗi, response không hợp lệ, thiếu model) → exit `1`, `auto-short: error: ollama preflight: <lý do>`, không stage nào chạy, manifest không đổi.
 - `--no-preflight` bỏ qua (vd episode đã xong selection/titling khi Ollama tắt). Không preflight `node` / `ffmpeg` / Whisper. Không sửa `OllamaClient.chat`.
+- **Sửa đổi FIX-ollama-wait (HUMAN LEAD 2026-09-30, O1):** lỗi preflight có hai loại: mất kết nối (không kết nối được, timeout, HTTP 502 / 503 / 504) → `OllamaUnavailable` (subclass của `PreflightError`); thiếu model, HTTP khác, response không hợp lệ → `PreflightError` thường. CLI không đổi (exit `1`, cùng message); chỉ web phân biệt để đợi GPU (CP8.3 W5). Canonical: `docs/tasks/FIX-ollama-wait.md`.
 
 ## Số đo (máy dev, `rbjfCfFq3Dk`, 13 Short)
 
