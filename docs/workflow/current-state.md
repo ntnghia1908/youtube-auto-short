@@ -26,7 +26,10 @@ Framework: FW-implementer-speed đã merge (PR #31, `6516638`): `pytest-xdist` (
    - CP8.13 (S2, `docs/tasks/CP8.13-playlist-groups-loop.md`): đã merge (PR #26, `25f5b59`): nhóm lọc bộ kinh mới (Đang xử lý / Lỗi / dở dang / Đang làm = chỉ tập đã render chưa đăng hết), bỏ link "Khai thị" ở dòng tập, nút "Lặp lại" trên thẻ video.
    - CP8.14 (S2, `docs/tasks/CP8.14-title-layout.md`): đã merge (PR #28, `d623cd3`): layout V16 tránh giao diện YouTube Shorts.
    - CP9 (S2, `docs/tasks/CP9-clip-review.md`): đã merge (PR #30, `e60ab7a`): thêm Short từ đề xuất AI / đoạn chọn trên transcript + sửa điểm đầu/cuối. 8080 đã ghim lên `e60ab7a`; server test 8081 + dữ liệu test đã dọn.
-   - Tiếp theo (PROPOSED): CP8.15 bài đăng cộng đồng YouTube (text = lời giảng nguyên văn của Short, AI chỉ thêm dấu câu / chia đoạn; ảnh HT. Tịnh Không từ thư viện riêng, không chèn chữ; ô dán link Short; tick "Đã đăng bài"). 25 ảnh ứng viên (1080×1080, kèm `sources.tsv`) đã gửi HUMAN LEAD chờ duyệt; bản lưu ở `~/.cache/auto-short-post-images/`. Re-plan 2026-09-29: phần CP9 khác đã làm ở CP8.x; "xử lý tất cả" bộ kinh không làm. CP10: đóng (HUMAN LEAD 2026-09-29).
+   - CP8.15 (S2, `docs/tasks/CP8.15-community-post.md`): READY, PR chờ merge (HUMAN LEAD 2026-09-30: manual test làm trên 8080 sau merge, checklist chưa chạy). Bài đăng cộng đồng từ Short (package `src/auto_short/post/`, `work/<id>/posts.json`, `[post]`); prompt `v2` + chiếu dấu câu về chữ gốc. Sau merge: ghim 8080 lên commit merge, thêm `[post] image_dir` vào `config.toml` repo chính, chép 25 ảnh `~/.cache/auto-short-post-images/` vào thư viện (`sources.tsv` dạng `tên<TAB>URL`).
+   - FIX đề xuất: `tests/test_web_lanes_cp810.py::test_lanes_artifacts_identical_to_serial` chập chờn dưới `-n auto` (chạy riêng PASS).
+   - FW-starter-kit (S2): session song song, worktree `../youtube-auto-short-fw-kit`; không sửa `project-profile.md` / `README.md` / file này khi CP8.15 chưa merge.
+   - Re-plan 2026-09-29: "xử lý tất cả" bộ kinh không làm. CP10: đóng (HUMAN LEAD 2026-09-29).
 
 Đây là PROPOSED, không authorize implementation tiếp theo.
 

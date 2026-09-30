@@ -119,6 +119,8 @@ Tất cả required verification phải chạy và PASS trước READY.
 
 Chạm public API contract (route web mới) → manual test là gate trước integration. Server test riêng (8081), dữ liệu bản sao.
 
+HUMAN LEAD 2026-09-30: push + PR trước, manual test làm trên 8080 sau khi merge (như CP8.10) — checklist dưới **chưa chạy**.
+
 - [ ] Điện thoại: soạn bài một Short, sửa một chữ caption sai, đổi ảnh, dán link, "Sao chép bài" + "Tải ảnh" → đăng thử một bài cộng đồng trên YouTube (kiểm giới hạn ký tự, hiển thị đoạn / hashtag).
 - [ ] Thư viện ảnh trên điện thoại: tải ảnh lên từ máy, tìm ảnh từ một link (ảnh vào thẳng thư viện), xóa một ảnh vừa thêm.
 - [ ] "Soạn bài cho mọi Short" một tập; tick "Đã đăng bài"; tick Short / "Xong" không đổi.
@@ -177,4 +179,4 @@ Chạm public API contract (route web mới) → manual test là gate trước i
   - Prompt `v1` (JSON + validate token-chặt) không còn được dùng (mặc định `v2`); giữ trong code làm tư liệu, không có test riêng cho pipeline JSON cũ (đã gỡ theo amendment).
   - Manual test checklist (điện thoại, đăng thử thật) chưa chạy — cần HUMAN LEAD / Tech Lead trước khi merge.
   - Chưa có review round 2.
-- PR: chưa tạo (theo `docs/ai/project-profile.md` §5, PR chỉ sau READY + HUMAN LEAD approval — Status vừa chuyển READY ở round 2, tạo PR là quyết định của HUMAN LEAD/ORCHESTRATOR). Commit cục bộ trên `feature/cp8.15-community-post`, chưa push.
+- PR: HUMAN LEAD 2026-09-30 cho push + PR (manual test để sau, trên 8080). Trước đó: chưa tạo (theo `docs/ai/project-profile.md` §5, PR chỉ sau READY + HUMAN LEAD approval — Status vừa chuyển READY ở round 2, tạo PR là quyết định của HUMAN LEAD/ORCHESTRATOR). Commit cục bộ trên `feature/cp8.15-community-post`, chưa push.
