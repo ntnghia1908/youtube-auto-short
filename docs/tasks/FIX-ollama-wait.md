@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: CHANGE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -116,8 +116,9 @@ Chạm public API contract (W4 bỏ 503, field `gpu` / `gpu_wait`) và job model
 ## Result
 
 - Main changes: `ChatUnavailable` / `OllamaUnavailable` (client, `ollama_preflight`, `post.stage.preflight`; timeout → `/api/tags` re-check); selection / titling / soạn bài / `added` không retry lỗi mất kết nối (soạn bài không ghi `raw`); route gửi link + soạn bài không còn 503 (giữ 503 "Thêm Short"); `JobRunner` trạng thái `gpu_down` (đợi 60 s bằng `Condition.wait`, job về đầu hàng `ai`, `add` không đợi, bỏ `PREFETCH_LIMIT` khi down, dừng server → `interrupted while waiting for GPU`); field `gpu` + `gpu_wait`; dải cảnh báo + nhãn UI; docs CP8.3 / CP8 E8 / CP5 B5 / CP6 G6 / CP8.15.
-- Tests: mới `tests/test_ollama_wait_client.py` (AC1–AC2), `tests/test_ollama_wait_runner.py` (AC3–AC7). Sửa theo O4 (kỳ vọng 503 lúc gửi link / soạn bài đổi thành 202 + job): `test_web_app.py::test_submit_preflight_error_no_job` (đổi tên `…_still_queues_job`), `test_web_khaithi_cp89.py::test_submit_preflight_and_disk` (khối 503 → 202, hai job `failed`), `test_web_post_cp815.py::test_compose_preflight_failure_503` (đổi tên `…_queues_job`, cả `lanes` / `serial`). Chưa chạy thật trên 8081 và manual test (ORCHESTRATOR).
-- Review:
-- Important findings / decisions:
+- Tests: mới `tests/test_ollama_wait_client.py` (AC1–AC2), `tests/test_ollama_wait_runner.py` (AC3–AC7). Sửa theo O4 (kỳ vọng 503 lúc gửi link / soạn bài đổi thành 202 + job): `test_web_app.py::test_submit_preflight_error_no_job` (đổi tên `…_still_queues_job`), `test_web_khaithi_cp89.py::test_submit_preflight_and_disk` (khối 503 → 202, hai job `failed`), `test_web_post_cp815.py::test_compose_preflight_failure_503` (đổi tên `…_queues_job`, cả `lanes` / `serial`). Toàn bộ suite `python -m pytest -q -n auto` (ORCHESTRATOR chạy lại trên `80135cb`): 1199 passed, 1 skipped. `node scripts/framework-check.mjs` PASS (IMPLEMENTER).
+- Chạy thật 8081 (2026-09-30, giờ UTC; dữ liệu riêng `~/.cache/auto-short-ollama-wait-test/`, `OLLAMA_HOST=127.0.0.1:11438` = proxy TCP test tới 11437, tunnel thật không đụng; tập mới `4oOZz2CBz3g`, chỉ Short): proxy tắt, gửi link 12:45:43 → 202; `prepare` xong (ingest 52 s, transcript Whisper 1720 s, analysis 143 s) → 13:17:38 job `running` + `waiting` + `gpu_wait`, `gpu.state = down`; bật proxy 13:18:02 → `web: ollama is back` 13:18:38 (lần kiểm 60 s kế tiếp), selection chạy; tắt proxy giữa selection 13:19:23 → ~2 s sau job về đợi GPU (không `failed`, không retry); một lần kiểm lại còn lỗi 13:20:23; bật proxy 13:20:40 → tự chạy tiếp, selection làm lại từ đầu (237 s), titling 25 s, render 243 s → `done` 13:29:48, 9/9 Shorts, `gpu.state = ok`; job `post` tự động (CP8.16) xếp ngay sau đó và chạy. Không bấm gì sau khi gửi link.
+- Review: round 1 ACCEPTED (ORCHESTRATOR, diff `2b98ca6..80135cb` theo AC 1–8), không blocking finding. Note: (1) `submit()` gộp yêu cầu soạn bài mới vào job `post` đang đợi GPU (thay vì `again`) — trong scope O5, tránh soạn hai lượt; (2) dừng server đúng lúc job làn `ai` vừa nhận lỗi mất kết nối có thể ghi `failed` thay vì `interrupted` (cửa sổ rất hẹp, gửi lại là chạy tiếp).
+- Important findings / decisions: base là `2c5027d` (gồm cả CP8.17) thay vì merge commit CP8.16. Manual test checklist (HUMAN LEAD) chưa chạy — gate trước integration. "Thêm Short" 503 lúc GPU tắt và O6 (4 job) chỉ kiểm bằng test tự động, chưa chạy thật.
 - Known limitations: `job.stages` của lần chạy làn `ai` bị hủy (đợi GPU) được xóa trước khi chạy lại làn; mất kết nối giữa chừng làm lại stage lỗi từ đầu (selection: E3); trạng thái `gpu` chỉ cập nhật khi làn `ai` chạy / kiểm lại (không tự dò khi rảnh).
 - PR:
