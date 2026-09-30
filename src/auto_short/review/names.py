@@ -1,4 +1,4 @@
-"""Download file names of Shorts (CP8.5 X1): ``Tập<episode>_S<NN>_<title>.mp4`` and ``Tập<episode>_Shorts.zip``,
+"""Download file names of Shorts (CP8.5 X1): ``Tập<episode>_S<NN>_<title>.mp4`` and ``[<series>_]Tập<episode>_Shorts.zip``,
 plus the ``Content-Disposition`` header (RFC 6266 / RFC 5987). Pure functions, no I/O.
 
 Files on disk keep their CP7 names (``shorts/<clip_id>.mp4``); only the name offered to the browser changes.
@@ -57,9 +57,16 @@ def download_name(episode: str, number: int, total: int, title: str | None, *, k
     return f"{head}_{t}.mp4" if t else f"{head}.mp4"
 
 
-def zip_name(episode: str, *, khaithi: bool = False) -> str:
-    """``Tập<episode>_Shorts.zip``; a khai thị episode (CP8.9 K8): ``Tập<episode>_KhaiThị.zip``."""
-    return f"Tập{episode}_KhaiThị.zip" if khaithi else f"Tập{episode}_Shorts.zip"
+MAX_SERIES_BYTES = 80  # UTF-8 bytes of the bộ kinh part of a zip name (CP8.17 D4)
+
+
+def zip_name(episode: str, *, khaithi: bool = False, series: str | None = None, both: bool = False) -> str:
+    """``[<series>_]Tập<episode>_Shorts.zip``; a khai thị episode (CP8.9 K8): ``…_KhaiThị.zip``; ``both`` (CP8.17
+    D5): ``…_Shorts+KhaiThị.zip``. ``series`` (titles.json ``header.fields.series``) is cleaned like a title part
+    and cut to 80 UTF-8 bytes at a word boundary; empty after cleaning -> no series prefix."""
+    kind = "Shorts+KhaiThị" if both else ("KhaiThị" if khaithi else "Shorts")
+    head = truncate_utf8(clean_part(series), MAX_SERIES_BYTES)
+    return f"{head}_Tập{episode}_{kind}.zip" if head else f"Tập{episode}_{kind}.zip"
 
 
 def ascii_fallback(name: str) -> str:

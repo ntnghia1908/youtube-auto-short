@@ -253,6 +253,7 @@ def episode_view(config: Config, episode_id: str, *, hashtags: list[str] | None 
         "publish_error": publish_error,
         "zip_url": f"/files/{episode_id}/shorts.zip" if rendered else None,
         "zip_name": zip_download_name(config, episode_id) if rendered else None,
+        **_zip_all_fields(config, episode_id, rendered),  # CP8.17 D5
         "max_title_chars": config.titling.max_chars,
         "titles_error": titles_error,
         "titles_ignored": ignored,
@@ -364,9 +365,48 @@ def source_file(config: Config, episode_id: str) -> Path | None:
 
 
 def zip_download_name(config: Config, episode_id: str) -> str:
+    """CP8.17 D4: ``[<series>_]Tập<episode>_Shorts.zip`` / ``…_KhaiThị.zip``."""
     kf = kind_fields(config, episode_id)
-    return zip_name(_label(config, episode_id, kf), khaithi=kf["kind"] == khaithi.KIND)
+    return zip_name(_label(config, episode_id, kf), khaithi=kf["kind"] == khaithi.KIND,
+                    series=_zip_series(config, episode_id, kf))
 
+
+def _zip_series(config: Config, episode_id: str, kf: dict) -> str | None:
+    """Series of the zip name: this episode's titles.json; a khai thị episode without one falls back to its
+    base Short episode's (CP8.17 D4)."""
+    series = _series(config, episode_id)
+    if not (series or "").strip() and kf["base_episode_id"]:
+        series = _series(config, kf["base_episode_id"])
+    return series
+
+
+def all_zip(config: Config, episode_id: str) -> tuple[list[tuple[str, Path, str]], str] | None:
+    """CP8.17 D5: entries + zip name of "Tải cả hai" for a Short episode ``<vid>`` or its khai thị ``<vid>.kt``
+    (same result): ``Shorts/<name>`` entries of ``<vid>`` then ``KhaiThị/<name>`` of ``<vid>.kt``, manifest order.
+    None when either episode has no rendered Short file."""
+    kf = kind_fields(config, episode_id)
+    vid = kf["base_episode_id"] or episode_id
+    try:
+        kt_id = khaithi.episode_id_for(vid)
+    except khaithi.KhaithiError:
+        return None
+    if not valid_episode_id(kt_id):
+        return None
+    shorts, kts = short_files(config, vid), short_files(config, kt_id)
+    if not shorts or not kts:
+        return None
+    files = [(cid, path, f"Shorts/{name}") for cid, path, name in shorts] + \
+            [(cid, path, f"KhaiThị/{name}") for cid, path, name in kts]
+    vid_kf = kind_fields(config, vid)
+    name = zip_name(_label(config, vid, vid_kf), series=_zip_series(config, vid, vid_kf), both=True)
+    return files, name
+
+
+def _zip_all_fields(config: Config, episode_id: str, rendered: int) -> dict:
+    found = all_zip(config, episode_id) if rendered else None
+    if found is None:
+        return {"zip_all_url": None, "zip_all_name": None}
+    return {"zip_all_url": f"/files/{episode_id}/all.zip", "zip_all_name": found[1]}
 
 
 TODO, ALL_PUBLISHED = "todo", "done"  # list filter groups (CP8.5 X4, bổ sung HUMAN LEAD 2026-09-27)

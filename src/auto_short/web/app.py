@@ -623,7 +623,8 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                 return JSONResponse({"detail": "không có episode này"}, status_code=404)
             view = {**kf, "id": episode_id, "title": None, "channel": None, "duration": None, "source_url": None,
                     "stages": [], "header": None, "shorts": [], "rendered": 0, "deleted": 0, "published": 0,
-                    "zip_url": None, "zip_name": None, "archived": None}
+                    "zip_url": None, "zip_name": None, "zip_all_url": None, "zip_all_name": None,
+                    "archived": None}
         view["job"] = _job_view(job)
         view["post_job"] = _job_view(runner.latest_post(episode_id))  # CP8.16 R3 (job stays the episode's own job)
         if job is not None and job.active and job.kind in (KIND_RENDER, KIND_ADD):
@@ -1212,11 +1213,19 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             items = ep.short_files(config, episode_id)
             if not items:
                 return JSONResponse({"detail": "chưa có Short nào"}, status_code=404)
-            _mark_downloaded(episode_id, [clip for clip, _path, _name in items])
+            # CP8.17 D3: a zip never ticks "Đã đăng" (only the single "Tải về" of a Short does)
             return StreamingResponse(
                 _zip_stream(items), media_type="application/zip",
                 headers={"Content-Disposition": content_disposition(ep.zip_download_name(config, episode_id)),
                          "Cache-Control": "no-store"})
+        if name == "all.zip":  # CP8.17 D5: Shorts/ + KhaiThị/ of one video in a single zip (no tick, D3)
+            both = ep.all_zip(config, episode_id)
+            if both is None:
+                return JSONResponse({"detail": "cần có cả Short và khai thị đã dựng"}, status_code=404)
+            items, zip_file_name = both
+            return StreamingResponse(
+                _zip_stream(items), media_type="application/zip",
+                headers={"Content-Disposition": content_disposition(zip_file_name), "Cache-Control": "no-store"})
         if name == "source.mp4":  # CP9 C7: "Nghe thử" around a cut point (Range; never ticks, never a download)
             found_src = ep.source_file(config, episode_id)
             if found_src is None:

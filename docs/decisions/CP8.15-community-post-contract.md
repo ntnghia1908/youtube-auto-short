@@ -6,7 +6,7 @@
 | Accepted by | HUMAN LEAD 2026-09-29: APPROVE TASK; Q1 ảnh chọn trong thư viện + upload + tìm ảnh từ link (ảnh tìm được vào thẳng thư viện); Q2–Q4 theo đề xuất (P4 bố cục, soạn theo yêu cầu, model `qwen3:14b`). Sửa đổi HUMAN LEAD 2026-09-29 (ORCHESTRATOR review round 1, sau Q4 BLOCKED ở 72%): P3 đổi sang AI tự do + chiếu (projection) về chữ gốc bằng `difflib` (prompt `v2`), Q4 đổi tiêu chí (≥ 90% bài `ai` có ≥ 4 dấu câu / 100 từ); B1: bản đầu implement sai P2 (giữ nguyên từ nối bị `head_cut`, ghi nhầm là HUMAN LEAD đã chấp nhận) — sửa lại đúng P2 gốc (bỏ `head_cut` như CP6 G3). |
 | Checkpoint | CP8.15 (S2) |
 | Roadmap | `AUTO_SHORT_CHECKPOINT_PLAN.md` §4 CP8.15 |
-| Task contract | `docs/tasks/CP8.15-community-post.md` |
+| Task contract | `docs/tasks/CP8.15-community-post.md`; sửa đổi CP8.17: `docs/tasks/CP8.17-download-rules.md` |
 | Builds on | `docs/decisions/CP6-titling-contract.md` (G3 `clip_text`, G5 validate style); `docs/decisions/CP8.2-title-override-contract.md` (CP9: cut points, added Shorts, `review.cuts.lines_in`); `docs/decisions/CP8.3-web-contract.md` W4/W5/W7 (job model, API, auth); `docs/decisions/CP8.9-khai-thi-contract.md` (một Short/khai thị dùng chung route); CP1 §10 (dependency: không thêm) |
 
 File này là **canonical owner** của: text nguồn một bài đăng cộng đồng của một Short (P2), prompt AI tự do + chiếu (projection) deterministic về chữ gốc (`post` `v2`, P3), schema `posts.json` (P7) + `post_log.json`, thư viện ảnh (P5) + upload (P5a) + tìm ảnh từ link (P5b), link Short (P6), bố cục text sao chép (P4), config `[post]` (P11), route web + job (P9) và security tải ảnh từ link (P13). Nơi khác chỉ trỏ tới đây. Không đổi contract stage CP2–CP9: `posts.json` không phải input của stage nào (như `publish.json`, CP8.3 W8). Thay đổi cần decision gate mới với HUMAN LEAD.
@@ -99,9 +99,11 @@ State người dùng, **không** là input stage nào (như `publish.json`, CP8.
 
 `posted_at` (UTC `YYYY-MM-DDTHH:MM:SSZ`) | `null`, qua `POST /api/episodes/{id}/posts/{clip}/posted {value: bool}`; độc lập với tick "Đã đăng" Short (`publish.json`, CP8.5 X4) và **không** ảnh hưởng "Xong" (CP8.7 L4) hay gợi ý dọn (CP8.6 S1/S2). Bài đã tick mà text nguồn đổi → vẫn giữ tick, hiện `stale` (P2).
 
+**Sửa đổi CP8.17 (D1, D2 — tự tick, chỉ ở trình duyệt, route `posted` và `posts.json` không đổi):** trang Bài đăng ghi nhớ trong `localStorage` (`autoShort.postMarks`, dự phòng bộ nhớ trang khi không dùng được) cho từng bài `<episode_id>/<clip_id>`: dấu *đã sao chép* (kèm text đã sao chép; chỉ đặt khi sao chép thành công, không tính ô dự phòng "Giữ vào ô để copy") và dấu *đã tải ảnh* (kèm tên ảnh; đặt khi bấm "Tải ảnh"). Cả hai còn hiệu lực (text / ảnh hiện tại của bài trùng lúc ghi) và bài chưa tick → trang gọi `POST …/posted {value: true}`, thứ tự hai thao tác tùy ý; xong thì xóa dấu (bỏ tick tay không tự tick lại cho tới khi làm lại cả hai). Bài không có ảnh tải được (`image` rỗng / `image_missing`) → chỉ cần sao chép thành công. Bài đã tick: không ghi gì. Dấu theo từng thiết bị / trình duyệt.
+
 ## P9. Web
 
-- Thẻ mỗi Short `rendered` (tập Short + khai thị): khu thu gọn "Bài đăng cộng đồng" — chưa có bài: "Soạn bài"; có bài: nhãn `raw` / `stale` / `image_missing`, textarea các đoạn (đoạn cách nhau dòng trống) + "Lưu đoạn" (→ `manual`), ảnh thu nhỏ + "Đổi ảnh" (mở thư viện), ô link + "Lưu link", số ký tự (P4), "Sao chép bài" (dùng fallback clipboard hiện có, CP8.3 W6), "Soạn lại", tick "Đã đăng bài".
+- Thẻ mỗi Short `rendered` (tập Short + khai thị): khu thu gọn "Bài đăng cộng đồng" — chưa có bài: "Soạn bài"; có bài: nhãn `raw` / `stale` / `image_missing`, textarea các đoạn (đoạn cách nhau dòng trống) + "Lưu đoạn" (→ `manual`), ảnh thu nhỏ + "Đổi ảnh" (mở thư viện), ô link + "Lưu link", số ký tự (P4), "Sao chép bài" (dùng fallback clipboard hiện có, CP8.3 W6), "Soạn lại", tick "Đã đăng bài" (tự tick khi đã sao chép + tải ảnh, **sửa đổi CP8.17** P8).
 - Trang tập: nút "Soạn bài cho mọi Short" (ẩn khi không có Short `rendered`), đếm "Bài đăng cộng đồng đã đăng: x/y".
 - Hộp thoại "Thư viện ảnh" (mở từ "Đổi ảnh"): lưới ảnh (kích thước, số bài dùng), "Tải ảnh lên", ô dán link + nút nhanh (`[post] image_sources`) + "Tìm ảnh", "Xóa khỏi thư viện".
 - Route (cookie CP8.3 W2; 422 lỗi dữ liệu; 503 Ollama khi preflight lỗi; 409 khi episode đang có job — kể cả job khác, cùng luật job runner CP8.10):
