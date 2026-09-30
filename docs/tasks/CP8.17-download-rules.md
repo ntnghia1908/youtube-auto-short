@@ -2,15 +2,15 @@
 
 ## Status / Approval
 
-- Status: DRAFT
+- Status: IN_PROGRESS
 - Type: CHANGE
 - Change class: S2
 - Owner: HUMAN LEAD
 - Execution profile: dual-agent
 - Implementer: `.claude/agents/implementer` (Sonnet) — mặc định dual-agent của project; task có UI + route file, cần review diff riêng.
 - Base commit / branch: `d0c1517` (`origin/main`) / `feature/cp8.17-download-rules` (implement trong worktree `../youtube-auto-short-cp817`)
-- Human Lead approval: pending
-- Implementation authorized: NO
+- Human Lead approval: accepted (HUMAN LEAD 2026-09-30: APPROVE D1–D5, Q1 chọn (a))
+- Implementation authorized: YES
 
 Lifecycle: `DRAFT → APPROVED → IN_PROGRESS → READY`. DONE suy ra từ Git sau khi merge.
 
@@ -34,7 +34,7 @@ Hiện trạng (code `d0c1517`):
 
 Đăng một bài cộng đồng (sao chép bài + tải ảnh) xong thì bài tự được tick "Đã đăng bài". Tải zip cả tập không còn làm Short thành "Đã đăng". File zip tải về nhìn tên là biết bộ kinh nào, tập nào, Short hay khai thị; có một nút tải cả Short lẫn khai thị của một video trong một zip.
 
-## Quyết định đề xuất (chờ HUMAN LEAD duyệt)
+## Quyết định (HUMAN LEAD 2026-09-30: APPROVE D1–D5, Q1 = (a))
 
 - **D1. Tự tick "Đã đăng bài" — theo dõi ở trình duyệt, không đổi server.**
   - Trang Bài đăng ghi nhớ cho từng bài (`<episode_id>/<clip_id>`) hai dấu: *đã sao chép* (kèm chính text đã sao chép) và *đã tải ảnh* (kèm tên ảnh). Khi cả hai dấu còn hiệu lực và bài chưa tick → trang gọi route có sẵn `POST …/posts/{clip}/posted {value: true}` (CP8.15 P9), hiện tick như khi bấm tay. Thứ tự hai thao tác không quan trọng.
@@ -44,9 +44,7 @@ Hiện trạng (code `d0c1517`):
   - Bài đã tick: sao chép / tải ảnh không đổi gì (không ghi lại `posted_at`).
   - Không đổi `posts.json` (P7), không thêm route. Hệ quả chấp nhận: dấu theo từng thiết bị / trình duyệt (sao chép trên điện thoại, tải ảnh trên máy tính → không tự tick).
   - Phương án khác (không đề xuất): ghi `copied_at` / `image_downloaded_at` vào `posts.json` qua route mới — đổi schema + API cho một tiện ích UI, và route tải ảnh hiện không gắn với bài nào.
-- **D2. Bài không có ảnh tải được** (`image` rỗng hoặc `image_missing` → không có nút "Tải ảnh") — **CÂU HỎI MỞ Q1, cần HUMAN LEAD chọn:**
-  - (a) *đề xuất*: chỉ cần "Sao chép bài" là tự tick (không còn thao tác nào khác để chờ);
-  - (b) không tự tick, tick tay.
+- **D2. Bài không có ảnh tải được** (`image` rỗng hoặc `image_missing` → không có nút "Tải ảnh") — Q1, HUMAN LEAD chọn (a): chỉ cần "Sao chép bài" (thành công) là tự tick (không còn thao tác nào khác để chờ). Phương án (b) không tự tick: không chọn.
 - **D3. Zip cả tập không tick "Đã đăng"** (sửa CP8.3 W8 "tải về = đã đăng").
   - `GET /files/{id}/shorts.zip` và zip "Tải cả hai" (D5) **không** gọi `mark_downloaded`. Chỉ `GET /files/{id}/{clip}.mp4?download=1` (nút "Tải về" từng Short) tick, giữ nguyên luật CP8.7 cho nó (idempotent, tick trước khi gửi file, lỗi ghi không chặn tải).
   - Tick đã có trong `publish.json` (kể cả tick do zip trước đây) giữ nguyên; không migrate.
@@ -108,7 +106,7 @@ Chạm public API contract (route `all.zip`, field mới, tên file) và luật 
 - [ ] Điện thoại, tab Bài đăng: "Sao chép bài" rồi "Tải ảnh" (và thứ tự ngược lại) → bài tự tick "Đã đăng bài"; chỉ làm một trong hai → chưa tick.
 - [ ] Sao chép, chuyển sang app YouTube, quay lại (trang nạp lại), "Tải ảnh" → vẫn tự tick.
 - [ ] Bỏ tick tay → không tự tick lại; làm lại cả hai thao tác → tick lại.
-- [ ] Bài không có ảnh: hành vi đúng lựa chọn Q1.
+- [ ] Bài không có ảnh: "Sao chép bài" → tự tick (Q1 = a).
 - [ ] "Tải tất cả Short (.zip)" / "Tải tất cả khai thị (.zip)": tên file có tên bộ kinh + tập + loại; các Short **không** thành "Đã đăng".
 - [ ] "Tải về" một Short: vẫn tick "Đã đăng".
 - [ ] "Tải cả hai (.zip)": một file, hai thư mục `Shorts/` và `KhaiThị/`, giải nén được trên điện thoại / máy tính; nút ẩn ở video chỉ có một loại.
