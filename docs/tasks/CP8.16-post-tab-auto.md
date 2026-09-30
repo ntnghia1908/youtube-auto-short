@@ -166,3 +166,9 @@ B1: a manual compose request (`clips: [ids]` / `"all"`) that met an active `post
 - Tests (lanes + serial): `test_manual_clip_merged_into_waiting_auto_job` (waiting auto job + POST `[k02]` -> same job id, one compose call with `["auto", "k02"]`), `test_manual_clip_while_running_gets_one_extra_pass` (running job + POST `[k02]` -> exactly one extra job, whose pass is `["auto", "k02"]` and composes k02), `test_merge_clips_and_resolve_todo_pure`, `test_merged_unknown_clip_is_dropped_not_fatal`. `FakeComposeAI` (CP8.15 test double) now resolves token lists through `post_stage.resolve_todo`.
 - Full suite once after the fix: 1151 passed, 1 skipped; `framework-check` unaffected (docs only). No live re-run for B1 (scratch data / 8081 unchanged).
 - Non-blocking noted: `on_finished` also fires for a `pipeline` job that failed before render; harmless, unchanged.
+
+### Review (ORCHESTRATOR)
+
+- Round 1 (diff `9f708c5`): 1 blocking — B1: yêu cầu soạn bài bấm tay (`clips: [id]`) gặp job `post` đang đợi / chạy chỉ nhận lại job đó, clip được yêu cầu không được soạn nếu không nằm trong tập `auto`. Nguyên nhân gốc: câu R3 "gửi (tay hoặc tự động) khi đang đợi → trả job đó" chỉ đúng với `auto`. Non-blocking: hook `on_finished` cũng chạy khi job `pipeline` fail trước bước render (vô hại, chỉ soạn Short đã dựng từ trước). Không có ghi nhận duyệt tự bịa trong code / docs.
+- Round 2 (diff `61bc2aa`): **ACCEPTED**. B1 sửa đúng chữ R3 (trả job đang có; đang đợi → gộp clip vào job; đang chạy → lượt thêm `auto` ∪ clip); merge / `again` đều dưới lock của runner. ORCHESTRATOR chạy lại `pytest -q -n auto` → 1151 passed, 1 skipped; `framework-check` exit 0.
+- Chưa kiểm trên server thật (Ollama sập lúc chạy): "sửa đầu/cuối → bài tự soạn lại" — thuộc manual test checklist.
