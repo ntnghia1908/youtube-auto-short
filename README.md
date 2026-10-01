@@ -255,7 +255,7 @@ unless a manual title is set in `review.json` (see `title` below); `untitled` cl
 warning. Each Short records a `render_key`; a Short whose key, file and sha256 are unchanged is reused instead of
 encoded again (`--force` encodes all). A long title first makes the title panel taller (3 lines), and only
 shrinks the font when that is not enough. Rules and schema: `docs/decisions/CP7-render-contract.md`; parameters in
-`[render]` of `config.example.toml` (`output_dir` and `threads` do not re-run the stage; any other key does).
+`[render]` of `config.example.toml` (`output_dir`, `threads` and `jobs` do not re-run the stage; any other key does).
 
 Set the title of one Short by hand, then re-render only that Short (no AI call):
 

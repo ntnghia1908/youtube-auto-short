@@ -192,6 +192,7 @@ class RenderConfig:
     # Execution-only settings (not part of the config hash):
     output_dir: Path = Path("output")
     threads: int = 0  # 0 = ffmpeg/x264 default
+    jobs: int = 1  # Shorts encoded at once (CP11-R1)
 
 
 @dataclass(frozen=True)
@@ -555,6 +556,7 @@ def _render(data: dict) -> RenderConfig:
         dissolve=num("dissolve", 0, 1),
         output_dir=Path(_str(re_, "output_dir", str(d.output_dir), w)),
         threads=_int(re_, "threads", d.threads, w, lo=0, hi=256),
+        jobs=_int(re_, "jobs", d.jobs, w, lo=1, hi=16),
     )
 
 

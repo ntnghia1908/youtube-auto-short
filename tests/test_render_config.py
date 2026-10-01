@@ -25,7 +25,7 @@ def test_render_config_parsing():
 @pytest.mark.parametrize("data", [
     {"title_source": "review"}, {"font_file": "/etc/f.ttf"}, {"font_file": "../x.ttf"}, {"preset": "fastest"},
     {"crf": 60}, {"crf": 1.5}, {"audio_bitrate": "192"}, {"line_spacing": 3}, {"min_font_scale": 0},
-    {"header_panel_width": 1.5}, {"threads": -1}, {"output_dir": ""},
+    {"header_panel_width": 1.5}, {"threads": -1}, {"jobs": 0}, {"jobs": 17}, {"jobs": 1.5}, {"jobs": "4"}, {"jobs": True}, {"output_dir": ""},
     {"dissolve": -0.1}, {"dissolve": 2}, {"dissolve": "0.15"},
     {"title_bottom": 0}, {"title_bottom": 2.5}, {"title_bottom": "1600"}, {"title_bottom": True},
 ])
@@ -49,3 +49,9 @@ def test_render_layout_defaults_v16():
                                                             0.02, 0.005)
     assert from_dict({"render": {"title_bottom": 1.45}}).render.title_bottom == 1.45
     assert from_dict({"render": {"gap_video_title": 0.01}}).render == RenderConfig()
+
+
+def test_render_jobs_default_and_parse():
+    assert RenderConfig().jobs == 1
+    assert from_dict({"render": {"jobs": 4}}).render.jobs == 4
+    assert from_dict({"render": {"jobs": 16}}).render.jobs == 16
