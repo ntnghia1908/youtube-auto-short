@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: BUG
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -82,9 +82,9 @@ Không chạm database, security model hoặc public API contract → manual tes
 
 ## Result
 
-- Main changes:
-- Tests:
+- Main changes: `render/plan.py::source_fps(stream)` (hàm thuần, F1; raise `ValueError` khi không có trường hợp lệ) cạnh `output_fps`; `render/stage.py::_rate` gọi nó và đổi `ValueError` thành `RenderError("cannot determine the source frame rate")`. Không đụng `ingest/probe.py` (F5), `verify_output` (F3), `RENDER_PLAN_VERSION`.
+- Tests: `tests/test_render_plan.py` thêm test source_fps (3 cặp lỗi, r=avg, r=1000/1, một trường, snap 25, fallback limit_denominator, không hợp lệ -> RenderError) và `render_key` không đổi khi r=avg=30000/1001 (AC2). `pytest -q -x tests/test_render_plan.py tests/test_render_stage.py`: 57 passed. `pytest -q -n auto`: 1213 passed, 1 skipped (64 s). AC5: bản sao `~/.cache/auto-short-render-vfr-test/`, `auto-short render jr8mue8TJA0` exit 0, 11/11 clip, 345 s, manifest fps `30000/1001`; `jr8mue8TJA0.kt` exit 0, 6/6 clip, 684 s, fps `30000/1001` (verify_output đạt vì render không lỗi).
 - Review:
-- Important findings / decisions:
-- Known limitations:
+- Important findings / decisions: Không có test tích hợp ffmpeg với avg_frame_rate lẻ (không tạo lại được tin cậy bằng ffmpeg); thay bằng unit test + render thật AC5.
+- Known limitations: nguồn VFR thật có r_frame_rate cao + avg lẻ không chuẩn dùng `limit_denominator(1001)`.
 - PR:

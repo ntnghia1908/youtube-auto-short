@@ -139,14 +139,10 @@ def probe_media(path: Path, run: Runner) -> dict:
 
 
 def _rate(stream: dict) -> Fraction:
-    for key in ("avg_frame_rate", "r_frame_rate"):
-        try:
-            value = Fraction(stream.get(key) or "0/0")
-        except (ValueError, ZeroDivisionError):
-            continue
-        if value > 0:
-            return value
-    raise RenderError("cannot determine the source frame rate")
+    try:
+        return plan.source_fps(stream)
+    except ValueError:
+        raise RenderError("cannot determine the source frame rate") from None
 
 
 def verify_output(path: Path, fps: Fraction, planned_frames: int, run: Runner) -> None:

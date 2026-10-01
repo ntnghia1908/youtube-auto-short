@@ -142,6 +142,36 @@ def output_fps(source_fps: Fraction) -> Fraction:
     return source_fps if source_fps <= MAX_FPS else MAX_FPS
 
 
+STANDARD_FPS = (Fraction(24000, 1001), Fraction(24), Fraction(25), Fraction(30000, 1001), Fraction(30),
+                Fraction(50), Fraction(60000, 1001), Fraction(60))
+_FPS_TOLERANCE = Fraction(1, 100)
+
+
+def _valid_rate(value) -> Fraction | None:
+    try:
+        rate = Fraction(value or "0/0")
+    except (ValueError, ZeroDivisionError, TypeError):
+        return None
+    return rate if rate > 0 else None
+
+
+def source_fps(stream: dict) -> Fraction:
+    """Source frame rate from an ffprobe video stream (FIX-render-vfr F1): ``r_frame_rate`` when it agrees with
+    ``avg_frame_rate`` within 1 % (or the other is invalid); else ``avg_frame_rate`` snapped to a standard rate
+    within 1 %, otherwise ``limit_denominator(1001)``. Raises ``ValueError`` when neither field is valid."""
+    r = _valid_rate(stream.get("r_frame_rate"))
+    avg = _valid_rate(stream.get("avg_frame_rate"))
+    if r is None and avg is None:
+        raise ValueError("no valid frame rate")
+    if r is not None and (avg is None or abs(r - avg) <= avg * _FPS_TOLERANCE):
+        return r
+    value = avg if avg is not None else r
+    best = min(STANDARD_FPS, key=lambda c: abs(c - value))
+    if abs(best - value) <= value * _FPS_TOLERANCE:
+        return best
+    return value.limit_denominator(1001)
+
+
 def fps_text(fps: Fraction) -> str:
     return str(fps.numerator) if fps.denominator == 1 else f"{fps.numerator}/{fps.denominator}"
 
