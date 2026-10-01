@@ -255,3 +255,47 @@ def test_filter_graph_dissolve_structure():
     assert f"[x3]setpts=N/({f})/TB,pad=1080:1920:0:211:color=0x000000[vid];" in graph
     # audio unchanged: hard cuts
     assert "[a0][a1][a2][a3]concat=n=4:v=0:a=1" in graph and "afade" not in graph and "acrossfade" not in graph
+
+
+# --- FIX-render-vfr F1: source_fps ----------------------------------------------------------------------------
+
+@pytest.mark.parametrize("r,avg", [("30000/1001", "50304000/1678477"), ("30000/1001", "2495575/83269"),
+                                   ("30000/1001", "112318000/3747677"), ("30000/1001", "30000/1001"),
+                                   ("1000/1", "2495575/83269"), ("30000/1001", None), (None, "2495575/83269"),
+                                   ("0/0", "50304000/1678477"), ("1000/1", "0/0")])
+def test_source_fps_vfr_cases_give_ntsc(r, avg):
+    stream = {k: v for k, v in (("r_frame_rate", r), ("avg_frame_rate", avg)) if v is not None}
+    expect = Fraction(1000, 1) if (r == "1000/1" and avg == "0/0") else NTSC
+    assert plan.source_fps(stream) == expect
+
+
+def test_source_fps_snaps_and_falls_back():
+    assert plan.source_fps({"avg_frame_rate": "2501/100"}) == 25
+    assert plan.source_fps({"r_frame_rate": "25/1", "avg_frame_rate": "2501/100"}) == 25
+    assert plan.source_fps({"avg_frame_rate": "30000/1001"}) == NTSC
+    # not within 1 % of a standard rate -> limit_denominator(1001)
+    assert plan.source_fps({"avg_frame_rate": "15/1"}) == 15
+    assert plan.source_fps({"avg_frame_rate": "123456/10007"}) == Fraction(123456, 10007).limit_denominator(1001)
+
+
+@pytest.mark.parametrize("stream", [{}, {"r_frame_rate": "0/0", "avg_frame_rate": "0/0"},
+                                    {"r_frame_rate": "x", "avg_frame_rate": None}])
+def test_source_fps_none_valid(stream):
+    from auto_short.render import RenderError
+    from auto_short.render.stage import _rate
+    with pytest.raises(ValueError):
+        plan.source_fps(stream)
+    with pytest.raises(RenderError, match="source frame rate"):
+        _rate(stream)
+
+
+def test_render_key_unchanged_for_equal_r_and_avg():
+    from auto_short.render.stage import _rate, render_key
+    stream = {"r_frame_rate": "30000/1001", "avg_frame_rate": "30000/1001"}
+    layout = {"a": 1}
+    from types import SimpleNamespace
+    hdr = SimpleNamespace(lines=["h"], font_size=10)
+    ttl = SimpleNamespace(lines=["t"], font_size=12)
+    kw = dict(cfg_hash="c", font_sha="f", source_sha="s", segments=[[0, 1000]], dissolves=[], layout=layout,
+              header=hdr, title=ttl)
+    assert render_key(fps=plan.output_fps(_rate(stream)), **kw) == render_key(fps=NTSC, **kw)
