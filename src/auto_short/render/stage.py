@@ -13,8 +13,10 @@ import logging
 import os
 import subprocess
 import tempfile
+import threading
 import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
@@ -55,7 +57,7 @@ UNTITLED, REJECTED = "untitled", "rejected"  # skip_reason (R2; CP8.5 X2)
 PACKAGE_DIR = Path(__file__).resolve().parent
 
 # [render] keys outside the config hash (R10): execution-only.
-EXEC_KEYS = ("output_dir", "threads")
+EXEC_KEYS = ("output_dir", "threads", "jobs")
 HASH_KEYS = tuple(k for k in RenderConfig.__dataclass_fields__ if k not in EXEC_KEYS)
 DURATION_TOLERANCE = 0.1  # s, R9
 
@@ -425,6 +427,64 @@ class _RunFiles:
     committing: bool = False
 
 
+@dataclass
+class _Encode:
+    """One Short to encode (planned sequentially, J3); ``record`` receives the sha256."""
+
+    clip: dict
+    cp: ClipPlan
+    record: dict
+    fit: TextFit
+    dissolves: list[dict]
+    part: Path
+    cmd: list[str]
+
+
+def _encode_one(task: _Encode, run: Runner, fps: Fraction) -> None:
+    clip, cp, fit, part = task.clip, task.cp, task.fit, task.part
+    t0 = time.monotonic()
+    proc = run(task.cmd)
+    if proc.returncode != 0 or not part.is_file():
+        raise RenderError(f"clip {clip['id']}: ffmpeg failed: "
+                          f"{_last_line(proc.stderr) or f'exit {proc.returncode}'}")
+    verify_output(part, fps, plan.planned_frames(cp.segments, fps), run)
+    task.record["sha256"] = hashing.sha256_file(part)
+    log.info("%s: clip %s: %s (%d px, panel %d px, %s), %d segment(s), %d dissolve(s), %.3f s, "
+             "rendered in %.1f s", STAGE, clip["id"], " / ".join(fit.lines), fit.font_size,
+             fit.panel_height, cp.origin, len(cp.segments), sum(1 for d in task.dissolves if d["frames"]),
+             clip["duration"], time.monotonic() - t0)
+
+
+def _encode_all(tasks: list[_Encode], run: Runner, fps: Fraction, jobs: int) -> None:
+    """J3/J4: encode up to ``jobs`` Shorts at once. After the first failure no new encode starts; running ones
+    finish (never killed); the error of the earliest failing clip in clip order is raised."""
+    if jobs <= 1 or len(tasks) <= 1:
+        for task in tasks:
+            _encode_one(task, run, fps)
+        return
+    stop = threading.Event()
+    errors: dict[int, RenderError] = {}
+
+    def work(i: int) -> None:
+        if stop.is_set():
+            return
+        try:
+            _encode_one(tasks[i], run, fps)
+        except RenderError as exc:
+            errors[i] = exc
+            stop.set()
+
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        try:
+            for f in [pool.submit(work, i) for i in range(len(tasks))]:
+                f.result()
+        except BaseException:
+            stop.set()
+            raise
+    if errors:
+        raise errors[min(errors)]
+
+
 # --- stage -------------------------------------------------------------------------------------------------------
 
 def run_render(episode_id: str, config: Config, *, force: bool = False, run: Runner | None = None) -> RenderResult:
@@ -539,8 +599,9 @@ def _render_all(ws: Workspace, cfg: RenderConfig, fpath: Path, font_sha: str, me
     plans = plan_clips(targets, resolved, font=font, cfg=cfg, geo=geo, src_w=src_w, src_h=src_h)
     base_layout = plan.layout(geo, geo.title_h, src_w, src_h)
 
-    log.info("%s: font %s (%s), fps %s, source %dx%d, dissolve %g s (%d frames)", STAGE, font.family,
-             cfg.font_file, plan.fps_text(fps), src_w, src_h, cfg.dissolve, 2 * plan.dissolve_half(cfg.dissolve, fps))
+    log.info("%s: font %s (%s), fps %s, source %dx%d, dissolve %g s (%d frames)%s", STAGE, font.family,
+             cfg.font_file, plan.fps_text(fps), src_w, src_h, cfg.dissolve, 2 * plan.dissolve_half(cfg.dissolve, fps),
+             f", jobs {cfg.jobs}" if cfg.jobs > 1 else "")
     log.info("%s: layout header %s, video %s crop %s, title %s (max h %d)", STAGE, base_layout.header,
              base_layout.video, base_layout.crop, base_layout.title, geo.title_max_h)
     log.info("%s: header %s (%d px)", STAGE, " / ".join(header.lines), header.font_size)
@@ -549,6 +610,7 @@ def _render_all(ws: Workspace, cfg: RenderConfig, fpath: Path, font_sha: str, me
     shorts_dir = out_dir / SHORTS_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
     shorts = []
+    tasks: list[_Encode] = []  # Shorts to encode, in clip order (J3)
     t_all = time.monotonic()
     with tempfile.TemporaryDirectory(prefix="auto-short-render-") as tmpname:
         tmp = Path(tmpname)
@@ -606,17 +668,8 @@ def _render_all(ws: Workspace, cfg: RenderConfig, fpath: Path, font_sha: str, me
             cmd = plan.ffmpeg_command(ffmpeg="ffmpeg", source=media, output=part, graph_script=script,
                                       segments=cp.segments, fps=fps, crf=cfg.crf, preset=cfg.preset,
                                       audio_bitrate=cfg.audio_bitrate, threads=cfg.threads)
-            t0 = time.monotonic()
-            proc = run(cmd)
-            if proc.returncode != 0 or not part.is_file():
-                raise RenderError(f"clip {clip['id']}: ffmpeg failed: "
-                                  f"{_last_line(proc.stderr) or f'exit {proc.returncode}'}")
-            verify_output(part, fps, plan.planned_frames(cp.segments, fps), run)
-            record["sha256"] = hashing.sha256_file(part)
-            log.info("%s: clip %s: %s (%d px, panel %d px, %s), %d segment(s), %d dissolve(s), %.3f s, "
-                     "rendered in %.1f s", STAGE, clip["id"], " / ".join(fit.lines), fit.font_size,
-                     fit.panel_height, cp.origin, len(cp.segments), sum(1 for d in dissolves if d["frames"]),
-                     clip["duration"], time.monotonic() - t0)
+            tasks.append(_Encode(clip, cp, record, fit, dissolves, part, cmd))
+        _encode_all(tasks, run, fps, cfg.jobs)
 
     rendered = [s for s in shorts if s["status"] == RENDERED]
     base = base_layout.as_dict()

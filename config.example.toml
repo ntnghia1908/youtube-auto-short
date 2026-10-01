@@ -120,7 +120,7 @@ lines = ["{speaker}", "{series} (tập {episode})"]
 # Short composition / renderer (docs/decisions/CP7-render-contract.md; layout CP1 §4, V16 of CP8.14).
 # Frame 1080x1920; ratios below are fractions of the frame width W. Header at the top, video right below
 # it, title panel floating over the bottom of the video (bottom edge at title_bottom, clear of the YouTube
-# Shorts channel row). Changing any key below except output_dir/threads re-renders every Short.
+# Shorts channel row). Changing any key below except output_dir/threads/jobs re-renders every Short.
 title_source = "titles"              # auto-approve: AI titles from titles.json (only value until CP9 review)
 font_file = "fonts/BeVietnamPro-Regular.ttf"   # OFL font inside the auto_short.render package
 header_panel_width = 0.85
@@ -146,6 +146,7 @@ dissolve = 0.15                      # s, video dissolve at silence-trim junctio
 # Execution-only (not part of the config hash):
 output_dir = "output"                # Shorts go to <output_dir>/<episode_id>/
 threads = 0                          # ffmpeg/x264 threads; 0 = automatic
+jobs = 1                             # Shorts encoded at the same time (1-16); more = faster on many-core CPUs
 
 [web]
 # Web MVP: `auto-short web` (docs/decisions/CP8.3-web-contract.md). Execution-only (no stage uses it).

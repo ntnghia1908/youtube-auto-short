@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: CHANGE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -76,8 +76,8 @@ Không chạm database, security model hoặc public API contract → manual tes
 
 ## Result
 
-- Main changes:
-- Tests:
+- Main changes: `[render] jobs` (int 1–16, mặc định 1) trong `config.py`, `EXEC_KEYS` (không vào `config_hash`); `render/stage.py`: vòng kế hoạch giữ nguyên, Short cần encode thu vào danh sách `_Encode`, `_encode_all` chạy bằng `ThreadPoolExecutor(jobs)` (jobs 1 → tuần tự); lỗi đầu tiên → `stop` event, không encode mới, đợi tiến trình đang chạy, báo lỗi clip lỗi đầu tiên theo thứ tự; `, jobs N` vào dòng log đầu khi jobs > 1; sửa CP7 R6 / R10 + dòng Accepted by / Task contract; `config.example.toml`, `README.md`.
+- Tests: `tests/test_render_parallel.py` mới (7 test: AC2–AC5, config_hash / không stale) + `tests/test_render_config.py` (AC1). Targeted 62 passed; toàn bộ `pytest -q -n auto`: 1226 passed, 1 skipped. AC7 (bản sao `~/.cache/auto-short-render-parallel-test/`, không có tiến trình ffmpeg khác lúc đo): tập Short `4oOZz2CBz3g` (7 Short) jobs 1 → 191.2 s, jobs 4 → 101.4 s; tập khai thị `4oOZz2CBz3g.kt` (6 Short) 700.1 s → 323.1 s; sha256 mọi Short + `render_manifest.json` giống hệt giữa jobs 1 và jobs 4.
 - Review:
 - Important findings / decisions:
 - Known limitations:
