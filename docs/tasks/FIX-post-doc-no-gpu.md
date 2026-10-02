@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: BUG
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -60,9 +60,9 @@ Không chạm database, security model hay public API. Manual test là điểm d
 
 ## Result
 
-- Main changes:
-- Tests:
-- Review:
-- Important findings / decisions:
-- Known limitations:
+- Main changes: `post/stage.compose_posts(before_ai=…)` gọi preflight đúng một lần trước Short đầu tiên cần AI (F1); `PostComposeTarget` bỏ preflight đầu job, truyền `before_ai` (F2, cả serial F4); `Job.requeued` + `_take_locked` khi `gpu_down` lấy job `add`, rồi job `post` chưa về hàng lần nào (F3). Tài liệu: ghi chú O5 trong `docs/tasks/FIX-ollama-wait.md`, pointer CP8.3 W5, CP8.15 P1.
+- Tests: 5 test mới `tests/test_ollama_wait_runner.py` (AC 1–4, F4) + test `before_ai` trong `tests/test_post_doc.py`; fake compose cũ (4 test runner, `FakeComposeAI` CP8.15) nhận `before_ai`. Toàn bộ `python -m pytest -q -n auto` 1324 passed, 1 skipped (ORCHESTRATOR chạy lại); framework-check PASS.
+- Review: round 1 ACCEPTED, không có blocking finding.
+- Important findings / decisions: không.
+- Known limitations: khi GPU bình thường, job `post` vẫn đợi sau job `pipeline` trong làn `ai` (FIFO, ngoài scope). Manual test (GPU tắt trên 8080): chưa chạy; 8080 chưa đổi bản (HUMAN LEAD 2026-10-02: không đụng 8080).
 - PR:
