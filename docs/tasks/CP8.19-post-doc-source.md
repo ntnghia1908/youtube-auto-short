@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -147,9 +147,10 @@ Task chạm public API web và tải dữ liệu từ mạng (dùng lại luật
 
 ## Result
 
-- Main changes:
-- Tests:
-- Review:
-- Important findings / decisions:
-- Known limitations:
+- Main changes: `post/doc.py` mới (D1 link + template, tra `doc_url` từ `_playlists/*.json`, tải qua `post.fetch` + chặn redirect khác host, parse `#bodytext` + phần gzip giới hạn, cache `doc.json` + `match`, gióng + mở rộng trọn câu + dọn ngoặc kép); `post/stage.py` nhánh `doc` trước AI; `store.ORIGINS` + `doc`; `web/playlists.py` field `doc_url` (giữ khi làm mới); `PUT /api/playlists/{pid}/doc` (`check`, `queued`, xếp job soạn lại D7); UI ô "Văn bản gốc" trang bộ kinh + nhãn "Văn bản gốc" tab Bài đăng. Tài liệu: CP8.15 P15 + ghi chú P1/P2/P3/P7/P9, CP8.3 W7/W10, README, checkpoint plan, project profile.
+- Tests: `tests/test_post_doc.py` (48), `tests/test_web_post_doc_cp819.py` (15) — 63 passed; toàn bộ `python -m pytest -q -n auto` 1318 passed, 1 skipped (ORCHESTRATOR chạy lại); `node scripts/framework-check.mjs` PASS.
+- AC 10 (ORCHESTRATOR 2026-10-02, bản sao `~/.cache/auto-short-cp819-test/`, link: `KinhVoLuongTho10_001`, `CamUngThien_001`, `KinhThapThienNghiep_01`; client AI giả): 17 tập (Short + `.kt`) của 3 bộ kinh có bài → **148/150 Short (99%) `origin: doc`**; `match` tập 0.67–0.92; mỗi tập ~0.5 s gồm tải. Đọc đối chiếu 6 bài (`Bi7kVGbnPfE` k03, `4oOZz2CBz3g` k01, `X8ao0_7ufto` k05, `yzR1eCK_iV0` k02, `By0ZVJTPW3Y.kt` k01, `VlLxSpVCcws.kt` k02) với chữ nguồn: đúng đoạn, trọn câu, chính tả / dấu câu đúng ("xuất thế gian pháp", "hết thảy"); mở rộng lớn nhất 41 token đầu / 40 token cuối.
+- Review: round 1 ACCEPTED, không có blocking finding.
+- Important findings / decisions (IMPLEMENTER, contract không nói): link gzip tìm bằng regex trên HTML (trang thật dùng `<link rel="preload">`); `check` có `error` khi tải lỗi (link vẫn lưu); `queued` bỏ qua tập đang có job `pipeline`; `…` dính chữ, có `…` đầu thì không viết hoa; `match` tính trên segment `speech`; cache không theo transcript hash (chỉ tải lại khi đổi link).
+- Known limitations: job soạn bài vẫn chạy preflight Ollama (làn `ai`) kể cả khi mọi Short lấy từ văn bản — GPU tắt thì bài `doc` cũng đợi GPU; bài có thể thừa vài câu không có trong video (Q1 a, ≤ 60 token mỗi phía). Manual test trên 8080: chưa chạy.
 - PR:
