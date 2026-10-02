@@ -65,4 +65,4 @@ Không chạm database, security model hay public API. Manual test là điểm d
 - Review: round 1 ACCEPTED, không có blocking finding.
 - Important findings / decisions: không.
 - Known limitations: khi GPU bình thường, job `post` vẫn đợi sau job `pipeline` trong làn `ai` (FIFO, ngoài scope). Manual test (GPU tắt trên 8080): chưa chạy; 8080 chưa đổi bản (HUMAN LEAD 2026-10-02: không đụng 8080).
-- PR:
+- PR: #49 (base = branch CP8.19, xếp chồng trên #48)
