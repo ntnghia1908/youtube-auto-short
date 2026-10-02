@@ -8,7 +8,7 @@
 - Owner: HUMAN LEAD
 - Execution profile: dual-agent
 - Implementer: `.claude/agents/implementer` (Sonnet) — mặc định dual-agent của project; task có tải từ mạng + gióng văn bản + route + UI, cần review diff riêng.
-- Base commit / branch: `028ef8f` (`feature/cp8.18-post-corrections`, CP8.18 READY, PR #47 chưa merge — xếp chồng; rebase lên `main` sau khi CP8.18 merge) / `feature/cp8.19-post-doc-source` (worktree `../youtube-auto-short-cp819`)
+- Base commit / branch: `cecc920` (`origin/main`, sau merge CP8.18 PR #47; ban đầu xếp chồng trên `028ef8f`) / `feature/cp8.19-post-doc-source` (worktree `../youtube-auto-short-cp819`)
 - Human Lead approval: accepted (HUMAN LEAD 2026-10-02: Q1–Q4; APPROVE CP8.19 — D1–D8, Q3 theo cách hiểu ghi dưới; manual test thẳng trên 8080)
 - Implementation authorized: YES
 
@@ -152,5 +152,5 @@ Task chạm public API web và tải dữ liệu từ mạng (dùng lại luật
 - AC 10 (ORCHESTRATOR 2026-10-02, bản sao `~/.cache/auto-short-cp819-test/`, link: `KinhVoLuongTho10_001`, `CamUngThien_001`, `KinhThapThienNghiep_01`; client AI giả): 17 tập (Short + `.kt`) của 3 bộ kinh có bài → **148/150 Short (99%) `origin: doc`**; `match` tập 0.67–0.92; mỗi tập ~0.5 s gồm tải. Đọc đối chiếu 6 bài (`Bi7kVGbnPfE` k03, `4oOZz2CBz3g` k01, `X8ao0_7ufto` k05, `yzR1eCK_iV0` k02, `By0ZVJTPW3Y.kt` k01, `VlLxSpVCcws.kt` k02) với chữ nguồn: đúng đoạn, trọn câu, chính tả / dấu câu đúng ("xuất thế gian pháp", "hết thảy"); mở rộng lớn nhất 41 token đầu / 40 token cuối.
 - Review: round 1 ACCEPTED, không có blocking finding.
 - Important findings / decisions (IMPLEMENTER, contract không nói): link gzip tìm bằng regex trên HTML (trang thật dùng `<link rel="preload">`); `check` có `error` khi tải lỗi (link vẫn lưu); `queued` bỏ qua tập đang có job `pipeline`; `…` dính chữ, có `…` đầu thì không viết hoa; `match` tính trên segment `speech`; cache không theo transcript hash (chỉ tải lại khi đổi link).
-- Known limitations: job soạn bài vẫn chạy preflight Ollama (làn `ai`) kể cả khi mọi Short lấy từ văn bản — GPU tắt thì bài `doc` cũng đợi GPU; bài có thể thừa vài câu không có trong video (Q1 a, ≤ 60 token mỗi phía). Manual test trên 8080: chưa chạy.
-- PR:
+- Known limitations: job soạn bài vẫn chạy preflight Ollama (làn `ai`) kể cả khi mọi Short lấy từ văn bản — GPU tắt thì bài `doc` cũng đợi GPU; bài có thể thừa vài câu không có trong video (Q1 a, ≤ 60 token mỗi phía). Manual test trên 8080 (HUMAN LEAD 2026-10-02): "Test quá ok" — tập 1 Vô Lượng Thọ (`Bi7kVGbnPfE` + `.kt`) soạn lại 17/17 bài `doc`.
+- PR: (đang tạo)
