@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field, StrictBool
 from .. import khaithi
 from ..config import Config
 from ..pipeline import PIPELINE_STAGES, PreflightError, ollama_preflight, run_pipeline
+from ..post import corrections as post_corrections
 from ..post import fetch as post_fetch
 from ..post import images as post_images
 from ..post import logic as post_logic
@@ -143,6 +144,23 @@ class PostEditIn(BaseModel):
     paragraphs: list[str] | None = Field(default=None, max_length=200)
     image: str | None = Field(default=None, max_length=100)
     link: str | None = Field(default=None, max_length=2000)
+
+
+class CorrectionIn(BaseModel):
+    """CP8.18 D5 ``POST /api/post-corrections``: a hand-added rule."""
+
+    model_config = {"populate_by_name": True}
+    from_: str = Field(alias="from", max_length=500)
+    to: str = Field(max_length=500)
+
+
+class CorrectionEditIn(BaseModel):
+    """CP8.18 D5 ``PUT /api/post-corrections/{id}``: any subset of ``status`` / ``from`` / ``to``."""
+
+    model_config = {"populate_by_name": True}
+    status: Literal["proposed", "approved", "rejected"] | None = None
+    from_: str | None = Field(default=None, alias="from", max_length=500)
+    to: str | None = Field(default=None, max_length=500)
 
 
 class PostImageSearchIn(BaseModel):
@@ -970,6 +988,24 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                  job.id)
         return JSONResponse({"job": _job_view(job)}, status_code=202)
 
+    def _learn_corrections(episode_id: str, clip: str, old: list[str], new: list[str], now: str) -> int | None:
+        """CP8.18 D2/D6 (caller holds ``post_lock``): log the edit and record the proposals; any dictionary / IO
+        failure is a warning and ``None``, never a failure of the post save."""
+        path = config.post.corrections_path
+        try:
+            proposals, words, changed = post_corrections.extract(old, new)
+            post_corrections.append_edit_log(path, at=now, episode_id=episode_id, clip_id=clip, words=words,
+                                             changed_words=changed)
+            if not proposals:
+                return 0
+            cdoc = post_corrections.load(path)
+            post_corrections.record(cdoc, proposals, episode_id, clip, now)
+            post_corrections.save(path, cdoc)
+            return len(proposals)
+        except (post_corrections.CorrectionsError, OSError) as exc:
+            log.warning("web: từ điển sửa lỗi: %s", exc)
+            return None
+
     @app.put("/api/episodes/{episode_id}/posts/{clip}")
     def api_posts_edit(episode_id: str, clip: str, body: PostEditIn):
         """P9: sửa tay ``paragraphs`` (-> ``origin: manual``) / đổi ``image`` / sửa ``link`` (P6); được cả khi job
@@ -997,13 +1033,18 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             except post_logic.LinkError as exc:
                 return JSONResponse({"detail": str(exc)}, status_code=422)
         order = [cid for cid, _ in post_stage.rendered_clip_ids(config, episode_id)]
+        proposed: int | None = None
         with post_lock:
             try:
                 doc = post_store.read_posts(_posts_path(episode_id), episode_id)
-                doc = post_store.with_fields(doc, order, clip, changes, now=_post_now())
+                old_paragraphs = post_store.find(doc, clip)["paragraphs"] if post_store.find(doc, clip) else None
+                now = _post_now()
+                doc = post_store.with_fields(doc, order, clip, changes, now=now)
             except post_store.PostsError as exc:
                 return JSONResponse({"detail": str(exc)}, status_code=422)
             post_store.write(_posts_path(episode_id), doc)
+            if "paragraphs" in given and old_paragraphs is not None:
+                proposed = _learn_corrections(episode_id, clip, old_paragraphs, changes["paragraphs"], now)
         entry = post_store.find(doc, clip)
         try:
             ep_src = post_source.load(episode_id, config)
@@ -1017,8 +1058,11 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         header_fields = _post_header_fields(episode_id)
         series, tags = _post_series_and_tags(episode_id)
         log.info("web: post %s [%s] sửa %s", clip, episode_id, ", ".join(sorted(given)))
-        return _post_entry_view(entry, ep_src=ep_src, title=title, header_fields=header_fields,
+        view = _post_entry_view(entry, ep_src=ep_src, title=title, header_fields=header_fields,
                                 hashtags_list=review_hashtags(series, tags))
+        if "paragraphs" in given:
+            view["proposed"] = proposed  # CP8.18 D5 (null: the dictionary failed, the post was still saved)
+        return view
 
     @app.post("/api/episodes/{episode_id}/posts/{clip}/posted")
     def api_posts_posted(episode_id: str, clip: str, body: PublishedIn):
@@ -1037,6 +1081,93 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         entry = post_store.find(doc, clip)
         log.info("web: post %s [%s] %s \"Đã đăng bài\"", clip, episode_id, "tick" if body.value else "untick")
         return {"clip_id": clip, "posted": entry["posted_at"] is not None, "posted_at": entry["posted_at"]}
+
+    # --- CP8.18: post correction dictionary (D5) ------------------------------------------------------------
+
+    def _corr_load() -> dict | JSONResponse:
+        try:
+            return post_corrections.load(config.post.corrections_path)
+        except post_corrections.CorrectionsError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=422)
+
+    def _corr_apply(rule: dict) -> dict:
+        return post_corrections.apply_rule_to_posts(Path(config.workspace.dir), rule, post_lock, _post_now())
+
+    @app.get("/api/post-corrections")
+    def api_corrections():
+        with post_lock:
+            try:
+                doc, error = post_corrections.load(config.post.corrections_path), None
+            except post_corrections.CorrectionsError as exc:
+                doc, error = post_corrections.empty_doc(), str(exc)
+        return {"rules": doc["rules"], "stats": post_corrections.stats(config.post.corrections_path),
+                "error": error}
+
+    @app.post("/api/post-corrections")
+    def api_corrections_add(body: CorrectionIn):
+        now = _post_now()
+        with post_lock:
+            doc = _corr_load()
+            if isinstance(doc, JSONResponse):
+                return doc
+            try:
+                src, dst = post_corrections.validate_phrases(body.from_, body.to)
+                nums = [int(r["id"][1:]) for r in doc["rules"] if r["id"][1:].isdigit()]
+                rule = {"id": f"r{max(nums, default=0) + 1:04d}", "from": src, "to": dst,
+                        "status": post_corrections.APPROVED, "count": 0, "examples": [], "created_at": now,
+                        "updated_at": now}
+                post_corrections.check_unique_approved(doc, rule)
+                doc["rules"].append(rule)
+                post_corrections.save(config.post.corrections_path, doc)
+            except post_corrections.CorrectionsError as exc:
+                return JSONResponse({"detail": str(exc)}, status_code=422)
+        applied = _corr_apply(rule)
+        log.info("web: luật sửa lỗi %s thêm tay: %s", rule["id"], applied)
+        return {"rule": rule, "applied": applied}
+
+    @app.put("/api/post-corrections/{rule_id}")
+    def api_corrections_edit(rule_id: str, body: CorrectionEditIn):
+        now = _post_now()
+        with post_lock:
+            doc = _corr_load()
+            if isinstance(doc, JSONResponse):
+                return doc
+            rule = post_corrections.find_rule(doc, rule_id)
+            if rule is None:
+                return JSONResponse({"detail": "không có luật này"}, status_code=404)
+            given = body.model_fields_set & {"status", "from_", "to"}
+            if not given:
+                return JSONResponse({"detail": "cần ít nhất một trong: status, from, to"}, status_code=422)
+            try:
+                src, dst = post_corrections.validate_phrases(
+                    body.from_ if "from_" in given else rule["from"], body.to if "to" in given else rule["to"])
+                status = body.status if body.status is not None else rule["status"]
+                new = {**rule, "from": src, "to": dst, "status": status, "updated_at": now}
+                post_corrections.check_unique_approved(doc, new)
+                doc["rules"] = [new if r["id"] == rule_id else r for r in doc["rules"]]
+                post_corrections.save(config.post.corrections_path, doc)
+            except post_corrections.CorrectionsError as exc:
+                return JSONResponse({"detail": str(exc)}, status_code=422)
+        out: dict = {"rule": new}
+        if new["status"] == post_corrections.APPROVED and rule["status"] != post_corrections.APPROVED:
+            out["applied"] = _corr_apply(new)
+            log.info("web: luật sửa lỗi %s đã duyệt: %s", rule_id, out["applied"])
+        return out
+
+    @app.delete("/api/post-corrections/{rule_id}")
+    def api_corrections_delete(rule_id: str):
+        with post_lock:
+            doc = _corr_load()
+            if isinstance(doc, JSONResponse):
+                return doc
+            if post_corrections.find_rule(doc, rule_id) is None:
+                return JSONResponse({"detail": "không có luật này"}, status_code=404)
+            doc["rules"] = [r for r in doc["rules"] if r["id"] != rule_id]
+            try:
+                post_corrections.save(config.post.corrections_path, doc)
+            except post_corrections.CorrectionsError as exc:
+                return JSONResponse({"detail": str(exc)}, status_code=422)
+        return {"deleted": rule_id}
 
     # --- CP8.15: image library (P5, P5a, P5b) ---------------------------------------------------------------
 

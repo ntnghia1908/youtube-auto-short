@@ -156,6 +156,12 @@ accepted, matching images are downloaded straight into the library after the sam
 http(s) hosts are fetched, never a local/private address). Parameters in `[post]` of `config.example.toml`.
 Contract: `docs/decisions/CP8.15-community-post-contract.md`.
 
+Correction dictionary (CP8.18): editing a post and pressing "Lưu đoạn" records word fixes as proposals; approve them in
+"Từ điển sửa lỗi" on the Bài đăng tab and they are applied to the source words of every later post and to the unposted
+posts already stored. The rules live in `[post] corrections_path` (default
+`~/.local/share/auto-short/post-corrections.json`, shared by every episode; `post-edit-log.jsonl` beside it feeds the
+"% words you fix" figure). Contract: P14 of the same file.
+
 Storage tab (CP8.6, "Bộ nhớ" in the top bar, `/storage`): free / used space of the drive holding `work/` and
 `output/`, the size of every episode (source video / Shorts / other) and of the Whisper models, and clean-up
 suggestions with a "Làm" button (asks first; nothing is ever deleted automatically): episodes whose Shorts are all

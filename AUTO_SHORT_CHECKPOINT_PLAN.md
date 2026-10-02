@@ -483,6 +483,18 @@ bộ kinh (`<series>_Tập<N>_Shorts.zip` / `…_KhaiThị.zip`) and a "Tải c�
 
 ---
 
+## CP8.18 — Post Correction Dictionary
+
+> HUMAN LEAD 2026-10-02 (`docs/tasks/CP8.18-post-corrections.md`, D1–D7, S2). Amends `docs/decisions/CP8.15-community-post-contract.md` P2, P3, P7, P9, P11 (+ P14) and `docs/decisions/CP8.3-web-contract.md` W7.
+
+Hand edits of a post ("Lưu đoạn") are turned into word-fix proposals; approved rules (a shared file outside the repo,
+`[post] corrections_path`) are applied deterministically to the source words of every later post and to the unposted
+`ai` / `raw` posts already stored. A "% words you still fix" figure shows whether the dictionary helps. Only the post
+text is touched (not the transcript, titles or render); punctuation / capitalisation errors of the AI are out of scope.
+No new dependency, `posts.json` schema unchanged.
+
+---
+
 ## CP9 — Human Review + Batch Processing
 
 > Re-plan HUMAN LEAD 2026-09-27: phần batch mức playlist (bộ kinh: liệt kê, bấm xử lý từng tập, xếp hàng, trạng thái "Xong" suy ra khi đăng hết) kéo lên CP8.7 (`docs/tasks/CP8.7-playlist.md`, `docs/decisions/CP8.3-web-contract.md` W10). CP9 còn: tự xử lý hàng loạt, approval state, failed-item isolation đầy đủ.

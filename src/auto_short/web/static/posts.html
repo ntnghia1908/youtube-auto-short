@@ -26,6 +26,7 @@
     <div class="shorts-head">
       <span id="posts-count" class="muted small"></span>
       <button id="posts-compose-missing" class="btn small" type="button" hidden>Soạn bài còn thiếu</button>
+      <button id="corr-open" class="btn small" type="button">Từ điển sửa lỗi</button>
     </div>
     <div id="posts-jobs" class="small"></div>
     <p id="posts-msg" class="small" hidden></p>
@@ -48,6 +49,28 @@
       <div id="image-quick-links" class="edit-actions" hidden></div>
       <p id="image-msg" class="small" hidden></p>
       <div id="image-grid" class="img-grid"></div>
+    </div>
+  </div>
+</div>
+<div id="corr-dialog" class="modal" role="dialog" aria-modal="true" aria-labelledby="corr-title" hidden>
+  <div class="modal-box">
+    <div class="modal-head">
+      <h2 id="corr-title">Từ điển sửa lỗi</h2>
+      <button id="corr-close" class="btn small" type="button">Đóng</button>
+    </div>
+    <div class="pane">
+      <p id="corr-stats" class="muted small"></p>
+      <p id="corr-msg" class="small" hidden></p>
+      <h3>Đề xuất</h3>
+      <div id="corr-proposed"></div>
+      <h3>Đã duyệt</h3>
+      <div id="corr-approved"></div>
+      <h3>Thêm luật</h3>
+      <div class="edit-actions corr-add">
+        <input id="corr-add-from" type="text" placeholder="Sai (vd: hết thầy tất cả)" aria-label="Cụm sai">
+        <input id="corr-add-to" type="text" placeholder="Đúng (vd: hết thảy tất cả)" aria-label="Cụm đúng">
+        <button id="corr-add-btn" class="btn small primary" type="button">Thêm và áp dụng</button>
+      </div>
     </div>
   </div>
 </div>

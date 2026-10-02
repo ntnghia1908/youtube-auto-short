@@ -108,6 +108,8 @@ Implementation tham chiếu: `src/auto_short/web/` (`app.py` app factory + route
 
 Mọi route cần cookie (W2). JSON UTF-8.
 
+**Sửa đổi CP8.18 (HUMAN LEAD 2026-10-02):** route từ điển sửa lỗi bài đăng `GET|POST /api/post-corrections`, `PUT|DELETE /api/post-corrections/{id}`; `PUT /api/episodes/{id}/posts/{clip}` có `paragraphs` trả thêm `proposed` — canonical ở `docs/decisions/CP8.15-community-post-contract.md` P14.
+
 **Sửa đổi CP8.9 (HUMAN LEAD 2026-09-28):** `POST /api/episodes` nhận thêm `kinds`, `min_minutes`, `max_minutes` và trả thêm `episodes: […]`; `GET /api/episodes`, `GET /api/episodes/{id}` thêm `kind`, `min_minutes`, `max_minutes`, `base_episode_id`, `khaithi_episode_id`; entry bộ kinh thêm trạng thái khai thị. Canonical: `docs/decisions/CP8.9-khai-thi-contract.md` K7, K8.
 
 | Route | Kết quả |

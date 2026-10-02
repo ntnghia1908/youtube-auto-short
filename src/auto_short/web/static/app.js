@@ -1341,8 +1341,139 @@ const AutoShort = (() => {
     postsPage.vid = episodeId.endsWith(".kt") ? episodeId.slice(0, -3) : episodeId;
     initImageDialog();
     $("#posts-compose-missing").addEventListener("click", composeMissing);
+    initCorrections();
     checkDisk();
     loadPostsPage();
+  }
+
+  // --- CP8.18 D7: correction dictionary dialog ---------------------------------------------------------------
+
+  function corrMsg(text, cls) {
+    const m = $("#corr-msg");
+    m.textContent = text || "";
+    m.className = "small " + (cls || "");
+    m.hidden = !text;
+  }
+
+  function setCorrectionsButton(proposed) {
+    $("#corr-open").textContent = proposed ? `Từ điển sửa lỗi (${proposed} đề xuất)` : "Từ điển sửa lỗi";
+  }
+
+  async function refreshCorrectionsCount() {
+    try {
+      const d = await api("/api/post-corrections");
+      setCorrectionsButton(d.rules.filter((r) => r.status === "proposed").length);
+      return d;
+    } catch (_) { return null; }
+  }
+
+  function closeCorrections() {
+    $("#corr-dialog").hidden = true;
+    document.body.classList.remove("modal-open");
+  }
+
+  function initCorrections() {
+    $("#corr-open").addEventListener("click", openCorrections);
+    $("#corr-close").addEventListener("click", closeCorrections);
+    $("#corr-add-btn").addEventListener("click", async () => {
+      const body = { from: $("#corr-add-from").value, to: $("#corr-add-to").value };
+      try {
+        const d = await api("/api/post-corrections", jsonBody("POST", body));
+        $("#corr-add-from").value = "";
+        $("#corr-add-to").value = "";
+        await corrApplied(d.applied);
+      } catch (e) { corrMsg(e.message, "error"); }
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && !$("#corr-dialog").hidden) closeCorrections();
+    });
+    refreshCorrectionsCount();
+  }
+
+  async function openCorrections() {
+    $("#corr-dialog").hidden = false;
+    document.body.classList.add("modal-open");
+    corrMsg("");
+    await loadCorrections();
+  }
+
+  async function corrApplied(applied) {
+    if (applied) {
+      corrMsg(`Đã sửa ${applied.places} chỗ trong ${applied.posts} bài chưa đăng`, "");
+      loadPostsPage();
+    } else corrMsg("");
+    await loadCorrections();
+  }
+
+  async function corrUpdate(id, body) {
+    try {
+      const d = await api("/api/post-corrections/" + encodeURIComponent(id), jsonBody("PUT", body));
+      await corrApplied(d.applied);
+    } catch (e) { corrMsg(e.message, "error"); }
+  }
+
+  async function corrDelete(id) {
+    if (!confirm("Xóa luật này? Các bài đã sửa không bị hoàn tác.")) return;
+    try {
+      await api("/api/post-corrections/" + encodeURIComponent(id), { method: "DELETE" });
+      corrMsg("");
+      await loadCorrections();
+    } catch (e) { corrMsg(e.message, "error"); }
+  }
+
+  function corrButton(label, cls, fn) {
+    const b = el("button", { class: "btn small " + cls, type: "button", text: label });
+    b.addEventListener("click", fn);
+    return b;
+  }
+
+  function corrExamples(r) {
+    const ex = (r.examples || []).map((e) => `${e.episode_id}/${e.clip_id}`);
+    return `${r.count} lần` + (ex.length ? " · " + ex.join(", ") : "");
+  }
+
+  function proposedRow(r) {
+    const from = el("input", { type: "text", value: r.from, "aria-label": "Cụm sai" });
+    const to = el("input", { type: "text", value: r.to, "aria-label": "Cụm đúng" });
+    from.value = r.from;
+    to.value = r.to;
+    return el("div", { class: "corr-row" },
+      el("div", { class: "corr-pair", text: `${r.from} → ${r.to}` }),
+      el("div", { class: "muted small", text: corrExamples(r) }),
+      el("div", { class: "edit-actions" }, from, to),
+      el("div", { class: "edit-actions" },
+        corrButton("Duyệt", "primary", () => {
+          const body = { status: "approved" };
+          if (from.value !== r.from) body.from = from.value;
+          if (to.value !== r.to) body.to = to.value;
+          corrUpdate(r.id, body);
+        }),
+        corrButton("Bỏ qua", "", () => corrUpdate(r.id, { status: "rejected" }))));
+  }
+
+  function approvedRow(r) {
+    return el("div", { class: "corr-row" },
+      el("div", { class: "corr-pair", text: `${r.from} → ${r.to}` }),
+      el("div", { class: "muted small", text: corrExamples(r) }),
+      el("div", { class: "edit-actions" },
+        corrButton("Bỏ duyệt", "", () => corrUpdate(r.id, { status: "proposed" })),
+        corrButton("Xóa", "danger", () => corrDelete(r.id))));
+  }
+
+  async function loadCorrections() {
+    let d;
+    try { d = await api("/api/post-corrections"); } catch (e) { corrMsg(e.message, "error"); return; }
+    if (d.error) corrMsg(d.error, "error");
+    const proposed = d.rules.filter((r) => r.status === "proposed");
+    const approved = d.rules.filter((r) => r.status === "approved");
+    setCorrectionsButton(proposed.length);
+    const none = (t) => el("p", { class: "muted small", text: t });
+    $("#corr-proposed").replaceChildren(...(proposed.length ? proposed.map(proposedRow) : [none("Chưa có đề xuất.")]));
+    $("#corr-approved").replaceChildren(...(approved.length ? approved.map(approvedRow) : [none("Chưa có luật nào được duyệt.")]));
+    const st = d.stats || {};
+    $("#corr-stats").textContent = st.avg_changed_pct === null || st.avg_changed_pct === undefined
+      ? "Chưa có số đo (chưa lưu đoạn nào)."
+      : `Trung bình bạn sửa ${st.avg_changed_pct}% từ mỗi bài (${Math.min(st.saves, 20)} lần lưu gần nhất).`;
   }
 
   // --- CP8.17 D1/D2: "Đã đăng bài" ticks itself once the post text was copied AND its image downloaded -----------
@@ -1481,8 +1612,13 @@ const AutoShort = (() => {
       const paragraphs = textarea.value.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
       btn.disabled = true;
       try {
-        changed(await api(url(), jsonBody("PUT", { paragraphs })));
+        const saved = await api(url(), jsonBody("PUT", { paragraphs }));
+        changed(saved);
         render();
+        if (saved.proposed > 0) { // CP8.18 D7
+          postsMsg(`Đã ghi ${saved.proposed} đề xuất sửa từ`, "");
+          refreshCorrectionsCount();
+        }
         return;
       } catch (e) {
         msg.textContent = e.message;
