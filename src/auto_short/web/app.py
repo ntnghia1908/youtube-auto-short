@@ -1112,8 +1112,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                 return doc
             try:
                 src, dst = post_corrections.validate_phrases(body.from_, body.to)
-                nums = [int(r["id"][1:]) for r in doc["rules"] if r["id"][1:].isdigit()]
-                rule = {"id": f"r{max(nums, default=0) + 1:04d}", "from": src, "to": dst,
+                rule = {"id": post_corrections.next_rule_id(doc), "from": src, "to": dst,
                         "status": post_corrections.APPROVED, "count": 0, "examples": [], "created_at": now,
                         "updated_at": now}
                 post_corrections.check_unique_approved(doc, rule)

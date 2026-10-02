@@ -171,6 +171,11 @@ def extract(old_paragraphs: list[str], new_paragraphs: list[str]) -> tuple[list[
     return out, len(old), changed
 
 
+def next_rule_id(doc: dict) -> str:
+    nums = [int(m.group(1)) for r in doc["rules"] if (m := re.fullmatch(r"r(\d+)", r["id"]))]
+    return f"r{max(nums, default=0) + 1:04d}"
+
+
 def record(doc: dict, proposals: list[tuple[str, str]], episode_id: str, clip_id: str, now: str) -> dict:
     """D2: add the proposals to ``doc`` (in place; also returned). An existing ``(from, to)`` (any status) gets
     ``count + 1`` and one more example, status unchanged; a new pair becomes ``proposed``."""
@@ -178,8 +183,7 @@ def record(doc: dict, proposals: list[tuple[str, str]], episode_id: str, clip_id
         example = {"episode_id": episode_id, "clip_id": clip_id, "at": now}
         rule = next((r for r in doc["rules"] if r["from"] == src and r["to"] == dst), None)
         if rule is None:
-            nums = [int(m.group(1)) for r in doc["rules"] if (m := re.fullmatch(r"r(\d+)", r["id"]))]
-            doc["rules"].append({"id": f"r{max(nums, default=0) + 1:04d}", "from": src, "to": dst,
+            doc["rules"].append({"id": next_rule_id(doc), "from": src, "to": dst,
                                  "status": PROPOSED, "count": 1, "examples": [example], "created_at": now,
                                  "updated_at": now})
         else:
@@ -212,20 +216,41 @@ def _match_spans(norm: list[str], rules: list[dict]) -> list[tuple[int, int, dic
     return spans
 
 
-def _replacement(orig: list[str], rule: dict) -> list[str]:
-    """New tokens for ``orig`` (the matched raw tokens): the rule's ``to`` words, first letter upper-case where the
-    original token at the same position (the last one when ``to`` is longer) is; leading punctuation of the first and
-    trailing punctuation of the last original token kept (D3 / D4)."""
-    new = rule["to"].split()
-    out = []
-    for j, word in enumerate(new):
-        o = orig[min(j, len(orig) - 1)]
-        core = _TRAIL_RE.sub("", _LEAD_RE.sub("", o))
-        out.append(word[:1].upper() + word[1:] if core[:1].isupper() else word)
-    lead = _LEAD_RE.match(orig[0])
-    trail = _TRAIL_RE.search(orig[-1])
-    out[0] = (lead.group(0) if lead else "") + out[0]
-    out[-1] = out[-1] + (trail.group(0) if trail else "")
+def _replacement(orig: list[str], rule: dict) -> list[tuple[str, int]]:
+    """``[(token, index in orig)]`` replacing the matched raw tokens ``orig``. The common prefix / suffix of the rule's
+    ``from`` / ``to`` keep their original tokens verbatim (case, punctuation) and their own index; only the changed
+    middle is replaced. Equal-length middle: each new word takes the lead / trail punctuation and first-letter case of
+    the original at the same position; otherwise the first new word takes the lead of the first middle original, the
+    last one the trail of the last, case per position (the last original when ``to`` is longer). Middle words belong to
+    the first middle original (line membership)."""
+    old, new = rule["from"].split(), rule["to"].split()
+    p = 0
+    while p < min(len(old), len(new)) and old[p] == new[p]:
+        p += 1
+    sfx = 0
+    while sfx < min(len(old), len(new)) - p and old[len(old) - 1 - sfx] == new[len(new) - 1 - sfx]:
+        sfx += 1
+    old_mid = orig[p:len(orig) - sfx]
+    new_mid = new[p:len(new) - sfx]
+    anchor = min(p, len(orig) - 1)
+    out: list[tuple[str, int]] = [(orig[i], i) for i in range(p)]
+    if old_mid:
+        same = len(old_mid) == len(new_mid)
+        for j, word in enumerate(new_mid):
+            o = old_mid[j if same else min(j, len(old_mid) - 1)]
+            core = _TRAIL_RE.sub("", _LEAD_RE.sub("", o))
+            tok = word[:1].upper() + word[1:] if core[:1].isupper() else word
+            if same:
+                lead, trail = _LEAD_RE.match(o), _TRAIL_RE.search(o)
+                tok = (lead.group(0) if lead else "") + tok + (trail.group(0) if trail else "")
+            out.append((tok, p))
+        if not same and new_mid:
+            lead, trail = _LEAD_RE.match(old_mid[0]), _TRAIL_RE.search(old_mid[-1])
+            out[p] = ((lead.group(0) if lead else "") + out[p][0], p)
+            out[-1] = (out[-1][0] + (trail.group(0) if trail else ""), p)
+    else:  # pure insertion between the prefix and the suffix
+        out += [(w, anchor) for w in new_mid]
+    out += [(orig[len(orig) - sfx + k], len(orig) - sfx + k) for k in range(sfx)]
     return out
 
 
@@ -242,8 +267,8 @@ def apply_tokens(tokens: list[str], rules: list[dict]) -> tuple[list[str], list[
         out += tokens[pos:start]
         origin += range(pos, start)
         repl = _replacement(tokens[start:end], rule)
-        out += repl
-        origin += [start] * len(repl)
+        out += [t for t, _i in repl]
+        origin += [start + i for _t, i in repl]
         applied.append({"rule_id": rule["id"], "at_token": start})
         pos = end
     out += tokens[pos:]
@@ -286,7 +311,7 @@ def apply_paragraphs(paragraphs: list[str], rule: dict) -> tuple[list[str], int]
         pos = 0
         for start, end, r in spans:
             pieces.append(para[pos:words[start].start()])
-            pieces.append(" ".join(_replacement([m.group(0) for m in words[start:end]], r)))
+            pieces.append(" ".join(t for t, _i in _replacement([m.group(0) for m in words[start:end]], r)))
             pos = words[end - 1].end()
         pieces.append(para[pos:])
         out.append("".join(pieces))

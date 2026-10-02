@@ -80,7 +80,7 @@ def test_apply_tokens_case_longest_first_non_overlapping():
     new, applied, origin = C.apply_tokens(toks, rules)
     assert new == "Hết thảy mọi thứ xuất thế gian".split()
     assert applied == [{"rule_id": "r2", "at_token": 0}, {"rule_id": "r3", "at_token": 4}]
-    assert origin[:3] == [0, 0, 0]
+    assert origin[:3] == [0, 1, 1]
 
 
 def test_apply_tokens_case_follows_original_position():
@@ -89,13 +89,13 @@ def test_apply_tokens_case_follows_original_position():
     new, _a, _o = C.apply_tokens(["suốt", "Thế"], [rule("suốt thế", "xuất thế")])
     assert new == ["xuất", "Thế"]
     new, _a, _o = C.apply_tokens(["Hết"], [rule("hết", "hết thảy")])  # `to` longer: reuse the last original token
-    assert new == ["Hết", "Thảy"]
+    assert new == ["Hết", "thảy"]  # common prefix kept verbatim, inserted word lower-case
 
 
 def test_apply_lines_keeps_line_membership_across_lines():  # AC5
     lines = ["hết thầy tất", "cả mọi người", "đều nghe"]
     new, applied = C.apply_lines(lines, [rule("tất cả", "tất thảy")])
-    assert new == ["hết thầy tất thảy", "mọi người", "đều nghe"]
+    assert new == ["hết thầy tất", "thảy mọi người", "đều nghe"]  # changed word sits on its own line
     assert applied == [{"rule_id": "r0001", "at_token": 2}]
 
 
@@ -116,6 +116,17 @@ def test_apply_paragraphs_keeps_edge_punct_and_paragraph_break():
     assert new == ["Hết thảy tất cả."] and places == 1
     new, places = C.apply_paragraphs(["x  hết thầy tất cả\ny"], r)
     assert new == ["x  hết thảy tất cả\ny"]  # whitespace untouched
+
+
+def test_context_tokens_keep_punctuation_case_and_line():  # review B1
+    r = rule("thôi suốt thế", "thôi xuất thế")
+    assert C.apply_paragraphs(["Vậy là thôi. Suốt thế gian pháp"], r)[0] == ["Vậy là thôi. Xuất thế gian pháp"]
+    r = rule("và suốt thế", "và xuất thế")
+    assert C.apply_paragraphs(["Pháp và suốt, thế gian."], r)[0] == ["Pháp và xuất, thế gian."]
+    new, _a = C.apply_lines(["là thôi", "suốt thế gian"], [rule("thôi suốt thế", "thôi xuất thế")])
+    assert new == ["là thôi", "xuất thế gian"]
+    # unequal middle: lead of the first / trail of the last original, case per position
+    assert C.apply_paragraphs(["(Hết, thầy) tất"], rule("hết thầy", "hết thảy mọi"))[0] == ["(Hết, thảy mọi) tất"]
 
 
 # --- D5 ---------------------------------------------------------------------------------------------------------
