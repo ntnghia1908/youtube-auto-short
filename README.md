@@ -162,6 +162,13 @@ posts already stored. The rules live in `[post] corrections_path` (default
 `~/.local/share/auto-short/post-corrections.json`, shared by every episode; `post-edit-log.jsonl` beside it feeds the
 "% words you fix" figure). Contract: P14 of the same file.
 
+Lecture document (CP8.19): on a bộ kinh page, "Văn bản gốc" takes a link to any episode of the edited text on
+`ph.tinhtong.vn` (`https://ph.tinhtong.vn/Home/<Code>?d=<Code>_001.html`); the link of episode N is derived from it. The
+page is downloaded (public host only, cached as `work/<id>/doc.json`) and each Short's post becomes the matching passage
+of the text, widened to whole sentences and kept in the document's paragraphs (label "Văn bản gốc", no AI). Saving the
+link reports how well episode N matches ("Khớp 88%") and recomposes the unposted posts of the bộ kinh; Shorts that do
+not match (or an episode that matches below 60%) keep the AI path. Contract: P15 of the same file.
+
 Storage tab (CP8.6, "Bộ nhớ" in the top bar, `/storage`): free / used space of the drive holding `work/` and
 `output/`, the size of every episode (source video / Shorts / other) and of the Whisper models, and clean-up
 suggestions with a "Làm" button (asks first; nothing is ever deleted automatically): episodes whose Shorts are all

@@ -14,8 +14,8 @@ from ..workspace import atomic_write_json
 
 POSTS_NAME = "posts.json"
 SCHEMA_VERSION = 1
-AI, RAW, MANUAL = "ai", "raw", "manual"
-ORIGINS = (AI, RAW, MANUAL)
+AI, RAW, MANUAL, DOC = "ai", "raw", "manual", "doc"  # DOC: CP8.19 text taken from the lecture document
+ORIGINS = (AI, RAW, MANUAL, DOC)
 ENTRY_KEYS = ("clip_id", "candidate_id", "source_sha256", "paragraphs", "origin", "image", "link", "posted_at",
              "updated_at")
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$")
