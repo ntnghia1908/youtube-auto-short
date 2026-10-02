@@ -153,4 +153,4 @@ Task chạm public API web và tải dữ liệu từ mạng (dùng lại luật
 - Review: round 1 ACCEPTED, không có blocking finding.
 - Important findings / decisions (IMPLEMENTER, contract không nói): link gzip tìm bằng regex trên HTML (trang thật dùng `<link rel="preload">`); `check` có `error` khi tải lỗi (link vẫn lưu); `queued` bỏ qua tập đang có job `pipeline`; `…` dính chữ, có `…` đầu thì không viết hoa; `match` tính trên segment `speech`; cache không theo transcript hash (chỉ tải lại khi đổi link).
 - Known limitations: job soạn bài vẫn chạy preflight Ollama (làn `ai`) kể cả khi mọi Short lấy từ văn bản — GPU tắt thì bài `doc` cũng đợi GPU; bài có thể thừa vài câu không có trong video (Q1 a, ≤ 60 token mỗi phía). Manual test trên 8080 (HUMAN LEAD 2026-10-02): "Test quá ok" — tập 1 Vô Lượng Thọ (`Bi7kVGbnPfE` + `.kt`) soạn lại 17/17 bài `doc`.
-- PR: (đang tạo)
+- PR: #48
