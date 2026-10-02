@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -131,9 +131,9 @@ Task chạm public API web (route mới) nhưng không chạm database, security
 
 ## Result
 
-- Main changes:
-- Tests:
-- Review:
-- Important findings / decisions:
-- Known limitations:
+- Main changes: `post/corrections.py` mới (D1–D6: file từ điển, `extract`/`record`, `apply_tokens`/`apply_lines`/`apply_paragraphs`/`apply_rule_to_posts`, kiểm D5, nhật ký sửa + `stats`); `PostConfig.corrections_path`; `post/stage.py` áp luật `approved` trước AI, `source_sha256` trên chữ chưa sửa, `post_log.json` thêm `corrections`; `web/app.py` 4 route `/api/post-corrections` + `PUT` bài trả `proposed`; UI hộp thoại "Từ điển sửa lỗi" (tab Bài đăng). Tài liệu: CP8.15 P14 + ghi chú P2/P3/P7/P9/P11, CP8.3 W7, README, checkpoint plan, project profile.
+- Tests: `tests/test_post_corrections.py`, `tests/test_web_post_corrections_cp818.py` (28 passed); toàn bộ `python -m pytest -q -n auto` 1255 passed, 1 skipped (ORCHESTRATOR chạy lại sau fix, `294ac08`); `node scripts/framework-check.mjs` PASS.
+- Review: round 1 — B1 (blocking): áp luật làm mất dấu câu / hoa thường của token ngữ cảnh và chuyển token ngữ cảnh sang dòng caption khác → sửa `294ac08` (giữ nguyên tiền tố / hậu tố chung của `from`/`to`, chỉ thay phần giữa) + test. Round 1 fix ACCEPTED.
+- Important findings / decisions: `tests/conftest.py` autouse chuyển `corrections_path` sang tmp (tránh test ghi vào home); `config.example.toml` không thêm key (test so với default), README ghi key; sửa `from`/`to` của luật đã duyệt không áp lại; luật `rejected` không hiện trên UI; nhật ký sửa ghi mỗi lần lưu `paragraphs`; luật chèn thuần (phần giữa rỗng) đặt từ mới cạnh token gốc gần nhất.
+- Known limitations: chỉ thay từ (không chèn/xóa); bỏ duyệt / xóa luật không hoàn tác bài đã sửa; test chập chờn dưới `-n auto` (chạy riêng PASS): `tests/test_web_lanes_cp810.py::test_lanes_artifacts_identical_to_serial`, `tests/test_web_cp9.py::test_cut_save_reset_and_409`. Manual test checklist: chưa chạy.
 - PR:
