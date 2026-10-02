@@ -790,6 +790,7 @@ class PostComposeTarget:
         job.stage = None
         st = self.result
         job.summary = f"{len(st.clip_ids)} Short: {st.ai} AI, {st.raw} raw" + \
+            (f", {st.doc} văn bản gốc" if getattr(st, "doc", 0) else "") + \
             (f", {len(st.errors)} lỗi text nguồn" if st.errors else "")
 
     def __call__(self, job: Job) -> None:

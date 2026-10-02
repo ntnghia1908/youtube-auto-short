@@ -1168,6 +1168,7 @@ const AutoShort = (() => {
 
   function postBadges(p) {
     const nodes = [];
+    if (p.origin === "doc") nodes.push(el("span", { class: "badge", text: "Văn bản gốc" }));
     if (p.origin === "raw") nodes.push(el("span", { class: "badge stale-badge", text: "AI không chắc — kiểm lại" }));
     if (p.low_punctuation) nodes.push(el("span", { class: "badge stale-badge", text: "Ít dấu câu — kiểm lại" }));
     if (p.stale) {
@@ -2172,6 +2173,7 @@ const AutoShort = (() => {
     $("#pl-refresh").addEventListener("click", refreshPlaylist);
     initHashtags();
     initSeries();
+    initDoc();
     $("#pl-delete").addEventListener("click", deletePlaylist);
     loadPlaylist();
     checkDisk();
@@ -2366,6 +2368,65 @@ const AutoShort = (() => {
     });
   }
 
+  // "Văn bản gốc" (CP8.19 D1): link of the lecture document of the bộ kinh.
+  let dcEditing = false;
+
+  function dcMessage(text, cls) {
+    const m = $("#dc-msg");
+    m.textContent = text;
+    m.className = "small " + (cls || "");
+    m.hidden = !text;
+  }
+
+  function dcLoad(d, force) {
+    const input = $("#dc-input");
+    $("#dc-state").textContent = d.doc_url ? "đã gắn" : "chưa gắn";
+    $("#dc-reset").disabled = !d.doc_url;
+    if (force || !dcEditing) {
+      input.value = d.doc_url || "";
+      input.dataset.saved = d.doc_url || "";
+      dcEditing = false;
+    }
+  }
+
+  function dcCheckText(r) {
+    const c = r.check;
+    const queued = r.queued ? ` Đã xếp soạn lại bài của ${r.queued} tập.` : "";
+    if (!c) return ["Đã lưu. Chưa có tập nào có transcript để kiểm." + queued, "ok"];
+    if (c.match === null || c.match === undefined) {
+      return [`Đã lưu, nhưng không tải được văn bản tập ${c.episode}: ${c.error || "lỗi"}.` + queued, "error"];
+    }
+    const pct = Math.round(c.match * 100);
+    return c.ok
+      ? [`Khớp ${pct}% — đúng bản giảng (tập ${c.episode}).` + queued, "ok"]
+      : [`Khớp ${pct}% — có thể sai bản giảng (tập ${c.episode}); tập khớp kém dùng cách cũ.` + queued, "error"];
+  }
+
+  function initDoc() {
+    const input = $("#dc-input");
+    input.addEventListener("input", () => { dcEditing = input.value.trim() !== (input.dataset.saved || ""); });
+    const put = async (url, busy) => {
+      dcMessage(busy, "muted");
+      try {
+        const r = await api(`/api/playlists/${encodeURIComponent(playlistId)}/doc`, jsonBody("PUT", { url }));
+        dcLoad(r, true);
+        if (url === null) dcMessage("Đã xóa", "ok");
+        else { const [t, cls] = dcCheckText(r); dcMessage(t, cls); }
+        loadPlaylist();
+      } catch (e) { dcMessage(e.message, "error"); }
+    };
+    $("#dc-save").addEventListener("click", () => {
+      const value = input.value.trim();
+      if (!value) { dcMessage("Link rỗng — dùng \"Xóa\" để bỏ", "error"); return; }
+      put(value, "Đang tải văn bản để kiểm…");
+    });
+    input.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); $("#dc-save").click(); } });
+    $("#dc-reset").addEventListener("click", () => {
+      if (!confirm("Xóa văn bản gốc của bộ kinh?\n\nBài đã soạn từ văn bản giữ nguyên; lần soạn sau dùng cách cũ (AI).")) return;
+      put(null, "…");
+    });
+  }
+
   async function processEntry(e, btn) {
     if (e.action === "reprocess" && !confirm(`Xử lý lại "${e.title || e.video_id}"?\n\n` +
       "Dữ liệu tập này đã bị xóa: sẽ tải lại video (≈ 700 MB) và chạy lại từ đầu (≈ 25 phút); " +
@@ -2420,6 +2481,7 @@ const AutoShort = (() => {
     $("#pl-title").textContent = d.title || d.id;
     if (htTags === null) htLoad(d); // not while the user edits
     srLoad(d);
+    dcLoad(d);
     const kd = d.khaithi_defaults; // A2.2: server defaults unless the browser remembers the user's minutes
     if (kd && !plDefaultsApplied) {
       plDefaultsApplied = true;

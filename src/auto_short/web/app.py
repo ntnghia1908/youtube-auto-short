@@ -27,6 +27,7 @@ from .. import khaithi
 from ..config import Config
 from ..pipeline import PIPELINE_STAGES, PreflightError, ollama_preflight, run_pipeline
 from ..post import corrections as post_corrections
+from ..post import doc as post_doc
 from ..post import fetch as post_fetch
 from ..post import images as post_images
 from ..post import logic as post_logic
@@ -46,6 +47,7 @@ from .auth import COOKIE_NAME, SessionSigner, load_or_create_secret
 from .storage import BLOCK_MESSAGE, StorageCache
 from .jobs import (KIND_ADD, KIND_PIPELINE, KIND_POST, KIND_POST_SEARCH, KIND_RENDER, POST_IMAGES_KEY, JobRunner,
                    add_short_target, image_search_target, pipeline_target, post_compose_target, render_target)
+from . import playlists as playlists_mod
 from .playlists import LIST_TIMEOUT, PlaylistError, PlaylistStore, ytdlp_list
 from .urls import ASK, PLAYLIST, UrlError, canonical_url, classify_url, valid_playlist_id
 
@@ -86,6 +88,10 @@ class HashtagsIn(BaseModel):
 
 class SeriesIn(BaseModel):
     series: Any = None  # CP8.11 D7: checked by the store (string, 1-100 chars after normalization) -> 422
+
+
+class DocIn(BaseModel):
+    url: Any = None  # CP8.19 D1: the lecture-document link, or null to remove it (checked by the store -> 422)
 
 
 class TitleIn(BaseModel):
@@ -240,14 +246,15 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                playlist_timeout: float = LIST_TIMEOUT, titler: Callable | None = None,
                post_compose: Callable | None = None,
                post_preflight: Callable[[Config], None] | None = post_stage.preflight,
-               post_search: Callable | None = None) -> FastAPI:
+               post_search: Callable | None = None, doc_prepare: Callable | None = None) -> FastAPI:
     """``preflight`` / ``pipeline`` / ``render`` are injectable for tests (defaults: CP8 ``ollama_preflight`` /
     ``run_pipeline``, CP7/CP8.2 ``run_render``); so are ``disk_usage`` (``shutil.disk_usage``) and ``clock`` (epoch
     seconds, ages of the storage recommendations) for CP8.6; ``playlist_lister`` (yt-dlp flat listing) and
     ``playlist_timeout`` for CP8.7; ``titler`` (AI title of an added Short, default
     :func:`auto_short.titling.added.title_added`) for CP9; ``post_compose`` / ``post_preflight`` (default
     :func:`auto_short.post.stage.compose_posts` / ``.preflight``) and ``post_search`` (default
-    :func:`auto_short.post.fetch.search_images`) for CP8.15."""
+    :func:`auto_short.post.fetch.search_images`) for CP8.15; ``doc_prepare`` (default
+    :func:`auto_short.post.doc.prepare`, the "Văn bản gốc" check of ``PUT /api/playlists/{id}/doc``) for CP8.19."""
     runner = runner or JobRunner(config.web.queue_mode)
     storage = StorageCache(config, disk_usage=disk_usage, clock=clock)
     playlists = PlaylistStore(config, lister=playlist_lister, timeout=playlist_timeout)
@@ -602,6 +609,90 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     @app.delete("/api/playlists/{playlist_id}/series")
     def api_playlist_series_reset(playlist_id: str):
         return _series_response(playlist_id, None)
+
+    def _doc_check(doc: dict) -> dict | None:
+        """CP8.19 D1: match of the first episode of the bộ kinh that already has a transcript (None when none)."""
+        prepare = doc_prepare or post_doc.prepare
+        root = Path(config.workspace.dir)
+        for e in doc["entries"]:
+            vid = e.get("video_id")
+            if not vid or not (root / vid / "transcript.json").is_file():
+                continue
+            found = post_doc.lookup(root, vid)
+            if found is None:
+                continue
+            base = {"episode_id": vid, "episode": found[1]}
+            try:
+                segments = json.loads((root / vid / "transcript.json").read_text(encoding="utf-8")).get("segments")
+                text = prepare(vid, root, [s for s in segments or [] if isinstance(s, dict)])
+            except (post_doc.DocError, OSError, ValueError, AttributeError) as exc:
+                log.warning("web: văn bản gốc [%s]: %s", vid, exc)
+                return {**base, "match": None, "ok": False, "error": str(exc)}
+            if text is None:
+                continue
+            return {**base, "match": text.match, "ok": text.usable}
+        return None
+
+    def _recompose_for_doc(doc: dict) -> int:
+        """CP8.19 D7: queue a ``post`` job per episode (Short + khai thị) of the bộ kinh that has ``posts.json``, for
+        its unposted ``ai`` / ``raw`` posts; returns how many episodes were queued."""
+        queued = 0
+        for e in doc["entries"]:
+            vid = e.get("video_id")
+            if not vid:
+                continue
+            ids = [vid]
+            try:
+                kid = khaithi.episode_id_for(vid)
+                if (Path(config.workspace.dir) / kid).is_dir():
+                    ids.append(kid)
+            except khaithi.KhaithiError:
+                pass
+            for eid in ids:
+                if not _posts_path(eid).is_file():
+                    continue
+                order = {cid for cid, _ in post_stage.rendered_clip_ids(config, eid)}
+                with post_lock:
+                    try:
+                        posts = post_store.read_posts(_posts_path(eid), eid)["posts"]
+                    except post_store.PostsError:
+                        continue
+                clips = [p["clip_id"] for p in posts if p["origin"] in (post_store.AI, post_store.RAW)
+                         and p["posted_at"] is None and p["clip_id"] in order]
+                if not clips:
+                    continue
+                with submit_lock:
+                    current = runner.latest(eid)
+                    if current is not None and current.active and current.kind == KIND_PIPELINE:
+                        log.info("web: văn bản gốc: bỏ qua soạn lại [%s]: đang chạy pipeline", eid)
+                        continue
+                    runner.submit(eid, KIND_POST, post_compose_target(config, clips, compose=post_compose,
+                                                                      preflight=post_preflight, lock=post_lock))
+                queued += 1
+        return queued
+
+    @app.put("/api/playlists/{playlist_id}/doc")
+    def api_playlist_doc(playlist_id: str, body: DocIn):
+        """CP8.19 D1: link of the bộ kinh's lecture document (``{"url": link | null}``); 422 for a link that is not
+        ``https://ph.tinhtong.vn/Home/<Code>?d=<Code>_<n>.html``. A new link downloads one episode to report
+        ``check`` and queues the recompose of unposted ``ai`` / ``raw`` posts (D7: ``queued`` episodes)."""
+        if _playlist_or_404(playlist_id) is None:
+            return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
+        if "url" not in body.model_fields_set:
+            return JSONResponse({"detail": "thiếu url (link hoặc null để xóa)"}, status_code=422)
+        try:
+            doc = playlists.set_doc_url(playlist_id, body.url)
+        except PlaylistError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=422)
+        except FileNotFoundError:
+            return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
+        url = playlists_mod.stored_doc_url(doc)
+        check, queued = None, 0
+        if url is not None:
+            check = _doc_check(doc)
+            queued = _recompose_for_doc(doc)
+        log.info("web: playlist %s văn bản gốc %s (queued %d)", playlist_id, url or "removed", queued)
+        return {"playlist_id": playlist_id, "doc_url": url, "check": check, "queued": queued}
 
     @app.post("/api/playlists/{playlist_id}/hashtags/preview")
     def api_playlist_hashtags_preview(playlist_id: str, body: HashtagsIn):

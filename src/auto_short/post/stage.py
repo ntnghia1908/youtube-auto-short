@@ -23,7 +23,7 @@ from ..config import Config, PostConfig
 from ..pipeline import OllamaUnavailable, PreflightError
 from ..selection.client import ChatClient, ChatError, ChatUnavailable, OllamaClient, resolve_host
 from ..workspace import atomic_write_json
-from . import corrections, images, source, store
+from . import corrections, doc as doc_mod, images, source, store
 from .logic import chunk_lines
 from .prompt import prompt_sha256, render_user_prompt, system_prompt
 from .validate import project_response, raw_fallback
@@ -279,22 +279,48 @@ def resolve_todo(ep: "source.SourceEpisode", doc: dict, order: list[str], clips:
     return [cid for cid in order if cid in want]
 
 
+def _load_doc(episode_id: str, config: Config, ep: "source.SourceEpisode",
+              loader: Callable[[str, list[dict]], "doc_mod.DocText | None"] | None) -> "doc_mod.DocText | None":
+    """CP8.19 D3/D6: the usable lecture document of the episode, else None (no link, a match below
+    :data:`doc.MIN_MATCH`, or a download / read failure, which is only a warning)."""
+    try:
+        if loader is not None:
+            text = loader(episode_id, ep.rng.segments)
+        else:
+            text = doc_mod.prepare(episode_id, config.workspace.dir, ep.rng.segments)
+    except (doc_mod.DocError, OSError) as exc:
+        log.warning("post: [%s] không lấy được văn bản gốc, dùng cách cũ: %s", episode_id, exc)
+        return None
+    if text is None:
+        return None
+    if not text.usable:
+        log.info("post: [%s] văn bản gốc khớp %.0f%% < %.0f%%: không dùng", episode_id, (text.match or 0) * 100,
+                 doc_mod.MIN_MATCH * 100)
+        return None
+    return text
+
+
 @dataclass
 class ComposeSummary:
     clip_ids: list[str]
     ai: int = 0
     raw: int = 0
+    doc: int = 0  # CP8.19: posts taken from the lecture document
     errors: dict[str, str] = field(default_factory=dict)  # clip_id -> reason its source text was not readable
 
 
 def compose_posts(episode_id: str, config: Config, clips: "list[str] | str", *, client: ChatClient | None = None,
                   sleep: Callable[[float], None] = time.sleep,
-                  lock: AbstractContextManager | None = None) -> ComposeSummary:
+                  lock: AbstractContextManager | None = None,
+                  doc_loader: Callable[[str, list[dict]], "doc_mod.DocText | None"] | None = None) -> ComposeSummary:
     """P1: compose (or recompose) the post of ``clips`` (a list of clip ids) or every eligible Short that has no
     valid, non-stale post yet (``clips == "all"``, "bỏ qua Short đã có bài còn hợp lệ"), or the CP8.16 R4 set
     (``clips == "auto"``, :func:`auto_clips`). Each clip's AI work runs
     outside ``lock``; only the read-modify-write of ``posts.json`` for that one clip is serialized by ``lock`` (a
-    no-op by default) so a concurrent manual edit of another clip is never lost."""
+    no-op by default) so a concurrent manual edit of another clip is never lost. CP8.19 D6: when the episode's bộ kinh
+    carries a lecture document that matches the transcript (``doc_loader(episode_id, segments)``, default
+    :func:`auto_short.post.doc.prepare`), a Short that aligns into it takes its post from it (``origin: doc``, no AI
+    call); a download failure only logs a warning and the whole episode takes the AI path."""
     cfg = config.post
     ws_dir = Path(config.workspace.dir) / episode_id
     posts_path = ws_dir / store.POSTS_NAME
@@ -324,6 +350,7 @@ def compose_posts(episode_id: str, config: Config, clips: "list[str] | str", *, 
         if unknown:
             raise PostComposeError(f"không có Short đã dựng: {', '.join(unknown)}")
 
+    docsrc = _load_doc(episode_id, config, ep, doc_loader) if todo else None
     rules = corrections.approved_rules(cfg.corrections_path)  # CP8.18 D3: once per job
     chat = client or OllamaClient(resolve_host(cfg.ollama_host), timeout=cfg.timeout)
     guard = lock if lock is not None else _NullLock()
@@ -336,6 +363,26 @@ def compose_posts(episode_id: str, config: Config, clips: "list[str] | str", *, 
             log.warning("post: %s [%s]: source text not ready: %s", cid, episode_id, exc)
             continue
         raw_text = " ".join(lines)  # source_sha256 is taken on the uncorrected text (CP8.18 D3)
+        if docsrc is not None:
+            t0 = time.monotonic()
+            dp = doc_mod.compose(docsrc, raw_text)
+            if dp is not None:  # D6: before the AI path; the CP8.18 dictionary is not applied to a doc post
+                summary.doc += 1
+                _append_log(ws_dir / LOG_NAME, episode_id, {
+                    "at": _now(), "clip_id": cid, "candidate_id": cand_by_clip[cid], "origin": store.DOC,
+                    "doc_url": docsrc.url, "doc_match": docsrc.match, "ratio": dp.ratio, "span": list(dp.span),
+                    "expanded": {"head": dp.head, "tail": dp.tail}, "seconds": round(time.monotonic() - t0, 3),
+                    "text": raw_text, "paragraphs": dp.paragraphs})
+                with guard:
+                    doc = store.read_posts(posts_path, episode_id)
+                    image = images.least_used(cfg.image_dir, Path(config.workspace.dir)) \
+                        if store.find(doc, cid) is None else None
+                    doc = store.with_compose(doc, order, clip_id=cid, candidate_id=cand_by_clip[cid],
+                                             source_sha256=source.source_sha256(raw_text),
+                                             paragraphs=dp.paragraphs, origin=store.DOC, image=image, now=_now())
+                    store.write(posts_path, doc)
+                log.info("post: %s [%s]: doc (ratio %.2f)", cid, episode_id, dp.ratio)
+                continue
         lines, applied = corrections.apply_lines(lines, rules)
         clog: dict = {"clip_id": cid, "candidate_id": cand_by_clip[cid], "text": " ".join(lines), "ai_calls": []}
         t0 = time.monotonic()
@@ -363,6 +410,6 @@ def compose_posts(episode_id: str, config: Config, clips: "list[str] | str", *, 
         valid_first = sum(1 for c in clog["ai_calls"] if c["valid"])
         log.info("post: %s [%s]: %s (%d/%d call(s) valid, %.1f s)", cid, episode_id, result.origin, valid_first,
                  len(clog["ai_calls"]), secs)
-    if todo and summary.errors and not summary.ai and not summary.raw:
+    if todo and summary.errors and not summary.ai and not summary.raw and not summary.doc:
         raise PostComposeError("; ".join(f"{c}: {e}" for c, e in summary.errors.items()))
     return summary

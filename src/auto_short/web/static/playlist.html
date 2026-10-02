@@ -38,6 +38,20 @@
     </details>
   </section>
   <section class="card">
+    <details id="dc-box">
+      <summary>Văn bản gốc (<span id="dc-state">chưa gắn</span>)</summary>
+      <p class="muted small">Link một tập bất kỳ trên ph.tinhtong.vn (dạng <code>https://ph.tinhtong.vn/Home/KinhVoLuongTho10?d=KinhVoLuongTho10_001.html</code>). Bài đăng của Short lấy đúng đoạn văn bản tương ứng, không cần AI; Short không khớp thì dùng cách cũ. Lưu link mới sẽ soạn lại các bài chưa đăng (không phải bài sửa tay).</p>
+      <div class="sr-edit">
+        <input id="dc-input" type="url" maxlength="300" autocomplete="off" placeholder="https://ph.tinhtong.vn/Home/…?d=…_001.html" aria-label="Link văn bản gốc">
+      </div>
+      <div class="edit-actions">
+        <button id="dc-save" class="btn primary small" type="button">Lưu</button>
+        <button id="dc-reset" class="btn small" type="button">Xóa</button>
+        <span id="dc-msg" class="small" hidden></span>
+      </div>
+    </details>
+  </section>
+  <section class="card">
     <details id="ht-box">
       <summary>Hashtag khi Copy tiêu đề (<span id="ht-state">mặc định</span>)</summary>
       <p class="muted small">Danh sách đầy đủ, theo thứ tự, cho mọi tập của bộ kinh này. Tổng tiêu đề + hashtag ≤ 100 ký tự: hashtag cuối bị bỏ khi quá dài.</p>

@@ -23,6 +23,7 @@ from pathlib import Path
 
 from .. import khaithi
 from ..config import Config
+from ..post import doc as post_doc
 from ..review import ReviewError, episode_complete, publish_status, read_archive, read_publish, read_tombstone
 from ..review.names import MAX_COPY_CHARS, copy_text, hashtag, hashtags
 from ..review.publish import PUBLISH_NAME
@@ -62,6 +63,7 @@ Lister = Callable[[str, Config], dict]  # (playlist url, config) -> yt-dlp flat 
 
 
 MAX_HASHTAGS = 15
+USER_FIELDS = ("hashtags", "series", "doc_url")
 SAMPLE_TITLE = "Tiêu đề mẫu dài sáu mươi ký tự để xem trước hashtag trên YouTube"[:60]
 
 
@@ -86,6 +88,14 @@ def normalize_hashtags(values: object) -> list[str]:
     if len(out) > MAX_HASHTAGS:
         raise PlaylistError(f"tối đa {MAX_HASHTAGS} hashtag")
     return out
+
+
+def stored_doc_url(doc: dict) -> str | None:
+    """The playlist's lecture-document link (CP8.19 D1), or None when absent or not a valid link."""
+    try:
+        return post_doc.normalize_url(doc.get("doc_url"))
+    except post_doc.DocError:
+        return None
 
 
 def custom_hashtags(doc: dict) -> list[str] | None:
@@ -132,10 +142,11 @@ def title_series(title: str | None, config: Config) -> str | None:
 
 
 def _with_user_fields(doc: dict, source: dict) -> dict:
-    """``doc`` with the user's fields of ``source`` (``hashtags`` then ``series``, after ``entries``; H5, D5)."""
-    for key in ("hashtags", "series"):
+    """``doc`` with the user's fields of ``source`` (``hashtags``, ``series``, ``doc_url``, after ``entries``; H5, D5,
+    CP8.19 D1)."""
+    for key in USER_FIELDS:
         doc.pop(key, None)
-    for key in ("hashtags", "series"):
+    for key in USER_FIELDS:
         if key in source:
             doc[key] = source[key]
     return doc
@@ -275,7 +286,7 @@ class PlaylistStore:
             doc = self.load(playlist_id)
             if doc is None:
                 raise FileNotFoundError(playlist_id)
-            fields = {k: doc[k] for k in ("series",) if k in doc}
+            fields = {k: doc[k] for k in USER_FIELDS if k in doc and k != "hashtags"}
             if tags is not None:
                 fields["hashtags"] = tags
             _with_user_fields(doc, fields)
@@ -294,9 +305,29 @@ class PlaylistStore:
             doc = self.load(playlist_id)
             if doc is None:
                 raise FileNotFoundError(playlist_id)
-            fields = {k: doc[k] for k in ("hashtags",) if k in doc}
+            fields = {k: doc[k] for k in USER_FIELDS if k in doc and k != "series"}
             if series is not None:
                 fields["series"] = series
+            _with_user_fields(doc, fields)
+            atomic_write_json(self.path(playlist_id), doc)
+        return doc
+
+    # --- "Văn bản gốc" (CP8.19 D1) ------------------------------------------------------------------------------
+
+    def set_doc_url(self, playlist_id: str, value: object) -> dict:
+        """Store the playlist's lecture-document link (``None`` = removed); a link of another form -> PlaylistError
+        (422)."""
+        try:
+            url = post_doc.normalize_url(value) if value is not None else None
+        except post_doc.DocError as exc:
+            raise PlaylistError(str(exc)) from exc
+        with self._lock:
+            doc = self.load(playlist_id)
+            if doc is None:
+                raise FileNotFoundError(playlist_id)
+            fields = {k: doc[k] for k in USER_FIELDS if k in doc and k != "doc_url"}
+            if url is not None:
+                fields["doc_url"] = url
             _with_user_fields(doc, fields)
             atomic_write_json(self.path(playlist_id), doc)
         return doc
@@ -417,7 +448,8 @@ class PlaylistStore:
         tags, custom = self.effective_hashtags(doc)
         return {"id": doc["playlist_id"], "title": doc.get("title"), "url": doc.get("url"),
                 "fetched_at": doc.get("fetched_at"), "count": len(doc["entries"]), "entries": entries,
-                "counts": counts, "hashtags": tags, "hashtags_custom": custom, **self.series_view(doc)}
+                "counts": counts, "hashtags": tags, "hashtags_custom": custom, "doc_url": stored_doc_url(doc),
+                **self.series_view(doc)}
 
     def series_view(self, doc: dict) -> dict:
         """CP8.11 D7: ``series`` (the user's name or null), ``series_suggested`` (series of the first entry title a
