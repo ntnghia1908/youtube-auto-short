@@ -63,6 +63,8 @@ Implementation tham chiếu: `src/auto_short/web/` (`app.py` app factory + route
 
 **Sửa đổi CP8.10 (HUMAN LEAD 2026-09-28, `docs/tasks/CP8.10-queue-lanes.md` Q0–Q8)** — trước đó: một worker thread, một job chạy tại một thời điểm (nay là `queue_mode = "serial"`).
 
+**Sửa đổi FIX-post-doc-no-gpu (HUMAN LEAD 2026-10-02):** job `post` chưa chạy lượt nào không đợi khi làn `ai` `gpu_down`; preflight của nó chạy trễ, trước Short đầu tiên cần AI. Canonical: `docs/tasks/FIX-ollama-wait.md` O5 (ghi chú sửa đổi) + `docs/tasks/FIX-post-doc-no-gpu.md`.
+
 - `[web] queue_mode = "lanes"` (mặc định): ba **làn**, mỗi làn một worker thread + hàng đợi FIFO trong bộ nhớ, mỗi làn chạy tối đa một job:
   - `prepare` = ingest → transcript → analysis; `ai` = preflight Ollama → selection → titling; `render` = render.
   - Job `pipeline` vào cuối hàng `prepare`; xong một làn → vào cuối hàng làn kế; lỗi / bị ngắt ở làn nào → job kết thúc ở đó (`failed` / `interrupted`, W4). Mỗi làn gọi `run_pipeline(…, stages=<các stage của làn>)` (CP8 E7); làn sau dùng episode id mà ingest trả về. Stage tự skip khi up to date (CP8 E3).

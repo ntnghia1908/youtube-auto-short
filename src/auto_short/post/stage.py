@@ -312,7 +312,8 @@ class ComposeSummary:
 def compose_posts(episode_id: str, config: Config, clips: "list[str] | str", *, client: ChatClient | None = None,
                   sleep: Callable[[float], None] = time.sleep,
                   lock: AbstractContextManager | None = None,
-                  doc_loader: Callable[[str, list[dict]], "doc_mod.DocText | None"] | None = None) -> ComposeSummary:
+                  doc_loader: Callable[[str, list[dict]], "doc_mod.DocText | None"] | None = None,
+                  before_ai: Callable[[], None] | None = None) -> ComposeSummary:
     """P1: compose (or recompose) the post of ``clips`` (a list of clip ids) or every eligible Short that has no
     valid, non-stale post yet (``clips == "all"``, "bỏ qua Short đã có bài còn hợp lệ"), or the CP8.16 R4 set
     (``clips == "auto"``, :func:`auto_clips`). Each clip's AI work runs
@@ -320,7 +321,9 @@ def compose_posts(episode_id: str, config: Config, clips: "list[str] | str", *, 
     no-op by default) so a concurrent manual edit of another clip is never lost. CP8.19 D6: when the episode's bộ kinh
     carries a lecture document that matches the transcript (``doc_loader(episode_id, segments)``, default
     :func:`auto_short.post.doc.prepare`), a Short that aligns into it takes its post from it (``origin: doc``, no AI
-    call); a download failure only logs a warning and the whole episode takes the AI path."""
+    call); a download failure only logs a warning and the whole episode takes the AI path. FIX-post-doc-no-gpu F1:
+    ``before_ai`` (the Ollama preflight) is called exactly once, right before the first AI call of the job (the
+    first Short not served from the document); its exception propagates, doc posts already written stay."""
     cfg = config.post
     ws_dir = Path(config.workspace.dir) / episode_id
     posts_path = ws_dir / store.POSTS_NAME
@@ -355,6 +358,7 @@ def compose_posts(episode_id: str, config: Config, clips: "list[str] | str", *, 
     chat = client or OllamaClient(resolve_host(cfg.ollama_host), timeout=cfg.timeout)
     guard = lock if lock is not None else _NullLock()
     summary = ComposeSummary(list(todo))
+    ai_started = False
     for cid in todo:
         try:
             lines = source.source_lines(ep, cid)
@@ -383,6 +387,9 @@ def compose_posts(episode_id: str, config: Config, clips: "list[str] | str", *, 
                     store.write(posts_path, doc)
                 log.info("post: %s [%s]: doc (ratio %.2f)", cid, episode_id, dp.ratio)
                 continue
+        if before_ai is not None and not ai_started:
+            before_ai()
+        ai_started = True
         lines, applied = corrections.apply_lines(lines, rules)
         clog: dict = {"clip_id": cid, "candidate_id": cand_by_clip[cid], "text": " ".join(lines), "ai_calls": []}
         t0 = time.monotonic()

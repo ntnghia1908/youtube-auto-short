@@ -132,6 +132,7 @@ class Job:
     gpu_wait: bool = False  # O7: waiting in the ai queue while Ollama is unreachable
     _reachable: Callable[[], None] | None = field(default=None, repr=False)  # set by the runner (ai lane)
     again: bool = field(default=False, repr=False)  # post job: a new trigger arrived while running (R3)
+    requeued: bool = field(default=False, repr=False)  # came back to the ai queue via GpuUnavailable (O5)
     step: int = field(default=0, repr=False)  # index of the running / next step
     t0: float = field(default=0.0, repr=False)  # monotonic start
 
@@ -436,10 +437,13 @@ class JobRunner:
         queue = self._queues[lane]
         while not self._stopping:
             if lane == AI and queue and self._gpu_down():
-                add = next((j for j in queue if j.kind == KIND_ADD), None)
-                if add is not None:
-                    queue.remove(add)
-                    return add
+                # an ``add`` job never waits; nor does a ``post`` job that has not run yet (it may need no AI:
+                # FIX-post-doc-no-gpu F3). A job that came back via GpuUnavailable waits for the next check.
+                free = next((j for j in queue if j.kind == KIND_ADD), None) or \
+                    next((j for j in queue if j.kind == KIND_POST and not j.requeued), None)
+                if free is not None:
+                    queue.remove(free)
+                    return free
                 left = self._gpu_next - time.monotonic()
                 if left > 0:
                     self._lock.wait(left)
@@ -506,6 +510,7 @@ class JobRunner:
         with self._lock:
             self._current[lane] = None
             job.lane, job.waiting, job._reachable = lane, True, None
+            job.requeued = True
             if job.kind == KIND_PIPELINE:
                 job.stage = LANE_STAGES[lane][0]
             self._queues[lane].appendleft(job)
@@ -767,11 +772,14 @@ class PostComposeTarget:
 
     def run(self, job: Job) -> None:
         try:
-            if self.preflight is not None:
-                job.stage = "preflight"
-                run_preflight(job, self.preflight, self.config)
+            def before_ai() -> None:  # F1: Ollama is only needed from the first Short that takes the AI path
+                if self.preflight is not None:
+                    job.stage = "preflight"
+                    run_preflight(job, self.preflight, self.config)
+                job.stage = "post"
+
             job.stage = "post"
-            self.result = self.compose(job.episode_id, self.config, self.clips, lock=self.lock)
+            self.result = self.compose(job.episode_id, self.config, self.clips, lock=self.lock, before_ai=before_ai)
         except OllamaUnavailable as exc:
             raise GpuUnavailable(f"ollama preflight: {exc}") from exc
         except PreflightError as exc:

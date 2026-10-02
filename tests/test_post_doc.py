@@ -359,6 +359,45 @@ def test_compose_posts_uses_doc_without_ai_and_falls_back_per_short(tmp_path):  
     assert "ai_calls" in next(e for e in log_doc["entries"] if e["clip_id"] == "k02")
 
 
+def test_compose_posts_before_ai_called_once_before_first_ai_short(tmp_path):  # FIX-post-doc-no-gpu F1
+    make_post_episode(tmp_path / "work", tmp_path / "output")
+    cfg = _cfg(tmp_path)
+    text, _ = _doc_for_k01(tmp_path, cfg)
+    posts_path = tmp_path / "work" / EID / "posts.json"
+
+    # every Short from the document: never called
+    calls = []
+    client = FailClient()
+    stage.compose_posts(EID, cfg, ["k01"], client=client, sleep=lambda s: None, doc_loader=lambda e, s: text,
+                        before_ai=lambda: calls.append(1))
+    assert calls == [] and client.calls == 0
+
+    # doc Short first, then an AI one: called once, after the doc post was written; its error propagates and the
+    # doc post stays
+    class Down(Exception):
+        pass
+
+    seen = []
+
+    def down():
+        seen.append(store.find(store.read_posts(posts_path, EID), "k01") is not None)
+        raise Down()
+
+    posts_path.unlink()
+    client = FailClient()
+    with pytest.raises(Down):
+        stage.compose_posts(EID, cfg, ["k01", "k02"], client=client, sleep=lambda s: None,
+                            doc_loader=lambda e, s: text, before_ai=down)
+    assert seen == [True] and client.calls == 0
+    assert store.find(store.read_posts(posts_path, EID), "k01")["origin"] == store.DOC
+
+    # two AI Shorts: once
+    calls.clear()
+    stage.compose_posts(EID, cfg, ["k01", "k02"], client=FailClient(), sleep=lambda s: None,
+                        doc_loader=lambda e, s: None, before_ai=lambda: calls.append(1))
+    assert calls == [1]
+
+
 def test_compose_posts_unusable_missing_or_failing_doc_takes_ai_path(tmp_path):  # AC4, AC6
     make_post_episode(tmp_path / "work", tmp_path / "output")
     cfg = _cfg(tmp_path)
