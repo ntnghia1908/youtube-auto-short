@@ -182,7 +182,8 @@ def test_missing_model_after_outage_clears_gpu_down(runner, tcfg):
 def test_post_jobs_wait_like_pipeline(runner, tcfg):
     gpu, calls = Gpu(up=False), []
 
-    def compose(episode_id, config, clips, lock=None):
+    def compose(episode_id, config, clips, lock=None, before_ai=None):
+        before_ai()  # F1: the preflight now runs lazily, before the first AI call (all Shorts here need AI)
         calls.append((episode_id, clips))
         return SimpleNamespace(clip_ids=["k01"], ai=1, raw=0, errors={})
 
@@ -201,7 +202,8 @@ def test_post_compose_outage_midway_waits_and_reruns(runner, tcfg):
     state = {"n": 0}
     gpu = Gpu(up=True)
 
-    def compose(episode_id, config, clips, lock=None):
+    def compose(episode_id, config, clips, lock=None, before_ai=None):
+        before_ai()
         state["n"] += 1
         if state["n"] == 1:
             gpu.up = False  # Ollama goes away during the compose call
@@ -216,7 +218,8 @@ def test_post_compose_outage_midway_waits_and_reruns(runner, tcfg):
 
 
 def test_post_compose_unavailable_but_preflight_ok_fails(runner, tcfg):
-    def compose(episode_id, config, clips, lock=None):
+    def compose(episode_id, config, clips, lock=None, before_ai=None):
+        before_ai()
         raise ChatUnavailable("cannot reach Ollama")
 
     job, _ = runner.submit("ep", KIND_POST, post_compose_target(tcfg, ["k01"], compose=compose, preflight=Gpu(up=True)))
@@ -260,7 +263,7 @@ def test_stop_does_not_run_post_followup(tcfg):
     runner = JobRunner(gpu_retry_seconds=60.0)
     runner.start()
     gpu, composed = Gpu(up=False), []
-    job, _ = runner.submit("ep", KIND_POST, post_compose_target(tcfg, ["k01"], compose=lambda *a, **k: composed.append(1),
+    job, _ = runner.submit("ep", KIND_POST, post_compose_target(tcfg, ["k01"], compose=lambda *a, before_ai, **k: (before_ai(), composed.append(1)),
                                                                 preflight=gpu))
     wait_for(lambda: waiting_for_gpu(job))
     job.again = True
@@ -356,3 +359,98 @@ def test_posts_compose_202_while_down(web, tmp_path):
     job = web.runner.latest_post("post8TestEp1")
     wait_for(lambda: waiting_for_gpu(job))
     assert web.c.get("/api/episodes/post8TestEp1").json()["post_job"]["gpu_wait"] is True
+
+
+# --- FIX-post-doc-no-gpu: lazy preflight, a fresh post job does not wait while the GPU is down --------------------
+
+def fake_compose(calls, need_ai):
+    """compose_posts stand-in: Shorts in ``need_ai`` take the AI path (``before_ai`` once, before the first), the
+    others come from the document (written to ``calls`` as ('doc', clip))."""
+    done_doc: set[str] = set()
+
+    def compose(episode_id, config, clips, lock=None, before_ai=None):
+        started = False
+        for cid in clips:
+            if cid in need_ai:
+                if not started and before_ai is not None:
+                    before_ai()
+                started = True
+                calls.append(("ai", cid))
+            else:
+                done_doc.add(cid)
+                calls.append(("doc", cid))
+        return SimpleNamespace(clip_ids=list(clips), ai=len(need_ai & set(clips)), raw=0, doc=len(done_doc), errors={})
+    return compose
+
+
+def test_post_all_doc_done_while_gpu_down_without_preflight(runner, tcfg):  # AC1
+    gpu, calls = Gpu(up=False), []
+    # a pipeline job holds the GPU wait so that gpu_down is set
+    waiting = submit(runner, tcfg, "aaaaaaaaaaa", FakePipe(), gpu)
+    wait_for(lambda: waiting_for_gpu(waiting))
+    own = Gpu(up=False)  # the post job's own preflight: must never be called
+    job, _ = runner.submit("ep", KIND_POST, post_compose_target(tcfg, ["k01", "k02"], compose=fake_compose(calls, set()),
+                                                                preflight=own))
+    wait_for(lambda: job.status == DONE)
+    assert calls == [("doc", "k01"), ("doc", "k02")] and job.gpu_wait is False
+    assert own.calls == 0
+    assert waiting_for_gpu(waiting)
+    gpu.up = True
+    assert runner.wait_idle(10)
+
+
+def test_post_doc_then_ai_waits_at_first_ai_short_and_resumes(runner, tcfg):  # AC2
+    gpu, calls = Gpu(up=False), []
+    waiting = submit(runner, tcfg, "aaaaaaaaaaa", FakePipe(), gpu)
+    wait_for(lambda: waiting_for_gpu(waiting))
+    job, _ = runner.submit("ep", KIND_POST, post_compose_target(tcfg, ["k01", "k02", "k03"],
+                                                                compose=fake_compose(calls, {"k02", "k03"}),
+                                                                preflight=gpu))
+    wait_for(lambda: waiting_for_gpu(job))
+    assert calls == [("doc", "k01")] and job.error is None
+    gpu.up = True
+    assert runner.wait_idle(10) and job.status == DONE and waiting.status == DONE
+    assert calls == [("doc", "k01"), ("doc", "k01"), ("ai", "k02"), ("ai", "k03")]  # no AI for the doc Short
+
+
+def test_requeued_post_job_not_taken_again_until_next_check(tcfg):  # AC3
+    runner = JobRunner(gpu_retry_seconds=0.4)
+    runner.start()
+    try:
+        gpu, calls = Gpu(up=False), []
+        job, _ = runner.submit("ep", KIND_POST, post_compose_target(tcfg, ["k01"], compose=fake_compose(calls, {"k01"}),
+                                                                    preflight=gpu))
+        wait_for(lambda: waiting_for_gpu(job))
+        n = gpu.calls
+        assert n == 1
+        time.sleep(0.25)  # well inside the retry window: no busy loop
+        assert gpu.calls == n
+        gpu.up = True
+        assert runner.wait_idle(10) and job.status == DONE
+    finally:
+        runner.stop(timeout=5)
+
+
+def test_post_needing_ai_preflights_before_first_ai_when_gpu_ok(runner, tcfg):  # AC4
+    gpu, calls = Gpu(up=True), []
+    job, _ = runner.submit("ep", KIND_POST, post_compose_target(tcfg, ["k01", "k02"],
+                                                                compose=fake_compose(calls, {"k01", "k02"}),
+                                                                preflight=gpu))
+    assert runner.wait_idle(10) and job.status == DONE
+    assert gpu.calls == 1 and calls == [("ai", "k01"), ("ai", "k02")]
+
+
+def test_serial_post_lazy_preflight(tcfg):  # F4
+    runner = JobRunner("serial", gpu_retry_seconds=RETRY)
+    runner.start()
+    try:
+        gpu, calls = Gpu(up=False), []
+        ok, _ = runner.submit("ep", KIND_POST, post_compose_target(tcfg, ["k01"], compose=fake_compose(calls, set()),
+                                                                   preflight=gpu))
+        assert runner.wait_idle(10) and ok.status == DONE and gpu.calls == 0
+        bad, _ = runner.submit("ep", KIND_POST, post_compose_target(tcfg, ["k02"],
+                                                                    compose=fake_compose(calls, {"k02"}),
+                                                                    preflight=gpu))
+        assert runner.wait_idle(10) and bad.status == FAILED and "ollama preflight" in bad.error
+    finally:
+        runner.stop(timeout=5)

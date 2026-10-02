@@ -20,6 +20,8 @@ Một bài cho mỗi Short `rendered` chưa xóa của một episode (Short AI, 
 
 **Sửa đổi CP8.16** (task `docs/tasks/CP8.16-post-tab-auto.md`, HUMAN LEAD 2026-09-30 APPROVE R1–R5; canonical R2–R4 ở file task đó): (R2) bài được soạn **tự động** thay cho "theo yêu cầu" — sau mỗi job `pipeline` / `render` / `add` của episode kết thúc (`done` hoặc `failed`) server xếp job `post` `auto`; trang tab "Bài đăng" tự gửi `auto` một lần mỗi lần tải trang cho tập có bài thiếu / cần soạn lại; nút "Soạn bài cho mọi Short" thay bằng "Soạn bài còn thiếu" (`auto`). (R3) job `post` chạy dưới khóa runner riêng `<episode_id>#post` (làn `ai` như cũ): không còn chiếm khóa "một job mỗi episode" nên sửa title / cut / thêm / xóa Short không bị 409 vì nó; tối đa một job `post` đợi / chạy mỗi episode (gửi lại khi đang đợi → trả job đó; trigger tự động khi đang chạy → thêm một lượt `auto`); gửi tay khi episode có job `pipeline` → 409; xóa tập xét cả hai khóa. (R4) `clips: "auto"` = Short `rendered` chưa có bài, hoặc bài `stale` chưa tick "Đã đăng bài" và `origin` khác `manual` (`post.stage.auto_clips`); `"all"` và danh sách clip giữ nghĩa cũ.
 
+**Sửa đổi FIX-post-doc-no-gpu (HUMAN LEAD 2026-10-02):** preflight Ollama của job `post` chạy trễ, ngay trước Short đầu tiên cần AI (bài lấy từ văn bản gốc không cần GPU). Canonical: `docs/tasks/FIX-post-doc-no-gpu.md`, `docs/tasks/FIX-ollama-wait.md` O5.
+
 **Sửa đổi CP8.19 (HUMAN LEAD 2026-10-02):** bộ kinh có "Văn bản gốc" (P15) → bài chưa đăng `ai` / `raw` của các tập trong bộ được soạn lại ngay khi gắn link (xếp job `post` theo P15 D7); khi soạn, mỗi Short được thử lấy bài từ văn bản trước AI.
 
 ## P2. Text nguồn

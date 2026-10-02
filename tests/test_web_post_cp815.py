@@ -42,7 +42,7 @@ class FakeComposeAI:
     def __init__(self):
         self.calls: list[tuple] = []
 
-    def __call__(self, episode_id, config, clips, *, client=None, sleep=None, lock=None):
+    def __call__(self, episode_id, config, clips, *, client=None, sleep=None, lock=None, before_ai=None):
         self.calls.append((episode_id, clips))
         from auto_short.post import source as post_source
 
@@ -59,6 +59,8 @@ class FakeComposeAI:
             todo = post_stage.resolve_todo(ep, cur, order, tokens)
         else:
             todo = list(tokens)
+        if todo and before_ai is not None:  # FIX-post-doc-no-gpu F1: the lazy Ollama preflight
+            before_ai()
         for cid in todo:
             text = post_source.source_text(ep, cid)
             paragraphs = [text[0].upper() + text[1:] + "."]
