@@ -6,12 +6,12 @@
 | Accepted by | HUMAN LEAD 2026-09-29: APPROVE TASK; Q1 ảnh chọn trong thư viện + upload + tìm ảnh từ link (ảnh tìm được vào thẳng thư viện); Q2–Q4 theo đề xuất (P4 bố cục, soạn theo yêu cầu, model `qwen3:14b`). Sửa đổi HUMAN LEAD 2026-09-29 (ORCHESTRATOR review round 1, sau Q4 BLOCKED ở 72%): P3 đổi sang AI tự do + chiếu (projection) về chữ gốc bằng `difflib` (prompt `v2`), Q4 đổi tiêu chí (≥ 90% bài `ai` có ≥ 4 dấu câu / 100 từ); B1: bản đầu implement sai P2 (giữ nguyên từ nối bị `head_cut`, ghi nhầm là HUMAN LEAD đã chấp nhận) — sửa lại đúng P2 gốc (bỏ `head_cut` như CP6 G3). |
 | Checkpoint | CP8.15 (S2) |
 | Roadmap | `AUTO_SHORT_CHECKPOINT_PLAN.md` §4 CP8.15 |
-| Task contract | `docs/tasks/CP8.15-community-post.md`; sửa đổi CP8.17: `docs/tasks/CP8.17-download-rules.md`; sửa đổi CP8.18: `docs/tasks/CP8.18-post-corrections.md` |
+| Task contract | `docs/tasks/CP8.15-community-post.md`; sửa đổi CP8.17: `docs/tasks/CP8.17-download-rules.md`; sửa đổi CP8.18: `docs/tasks/CP8.18-post-corrections.md`; sửa đổi CP8.19: `docs/tasks/CP8.19-post-doc-source.md` |
 | Builds on | `docs/decisions/CP6-titling-contract.md` (G3 `clip_text`, G5 validate style); `docs/decisions/CP8.2-title-override-contract.md` (CP9: cut points, added Shorts, `review.cuts.lines_in`); `docs/decisions/CP8.3-web-contract.md` W4/W5/W7 (job model, API, auth); `docs/decisions/CP8.9-khai-thi-contract.md` (một Short/khai thị dùng chung route); CP1 §10 (dependency: không thêm) |
 
-File này là **canonical owner** của: text nguồn một bài đăng cộng đồng của một Short (P2), prompt AI tự do + chiếu (projection) deterministic về chữ gốc (`post` `v2`, P3), schema `posts.json` (P7) + `post_log.json`, thư viện ảnh (P5) + upload (P5a) + tìm ảnh từ link (P5b), link Short (P6), bố cục text sao chép (P4), config `[post]` (P11), route web + job (P9) và security tải ảnh từ link (P13). Nơi khác chỉ trỏ tới đây. Không đổi contract stage CP2–CP9: `posts.json` không phải input của stage nào (như `publish.json`, CP8.3 W8). Thay đổi cần decision gate mới với HUMAN LEAD.
+File này là **canonical owner** của: text nguồn một bài đăng cộng đồng của một Short (P2), prompt AI tự do + chiếu (projection) deterministic về chữ gốc (`post` `v2`, P3), schema `posts.json` (P7) + `post_log.json`, thư viện ảnh (P5) + upload (P5a) + tìm ảnh từ link (P5b), link Short (P6), bố cục text sao chép (P4), config `[post]` (P11), route web + job (P9) và security tải ảnh từ link (P13), bài lấy từ văn bản gốc bài giảng (P15, CP8.19). Nơi khác chỉ trỏ tới đây. Không đổi contract stage CP2–CP9: `posts.json` không phải input của stage nào (như `publish.json`, CP8.3 W8). Thay đổi cần decision gate mới với HUMAN LEAD.
 
-Implementation tham chiếu: `src/auto_short/post/` (`source.py`, `validate.py`, `prompt.py`, `logic.py`, `store.py`, `stage.py`, `images.py`, `fetch.py`, `corrections.py`), `src/auto_short/config.py` (`PostConfig`), `src/auto_short/web/app.py` (route), `src/auto_short/web/jobs.py` (`PostComposeTarget`, `ImageSearchTarget`), `src/auto_short/web/static/` (khu "Bài đăng cộng đồng", hộp thoại "Thư viện ảnh").
+Implementation tham chiếu: `src/auto_short/post/` (`source.py`, `validate.py`, `prompt.py`, `logic.py`, `store.py`, `stage.py`, `images.py`, `fetch.py`, `corrections.py`, `doc.py`), `src/auto_short/config.py` (`PostConfig`), `src/auto_short/web/app.py` (route), `src/auto_short/web/jobs.py` (`PostComposeTarget`, `ImageSearchTarget`), `src/auto_short/web/static/` (khu "Bài đăng cộng đồng", hộp thoại "Thư viện ảnh").
 
 ## P1. Phạm vi bài + khi soạn
 
@@ -19,6 +19,8 @@ Một bài cho mỗi Short `rendered` chưa xóa của một episode (Short AI, 
 - **Sửa đổi FIX-ollama-wait (HUMAN LEAD 2026-09-30, O4, O5):** route soạn bài không còn preflight trong request (bỏ 503): luôn 202 + job; preflight chạy ở làn `ai` và mất kết nối → job đợi GPU (CP8.3 W5). Canonical: `docs/tasks/FIX-ollama-wait.md`.
 
 **Sửa đổi CP8.16** (task `docs/tasks/CP8.16-post-tab-auto.md`, HUMAN LEAD 2026-09-30 APPROVE R1–R5; canonical R2–R4 ở file task đó): (R2) bài được soạn **tự động** thay cho "theo yêu cầu" — sau mỗi job `pipeline` / `render` / `add` của episode kết thúc (`done` hoặc `failed`) server xếp job `post` `auto`; trang tab "Bài đăng" tự gửi `auto` một lần mỗi lần tải trang cho tập có bài thiếu / cần soạn lại; nút "Soạn bài cho mọi Short" thay bằng "Soạn bài còn thiếu" (`auto`). (R3) job `post` chạy dưới khóa runner riêng `<episode_id>#post` (làn `ai` như cũ): không còn chiếm khóa "một job mỗi episode" nên sửa title / cut / thêm / xóa Short không bị 409 vì nó; tối đa một job `post` đợi / chạy mỗi episode (gửi lại khi đang đợi → trả job đó; trigger tự động khi đang chạy → thêm một lượt `auto`); gửi tay khi episode có job `pipeline` → 409; xóa tập xét cả hai khóa. (R4) `clips: "auto"` = Short `rendered` chưa có bài, hoặc bài `stale` chưa tick "Đã đăng bài" và `origin` khác `manual` (`post.stage.auto_clips`); `"all"` và danh sách clip giữ nghĩa cũ.
+
+**Sửa đổi CP8.19 (HUMAN LEAD 2026-10-02):** bộ kinh có "Văn bản gốc" (P15) → bài chưa đăng `ai` / `raw` của các tập trong bộ được soạn lại ngay khi gắn link (xếp job `post` theo P15 D7); khi soạn, mỗi Short được thử lấy bài từ văn bản trước AI.
 
 ## P2. Text nguồn
 
@@ -30,6 +32,8 @@ Một bài cho mỗi Short `rendered` chưa xóa của một episode (Short AI, 
 - **Sửa đổi CP8.18 (HUMAN LEAD 2026-10-02):** khi soạn, luật `approved` của từ điển sửa lỗi (P14) được áp lên chữ nguồn **trước** AI; bài chứa chữ nguồn **sau** từ điển đã duyệt. `source_sha256` vẫn tính trên chữ nguồn chưa sửa (duyệt luật không làm bài `stale`).
 
 ## P3. AI thêm dấu câu / chia đoạn (sửa đổi HUMAN LEAD 2026-09-29, ORCHESTRATOR review round 1)
+
+> **Sửa đổi CP8.19:** P3 chỉ là nhánh dự phòng. Tập có văn bản gốc dùng được (P15 D3) và Short gióng được vào đó (P15 D4) → bài là đoạn văn bản gốc (`origin: doc`), **không** gọi AI, **không** qua từ điển P14; còn lại (không link, khớp kém, lỗi tải, Short không gióng được) → P3 như cũ. `source_sha256` vẫn tính trên chữ nguồn P2.
 
 > **Sửa đổi CP8.18:** "đúng chữ nguồn" ở mục này nghĩa là chữ nguồn **sau** luật `approved` của P14 (áp tất định trước khi gọi AI; chiếu và `raw` fallback dùng chữ đã sửa).
 
@@ -98,7 +102,7 @@ State người dùng, **không** là input stage nào (như `publish.json`, CP8.
             "posted_at": null, "updated_at": "2026-09-29T10:05:27Z"}]}
 ```
 
-`origin` = `ai` | `raw` (P3) | `manual` (sửa tay text qua `PUT`; không validate token, chỉ không rỗng). Khóa `(clip_id, candidate_id)` như CP8.2 T3 (không dùng ở đây để bỏ qua entry — mỗi `clip_id` một entry, `candidate_id` chỉ để đối chiếu khi debug). Soạn lại một bài đã có: thay `paragraphs` / `origin` / `source_sha256`, giữ `image`, `link`, `posted_at` (`post.store.with_compose`). File hỏng (JSON lỗi / sai schema) → API trả `post_error`, không ghi đè (`post.store.read_posts` raise, không có fallback ghi). Ghi tuần tự bằng một `threading.Lock` trong server (`post_lock`, tương tự `publish_lock` CP8.5); các route sửa tay (`PUT`, `posted`) **không** bị khóa bởi job đang chạy (không qua `submit_lock`/`_busy`, khác title/cut CP8.2/CP9) — chỉ khóa lẫn nhau và với chính job soạn bài qua `post_lock`. Xóa tập → mất cùng workspace (không xử lý riêng); tập archived (CP8.6) vẫn soạn được (đọc artifact, không cần video nguồn).
+`origin` = `ai` | `raw` (P3) | `doc` (CP8.19, P15: đoạn văn bản gốc) | `manual` (sửa tay text qua `PUT`; không validate token, chỉ không rỗng). Khóa `(clip_id, candidate_id)` như CP8.2 T3 (không dùng ở đây để bỏ qua entry — mỗi `clip_id` một entry, `candidate_id` chỉ để đối chiếu khi debug). Soạn lại một bài đã có: thay `paragraphs` / `origin` / `source_sha256`, giữ `image`, `link`, `posted_at` (`post.store.with_compose`). File hỏng (JSON lỗi / sai schema) → API trả `post_error`, không ghi đè (`post.store.read_posts` raise, không có fallback ghi). Ghi tuần tự bằng một `threading.Lock` trong server (`post_lock`, tương tự `publish_lock` CP8.5); các route sửa tay (`PUT`, `posted`) **không** bị khóa bởi job đang chạy (không qua `submit_lock`/`_busy`, khác title/cut CP8.2/CP9) — chỉ khóa lẫn nhau và với chính job soạn bài qua `post_lock`. Xóa tập → mất cùng workspace (không xử lý riêng); tập archived (CP8.6) vẫn soạn được (đọc artifact, không cần video nguồn).
 
 **Sửa đổi CP8.18:** `PUT …/posts/{clip}` có `paragraphs` còn rút đề xuất sửa từ + ghi nhật ký sửa (P14 D2, D6) dưới `post_lock` và trả thêm `proposed`; schema `posts.json` không đổi. Duyệt một luật (P14 D4) sửa `paragraphs` của bài `ai` / `raw` chưa đăng, mỗi `posts.json` read-modify-write dưới `post_lock`.
 
@@ -126,6 +130,8 @@ State người dùng, **không** là input stage nào (như `publish.json`, CP8.
 **Sửa đổi CP8.18:** route từ điển sửa lỗi (`/api/post-corrections`, P14 D5) và nút "Từ điển sửa lỗi" trên tab Bài đăng (P14 D7); `PUT …/posts/{clip}` có `paragraphs` trả thêm `proposed`.
 
 **Sửa đổi CP8.16 (R1, R3):** khu "Bài đăng cộng đồng" trên thẻ Short và "Soạn bài cho mọi Short" của trang tập được thay bằng tab "Bài đăng": trang `GET /episodes/{id}/posts` (cùng HTML cho tập Short `<vid>` và khai thị `<vid>.kt`), thanh chuyển [Shorts | Khai thị | Bài đăng] ở cả ba view, hai nhóm Short / Khai thị, editor mở sẵn, hộp thoại "Thư viện ảnh" chuyển sang trang này. `POST /api/episodes/{id}/posts` nhận thêm `clips: "auto"`; `GET /api/episodes/{id}` thêm `post_job` (job `post` mới nhất, hoặc `null`); 409 khi episode có job `pipeline` (không phải mọi job) — thay câu "409 khi episode đang có job — kể cả job khác" ở trên.
+
+**Sửa đổi CP8.19:** `PUT /api/playlists/{id}/doc` (CP8.3 W7, P15 D1); `GET …/posts` trả `origin: "doc"`; nhãn "Văn bản gốc" trên tab Bài đăng, bài `doc` không có nhãn "ít dấu câu"; sửa tay bài `doc` → `manual` như mọi bài (từ điển P14 vẫn học từ bản sửa).
 
 ## P10. Không CLI mới
 
@@ -156,6 +162,21 @@ Canonical owner của từ điển sửa lỗi bài đăng; chi tiết từng qu
 - **D7** Hộp thoại "Từ điển sửa lỗi" trên tab Bài đăng (đề xuất: Duyệt / Sửa / Bỏ qua; đã duyệt: Bỏ duyệt / Xóa; thêm luật tay; dòng số đo).
 
 Ngoài phạm vi: dấu câu / viết hoa, sửa transcript / title / render, tự duyệt luật, luật chèn / xóa từ.
+
+## P15. Văn bản gốc bài giảng (CP8.19, HUMAN LEAD 2026-10-02: APPROVE D1–D8, Q1–Q4)
+
+Canonical owner của bài đăng lấy từ văn bản đã biên tập của `ph.tinhtong.vn`; chi tiết D1–D8 ở `docs/tasks/CP8.19-post-doc-source.md`, implementation `src/auto_short/post/doc.py`. Tóm tắt luật chuẩn:
+
+- **D1** Bộ kinh có field tùy chọn `doc_url` (`<workspace>/_playlists/<pid>.json`, sau `series`; giữ khi "Cập nhật danh sách"): chỉ nhận `https://ph.tinhtong.vn/Home/<Code>?d=<Code>_<số>.html`. Link tập N = thay `<số>` bằng N giữ độ rộng đệm số 0. Số tập = `episode` của entry bộ kinh (CP8.11); tập `<id>.kt` dùng link của video gốc. Nhiều bộ cùng có `doc_url` → bộ có `playlist_id` nhỏ nhất (như CP8.8 H4).
+- **D2** Tải trang (+ phần gzip `/html-end/…gz.z` cùng host) bằng `post.fetch.fetch`, **áp P13** (chỉ host công khai, kiểm lại mỗi redirect, thêm: redirect sang host khác `ph.tinhtong.vn` → lỗi; trang ≤ 5 MB; gzip ≤ 5 MB cả sau giải nén). Đoạn = `<p>` của `<div id="bodytext">`, bỏ `text-center` và đoạn toàn chữ `<b>` (tiêu đề).
+- **D3** Cache `work/<id>/doc.json` (`schema_version`, `url`, `fetched_at`, `paragraphs`, `match`); `match` = token transcript nằm trong khối khớp `difflib` với văn bản / tổng token transcript; `< 0.6` → tập không dùng văn bản (cache vẫn lưu). Dùng lại khi `url` trùng; lỗi tải không ghi cache.
+- **D4** Gióng chữ nguồn P2 (chưa áp từ điển) vào văn bản: khối khớp ≥ 4 token, cụm khối dày nhất (khoảng cách ≤ 30 token), `ratio ≥ 0.6` mới dùng.
+- **D5** Đoạn bài mở rộng ra trọn câu hai đầu (tối đa 60 token mỗi phía, vượt → dừng ở điểm gióng + `…`), giữ ngắt đoạn của văn bản, `“ X ”` → `“X”`, viết hoa chữ đầu.
+- **D6** `compose_posts`: nhánh `doc` trước AI; `post_log.json` ghi `origin: doc`, `doc_url`, `doc_match`, `ratio`, `span`, `expanded`, không có `ai_calls`; lỗi tải chỉ cảnh báo, cả tập đi nhánh cũ. `store.ORIGINS` thêm `doc`, `schema_version` giữ 1.
+- **D7** `PUT …/doc` với link mới → xếp job `post` (khóa `<id>#post`, CP8.16) cho từng tập (Short + khai thị) của bộ có `posts.json`, clip = bài `ai` / `raw` chưa đăng; `manual` và bài đã đăng không đổi.
+- **D8** Nhãn "Văn bản gốc" (`doc`) trên tab Bài đăng.
+
+Ngoài phạm vi: dùng văn bản cho title / transcript / phụ đề / chọn clip, site khác, `.docx` / PDF, tập không nhận dạng được số tập, từ điển P14 lên bài `doc`.
 
 ## Acceptance Criteria
 

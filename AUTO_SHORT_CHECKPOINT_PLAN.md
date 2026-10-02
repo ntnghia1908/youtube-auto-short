@@ -495,6 +495,19 @@ No new dependency, `posts.json` schema unchanged.
 
 ---
 
+## CP8.19 — Post From Lecture Document
+
+> HUMAN LEAD 2026-10-02 (`docs/tasks/CP8.19-post-doc-source.md`, D1–D8, Q1–Q4, S2). Amends `docs/decisions/CP8.15-community-post-contract.md` P1, P2, P3, P7, P9 (+ P15) and `docs/decisions/CP8.3-web-contract.md` W7, W10.
+
+A bộ kinh can carry a link to one page of the edited lecture text on `ph.tinhtong.vn` ("Văn bản gốc"). For every
+episode (Short and khai thị) the page is downloaded once (public host only, 5 MB caps, cached as `work/<id>/doc.json`
+with a transcript match score; below 60% the episode keeps the old way), a Short's words are aligned into it and the post
+is the matching span widened to whole sentences, keeping the document's paragraphs (`origin: doc`, no AI call). Shorts
+that do not align, or a missing / failing document, use the AI + correction dictionary path unchanged. Saving a new link
+recomposes the unposted `ai` / `raw` posts of the bộ kinh. No new dependency, `posts.json` schema unchanged.
+
+---
+
 ## CP9 — Human Review + Batch Processing
 
 > Re-plan HUMAN LEAD 2026-09-27: phần batch mức playlist (bộ kinh: liệt kê, bấm xử lý từng tập, xếp hàng, trạng thái "Xong" suy ra khi đăng hết) kéo lên CP8.7 (`docs/tasks/CP8.7-playlist.md`, `docs/decisions/CP8.3-web-contract.md` W10). CP9 còn: tự xử lý hàng loạt, approval state, failed-item isolation đầy đủ.
