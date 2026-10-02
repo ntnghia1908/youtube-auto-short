@@ -140,6 +140,9 @@ def test_post_config():
     assert (p.model, p.chunk_words, p.retries) == ("qwen3:30b", 250, 1)
     assert str(p.image_dir) == "/tmp/post-images"
     assert p.image_sources == ("https://example.com/a",)
+    # CP8.18 D1
+    assert config_mod.from_dict({"post": {"corrections_path": "/tmp/c.json"}}).post.corrections_path.as_posix() == "/tmp/c.json"
+    assert config_mod.from_dict({"post": {"corrections_path": "~/c.json"}}).post.corrections_path.is_absolute()
     # other sections are unaffected
     assert config_mod.from_dict({"post": {"model": "x"}}).titling == config_mod.Config().titling
 
@@ -150,6 +153,7 @@ def test_post_config():
     {"post": {"retries": -1}},
     {"post": {"model": ""}},
     {"post": {"image_dir": ""}},
+    {"post": {"corrections_path": ""}},
     {"post": {"image_sources": ["", "x"]}},
     {"post": {"image_sources": "x"}},
     {"post": []},

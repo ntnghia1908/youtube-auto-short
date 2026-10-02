@@ -66,3 +66,11 @@ def _reset_cli_logging():
         log.removeHandler(h)
     log.propagate = True
     log.setLevel(logging.NOTSET)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_post_corrections(tmp_path_factory, monkeypatch):
+    """CP8.18 D1: the default ``[post] corrections_path`` is under the home dir; no test may touch it."""
+    import auto_short.config as config_mod
+    path = tmp_path_factory.mktemp("post-corrections") / "post-corrections.json"
+    monkeypatch.setattr(config_mod, "_default_corrections_path", lambda: path)

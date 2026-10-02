@@ -261,3 +261,9 @@ body.modal-open { overflow: hidden; }
 .img-card { border: 1px solid var(--border); border-radius: 8px; padding: .4rem; display: grid; gap: .3rem;
   justify-items: center; }
 .img-card img { width: 100%; aspect-ratio: 1 / 1; object-fit: cover; border-radius: 6px; background: #eee; }
+
+/* CP8.18: post correction dictionary dialog */
+.corr-row { border-top: 1px solid var(--border, #ddd); padding: .5rem 0; display: flex; flex-direction: column; gap: .35rem; }
+.corr-row .corr-pair { font-weight: 600; word-break: break-word; }
+.corr-row input[type="text"], .corr-add input { flex: 1 1 10rem; min-width: 0; }
+.corr-add { flex-wrap: wrap; }

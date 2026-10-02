@@ -225,6 +225,11 @@ class KhaithiConfig:
     soft_label_max_seconds: float = 5.0  # A3.1: shorter non_speech labels are no hard break (khai thị only)
 
 
+def _default_corrections_path() -> Path:
+    """CP8.18 D1 default of ``[post] corrections_path`` (a function so tests can redirect it away from the home dir)."""
+    return Path("~/.local/share/auto-short/post-corrections.json").expanduser()
+
+
 @dataclass(frozen=True)
 class PostConfig:
     """Community post text of a Short (docs/decisions/CP8.15-community-post-contract.md P11): AI punctuation /
@@ -241,6 +246,8 @@ class PostConfig:
     # P5: outside the repo, not committed.
     image_dir: Path = field(default_factory=lambda: Path("~/.local/share/auto-short/post-images").expanduser())
     image_sources: tuple[str, ...] = ()  # P5b: quick-link buttons ([] = none)
+    # CP8.18 D1: shared correction dictionary (outside the repo; the edit log ``post-edit-log.jsonl`` sits beside it).
+    corrections_path: Path = field(default_factory=lambda: _default_corrections_path())
     # Execution-only settings (not part of any hash; posts.json is not a stage artifact); env OLLAMA_HOST overrides.
     ollama_host: str = "http://127.0.0.1:11437"
     timeout: float = 600.0
@@ -645,6 +652,7 @@ def _post(data: dict) -> PostConfig:
         chunk_words=_int(po, "chunk_words", d.chunk_words, w, lo=20, hi=5000),
         image_dir=Path(_str(po, "image_dir", str(d.image_dir), w)).expanduser(),
         image_sources=tuple(sources),
+        corrections_path=Path(_str(po, "corrections_path", str(d.corrections_path), w)).expanduser(),
         ollama_host=_str(po, "ollama_host", d.ollama_host, w),
         timeout=_number(po, "timeout", d.timeout, w, lo=1),
         retry_backoff=tuple(float(x) for x in backoff),

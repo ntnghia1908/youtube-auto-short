@@ -31,7 +31,7 @@ Các boundary dưới đây là **planned module boundaries**, chưa phải impl
 |---|---|---|
 | `src/auto_short/` (`workspace.py`, `hashing.py`, `config.py`, `cli.py`) | stage framework dùng chung, config, CLI — *implemented* (CP2) | `docs/decisions/CP2-workspace-contract.md` |
 | `src/auto_short/khaithi.py` | tập khai thị: `khaithi.json` + tham số hiệu lực analysis / selection, dùng chung stage, CLI, web — *implemented* (CP8.9) | `docs/decisions/CP8.9-khai-thi-contract.md` |
-| `src/auto_short/post/` | bài đăng cộng đồng của một Short: text nguồn, AI thêm dấu câu / chia đoạn (Ollama) + validate, `posts.json` / `post_log.json`, thư viện ảnh + tìm ảnh từ link — *implemented* (CP8.15); web chỉ gọi | `docs/decisions/CP8.15-community-post-contract.md` |
+| `src/auto_short/post/` | bài đăng cộng đồng của một Short: text nguồn, AI thêm dấu câu / chia đoạn (Ollama) + validate, `posts.json` / `post_log.json`, thư viện ảnh + tìm ảnh từ link — *implemented* (CP8.15); từ điển sửa lỗi học từ bản sửa tay (`corrections.py`) — *implemented* (CP8.18); web chỉ gọi | `docs/decisions/CP8.15-community-post-contract.md` |
 | `src/auto_short/pipeline.py` | điều phối end-to-end `ingest → … → render` + preflight Ollama (lệnh `run` trong `cli.py`) — *implemented* (CP8) | `docs/decisions/CP8-pipeline-contract.md` |
 | `src/auto_short/ingest/` | ingest: input/download/metadata — *implemented* (CP2) | `docs/decisions/CP2-workspace-contract.md` |
 | `src/auto_short/transcript/` | transcript: caption YouTube / subtitle local / Whisper + timestamps — *implemented* (CP3) | `docs/decisions/CP3-transcript-contract.md` |

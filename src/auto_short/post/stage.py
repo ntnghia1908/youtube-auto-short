@@ -23,7 +23,7 @@ from ..config import Config, PostConfig
 from ..pipeline import OllamaUnavailable, PreflightError
 from ..selection.client import ChatClient, ChatError, ChatUnavailable, OllamaClient, resolve_host
 from ..workspace import atomic_write_json
-from . import images, source, store
+from . import corrections, images, source, store
 from .logic import chunk_lines
 from .prompt import prompt_sha256, render_user_prompt, system_prompt
 from .validate import project_response, raw_fallback
@@ -324,6 +324,7 @@ def compose_posts(episode_id: str, config: Config, clips: "list[str] | str", *, 
         if unknown:
             raise PostComposeError(f"không có Short đã dựng: {', '.join(unknown)}")
 
+    rules = corrections.approved_rules(cfg.corrections_path)  # CP8.18 D3: once per job
     chat = client or OllamaClient(resolve_host(cfg.ollama_host), timeout=cfg.timeout)
     guard = lock if lock is not None else _NullLock()
     summary = ComposeSummary(list(todo))
@@ -334,6 +335,8 @@ def compose_posts(episode_id: str, config: Config, clips: "list[str] | str", *, 
             summary.errors[cid] = str(exc)
             log.warning("post: %s [%s]: source text not ready: %s", cid, episode_id, exc)
             continue
+        raw_text = " ".join(lines)  # source_sha256 is taken on the uncorrected text (CP8.18 D3)
+        lines, applied = corrections.apply_lines(lines, rules)
         clog: dict = {"clip_id": cid, "candidate_id": cand_by_clip[cid], "text": " ".join(lines), "ai_calls": []}
         t0 = time.monotonic()
         result = compose_clip(chat, cfg, cid, cand_by_clip[cid], lines, clog, sleep)
@@ -347,13 +350,14 @@ def compose_posts(episode_id: str, config: Config, clips: "list[str] | str", *, 
             "prompt_version": cfg.prompt_version, "prompt_sha256": prompt_sha256(cfg.prompt_version),
             "chunks": result.chunks, "attempts": result.attempts, "first_try": result.first_try,
             "match_ratio": result.match_ratio, "seconds": round(secs, 3), "origin": result.origin,
-            "text": result.source_text, "paragraphs": result.paragraphs, "ai_calls": clog["ai_calls"]})
+            "text": result.source_text, "corrections": applied, "paragraphs": result.paragraphs,
+            "ai_calls": clog["ai_calls"]})
         with guard:
             doc = store.read_posts(posts_path, episode_id)
             image = images.least_used(cfg.image_dir, Path(config.workspace.dir)) if store.find(doc, cid) is None \
                 else None
             doc = store.with_compose(doc, order, clip_id=cid, candidate_id=cand_by_clip[cid],
-                                     source_sha256=source.source_sha256(result.source_text),
+                                     source_sha256=source.source_sha256(raw_text),
                                      paragraphs=result.paragraphs, origin=result.origin, image=image, now=_now())
             store.write(posts_path, doc)
         valid_first = sum(1 for c in clog["ai_calls"] if c["valid"])
