@@ -136,4 +136,4 @@ Task chạm public API web (route mới) nhưng không chạm database, security
 - Review: round 1 — B1 (blocking): áp luật làm mất dấu câu / hoa thường của token ngữ cảnh và chuyển token ngữ cảnh sang dòng caption khác → sửa `294ac08` (giữ nguyên tiền tố / hậu tố chung của `from`/`to`, chỉ thay phần giữa) + test. Round 1 fix ACCEPTED.
 - Important findings / decisions: `tests/conftest.py` autouse chuyển `corrections_path` sang tmp (tránh test ghi vào home); `config.example.toml` không thêm key (test so với default), README ghi key; sửa `from`/`to` của luật đã duyệt không áp lại; luật `rejected` không hiện trên UI; nhật ký sửa ghi mỗi lần lưu `paragraphs`; luật chèn thuần (phần giữa rỗng) đặt từ mới cạnh token gốc gần nhất.
 - Known limitations: chỉ thay từ (không chèn/xóa); bỏ duyệt / xóa luật không hoàn tác bài đã sửa; test chập chờn dưới `-n auto` (chạy riêng PASS): `tests/test_web_lanes_cp810.py::test_lanes_artifacts_identical_to_serial`, `tests/test_web_cp9.py::test_cut_save_reset_and_409`. Manual test checklist: chưa chạy.
-- PR:
+- PR: #47
