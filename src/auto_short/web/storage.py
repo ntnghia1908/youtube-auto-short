@@ -22,6 +22,7 @@ from ..review.archive import source_files
 from ..post.store import POSTS_NAME, read_posts_quiet
 from ..review.publish import PUBLISH_NAME, read_publish
 from ..khaithi import SUFFIX as KT_SUFFIX
+from ..enhance import state as enhance_state
 from ..workspace import DONE, iter_manifests
 from . import episodes as ep
 
@@ -166,6 +167,12 @@ def episode_sizes(config: Config, active: set[str] | None = None) -> list[dict]:
             if st.st_nlink > 1 and not p.is_symlink():
                 src_links[(st.st_dev, st.st_ino)] = st.st_size
         links = {**tree_links(ws.dir), **tree_links(out_root / eid)}
+        # CP13.1 E5 / E10: the enhanced source (never cleaned up automatically) and the received segments
+        enh = enhance_state.read(ws.dir)
+        hd_file = enhance_state.hd_path(ws.dir)
+        hd = hd_file.lstat().st_size if hd_file.is_file() else 0
+        hd_linked = hd > 0 and hd_file.lstat().st_nlink > 1 and eid.endswith(KT_SUFFIX)  # counted once, with its Short
+        enhance_tmp = tree_size(ws.dir / enhance_state.ENHANCED_DIR)
         stages = manifest.get("stages") or {}
         statuses = [(stages.get(s) or {}).get("status") for s in ep.PIPELINE_STAGES]
         archive = read_archive(ws.dir)
@@ -211,6 +218,7 @@ def episode_sizes(config: Config, active: set[str] | None = None) -> list[dict]:
             "id": eid, "title": meta.get("title"), "state": state,
             "source_kind": (manifest.get("source") or {}).get("kind"),
             "source": source, "shorts_bytes": shorts, "other": work_total - source, "total": work_total + shorts,
+            "hd": hd, "hd_linked": hd_linked, "enhance_tmp": enhance_tmp, "enhance_pending": enhance_state.is_pending(enh),
             "shorts": len(rendered), "published": published, "complete": complete,
             "post_unticked": post_unticked, "complete_since": complete_since,
             "links": links, "source_links": src_links,  # hard-linked files, for de-duplicated sums (not in the API)
@@ -226,6 +234,7 @@ def episode_sizes(config: Config, active: set[str] | None = None) -> list[dict]:
             size = tree_size(entry)
             rows.append({"id": entry.name, "title": None, "state": ORPHAN, "source_kind": None, "source": 0,
                          "shorts_bytes": size, "other": 0, "total": size, "shorts": 0, "published": 0,
+                         "hd": 0, "enhance_tmp": 0, "enhance_pending": False,
                          "complete": False, "post_unticked": 0, "complete_since": None,
                          "render_finished_at": None, "last_activity": entry.stat().st_mtime, "archived_at": None})
     rows.sort(key=lambda r: (-r["total"], r["id"]))
@@ -246,6 +255,11 @@ def _sum(parts: list[dict], field: str, links_field: str) -> int:
 
 def _can_archive(r: dict) -> bool:
     return r["state"] == DONE_STATE and r["source_kind"] == "youtube" and r["source"] > 0
+
+
+def _can_auto_archive(r: dict) -> bool:
+    """W9 S5 + CP13.1 E5: never automatically for an episode with an HD source, or while its HD is still wanted."""
+    return _can_archive(r) and not r.get("hd") and not r.get("enhance_pending")
 
 
 def _videos(rows: list[dict]) -> dict[str, list[dict]]:
@@ -308,7 +322,7 @@ def auto_archive_plan(rows: list[dict], now: float, grace_seconds: float) -> lis
     for vid, parts in _videos(rows).items():
         if any(r["state"] == PROCESSING for r in parts) or not all(r.get("complete") for r in parts):
             continue
-        arch = [r for r in parts if _can_archive(r)]
+        arch = [r for r in parts if _can_auto_archive(r)]
         since = max((r.get("complete_since") or now for r in parts), default=now)
         if arch and now - since >= grace_seconds:
             plan.append({"video_id": vid, "episodes": [r["id"] for r in arch],
@@ -358,6 +372,7 @@ class StorageCache:
             "disks": disks, **warning(disks),
             "episodes": [{k: v for k, v in r.items() if k not in ("links", "source_links")} for r in rows],
             "totals": {"source": sum(r["source"] for r in rows), "shorts": sum(r["shorts_bytes"] for r in rows),
+                       "hd": sum(r["hd"] for r in rows if not r.get("hd_linked")), "enhance_tmp": sum(r["enhance_tmp"] for r in rows),
                        "other": sum(r["other"] for r in rows), "episodes": sum(r["total"] for r in rows)},
             "caches": [{"name": "Model Whisper", "path": str(models), "bytes": tree_size(models),
                         "exists": models.is_dir()}],

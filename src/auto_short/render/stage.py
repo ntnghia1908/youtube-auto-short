@@ -33,6 +33,7 @@ from ..workspace import (
     run_stage,
     validate_episode_id,
 )
+from ..enhance import state as enhance_state
 from ..review import archive as review_archive
 from ..review import cuts as review_cuts
 from ..review import logic as review_logic
@@ -536,8 +537,12 @@ def run_render(episode_id: str, config: Config, *, force: bool = False, run: Run
     font_sha = hashing.sha256_file(fpath)
     src = manifest["source"]
     media = ws.resolve(src["path"]).absolute()
+    hd_fp = enhance_state.hd_fingerprint(ws.dir)  # CP13.1 E6: the enhanced source, when there is one, replaces it
     try:
-        media_fp = hashing.fingerprint(media, ws.source_fingerprint(manifest))
+        if hd_fp is not None:
+            media, media_fp = hd_fp.path, hd_fp
+        else:
+            media_fp = hashing.fingerprint(media, ws.source_fingerprint(manifest))
     except OSError as exc:
         raise fail(f"cannot read source media {media}: {exc}") from exc
     review_path = ws.dir / REVIEW_NAME

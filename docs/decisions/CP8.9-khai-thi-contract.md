@@ -53,6 +53,7 @@ Implementation tham chiếu: `src/auto_short/khaithi.py`, `analysis/stage.py`, `
 - **Ingest** tập khai thị nguồn YouTube: khi `work/<base_id>/` có ingest `done`, cùng video id, cùng config hash ingest (`[ingest] youtube_format`), không archived, file nguồn trong workspace còn và sha256 (hash lại thật) khớp manifest → hardlink (lỗi → copy + kiểm sha256) sang `work/<base_id>.kt/source.<ext>` thay vì tải; `metadata.json` lấy thông tin YouTube của tập gốc (ffprobe lại file). Không thỏa → tải như CP2 D4. Nguồn local: như CP2 D4 (không copy).
 - **Transcript**: khi tập gốc có transcript `done`, cùng source sha256 (metadata + `transcript.json` `media_sha256`), cùng config hash transcript và cùng input phụ đề (inputs ngoài `metadata.json`) → copy nguyên byte `transcript.json` + artifact phụ của stage (vd `transcript/youtube.*.json3`) và ghi manifest như stage đã chạy (`inputs` của tập khai thị, config hash giống tập gốc); không provider nào được gọi. Không thỏa → CP3 bình thường.
 - Chỉ đọc trong `work/<base_id>/`. Tập gốc không bắt buộc phải có.
+- **CP13.1b:** tập khai thị dùng chung một lần enhance với tập Short: `enhance.json` sao chép từ tập Short và `source_hd.mp4` là hard link của tập Short (ADR CP13.1 E1 / E5).
 
 ## K6. CLI
 

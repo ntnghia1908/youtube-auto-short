@@ -13,6 +13,27 @@ Quy ước: dòng bắt đầu bằng `>` là lệnh gõ trong **PowerShell** (k
 - Driver NVIDIA (`nvidia-smi` chạy được). Ổ đĩa còn ≥ 20 GB trống cho PyTorch, ffmpeg, mô hình và đoạn video tạm (giới hạn `-MaxDiskGb`, mặc định 100).
 - Token của worker do VM cấp (CP13.1b; biến `AUTO_SHORT_ENHANCE_TOKENS` ở VM, dạng `tên=token`). Chưa có token vẫn cài được: bỏ trống khi script hỏi, điền sau vào `config.json` (xem "Đổi token").
 
+## Lấy token
+
+Token do **VM** cấp (CP13.1b, ADR E8): mỗi máy một token ngẫu nhiên, không lưu trong repo / `config.toml`. Làm một lần cho mỗi máy, trên VM:
+
+1. Tạo token (hiện **một lần** ở stdout, không lưu ở đâu; `--name` = tên worker, ví dụ `rtx3090` / `rtx3050`):
+
+   ```
+   $ auto-short enhance-token --name rtx3090
+   ```
+
+2. Đặt vào biến môi trường của tiến trình web (pane tmux `youtube:web`), nối với token đã có bằng dấu phẩy, rồi khởi động lại `auto-short web`:
+
+   ```
+   export AUTO_SHORT_ENHANCE_TOKENS='rtx3090=<token máy 3090>,rtx3050=<token máy 3050>'
+   ```
+
+   Mỗi token ≥ 32 ký tự (lệnh trên ra 64 ký tự hex); server không khởi động nếu giá trị sai dạng. Token chỉ mở `/api/enhance/*`, mật khẩu web không mở các route đó.
+3. Máy Windows: điền token vào `config.json` (`"token"`; `"worker_name"` nên trùng tên token) hoặc truyền `-Token` cho `setup-enhance-worker.ps1` (xem "Đổi token / cấu hình"). Không gửi token qua chat / commit.
+4. Máy nhường Ollama (3090): thêm tên token vào `config.toml` của VM, ví dụ `[enhance] yield_workers = ["rtx3090"]` (VM không thấy `yield_to_ollama` của worker; chỉ tên token ở đây mới được `may-run: false` khi làn AI bận). Bật tính năng bằng `[enhance] enabled = true` sau khi manual test xong.
+5. Thu hồi: bỏ tên đó khỏi `AUTO_SHORT_ENHANCE_TOKENS` và khởi động lại web; worker nhận 401 và dừng (mã thoát 3).
+
 ## Bước 1 — Chép thư mục worker sang máy Windows
 
 Chép cả thư mục `tools/enhance_worker` của repo (có `worker.py`, `srvgg.py`, `windows\*.ps1`) sang máy, ví dụ `C:\enhance_worker_src`. Dùng `scp` (thay `USER`, `VM_ADDRESS` bằng cái bạn vẫn dùng để SSH vào VM; repo ở `youtube-auto-short` hoặc worktree đang chứa nhánh `feature/cp13.1-enhance-worker`):

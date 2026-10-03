@@ -65,6 +65,8 @@ Implementation tham chiếu: `src/auto_short/web/` (`app.py` app factory + route
 
 **Sửa đổi FIX-post-doc-no-gpu (HUMAN LEAD 2026-10-02):** job `post` chưa chạy lượt nào không đợi khi làn `ai` `gpu_down`; preflight của nó chạy trễ, trước Short đầu tiên cần AI. Canonical: `docs/tasks/FIX-ollama-wait.md` O5 (ghi chú sửa đổi) + `docs/tasks/FIX-post-doc-no-gpu.md`.
 
+**Sửa đổi CP13.1b (HUMAN LEAD 2026-10-03):** trạng thái "đợi HD" — job `pipeline` của tập cần enhance được đỗ sau làn `ai`, không chiếm làn; job `enhance` (ghép `source_hd.mp4`, làn `render`, khóa `<id>#hd`). Canonical: `docs/decisions/CP13.1-enhance-worker-contract.md` E3 / E6.
+
 - `[web] queue_mode = "lanes"` (mặc định): ba **làn**, mỗi làn một worker thread + hàng đợi FIFO trong bộ nhớ, mỗi làn chạy tối đa một job:
   - `prepare` = ingest → transcript → analysis; `ai` = preflight Ollama → selection → titling; `render` = render.
   - Job `pipeline` vào cuối hàng `prepare`; xong một làn → vào cuối hàng làn kế; lỗi / bị ngắt ở làn nào → job kết thúc ở đó (`failed` / `interrupted`, W4). Mỗi làn gọi `run_pipeline(…, stages=<các stage của làn>)` (CP8 E7); làn sau dùng episode id mà ingest trả về. Stage tự skip khi up to date (CP8 E3).
@@ -114,7 +116,7 @@ Implementation tham chiếu: `src/auto_short/web/` (`app.py` app factory + route
 
 ## W7. API và file
 
-Mọi route cần cookie (W2). JSON UTF-8.
+Mọi route cần cookie (W2), **trừ** `/api/enhance/*` (CP13.1b: xác thực bằng token worker, không cookie; ngoại lệ `GET /api/enhance/status` chỉ đọc dùng cookie). JSON UTF-8. Route enhance và thao tác "Bật / Tắt enhance", "Render bằng bản gốc", "Render lại bản HD", "Tạm dừng enhance": `docs/decisions/CP13.1-enhance-worker-contract.md` E3, E8, E10 (+ "Chi tiết hiện thực VM").
 
 **Sửa đổi CP8.18 (HUMAN LEAD 2026-10-02):** route từ điển sửa lỗi bài đăng `GET|POST /api/post-corrections`, `PUT|DELETE /api/post-corrections/{id}`; `PUT /api/episodes/{id}/posts/{clip}` có `paragraphs` trả thêm `proposed` — canonical ở `docs/decisions/CP8.15-community-post-contract.md` P14.
 
@@ -232,7 +234,7 @@ Quyết định: `docs/tasks/CP8.5-web-review.md` X1–X4, P1–P4. Hàm thuần
 
 ## W9. Bộ nhớ + dọn video nguồn (sửa đổi CP8.6, HUMAN LEAD 2026-09-27)
 
-Quyết định: `docs/tasks/CP8.6-storage.md` S1–S4, P1 (7 ngày), P2 (10 GB / 3 GB). Code: `auto_short.web.storage` (đo, gợi ý, ngưỡng; stdlib), `auto_short.review.archive` (dọn nguồn, cờ archived). Không có gì bị xóa tự động, trừ video nguồn của video đã đăng hết (S5).
+Quyết định: `docs/tasks/CP8.6-storage.md` S1–S4, P1 (7 ngày), P2 (10 GB / 3 GB). Code: `auto_short.web.storage` (đo, gợi ý, ngưỡng; stdlib), `auto_short.review.archive` (dọn nguồn, cờ archived). Không có gì bị xóa tự động, trừ video nguồn của video đã đăng hết (S5; **CP13.1b:** không bao giờ với tập có `source_hd.mp4` hoặc đang đợi enhance — ADR CP13.1 E5).
 
 ### Tab Bộ nhớ (S1)
 

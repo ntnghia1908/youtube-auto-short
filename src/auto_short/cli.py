@@ -91,6 +91,10 @@ def _build_parser() -> argparse.ArgumentParser:
     w.add_argument("--port", type=int, help="listen port (default: [web] port, 8080)")
     w.add_argument("--config", type=Path, help="config TOML (default: ./config.toml if present)")
 
+    et = sub.add_parser("enhance-token", help="make a random worker token for the enhance GPU workers "
+                                              "(printed once; CP13.1 E8) and show where to put it")
+    et.add_argument("--name", default="worker", help="worker name = token name, e.g. rtx3090 (default: worker)")
+
     tt = sub.add_parser("title", help="set, choose or reset the title of one Short (review.json), or --list")
     tt.add_argument("episode_id")
     tt.add_argument("clip_id", nargs="?", help="clip id (e.g. k03); not with --list")
@@ -314,6 +318,26 @@ def _cmd_web(args: argparse.Namespace, cfg: config_mod.Config) -> int:
     return 0
 
 
+def _cmd_enhance_token(args: argparse.Namespace) -> int:
+    """CP13.1 E8: print a fresh token (stdout, once) and the instructions (stderr). Nothing is stored anywhere."""
+    from .enhance.tokens import TOKENS_ENV, TokenError, new_token, parse_tokens
+
+    token = new_token()
+    try:
+        parse_tokens(f"{args.name}={token}")
+    except TokenError as exc:
+        print(f"auto-short: error: {exc}", file=sys.stderr)
+        return 1
+    print(token)
+    print(f"Token cho worker '{args.name}' (hiện một lần, không lưu ở đâu cả).\n"
+          f"1. VM: thêm vào biến môi trường của tiến trình web (pane tmux chạy `auto-short web`), nối với token đã có "
+          f"bằng dấu phẩy, rồi khởi động lại web:\n"
+          f"     export {TOKENS_ENV}='{args.name}=<token ở dòng trên>'      # nhiều worker: 'a=<token>,b=<token>'\n"
+          f"2. Máy Windows: điền cùng token vào `config.json` của worker (khóa \"token\"), worker_name = \"{args.name}\".\n"
+          f"Không ghi token vào repo / config.toml / chat.", file=sys.stderr)
+    return 0
+
+
 def _setup_logging() -> None:
     """Log to the current stderr; idempotent across repeated main() calls."""
     for h in list(log.handlers):
@@ -328,6 +352,8 @@ def _setup_logging() -> None:
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     _setup_logging()
+    if args.command == "enhance-token":  # needs no config
+        return _cmd_enhance_token(args)
     try:
         cfg = config_mod.load(args.config)
         if args.command == "ingest":
