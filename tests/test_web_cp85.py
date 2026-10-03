@@ -190,10 +190,10 @@ def test_view_download_names_and_deleted_short(tcfg, episode):
         d = c.get(f"/api/episodes/{EID}").json()
         k01, k02 = d["shorts"]
         assert k01["deleted"] is True and k01["video_url"] is None and k01["download_name"] is None
-        assert k02["download_name"] == "Tập9_S02_Mỗi suy nghĩ đều là tội lỗi.mp4"  # number kept, '?' dropped
+        assert k02["download_name"] == "T9_S02_Mỗi suy nghĩ đều là tội lỗi.mp4"  # number kept, '?' dropped
         assert (d["deleted"], d["rendered"], d["zip_name"]) == (1, 1, "Tập9_Shorts.zip")
         with zipfile.ZipFile(io.BytesIO(c.get(d["zip_url"]).content)) as zf:
-            assert zf.namelist() == ["Tập9_S02_Mỗi suy nghĩ đều là tội lỗi.mp4"]
+            assert zf.namelist() == ["T9_S02_Mỗi suy nghĩ đều là tội lỗi.mp4"]
         assert c.get(f"/files/{EID}/k01.mp4").status_code == 404
         r = c.post(f"{BASE}/k01/published", json={"value": True})
         assert r.status_code == 422 and "no rendered file" in r.json()["detail"]

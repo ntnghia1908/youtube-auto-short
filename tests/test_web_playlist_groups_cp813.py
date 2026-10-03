@@ -201,7 +201,7 @@ def test_loop_button_script_and_style(tcfg):
     assert "s.download_url ? downloadLink(s) : null,\n        video ? loopButton(s.clip_id, video) : null," in card
     loop = js[js.index("function loopButton("):js.index("function downloadLink(")]
     for needle in ("const on = loops.get(clipId) === true;", "video.loop = on;",
-                   '"aria-pressed": on ? "true" : "false"', 'text: "🔁 Lặp lại"',
+                   '"aria-pressed": on ? "true" : "false"', 'title: "Lặp lại", "aria-label": "Lặp lại"',
                    "loops.set(clipId, next);", "video.loop = next;",
                    'b.setAttribute("aria-pressed", next ? "true" : "false");'):
         assert needle in loop, needle

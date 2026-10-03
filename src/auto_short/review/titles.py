@@ -94,20 +94,20 @@ def _load(episode_id: str, config: Config) -> _Episode:
     return _Episode(ws, clips, titles, read_review(ws.dir / REVIEW_NAME, ws.episode_id))
 
 
-def _fit(config: Config, clip_id: str, text: str, origin: str) -> TitlePreview:
+def _fit(config: Config, episode_id: str, clip_id: str, text: str, origin: str) -> TitlePreview:
     """Glyph coverage + R5 fit with the render font/geometry (the same code the render uses)."""
     from ..render import plan
     from ..render import stage as render_stage
     from ..render.text import Font, TextError
 
-    cfg = config.render
+    cfg, kt = render_stage.episode_render_config(config, config.workspace.dir / episode_id)
     try:
         font = Font(render_stage.font_path(cfg))
         missing = font.missing(text)
         if missing:
             raise ReviewError("character(s) not in the font: " + ", ".join(f"{c!r} (U+{ord(c):04X})"
                                                                             for c in missing))
-        fit = render_stage.fit_clip_title(font, text, cfg, plan.geometry(cfg))
+        fit = render_stage.fit_clip_title(font, text, cfg, plan.geometry(cfg, khaithi=kt))
     except TextError as exc:
         raise ReviewError(f"title does not fit: {exc}") from exc
     except plan.PlanError as exc:
@@ -115,14 +115,14 @@ def _fit(config: Config, clip_id: str, text: str, origin: str) -> TitlePreview:
     return TitlePreview(clip_id, text, origin, list(fit.lines), fit.font_size, fit.panel_height)
 
 
-def _validate(config: Config, clip_id: str, text: str, origin: str) -> TitlePreview:
+def _validate(config: Config, episode_id: str, clip_id: str, text: str, origin: str) -> TitlePreview:
     """T2: form rules (CP6 G5 without evidence, 1..max_chars), then glyphs and fit."""
     if not isinstance(text, str):
         raise ReviewError("title must be a string")
     reason = manual_title_error(text, max_chars=config.titling.max_chars)
     if reason:
         raise ReviewError(f"invalid title: {reason}")
-    return _fit(config, clip_id, normalize_title(text), origin)
+    return _fit(config, episode_id, clip_id, normalize_title(text), origin)
 
 
 def _write(ep: _Episode, review: dict) -> None:
@@ -177,7 +177,7 @@ def preview_title(episode_id: str, config: Config, clip_id: str, text: str) -> T
     """Validate ``text`` as a manual title for ``clip_id`` (T2) and return its display (lines, font size, panel
     height) without writing anything; raises ReviewError with the reason when it is invalid."""
     _load(episode_id, config).entry(clip_id)
-    return _validate(config, clip_id, text, MANUAL)
+    return _validate(config, episode_id, clip_id, text, MANUAL)
 
 
 def set_title(episode_id: str, config: Config, clip_id: str, text: str) -> TitlePreview:
@@ -186,7 +186,7 @@ def set_title(episode_id: str, config: Config, clip_id: str, text: str) -> Title
     ep = _load(episode_id, config)
     check_not_archived(ep.ws.dir, ep.ws.episode_id)  # CP8.6 S3
     entry = ep.entry(clip_id)
-    preview = _validate(config, clip_id, text, MANUAL)
+    preview = _validate(config, episode_id, clip_id, text, MANUAL)
     added = ep.added_entry(clip_id)
     if added is not None:  # CP9 C1: the added Short's own title
         new = {**added, "title": preview.title}
@@ -208,7 +208,7 @@ def set_alternative(episode_id: str, config: Config, clip_id: str, n: int) -> Ti
     if isinstance(n, bool) or not isinstance(n, int) or not 1 <= n <= len(alts):
         raise ReviewError(f"clip {clip_id} has no alternative {n!r} "
                           f"({'choose 1-' + str(len(alts)) if alts else 'it has no alternatives'})")
-    preview = _validate(config, clip_id, alts[n - 1]["title"], ALTERNATIVE)
+    preview = _validate(config, episode_id, clip_id, alts[n - 1]["title"], ALTERNATIVE)
     added = ep.added_entry(clip_id)
     if added is not None:  # CP9 C1
         _write(ep, with_added(ep.review, ep.order, {**added, "title": preview.title}))
@@ -234,7 +234,7 @@ def reset_title(episode_id: str, config: Config, clip_id: str) -> TitlePreview |
             _write(ep, review)
     if entry["status"] != TITLED:
         return None
-    return _fit(config, clip_id, entry["title"], AI)
+    return _fit(config, episode_id, clip_id, entry["title"], AI)
 
 
 def reject_clip(episode_id: str, config: Config, clip_id: str) -> bool:

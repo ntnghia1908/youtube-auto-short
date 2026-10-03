@@ -120,7 +120,7 @@ def test_zip_names_with_series(tcfg):
         assert "filename*=UTF-8''Th%E1%BA%ADp%20Thi%E1%BB%87n" in r.headers["content-disposition"]
         assert 'filename="Thap Thien Nghiep Dao Kinh_Tap29_Shorts.zip"' in r.headers["content-disposition"]
         names = zipfile.ZipFile(io.BytesIO(r.content)).namelist()
-        assert names == ["Tập29_S01_Một.mp4", "Tập29_S02_Hai.mp4", "Tập29_S03_Ba.mp4"]  # entries unchanged
+        assert names == ["T29_S01_Một.mp4", "T29_S02_Hai.mp4", "T29_S03_Ba.mp4"]  # entries unchanged
         assert files[VID]  # keep the helper's return used
 
 
@@ -161,10 +161,10 @@ def test_all_zip_both_ids(tcfg):
             with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
                 assert zf.testzip() is None
                 assert all(i.compress_type == zipfile.ZIP_STORED for i in zf.infolist())
-                assert all(i.flag_bits & 0x800 for i in zf.infolist())
+                assert all(i.flag_bits & 0x800 for i in zf.infolist() if not i.filename.isascii())  # CP8.21: ASCII names need no flag
                 assert zf.namelist() == [
-                    "Shorts/Tập29_S01_Một.mp4", "Shorts/Tập29_S02_Hai.mp4", "Shorts/Tập29_S03_Ba.mp4",
-                    "KhaiThị/Tập29_KT01_Khai một.mp4", "KhaiThị/Tập29_KT02_Khai hai.mp4"]
+                    "Shorts/T29_S01_Một.mp4", "Shorts/T29_S02_Hai.mp4", "Shorts/T29_S03_Ba.mp4",
+                    "KhaiThị/T29_TK01_Khai một.mp4", "KhaiThị/T29_TK02_Khai hai.mp4"]
                 got = {n: hashlib.sha256(zf.read(n)).hexdigest() for n in zf.namelist()}
             bodies.append(got)
         assert bodies[0] == bodies[1]
@@ -189,7 +189,7 @@ def test_all_zip_skips_deleted_short_and_404_when_missing(tcfg):
         rm.write_text(json.dumps(doc), encoding="utf-8")
         (Path(tcfg.render.output_dir) / VID / "shorts" / "k02.mp4").unlink()
         names = zipfile.ZipFile(io.BytesIO(c.get(f"/files/{VID}/all.zip").content)).namelist()
-        assert [n for n in names if n.startswith("Shorts/")] == ["Shorts/Tập29_S01_Một.mp4", "Shorts/Tập29_S03_Ba.mp4"]
+        assert [n for n in names if n.startswith("Shorts/")] == ["Shorts/T29_S01_Một.mp4", "Shorts/T29_S03_Ba.mp4"]
     # no rendered Short left in the khai thị -> 404 + null
     kt_rm = Path(tcfg.render.output_dir) / KT / "render_manifest.json"
     doc = json.loads(kt_rm.read_text(encoding="utf-8"))

@@ -396,7 +396,7 @@ def test_copy_text_in_short_view_and_config(tcfg):
     with client(cfg) as c:
         _login(c)
         k01 = c.get(f"/api/episodes/{eid}").json()["shorts"][0]
-        assert k01["copy_text"] == "Đánh mắng trẻ là có tội không? #ThậpThiệnNghiệpĐạoKinh #TịnhKhông"
+        assert k01["copy_text"] == "T29_S01_Đánh mắng trẻ là có tội không? #ThậpThiệnNghiệpĐạoKinh #TịnhKhông"
         assert k01["hashtags"] == ["#ThậpThiệnNghiệpĐạoKinh", "#TịnhKhông"]
         js = c.get("/static/app.js").text
         assert "copyTitleButton(s.copy_text)" in js and 's.hashtags.join(" ")' in js
@@ -505,8 +505,10 @@ def test_playlist_hashtags_store_reset_refresh_and_effect(tcfg):
                                                      "hashtags_custom": True}
         assert json.loads(path.read_text())["hashtags"] == ["ThậpThiện", "TịnhĐộTông", "PhápSư"]
         k01, k02 = c.get(f"/api/episodes/{eid}").json()["shorts"]
-        assert k01["copy_text"] == "Đánh mắng trẻ là có tội không? #ThậpThiện #TịnhĐộTông #PhápSư"
-        assert k02["hashtags"] == ["#ThậpThiện", "#TịnhĐộTông", "#PhápSư"]
+        assert k01["copy_text"] == f"T{VIDS[1]}_S01_Đánh mắng trẻ là có tội không? #ThậpThiện #TịnhĐộTông #PhápSư"
+        # CP8.21 D3: the "T<tập>_S<NN>_" prefix counts towards the 100 characters, so k02 loses its last hashtag
+        assert k02["hashtags"] == ["#ThậpThiện", "#TịnhĐộTông"] and len(k02["copy_text"]) <= 100
+        assert k02["copy_text"].startswith(f"T{eid}_S02_")
         p = c.post(f"/api/playlists/{PL}/hashtags/preview", json={"hashtags": ["A" * 20, "B" * 20]}).json()
         assert p["title"] == "x" * 60 and p["title_is_real"] is True
         assert p["copy_text"] == "x" * 60 + " #" + "A" * 20 and p["dropped"] == ["#" + "B" * 20]
@@ -526,7 +528,7 @@ def test_playlist_hashtags_store_reset_refresh_and_effect(tcfg):
         assert c.put("/api/playlists/PLnope000000/hashtags", json={"hashtags": []}).status_code == 404
         # empty custom list = no hashtags at all
         c.put(f"/api/playlists/{PL}/hashtags", json={"hashtags": []})
-        assert c.get(f"/api/episodes/{eid}").json()["shorts"][0]["copy_text"] == "Đánh mắng trẻ là có tội không?"
+        assert c.get(f"/api/episodes/{eid}").json()["shorts"][0]["copy_text"] == f"T{eid}_S01_Đánh mắng trẻ là có tội không?"
 
 
 def test_episode_in_two_playlists_uses_first_by_id(tcfg):
@@ -579,7 +581,7 @@ def test_playlist_hashtags_delete_playlist_auth_body_and_files(tcfg):
             assert c.put(f"/api/playlists/{PL}/hashtags", json=bad).status_code == 422, bad
         before = {p: p.read_bytes() for p in Path(tcfg.workspace.dir, eid).rglob("*") if p.is_file()}
         assert c.put(f"/api/playlists/{PL}/hashtags", json={"hashtags": ["Riêng"]}).status_code == 200
-        assert c.get(f"/api/episodes/{eid}").json()["shorts"][0]["copy_text"] == "Tiêu đề #Riêng"
+        assert c.get(f"/api/episodes/{eid}").json()["shorts"][0]["copy_text"] == f"T{eid}_S01_Tiêu đề #Riêng"
         after = {p: p.read_bytes() for p in Path(tcfg.workspace.dir, eid).rglob("*") if p.is_file()}
         assert after == before  # AC8: nothing in the episode workspace changes
         # a hand-edited list of the wrong type -> default
@@ -593,5 +595,5 @@ def test_playlist_hashtags_delete_playlist_auth_body_and_files(tcfg):
         # "Xóa bộ kinh" removes the list with the file -> default again
         assert c.delete(f"/api/playlists/{PL}").status_code == 200
         assert c.get(f"/api/episodes/{eid}").json()["shorts"][0]["copy_text"] == \
-            "Tiêu đề #TịnhKhông #LờiPhậtDạy #TịnhĐộ #NiệmPhật"
+            f"T{eid}_S01_Tiêu đề #TịnhKhông #LờiPhậtDạy #TịnhĐộ #NiệmPhật"
         assert c.delete(f"/api/playlists/{PL}/hashtags").status_code == 404

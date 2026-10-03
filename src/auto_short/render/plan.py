@@ -6,7 +6,7 @@ Canonical contract: docs/decisions/CP7-render-contract.md.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from fractions import Fraction
 from pathlib import Path
 
@@ -230,20 +230,37 @@ def center_crop(src_w: int, src_h: int, out_w: int, out_h: int) -> Crop:
     return Crop(src_w, h, 0, (src_h - h) // 2)
 
 
+# Layout of a khai thị episode (CP8.21 D1): the one used before CP8.14 (header + video + title block centred
+# vertically, title panel below the video). Fixed values, not [render] keys: the user's [render] block only
+# drives the Short layout V16.
+KHAITHI_LAYOUT = {"header_panel_width": 0.79, "header_panel_height": 0.27, "video_height": 1.12,
+                  "title_panel_width": 0.81, "title_panel_height": 0.27, "gap_header_video": 0.005,
+                  "header_font_size": 0.062, "title_font_size": 0.0815}
+KHAITHI_GAP_VIDEO_TITLE = 0.01  # x W
+KHAITHI_LAYOUT_NAME = "khaithi-pre-cp8.14"
+
+
+def render_config_for(cfg, khaithi: bool):
+    """The [render] values an episode is rendered with: ``cfg`` for a Short, the pre-CP8.14 sizes for a khai thị."""
+    return replace(cfg, **KHAITHI_LAYOUT) if khaithi else cfg
+
+
 @dataclass(frozen=True)
 class Geometry:
-    """Pixel sizes derived from the [render] ratios (R4, layout V16 of CP8.14)."""
+    """Pixel sizes derived from the [render] ratios (R4, layout V16 of CP8.14; ``khaithi`` = layout of CP8.21 D1)."""
 
     header_w: int
     header_h: int
     video_h: int
     title_w: int
     title_h: int  # minimum title panel height
-    title_max_h: int  # tallest title panel: 3 lines at the reference font size (R5)
-    title_bottom: int  # y of the title panel's bottom edge
+    title_max_h: int  # tallest title panel (V16: 3 lines at the reference font size, R5; khai thị: fits the frame)
+    title_bottom: int  # y of the title panel's bottom edge (V16 only)
     gap_header_video: int
     radius: int
-    min_frame_margin: int  # y of the header panel's top edge
+    min_frame_margin: int  # y of the header panel's top edge (V16) / minimum margin of the centred block
+    khaithi: bool = False
+    gap_video_title: int = 0  # khai thị only
 
     @property
     def header_y(self) -> int:
@@ -253,6 +270,11 @@ class Geometry:
     def video_y(self) -> int:
         return self.header_y + self.header_h + self.gap_header_video
 
+    @property
+    def fixed_height(self) -> int:
+        """Khai thị: content block height without the title panel."""
+        return self.header_h + self.gap_header_video + self.video_h + self.gap_video_title
+
 
 def title_max_height(cfg) -> int:
     """Height a title panel needs for MAX_LINES lines at the reference font size, computed with the same
@@ -261,7 +283,23 @@ def title_max_height(cfg) -> int:
     return math.ceil(need - 1e-9)
 
 
-def geometry(cfg) -> Geometry:
+def geometry(cfg, khaithi: bool = False) -> Geometry:
+    """``cfg`` must be the config the episode is rendered with (:func:`render_config_for`)."""
+    if khaithi:
+        g = Geometry(header_w=px(cfg.header_panel_width), header_h=px(cfg.header_panel_height),
+                     video_h=even(px(cfg.video_height)), title_w=px(cfg.title_panel_width),
+                     title_h=px(cfg.title_panel_height), title_max_h=0, title_bottom=0,
+                     gap_header_video=px(cfg.gap_header_video), radius=px(cfg.panel_radius),
+                     min_frame_margin=px(cfg.min_frame_margin), khaithi=True,
+                     gap_video_title=px(KHAITHI_GAP_VIDEO_TITLE))
+        g = replace(g, title_max_h=HEIGHT - 2 * g.min_frame_margin - g.fixed_height)
+        for name, w in (("header_panel_width", g.header_w), ("title_panel_width", g.title_w)):
+            if w > WIDTH:
+                raise PlanError(f"render.{name} gives {w} px > frame width {WIDTH}")
+        if g.title_max_h < g.title_h:
+            raise PlanError(f"layout does not fit {WIDTH}x{HEIGHT}: content block {g.fixed_height + g.title_h} px "
+                            f"with min_frame_margin {g.min_frame_margin} px")
+        return g
     g = Geometry(header_w=px(cfg.header_panel_width), header_h=px(cfg.header_panel_height),
                  video_h=even(px(cfg.video_height)), title_w=px(cfg.title_panel_width),
                  title_h=px(cfg.title_panel_height), title_max_h=title_max_height(cfg),
@@ -288,7 +326,15 @@ def geometry(cfg) -> Geometry:
 
 def layout(g: Geometry, title_h: int, src_w: int, src_h: int) -> Layout:
     """Layout V16 (R4): header at the top margin, video full width right below it, title panel with its bottom
-    edge at ``title_bottom`` (grows upwards, drawn over the video); panels centred horizontally."""
+    edge at ``title_bottom`` (grows upwards, drawn over the video); panels centred horizontally.
+    Khai thị (CP8.21 D1): content block (header, video, title below the video) centred vertically."""
+    if g.khaithi:
+        top = (HEIGHT - (g.fixed_height + title_h)) // 2
+        header = Box((WIDTH - g.header_w) // 2, top, g.header_w, g.header_h, g.radius)
+        vy = top + g.header_h + g.gap_header_video
+        video = Box(0, vy, WIDTH, g.video_h)
+        title = Box((WIDTH - g.title_w) // 2, vy + g.video_h + g.gap_video_title, g.title_w, title_h, g.radius)
+        return Layout(header, video, center_crop(src_w, src_h, WIDTH, g.video_h), title)
     header = Box((WIDTH - g.header_w) // 2, g.header_y, g.header_w, g.header_h, g.radius)
     video = Box(0, g.video_y, WIDTH, g.video_h)
     title = Box((WIDTH - g.title_w) // 2, g.title_bottom - title_h, g.title_w, title_h, g.radius)

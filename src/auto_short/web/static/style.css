@@ -87,6 +87,8 @@ summary { cursor: pointer; color: var(--muted); }
 .short.deleted { opacity: .75; }
 .short-actions { display: flex; flex-wrap: wrap; gap: .4rem; }
 .loop-btn[aria-pressed="true"] { background: var(--accent-bg); border-color: var(--accent); font-weight: 700; } /* CP8.13 G5 */
+.icon-btn { display: inline-flex; align-items: center; justify-content: center; min-width: 2.75rem; min-height: 2.75rem; padding: .35rem; } /* CP8.21 D6: >= 44 px */
+.watched { display: inline-flex; flex-wrap: wrap; gap: .3rem .6rem; align-items: center; }
 .publish { display: flex; flex-wrap: wrap; gap: .3rem .6rem; align-items: center; }
 .publish-label { display: inline-flex; gap: .35rem; align-items: center; margin: 0; font-weight: 600; cursor: pointer; }
 .publish-label input { width: 1.25rem; height: 1.25rem; margin: 0; }

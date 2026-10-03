@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
 
-from .. import hashing
+from .. import hashing, khaithi
 from ..config import Config, RenderConfig
 from ..workspace import (
     DONE,
@@ -100,9 +100,22 @@ def fit_clip_title(font: Font, title: str, cfg: RenderConfig, geo: plan.Geometry
                      min_font_scale=cfg.min_font_scale)
 
 
-def used_config(cfg: RenderConfig, font_sha256: str) -> dict:
+def is_khaithi(ws_dir: Path) -> bool:
+    """CP8.21 D1: a khai thị episode (CP8.9: decided only by the presence of ``khaithi.json``)."""
+    return khaithi.path_of(ws_dir).exists()
+
+
+def episode_render_config(config: Config, ws_dir: Path) -> tuple[RenderConfig, bool]:
+    """([render] values the episode is rendered with, is khai thị): Short -> ``config.render`` untouched."""
+    kt = is_khaithi(ws_dir)
+    return plan.render_config_for(config.render, kt), kt
+
+
+def used_config(cfg: RenderConfig, font_sha256: str, khaithi: bool = False) -> dict:
     used = {f"render.{k}": getattr(cfg, k) for k in HASH_KEYS}
     used["render.font_sha256"] = font_sha256
+    if khaithi:  # CP8.21 D1; a Short keeps its hash byte for byte
+        used["render.layout"] = plan.KHAITHI_LAYOUT_NAME
     return used
 
 
@@ -490,13 +503,13 @@ def _encode_all(tasks: list[_Encode], run: Runner, fps: Fraction, jobs: int) -> 
 def run_render(episode_id: str, config: Config, *, force: bool = False, run: Runner | None = None) -> RenderResult:
     """Render the episode's Shorts (CP7), applying ``review.json`` title overrides and reusing every Short whose
     render_key is unchanged (CP8.2 T4/T5); ``force`` re-runs the stage and encodes every Short."""
-    cfg = config.render
     runner = run or _run
     try:
         ws = Workspace(config.workspace.dir, validate_episode_id(episode_id))
         manifest = ws.load_manifest()
     except WorkspaceError as exc:
         raise RenderError(str(exc)) from exc
+    cfg, kt = episode_render_config(config, ws.dir)
     if manifest is None:
         raise RenderError(f"no manifest for episode {episode_id!r} in {ws.dir}; run 'auto-short ingest' first")
     if review_archive.is_archived(ws.dir):
@@ -531,7 +544,7 @@ def run_render(episode_id: str, config: Config, *, force: bool = False, run: Run
     input_paths = list(paths.values()) + ([review_path] if review_path.is_file() else [])
     inputs = [{"path": ws.relpath(p), "sha256": hashing.sha256_file(p)} for p in input_paths]
     inputs.append({"path": ws.relpath(media), "sha256": media_fp.sha256})
-    cfg_hash = hashing.config_hash(used_config(cfg, font_sha))
+    cfg_hash = hashing.config_hash(used_config(cfg, font_sha, kt))
     outcome: dict = {}
 
     def action() -> list[str]:
@@ -579,7 +592,7 @@ def _render_all(ws: Workspace, cfg: RenderConfig, fpath: Path, font_sha: str, me
 
     font = Font(fpath)
     try:
-        geo = plan.geometry(cfg)
+        geo = plan.geometry(cfg, khaithi=is_khaithi(ws.dir))
     except plan.PlanError as exc:
         raise RenderError(str(exc)) from exc
     info = probe_media(media, run)
