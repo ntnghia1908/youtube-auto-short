@@ -2,7 +2,7 @@
 
 | Metadata | Value |
 |---|---|
-| Status | PROPOSED — số liệu E1 (CPU) có; E2 (GPU Windows) chờ HUMAN LEAD chạy; khuyến nghị §5 chờ HUMAN LEAD chọn |
+| Status | PROPOSED — E1 / E1b (CPU) + E2 (RTX 3090, RTX 3050) đã đo; khuyến nghị §5 chờ HUMAN LEAD chốt cấu hình |
 | Task contract | `docs/tasks/CP13-enhance-measure.md` |
 | Người viết | IMPLEMENTER (nháp), 2026-10-03 |
 | Dữ liệu / video mẫu | `~/.cache/auto-short-cp13-test/` (ngoài repo): `out/compare/`, `out/metrics.json`, `out/*.json` |
@@ -131,23 +131,24 @@ Dung lượng nếu enhance cả 98 giờ (crf 23 → 20): ≈ 58–92 GiB (ngu�
 
 Gợi ý ngắn (không thay §5): với nguồn 640×480 dùng `g10` không hạ khung; chỉ đoạn Short tiết kiệm ≈ 8× so với cả tập; Short crop khoảng 418×480 rồi scale lên 1080 rộng (≈ 2.6×, CP7 R4) nên bản gốc rất mờ trên Short; đây là trường hợp enhance có lợi nhất.
 
-## 3. E2 — Tốc độ GPU (chờ HUMAN LEAD)
+## 3. E2 — Tốc độ GPU (HUMAN LEAD đo 2026-10-03, Windows 10, torch 2.5.1+cu121, fp16, tile 0)
 
-Hướng dẫn: `docs/guides/enhance-gpu-windows.md`. Đoạn mẫu cho Windows: `~/.cache/auto-short-cp13-test/samples/` (3 file mp4 ≈ 0.25 / 1.1 / 2.3 MB). **Chưa đo GPU.** Bảng điền kết quả:
+Card nhỏ thực tế là **RTX 3050** (không phải 3060). Log gốc: `~/.cache/auto-short-cp13-test/e2/result3050.txt`, `result3090.txt`. Cột "giờ / 1 giờ video" = 107 892 khung × s/khung.
 
-| Card | Model / cấu hình | Đoạn | s/khung | fps | VRAM đỉnh (MB) | Nhiệt độ max | fp16 / tile |
-|---|---|---|---|---|---|---|---|
-| RTX 3060 | `g10`, A | A_old_352x262 | | | | | |
-| RTX 3060 | `g10_p360` | B_960x720 | | | | | |
-| RTX 3060 | `g10_p540` | B_960x720 | | | | | |
-| RTX 3060 | `g10_p540` | C_1440x1080 | | | | | |
-| RTX 3060 | `x4p` / `x4p_p270` | A / B | | | | | |
-| RTX 3060 | `x2p_p540` | B | | | | | |
-| RTX 3060 | `g10` (không hạ) / `g10_p360` | D_640x480 | | | | | |
-| RTX 3060 | `g10` (không hạ) | E_640x480 | | | | | |
-| RTX 3090 | (cùng bộ trên) | | | | | | |
+| Cấu hình | Đoạn | RTX 3090 s/khung (giờ / 1 giờ video) | RTX 3050 s/khung (giờ) | VRAM đỉnh | 3090 util max |
+|---|---|---|---|---|---|
+| `g10` không hạ | A 352×262 | 0,028 (0,8) | 0,066 (2,0) | 73 MB | 44 % |
+| `g10_p360` | B 960×720 | 0,046 (1,4) | 0,117 (3,5) | 134 MB | 36 % |
+| `g10_p540` | B 960×720 | 0,109 (3,3) | 0,261 (7,8) | 295 MB | 38 % |
+| `g10_p540` | C 1440×1080 | 0,106 (3,2) | 0,258 (7,7) | 295 MB | 40 % |
+| **`g10` không hạ (`g10_p0`)** | **D / E 640×480** | **0,081 (2,4)** | **0,208 (6,2)** | 234 MB | 47–50 % |
+| `g10_p360` | D 640×480 | 0,047 (1,4) | 0,116 (3,5) | 134 MB | 40 % |
+| `x4plus` | A / B (270p) | 0,151–0,159 (4,5–4,8) | 0,69–0,71 (21) | 1,2 GB | 100 % |
+| `x2plus_p540` | B | 0,161 (4,8) | 0,704 (21) | 1,2 GB | 100 % |
 
-Script kiểm chạy được ở chế độ CPU trên VM (`--device cpu`, 3 khung A: 2.06 s/khung ở 8 luồng; tile 256 chạy được; `--device cuda` báo lỗi rõ khi không có CUDA). Chưa chạy được nhánh CUDA / fp16 / `nvidia-smi` — kiểm thật lần đầu khi HUMAN LEAD chạy.
+- 3090 nhanh hơn 3050 ≈ 2,5× (model nhẹ), 4,6× (RRDB).
+- Với `realesr-general-x4v3`, 3090 chỉ dùng 36–50 % GPU: nghẽn ở phía CPU của script (đọc / đổi màu / resize từng khung, batch 1). Worker S2 cần đọc khung ở luồng riêng + batch nhiều khung → dự kiến nhanh thêm ≈ 1,5–2× trên 3090 (3050 đã 80–100 %, ít lợi).
+- VRAM ≤ 320 MB → chạy cạnh Ollama trên 3090 không thiếu bộ nhớ.
 
 ## 4. E3 — Ước lượng
 
@@ -170,13 +171,16 @@ Dung lượng (đo trên mẫu, x264 `medium`, 1080p `g10_p360`): crf 20 → 0.7
 
 ### 5.1 Model
 
-- **Ứng viên duy nhất: `realesr-general-x4v3`** (nhẹ nhất: 1,2–5,4 s/khung CPU, nhanh hơn RRDB 3–15 lần). RRDB loại: `x4plus` thêm hạt / họa tiết giả, `x2plus` gần như không hơn Lanczos, cả hai nhấp nháy 2–5×.
-- ORCHESTRATOR xem ảnh crop (A_face, C_face): `g10` sạch và nét nhất (lông mày, mắt, chữ Hán) nhưng **da bị "nhựa"** (mịn quá, mất nếp da) — rõ nhất ở C `g10_p360`; `g05` và `g10_p540` tự nhiên hơn một chút; bản HD của kênh gốc mềm hơn `g10` nhưng tự nhiên. Đây là đánh đổi cảm quan → **HUMAN LEAD chọn bằng mắt** trên video so sánh (`out/compare/*_compare_10s.mp4`, `*_compare_2s.mp4`): `g10` hay `g05`, hạ 360p hay 540p.
-- Nhấp nháy: mọi cấu hình per-frame đều hơn Lanczos (`g10` 1,2–1,7×; bản HD kênh gốc 1,86×) → mức của `g10` không tệ hơn kênh gốc; chấp nhận nếu HUMAN LEAD xem video thấy ổn.
+- **`realesr-general-x4v3` denoise 1.0 (`g10`)**. RRDB (`x4plus` / `x2plus`) loại: chậm 3–10× (E2), thêm hạt / họa tiết giả, nhấp nháy 2–5×.
+- **Nguồn 640×480 (đối tượng thật, Amendment 1): không hạ (`g10_p0`)**. ORCHESTRATOR xem D_face / D_text: `g10_p0` giữ mắt, lông mày, nét chữ Hán; hạ 360p vẽ lại mắt / môi, da "nhựa" rõ hơn; nhấp nháy `g10_p0` thấp nhất (1,33–1,53× Lanczos). Đánh đổi: chậm ≈ 1,7× so với hạ 360p. Nguồn ≥ 720p (không thuộc phạm vi hiện tại): hạ 360p–540p như E1.
+- Chốt bằng mắt: HUMAN LEAD xem `D_compare_10s.mp4` / `E_compare_10s.mp4`.
 
-### 5.2 Phạm vi
+### 5.2 Phạm vi và thời gian (HUMAN LEAD 2026-10-03)
 
-HUMAN LEAD đã chọn **cả video nguồn**. Ước lượng `g10_p360` (chưa đo GPU): 1 giờ video ≈ 1,2–4 giờ RTX 3060; thư viện hiện có 21,4 giờ video → ≈ 1–3,5 ngày GPU liên tục. Phương án rẻ hơn 8–15 lần (chỉ đoạn dùng cho Short / khai thị) ghi lại để HUMAN LEAD cân nhắc nếu E2 cho thấy 3060 chậm; không đổi quyết định khi chưa có số GPU.
+- Enhance **cả tập**, làm dần; đối tượng: video cũ chưa xử lý (playlist Địa Tạng 102 tập ≈ 98 giờ, 640×480); nguồn đã xử lý trong `work/` không enhance lại.
+- **Cả hai GPU chạy cả ngày**; 3090 nhường Ollama khi 8080 có job AI, 3050 chạy liên tục.
+- Ước lượng (E2, `g10_p0`): 3090 ≈ 10 giờ video / ngày, 3050 ≈ 3,9 → ≈ 14 tập / ngày → **≈ 7 ngày** cho 98 giờ; worker 3090 có batch (§3) → ≈ **4–5 ngày**. (Hạ 360p: ≈ 4 / ≈ 2,5–3 ngày, nếu HUMAN LEAD chấp nhận chất lượng.) +5–10 % cho thời gian nhường Ollama.
+- Dung lượng: `source_hd.mp4` ≈ 0,6–0,9 GiB / giờ video → 98 giờ ≈ 58–92 GiB (ổ VM còn ≈ 400 GiB). Nguồn HD **không tự dọn** (FIX-storage-suggest D4).
 
 ### 5.3 Kiến trúc S2 — worker **kéo việc** (pull), chịu được mất mạng
 
@@ -195,9 +199,8 @@ HUMAN LEAD 2026-10-03: máy RTX 3060 có thể đứt mạng → worker phải t
 
 ### 5.4 Bước tiếp theo đề xuất
 
-1. HUMAN LEAD xem video so sánh → chọn cấu hình (`g10` / `g05`, 360p / 540p) hoặc dừng nếu da "nhựa" không chấp nhận được.
-2. HUMAN LEAD chạy E2 trên RTX 3060 → ORCHESTRATOR điền §3, cập nhật §4.
-3. Nếu tiếp tục: ADR + contract S2 theo §5.3 (dual-agent).
+1. HUMAN LEAD chốt `g10_p0` (hoặc hạ 360p) sau khi xem D / E.
+2. ADR + contract S2 theo §5.3: hai worker Windows (3090 nhường Ollama, 3050 liên tục), batch khung trên GPU, lease theo tập, làm offline + gửi đoạn có sha256, VM ghép `source_hd.mp4`, render dùng nguồn HD, nguồn HD đánh dấu để không tự dọn; Short chưa đăng tự render lại khi có nguồn HD, Short đã đăng giữ nguyên (nút render lại).
 
 ## 6. Giới hạn / sai lệch
 
