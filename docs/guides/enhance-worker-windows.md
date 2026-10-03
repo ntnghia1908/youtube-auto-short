@@ -63,11 +63,11 @@ Worker luôn chạy bằng đường dẫn tuyệt đối tới `python.exe` c�
 Dòng cuối của self-test:
 
 ```
-SELF-TEST OK: gpu=NVIDIA GeForce RTX 3090 encoder=h264_nvenc vm=ket noi duoc, VM chua co API enhance (404 - binh thuong truoc CP13.1b)
+SELF-TEST OK voi canh bao: gpu=NVIDIA GeForce RTX 3090 encoder=h264_nvenc vm=reachable-unauthorized: VM tra 401: chua co token (VM cap o CP13.1b) - tunnel OK
 ```
 
-- Trước khi VM có API (CP13.1b chưa merge): `404` là đúng, nghĩa là tunnel thông. Worker cứ 5 phút hỏi lại.
-- `token bi tu choi (401)`: sai / chưa có token (xem "Đổi token").
+- Trước khi VM có API (CP13.1b chưa merge): kết quả mong đợi là `[WARN] VM: reachable-unauthorized ... 401` (đăng nhập web của VM chặn mọi `/api/*`); đây là **đạt** (tunnel thông, exit 0). Worker không thoát: cứ 10 phút (`auth_retry_seconds`) hỏi lại và đọc lại `config.json`, nên sửa token xong không cần khởi động lại task. (Nếu VM trả `404` cũng là đạt.)
+- Có token mà vẫn 401: token sai, hoặc VM chưa có API enhance (xem "Đổi token").
 - `khong noi duoc ... tunnel`: tunnel chưa lên. Chạy `.\auto-fix-enhance-worker.ps1`.
 - `WARN khong co NVENC`: worker vẫn chạy bằng libx264 (CPU, chậm hơn); dùng `-FfmpegPath` trỏ ffmpeg có NVENC.
 - Tunnel Ollama v4 vẫn phải chạy: `Get-ScheduledTask Ollama-GPU-Tunnel-*`.
@@ -78,7 +78,7 @@ Khởi động lại máy rồi đăng nhập: hai task tự chạy (kiểm bằ
 
 ## Đổi token / cấu hình
 
-Sửa `%USERPROFILE%\enhance-worker\config.json` rồi chạy `.\auto-fix-enhance-worker.ps1` (hoặc chạy lại `setup-enhance-worker.ps1 -WorkerName ... -Token <token mới>`). Các khóa: `worker_name`, `token`, `yield_to_ollama`, `batch_size`, `max_disk_gb`, `work_dir`, `device`, `ffmpeg`. Mẫu: `config.example.json`. Không gửi token qua chat / commit vào repo.
+Sửa `%USERPROFILE%\enhance-worker\config.json`; worker tự đọc lại sau tối đa `auth_retry_seconds` khi gặp 401 (muốn áp dụng ngay: `.\auto-fix-enhance-worker.ps1`; hoặc chạy lại `setup-enhance-worker.ps1 -WorkerName ... -Token <token mới>`). Các khóa: `worker_name`, `token`, `yield_to_ollama`, `batch_size`, `max_disk_gb`, `work_dir`, `device`, `ffmpeg`. Mẫu: `config.example.json`. Không gửi token qua chat / commit vào repo.
 
 ## Gỡ
 
