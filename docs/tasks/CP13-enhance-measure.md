@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: CHANGE
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -79,5 +79,6 @@ Không chạm database, security model hay public API.
 - Tests: E1 chạy đủ 3 đoạn × 4–5 cấu hình (CPU); `enhance_bench_win.py` chạy chế độ CPU trên VM (và tile); `python -m pytest -q -n auto` + `node scripts/framework-check.mjs` — PASS (1337 passed, 1 skipped; framework-check PASS).
 - Review: ORCHESTRATOR round 1 ACCEPTED (2026-10-03): xem ảnh crop A_face / C_face (g10 nét nhất nhưng da "nhựa"); script GPU chạy thử CPU trên VM OK; viết lại §5 (model, phạm vi, kiến trúc worker kéo việc chịu mất mạng theo yêu cầu HUMAN LEAD). E2 GPU chưa đo — báo cáo ghi rõ.
 - Important findings / decisions: bản cũ `AH5jLu40RMs` chỉ 352×262; `general-x4v3` tốt nhất, RRDB nhấp nháy + chậm; mọi model per-frame nhấp nháy hơn Lanczos; Short dùng nguồn 1:1 → enhance theo từng clip rẻ hơn cả tập ≈ 8–15×; E2 GPU chưa đo.
+- E1b (Amendment 1): 2 đoạn 640×480 (D = tập 1, E = tập 100) × `g10_p0` / `g10_p360` / `g05_p360` + Lanczos; E3 tính lại cho 98 giờ; nguồn 640×480 nên chạy `g10` không hạ khung (báo cáo §2.6).
 - Known limitations: chưa đo GPU (E2 chờ HUMAN LEAD); không thử GFPGAN / model video; ước lượng GPU là FLOPs giả định.
 - PR:

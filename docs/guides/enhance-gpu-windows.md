@@ -84,7 +84,7 @@ Kiểm tra: `dir models` phải có 4 file `.pth` (kích thước ≈ 4.9 MB, 4.
 Cần hai thứ, đều ở trên VM:
 
 - script: `scripts/enhance_bench_win.py` trong repo (nhánh `feature/cp13-enhance-measure`, hoặc `main` sau khi merge);
-- 3 đoạn mẫu (khoảng 10 s mỗi đoạn, vài MB): `~/.cache/auto-short-cp13-test/samples/`.
+- 5 đoạn mẫu (khoảng 10 s mỗi đoạn, vài MB): `~/.cache/auto-short-cp13-test/samples/`.
 
 Cách dễ nhất là `scp` (có sẵn trong Windows 10/11). Thay `USER` và `VM_ADDRESS` bằng tên đăng nhập và địa chỉ bạn vẫn dùng để SSH vào VM (nếu SSH vào VM bằng cổng khác thì thêm `-P <cổng>` ngay sau `scp`):
 
@@ -95,7 +95,7 @@ Cách dễ nhất là `scp` (có sẵn trong Windows 10/11). Thay `USER` và `VM
 
 (Nếu repo/đường dẫn khác, nhờ ORCHESTRATOR chép hai thứ trên sang chỗ bạn truy cập được; hoặc dùng WinSCP / thư mục chia sẻ — miễn cuối cùng thư mục `C:\enhance-bench` có `enhance_bench_win.py` và 3 file `.mp4`.)
 
-Kiểm tra: `dir` thấy `enhance_bench_win.py`, `A_old_352x262.mp4`, `B_960x720.mp4`, `C_1440x1080.mp4`, thư mục `models`, `venv`.
+Kiểm tra: `dir` thấy `enhance_bench_win.py`, `A_old_352x262.mp4`, `B_960x720.mp4`, `C_1440x1080.mp4`, `D_640x480.mp4`, `E_640x480.mp4`, thư mục `models`, `venv`.
 
 ## Bước 6 — Chạy thử (khoảng 1 phút)
 
@@ -131,7 +131,12 @@ Chạy lần lượt các lệnh dưới đây (mỗi lệnh 0.5–5 phút), **m
 > python enhance_bench_win.py --model RealESRGAN_x4plus --clip B_960x720.mp4 --scale-to 270 --frames 30 --fp16 --json
 > python enhance_bench_win.py --model RealESRGAN_x2plus --clip B_960x720.mp4 --scale-to 540 --frames 30 --fp16 --json
 > python enhance_bench_win.py --model realesr-general-x4v3 --clip C_1440x1080.mp4 --scale-to 540 --frames 60 --fp16 --json
+> python enhance_bench_win.py --model realesr-general-x4v3 --clip D_640x480.mp4 --frames 60 --fp16 --json
+> python enhance_bench_win.py --model realesr-general-x4v3 --clip D_640x480.mp4 --scale-to 360 --frames 60 --fp16 --json
+> python enhance_bench_win.py --model realesr-general-x4v3 --clip E_640x480.mp4 --frames 60 --fp16 --json
 ```
+
+Ba lệnh cuối dùng đoạn 640×480 từ video cũ chưa xử lý (đối tượng enhance thật, Amendment 1): giữ nguyên 480p (đầu ra model 1920p thu về 1080p) và hạ 360p.
 
 Giải thích nhanh: `--scale-to N` hạ khung xuống cao N px trước khi enhance (đúng cách dự kiến dùng thật: hạ rồi phóng lên 1080p); `--frames` là số khung đo; `--fp16` dùng số thực nửa độ chính xác (nhanh hơn, ít VRAM hơn trên card RTX).
 

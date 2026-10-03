@@ -92,6 +92,45 @@ Nhấp nháy = trung bình |chênh khung liền kề| (thang 0–255, xám) trê
 - `x2p`: gần như Lanczos, hơi nhòe; nháy nhiều.
 - `g10_p540` so với `g10_p360`: chi tiết hơn chút (chữ Hán, nếp da), nhưng tốn ≈ 2.2× thời gian.
 
+### 2.6 E1b — video cũ chưa xử lý 640×480 (Amendment 1)
+
+Đối tượng thật: playlist "Kinh Địa Tạng Bồ Tát Bổn Nguyện" (`PLOynZc0cJJfDMY5-Fd0su_Ea3TGdZ2wk4`, 102 tập ≈ 98 giờ, tối đa 640×480, định dạng `135` avc1 ≈ 361 kbps). Mẫu (tải bằng `yt-dlp --download-sections`, 10 s đầu của đoạn tải): **D** = tập 1 `9NQFsvecC04` từ 600 s; **E** = tập 100 `gXFNw1YTLmE` từ 1200 s. Cả hai 640×480, 29.97 fps, có mặt + chữ Hán. Không có đích HD. Cấu hình (không RRDB): `g10_p0` (không hạ, 480p → ×4 = 1920p → thu 1080p), `g10_p360` và `g05_p360` (hạ 360p). Không chạy `g05_p0` để tiết kiệm CPU (≈ 22 phút/đoạn).
+
+| Đoạn | Cấu hình | s/khung (CPU 16 luồng) | Nhấp nháy | Tương đối Lanczos | Độ nét |
+|---|---|---|---|---|---|
+| D | Lanczos | — | 0.060 | 1.00 | 35 |
+| D | `g10_p0` | 4.38 | 0.091 | 1.53 | 308 |
+| D | `g10_p360` | 2.50 | 0.099 | 1.66 | 350 |
+| D | `g05_p360` | 2.48 | 0.121 | 2.02 | 297 |
+| E | Lanczos | — | 0.058 | 1.00 | 26 |
+| E | `g10_p0` | 5.02 (4.4 lúc đầu; CPU có thể bị tranh) | 0.077 | 1.33 | 214 |
+| E | `g10_p360` | 2.47 | 0.084 | 1.45 | 268 |
+| E | `g05_p360` | 2.46 | 0.103 | 1.77 | 217 |
+
+Quan sát bằng mắt (D_face, D_text, E_text; chưa xem toàn bộ video):
+- Nguồn Lanczos rất mờ, mất mắt / chữ mềm. `g10_p0` giữ chi tiết mắt, lông mày, nét chữ Hán sắc nhất và **trung thành nhất** với hình gốc.
+- Hạ 360p (`g10_p360`) làm mịn hơn, hình dạng mắt / môi bị "vẽ lại" nhiều hơn (cảm giác nhựa), nhiều nhấp nháy hơn `g10_p0`; chữ Hán vẫn rõ. `g05_p360` mịn hơn nữa, nhấp nháy cao nhất.
+- Nghĩa là với nguồn 640×480 **không nên hạ khung** (ngược với 960×720 / 1440×1080 ở E1): `g10_p0`, chậm hơn ≈ 1.8× nhưng đẹp và ít nhấp nháy hơn. Nhấp nháy `g10_p0` 1.3–1.5× Lanczos, cùng cỡ các đoạn E1.
+- Dung lượng `g10_p0` x264 `medium`, 1080p: crf 20 → 0.86–0.94 GiB/giờ; crf 23 → 0.59–0.64 GiB/giờ (nguồn gốc 640×480 ≈ 0.16 GiB/giờ).
+
+Video / ảnh: `out/compare/D_compare_10s.mp4`, `E_compare_10s.mp4` (2×2: Lanczos, `g10_p0`, `g10_p360`, `g05_p360`), `D_face.jpg`, `D_text.jpg`, `E_face.jpg`, `E_text.jpg`. Mẫu Windows: `samples/D_640x480.mp4`, `E_640x480.mp4`; lệnh trong `docs/guides/enhance-gpu-windows.md` Bước 7.
+
+**E3 cho 98 giờ (≈ 10.6 triệu khung; ước lượng FLOPs, chưa đo GPU; giả thiết như §4: 3060 3–10, 3090 8–25 TFLOP/s hiệu dụng).** `g10_p0`: 0.72 TFLOP/khung; `g10_p360`: 0.40 TFLOP/khung. Cả tập = 107 892 khung/giờ; chỉ đoạn dùng cho Short ≈ 7 phút/tập ≈ 12 590 khung (giả định như §5.2; 102 tập ≈ 1.28 triệu khung).
+
+| Cấu hình | CPU (đo) / giờ video | RTX 3060 / giờ video | RTX 3090 / giờ video | 3060 cả 98 giờ | 3090 cả 98 giờ |
+|---|---|---|---|---|---|
+| `g10_p0` | 132–150 giờ | 2.2–7.2 giờ | 0.9–2.7 giờ | 215–705 giờ | 85–265 giờ |
+| `g10_p360` | 74 giờ | 1.2–4.0 giờ | 0.5–1.5 giờ | 118–392 giờ | 46–148 giờ |
+
+| Cấu hình | 3060 / tập (7 phút) | 3090 / tập | 3060 cả 102 tập | 3090 cả 102 tập |
+|---|---|---|---|---|
+| `g10_p0` | 0.25–0.84 giờ | 0.10–0.31 giờ | 26–86 giờ | 10–32 giờ |
+| `g10_p360` | 0.14–0.47 giờ | 0.06–0.18 giờ | 14–48 giờ | 6–18 giờ |
+
+Dung lượng nếu enhance cả 98 giờ (crf 23 → 20): ≈ 58–92 GiB (nguồn gốc ≈ 16 GiB); chỉ đoạn Short: ≈ 7–11 GiB. Khoảng GPU rất rộng — E2 trên RTX 3060 quyết định; nếu GPU gần cận dưới thì enhance cả 98 giờ chạy được trong vài tuần nền, nếu cận trên thì chỉ nên enhance đoạn dùng cho Short.
+
+Gợi ý ngắn (không thay §5): với nguồn 640×480 dùng `g10` không hạ khung; chỉ đoạn Short tiết kiệm ≈ 8× so với cả tập; Short crop khoảng 418×480 rồi scale lên 1080 rộng (≈ 2.6×, CP7 R4) nên bản gốc rất mờ trên Short; đây là trường hợp enhance có lợi nhất.
+
 ## 3. E2 — Tốc độ GPU (chờ HUMAN LEAD)
 
 Hướng dẫn: `docs/guides/enhance-gpu-windows.md`. Đoạn mẫu cho Windows: `~/.cache/auto-short-cp13-test/samples/` (3 file mp4 ≈ 0.25 / 1.1 / 2.3 MB). **Chưa đo GPU.** Bảng điền kết quả:
@@ -104,6 +143,8 @@ Hướng dẫn: `docs/guides/enhance-gpu-windows.md`. Đoạn mẫu cho Windows:
 | RTX 3060 | `g10_p540` | C_1440x1080 | | | | | |
 | RTX 3060 | `x4p` / `x4p_p270` | A / B | | | | | |
 | RTX 3060 | `x2p_p540` | B | | | | | |
+| RTX 3060 | `g10` (không hạ) / `g10_p360` | D_640x480 | | | | | |
+| RTX 3060 | `g10` (không hạ) | E_640x480 | | | | | |
 | RTX 3090 | (cùng bộ trên) | | | | | | |
 
 Script kiểm chạy được ở chế độ CPU trên VM (`--device cpu`, 3 khung A: 2.06 s/khung ở 8 luồng; tile 256 chạy được; `--device cuda` báo lỗi rõ khi không có CUDA). Chưa chạy được nhánh CUDA / fp16 / `nvidia-smi` — kiểm thật lần đầu khi HUMAN LEAD chạy.

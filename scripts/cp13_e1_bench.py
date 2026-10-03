@@ -42,7 +42,14 @@ CLIPS = {
               face=(0.33, 0.08, 0.68, 0.55), text=(0.25, 0.82, 0.72, 0.93), desc="By0ZVJTPW3Y 960x720"),
     "C": dict(src=WORK / "6R3GE2On7Yc/source.mp4", start=600.0, size=(1440, 1080),
               face=(0.33, 0.12, 0.62, 0.50), text=(0.10, 0.80, 0.88, 0.94), desc="6R3GE2On7Yc 1440x1080 mo"),
+    # E1b (Amendment 1): video cu chua xu ly, 640x480 (playlist Kinh Dia Tang, tap 1 va tap 100)
+    "D": dict(src=BASE / "src/D_raw.mp4", start=0.0, size=(1440, 1080),
+              face=(0.38, 0.12, 0.62, 0.40), text=(0.15, 0.82, 0.85, 0.94), desc="9NQFsvecC04 (tap 1) 640x480, 600 s"),
+    "E": dict(src=BASE / "src/E_raw.mp4", start=0.0, size=(1440, 1080),
+              face=(0.36, 0.12, 0.64, 0.42), text=(0.15, 0.82, 0.85, 0.94), desc="gXFNw1YTLmE (tap 100) 640x480, 1200 s"),
 }
+if os.environ.get("CLIPS_ONLY"):
+    CLIPS = {k: v for k, v in CLIPS.items() if k in os.environ["CLIPS_ONLY"].split(",")}
 # cfg: model, denoise, pre_h (0 = nguyen), so khung
 CFGS = {
     "g10_p360": ("realesr-general-x4v3", 1.0, 360, 300),
@@ -60,8 +67,16 @@ A_CFGS = {
 }
 
 
+# E1b: 640x480, khong ha (p0) va ha 360p; khong RRDB
+DE_CFGS = {
+    "g10_p0": ("realesr-general-x4v3", 1.0, 0, 300),
+    "g10_p360": ("realesr-general-x4v3", 1.0, 360, 300),
+    "g05_p360": ("realesr-general-x4v3", 0.5, 360, 300),
+}
+
+
 def cfgs_of(clip):
-    return A_CFGS if clip == "A" else CFGS
+    return A_CFGS if clip == "A" else DE_CFGS if clip in ("D", "E") else CFGS
 
 
 def sh(*a):
