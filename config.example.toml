@@ -179,6 +179,13 @@ window_words_per_minute = 400        # window = max([selection] max_window_words
 # (seconds) is a pause, not a hard break, so a khai thị video may run across it (Shorts are unchanged)
 soft_label_max_seconds = 5.0
 
+[storage]
+# Auto clean-up of source videos (docs/decisions/CP8.3-web-contract.md W9 S5), run by `auto-short web` at start-up
+# and every 5 minutes: when every part (Short + khai thi) of a video is "Xong" and has stayed so for the grace
+# period, its downloaded source video is removed (same effect as the "Dọn video nguồn" button). Shorts are kept.
+auto_archive = true
+auto_archive_grace_minutes = 30      # 0 = no wait
+
 [post]
 # Community post text of a Short (docs/decisions/CP8.15-community-post-contract.md): AI adds punctuation /
 # paragraph breaks only (never changes words) to the Short's caption text via Ollama, plus the image library

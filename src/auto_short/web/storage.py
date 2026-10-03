@@ -2,7 +2,8 @@
 the low-disk warning. Stdlib only; sizes via ``os.scandir`` (no ``du``), cached up to 30 s. Nothing here deletes
 anything: the recommendations are only shown, the user runs them (``archive_source`` / ``delete_episode``).
 
-Canonical contract: docs/decisions/CP8.3-web-contract.md W9.
+Canonical contract: docs/decisions/CP8.3-web-contract.md W9. Exception to "nothing deletes" (S5): the opt-in-by-default
+auto clean-up of a finished video's source (:func:`auto_archive_plan`, run by the web app).
 """
 
 from __future__ import annotations
@@ -18,7 +19,9 @@ from pathlib import Path
 from ..config import Config
 from ..review import ReviewError, episode_complete, publish_status, read_archive
 from ..review.archive import source_files
+from ..post.store import POSTS_NAME, read_posts_quiet
 from ..review.publish import PUBLISH_NAME, read_publish
+from ..khaithi import SUFFIX as KT_SUFFIX
 from ..workspace import DONE, iter_manifests
 from . import episodes as ep
 
@@ -107,6 +110,19 @@ def _last_activity(manifest: dict, fallback: float) -> float:
     return max(times, default=fallback)
 
 
+def video_id(episode_id: str) -> str:
+    """The video an episode belongs to: ``<id>`` (Short) and ``<id>.kt`` (khai thị) are parts of video ``<id>``."""
+    return episode_id[:-len(KT_SUFFIX)] if episode_id.endswith(KT_SUFFIX) and len(episode_id) > len(KT_SUFFIX) \
+        else episode_id
+
+
+def _mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
 def episode_sizes(config: Config, active: set[str] | None = None) -> list[dict]:
     """S1 table: one row per workspace with a manifest (+ output dirs without a workspace: ``orphan``), sorted by
     total size (largest first)."""
@@ -133,6 +149,19 @@ def episode_sizes(config: Config, active: set[str] | None = None) -> list[dict]:
         except ReviewError:
             status, complete = {}, False
         published = sum(1 for s in rendered if status.get(s.get("clip_id"), {}).get("published"))
+        # D3: composed community posts not yet ticked "Đã đăng bài" (only for Shorts still rendered)
+        rendered_ids = {s.get("clip_id") for s in rendered}
+        post_unticked = sum(1 for e in read_posts_quiet(ws.dir / POSTS_NAME, eid)["posts"]
+                            if e["posted_at"] is None and e["clip_id"] in rendered_ids)
+        # D4: since when the episode has been "Xong" — latest of the ticks, publish.json / render_manifest.json
+        # mtimes and render finish (stateless: survives a restart; any later change moves it forward)
+        complete_since = None
+        if complete:
+            ticks = [t for t in (parse_time(e.get("at")) for e in (pub.get("published") or [])) if t is not None]
+            finished = parse_time((stages.get("render") or {}).get("finished_at"))
+            complete_since = max([*ticks, _mtime(ws.dir / PUBLISH_NAME),
+                                  _mtime(out_root / eid / ep.RENDER_MANIFEST),
+                                  *([finished] if finished is not None else [])])
         if eid in active or "running" in statuses:
             state = PROCESSING
         elif archive is not None:
@@ -153,6 +182,7 @@ def episode_sizes(config: Config, active: set[str] | None = None) -> list[dict]:
             "source_kind": (manifest.get("source") or {}).get("kind"),
             "source": source, "shorts_bytes": shorts, "other": work_total - source, "total": work_total + shorts,
             "shorts": len(rendered), "published": published, "complete": complete,
+            "post_unticked": post_unticked, "complete_since": complete_since,
             "render_finished_at": parse_time((stages.get("render") or {}).get("finished_at"))
             if (stages.get("render") or {}).get("status") == DONE else None,
             "last_activity": _last_activity(manifest, mtime),
@@ -165,41 +195,82 @@ def episode_sizes(config: Config, active: set[str] | None = None) -> list[dict]:
             size = tree_size(entry)
             rows.append({"id": entry.name, "title": None, "state": ORPHAN, "source_kind": None, "source": 0,
                          "shorts_bytes": size, "other": 0, "total": size, "shorts": 0, "published": 0,
-                         "complete": False,
+                         "complete": False, "post_unticked": 0, "complete_since": None,
                          "render_finished_at": None, "last_activity": entry.stat().st_mtime, "archived_at": None})
     rows.sort(key=lambda r: (-r["total"], r["id"]))
     return rows
 
 
-def recommend(rows: list[dict], now: float, *, old_days: int = OLD_DAYS) -> list[dict]:
-    """S2 (priority order; one recommendation per episode, the first rule that applies; episodes with a job are
-    skipped). Each action names the bytes it frees:
+def _can_archive(r: dict) -> bool:
+    return r["state"] == DONE_STATE and r["source_kind"] == "youtube" and r["source"] > 0
 
-    1. the episode is "Xong" (CP8.7 L4, ``complete``: render done, every rendered Short ticked for its current
-       file; no Short left counts) -> ``delete`` (all) and, while the source is there, ``archive``;
-    2. render done more than ``old_days`` ago and the source video still there -> ``archive``;
-    3. failed / unfinished with no activity for ``old_days`` -> ``delete``.
+
+def _videos(rows: list[dict]) -> dict[str, list[dict]]:
+    """D1: rows grouped by video id (videos in first-row order, the Short before its khai thị inside a video;
+    ``orphan`` rows are not parts of a video)."""
+    out: dict[str, list[dict]] = {}
+    for r in rows:
+        if r["state"] != ORPHAN:
+            out.setdefault(video_id(r["id"]), []).append(r)
+    return {vid: sorted(parts, key=lambda r: r["id"] != vid) for vid, parts in out.items()}
+
+
+def recommend(rows: list[dict], now: float, *, old_days: int = OLD_DAYS) -> list[dict]:
+    """S2 (priority order; one recommendation per **video** — Short ``<id>`` and khai thị ``<id>.kt`` are its
+    parts; the first rule that applies; a video with a part that is processing is skipped). Each action names the
+    bytes it frees and the episodes it applies to (``episodes``):
+
+    1. every part is "Xong" (CP8.7 L4, ``complete``) -> ``delete`` (all parts) and, while a source can be cleaned
+       up, ``archive``;
+    2. every part with a cleanable source finished its render more than ``old_days`` ago -> ``archive``;
+    3. every part failed / unfinished with no activity for ``old_days`` -> ``delete``.
+
+    Every recommendation also carries ``post_unticked`` (D3): composed posts of the video not yet ticked.
     """
     limit = now - old_days * 86400
     out = []
-    for r in rows:
-        if r["state"] in (PROCESSING, ORPHAN):
+    for vid, parts in _videos(rows).items():
+        if any(r["state"] == PROCESSING for r in parts):
             continue
-        can_archive = r["state"] == DONE_STATE and r["source_kind"] == "youtube" and r["source"] > 0
-        if r.get("complete"):
-            actions = [{"action": "delete", "frees": r["total"]}]
-            if can_archive:
-                actions.insert(0, {"action": "archive", "frees": r["source"]})
-            out.append({"episode_id": r["id"], "title": r["title"], "rule": "all_published", "actions": actions})
-        elif can_archive and r["render_finished_at"] is not None and r["render_finished_at"] < limit:
-            out.append({"episode_id": r["id"], "title": r["title"], "rule": "old_source",
-                        "age_days": int((now - r["render_finished_at"]) // 86400),
-                        "actions": [{"action": "archive", "frees": r["source"]}]})
-        elif r["state"] in (FAILED, INCOMPLETE) and r["last_activity"] < limit:
-            out.append({"episode_id": r["id"], "title": r["title"], "rule": "stale_unfinished",
-                        "age_days": int((now - r["last_activity"]) // 86400),
-                        "actions": [{"action": "delete", "frees": r["total"]}]})
+        title = next((r["title"] for r in parts if r["title"]), None)
+        base = {"episode_id": parts[0]["id"], "episodes": [r["id"] for r in parts], "video_id": vid, "title": title,
+                "post_unticked": sum(r.get("post_unticked", 0) for r in parts)}
+        arch = [r for r in parts if _can_archive(r)]
+        if all(r.get("complete") for r in parts):
+            actions = [{"action": "delete", "frees": sum(r["total"] for r in parts),
+                        "episodes": [r["id"] for r in parts]}]
+            if arch:
+                actions.insert(0, {"action": "archive", "frees": sum(r["source"] for r in arch),
+                                   "episodes": [r["id"] for r in arch]})
+            out.append({**base, "rule": "all_published", "actions": actions})
+        elif arch and all(r["render_finished_at"] is not None and r["render_finished_at"] < limit for r in arch):
+            out.append({**base, "rule": "old_source",
+                        "age_days": min(int((now - r["render_finished_at"]) // 86400) for r in arch),
+                        "actions": [{"action": "archive", "frees": sum(r["source"] for r in arch),
+                                     "episodes": [r["id"] for r in arch]}]})
+        elif all(r["state"] in (FAILED, INCOMPLETE) and r["last_activity"] < limit for r in parts):
+            out.append({**base, "rule": "stale_unfinished",
+                        "age_days": min(int((now - r["last_activity"]) // 86400) for r in parts),
+                        "actions": [{"action": "delete", "frees": sum(r["total"] for r in parts),
+                                     "episodes": [r["id"] for r in parts]}]})
     return out
+
+
+def auto_archive_plan(rows: list[dict], now: float, grace_seconds: float) -> list[dict]:
+    """S5 / D4 (pure): videos whose source is to be cleaned up automatically. A video qualifies when it has at
+    least one part with a cleanable source, no part is processing, **every** part is "Xong" and the state has
+    held for ``grace_seconds`` (``complete_since`` of the latest part). Returns
+    ``[{"video_id", "episodes": [ids to archive], "freed": bytes, "since": epoch}]`` in row order."""
+    plan = []
+    for vid, parts in _videos(rows).items():
+        if any(r["state"] == PROCESSING for r in parts) or not all(r.get("complete") for r in parts):
+            continue
+        arch = [r for r in parts if _can_archive(r)]
+        since = max((r.get("complete_since") or now for r in parts), default=now)
+        if arch and now - since >= grace_seconds:
+            plan.append({"video_id": vid, "episodes": [r["id"] for r in arch],
+                         "freed": sum(r["source"] for r in arch), "since": since})
+    return plan
 
 
 def _models_dir(config: Config) -> Path:

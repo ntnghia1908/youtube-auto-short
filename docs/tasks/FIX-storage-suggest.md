@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: CHANGE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -73,8 +73,17 @@ Không chạm database hay security model. Có hành vi tự xóa dữ liệu �
 ## Result
 
 - Main changes:
-- Tests:
+  - D1/D2: `web/storage.py` `recommend` gộp theo video (`video_id` bỏ `.kt`; Short đứng trước khai thị); `all_published` khi mọi phần "Xong"; `old_source` khi mọi phần dọn được đều cũ; `stale_unfinished` khi mọi phần dở dang cũ; video có phần `processing` bị bỏ qua. Mỗi action có `episodes` (UI gọi archive / delete lần lượt từng phần; số byte = tổng); gợi ý có `video_id`, `episodes`.
+  - D3: `post_unticked` (bài `posts.json` chưa tick, của Short còn rendered) trên mỗi gợi ý; UI hiện cảnh báo + nhắc lại trong xác nhận "Xóa cả tập".
+  - D4: `[storage] auto_archive` (true) / `auto_archive_grace_minutes` (30) (`config.py` `StorageConfig`, `config.example.toml`); `auto_archive_plan` (thuần) + `auto_archive_pass` trong `create_app` (vòng lúc khởi động + mỗi 5 phút trong lifespan; giữ `submit_lock`, bỏ video có job); `archive_source(auto=True)` ghi `archive.json` `"auto": true`; `episode.archived.auto` + nhãn "Đã tự dọn video nguồn" ở trang tập; log `web: tự dọn nguồn <id> …`.
+  - Cách xác định ân hạn (không thêm file trạng thái): `complete_since` = max(`at` tick, mtime `publish.json`, mtime `render_manifest.json`, `render.finished_at`) của các phần; bỏ tick / tick lại / render lại dời mốc nên ân hạn tính lại, sống qua restart. Ghi trong CP8.3 § S5.
+  - Authority: CP8.3 § Gợi ý (S2), § Tự dọn video nguồn (S5), bảng API, README.
+- Tests: `tests/test_storage_suggest.py` (mới, 19 test: AC 1–6) + cập nhật assertion payload `episodes` trong `tests/test_storage_cp86.py`. `PYTHONPATH=<worktree>/src python -m pytest -q -n auto`: lần 2 = 1353 passed, 1 failed (`test_lanes_artifacts_identical_to_serial`, chập chờn đã biết, PASS khi chạy riêng); lần 1 thêm `test_web_cp9.py::test_cut_save_reset_and_409[serial]` fail, PASS khi chạy lại riêng + lần 2. `node scripts/framework-check.mjs` PASS.
+- Danh sách video SẼ BỊ TỰ DỌN khi 8080 khởi động lại (tính read-only trên `/home/ntnghia/youtube-auto-short/work`, 2026-10-03, ân hạn 30 phút): **không có video nào, giải phóng 0**. Lý do: 6 video "Xong" cả hai phần đều đã archived từ trước (không còn nguồn); `yzR1eCK_iV0` (Short Xong 13/13, nguồn 702 806 278 B) khai thị `.kt` chưa đăng (0/7) nên không đủ điều kiện; mọi tập khác chưa Xong. Phần Short / khai thị dùng chung một inode nguồn (hard link).
+- Bảng gợi ý trước (code cũ) -> sau (mới), dữ liệu thật:
+  - Trước: 14 gợi ý `all_published`: `yzR1eCK_iV0` (Dọn nguồn 702 806 278 B + Xóa 969 928 647 B) và 13 dòng riêng (7 tập `.kt`, 6 tập Short) chỉ "Xóa cả tập".
+  - Sau: 6 gợi ý `all_published` (một mỗi video): `Bi7kVGbnPfE` (Xóa 665 911 485 B), `4oOZz2CBz3g` (570 945 392), `Irmcm5Ep478` (532 810 088; còn 12 bài đăng chưa tick), `rbjfCfFq3Dk` (540 348 843), `7axON1RpRjo` (550 070 640), `7w4nSj3PguI` (521 878 485); chỉ "Xóa cả tập" (đã archived). `yzR1eCK_iV0` không còn gợi ý (khai thị chưa xong); `X8ao0_7ufto.kt` (Xong, đã archived) không còn gợi ý riêng vì Short `X8ao0_7ufto` chưa Xong.
 - Review:
-- Important findings / decisions:
-- Known limitations:
+- Important findings / decisions: gợi ý cũ 14 -> mới 6 vì gộp theo video. `Irmcm5Ep478` còn 12 bài đăng chưa tick (cảnh báo D3 hoạt động trên dữ liệu thật).
+- Known limitations: (1) byte của hai phần dùng chung inode nguồn (hard link CP8.9) được cộng cả hai — thực tế giải phóng nhỏ hơn; (2) "tự dọn" nhận biết "đã đăng hết" từ tick + mtime, nên sửa tay file trong `work/` / `output/` dời mốc ân hạn; (3) nguồn enhance (CP13) chưa có nên chưa được loại trừ; (4) server chưa được chạy với config repo chính (theo yêu cầu an toàn), UI chỉ kiểm bằng `node --check` + test API, chưa thử trình duyệt.
 - PR:

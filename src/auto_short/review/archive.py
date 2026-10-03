@@ -82,9 +82,10 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def archive_source(episode_id: str, config: Config, *, now: str | None = None) -> ArchiveResult:
+def archive_source(episode_id: str, config: Config, *, now: str | None = None, auto: bool = False) -> ArchiveResult:
     """S3: delete the downloaded source video of a YouTube episode whose render is ``done`` and mark the episode
-    archived. Local sources, unfinished renders -> ReviewError (nothing deleted). Already archived -> no-op."""
+    archived. Local sources, unfinished renders -> ReviewError (nothing deleted). Already archived -> no-op.
+    ``auto=True`` (server auto clean-up, W9 S5) adds ``"auto": true`` to ``archive.json``."""
     try:
         ws = Workspace(Path(config.workspace.dir), validate_episode_id(episode_id))
         manifest = ws.load_manifest()
@@ -102,9 +103,11 @@ def archive_source(episode_id: str, config: Config, *, now: str | None = None) -
                           "không dọn video nguồn")
     files = source_files(ws.dir)
     sizes = [(p, p.lstat().st_size) for p in files]
-    atomic_write_json(archive_path(ws.dir), {
-        "schema_version": SCHEMA_VERSION, "episode_id": ws.episode_id, "archived_at": now or _now(),
-        "removed": [{"path": p.name, "size": size} for p, size in sizes]})
+    doc = {"schema_version": SCHEMA_VERSION, "episode_id": ws.episode_id, "archived_at": now or _now(),
+           "removed": [{"path": p.name, "size": size} for p, size in sizes]}
+    if auto:
+        doc["auto"] = True
+    atomic_write_json(archive_path(ws.dir), doc)
     for p, _ in sizes:
         p.unlink()
     freed = sum(size for _, size in sizes)
