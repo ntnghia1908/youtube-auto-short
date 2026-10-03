@@ -50,7 +50,7 @@ Không chạm database, security model hay public API. Điểm danh sau merge tr
 
 - Main changes: `short_code` khai thị `KT`; bỏ `KHAITHI_COPY_PREFIX` (`copy_prefix` chỉ trả mã + `_`); tests + authority CP8.3 / CP8.9 + project-profile + README khớp.
 - Tests: `pytest -q -n auto` 1337 passed, 1 skipped; `node scripts/framework-check.mjs` toàn PASS. Test độ dài prefix (19 → 9 ký tự) chỉnh title mẫu 50 → 60 để giữ ý đồ.
-- Review:
+- Review: ORCHESTRATOR round 1 ACCEPTED (2026-10-03): diff `names.py` đúng yêu cầu; chạy lại 4 file test liên quan PASS.
 - Important findings / decisions:
 - Known limitations:
 - PR:
