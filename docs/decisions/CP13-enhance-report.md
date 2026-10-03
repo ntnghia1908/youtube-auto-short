@@ -2,7 +2,7 @@
 
 | Metadata | Value |
 |---|---|
-| Status | PROPOSED — E1 / E1b (CPU) + E2 (RTX 3090, RTX 3050) đã đo; khuyến nghị §5 chờ HUMAN LEAD chốt cấu hình |
+| Status | ACCEPTED — HUMAN LEAD 2026-10-03: `realesr-general-x4v3` denoise 1.0, **hạ 360p** (`g10_p360`); cả tập, hai GPU (3090 nhường Ollama, 3050 liên tục); tích hợp = task S2 riêng (ADR) |
 | Task contract | `docs/tasks/CP13-enhance-measure.md` |
 | Người viết | IMPLEMENTER (nháp), 2026-10-03 |
 | Dữ liệu / video mẫu | `~/.cache/auto-short-cp13-test/` (ngoài repo): `out/compare/`, `out/metrics.json`, `out/*.json` |
@@ -196,6 +196,8 @@ HUMAN LEAD 2026-10-03: máy RTX 3060 có thể đứt mạng → worker phải t
 - **Pipeline**: transcript / analysis / selection / titling dùng nguồn gốc (không stale); chỉ `render` đọc `source_hd.mp4` khi có (khóa nguồn HD vào `render_key`). Tập đã đăng không tự render lại (tick "Đã đăng" stale, lý do như CP8.14) — HUMAN LEAD bấm render lại khi muốn; khai thị `.kt` dùng chung nguồn HD.
 - **Worker Windows**: một chương trình Python chạy nền (Task Scheduler khi đăng nhập / khởi động), dependency chỉ trên Windows (PyTorch CUDA, opencv; NVENC qua ffmpeg). Cài theo hướng dẫn từng bước như E2.
 - **Giá**: ADR mới (kiến trúc + API worker + token = security model), API mới trên web, worker Windows, dung lượng +≈ 0,5–1 GiB / giờ video (`source_hd.mp4`; có thể xóa nguồn gốc sau khi ghép nếu HUMAN LEAD muốn), mạng ≈ 0,7 GiB tải xuống + 0,5–1 GiB gửi lên mỗi giờ video, tập cũ enhance bù theo hàng đợi.
+
+**Quyết định HUMAN LEAD 2026-10-03:** chọn **`g10_p360`** (xem video phóng sát mặt: khác biệt với `g10_p0` nhỏ, không đáng gấp đôi thời gian). Ước lượng: 3090 1,4 giờ + 3050 3,5 giờ GPU / 1 giờ video → ≈ 24 tập / ngày → playlist 98 giờ ≈ 4 ngày (≈ 2,5–3 ngày nếu worker 3090 batch).
 
 ### 5.4 Bước tiếp theo đề xuất
 
