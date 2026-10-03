@@ -1,0 +1,15 @@
+{
+  "server_url": "http://127.0.0.1:18080",
+  "worker_name": "rtx3090",
+  "token": "<token do VM cap>",
+  "yield_to_ollama": true,
+  "work_dir": "work",
+  "models_dir": "models",
+  "log_file": "logs/worker.log",
+  "max_disk_gb": 100,
+  "batch_size": 4,
+  "device": "cuda",
+  "cuda_device": 0,
+  "ffmpeg": "ffmpeg",
+  "ffprobe": "ffprobe"
+}
