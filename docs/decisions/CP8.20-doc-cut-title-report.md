@@ -2,7 +2,7 @@
 
 | Metadata | Value |
 |---|---|
-| Status | MEASUREMENT REPORT — khuyến nghị PROPOSED, chưa có quyết định |
+| Status | PROPOSED — báo cáo đo, khuyến nghị chưa có quyết định HUMAN LEAD |
 | Task | `docs/tasks/CP8.20-doc-cut-title-measure.md` (S1) |
 | Script | `scripts/measure_doc_cut_title.py` (không đổi `src/`) |
 | Dữ liệu | bản sao `~/.cache/auto-short-cp820-test/` (work + output + `config.toml` riêng); kết quả thô `results/*.json` |
