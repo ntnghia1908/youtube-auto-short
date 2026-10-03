@@ -164,7 +164,7 @@ def test_all_zip_both_ids(tcfg):
                 assert all(i.flag_bits & 0x800 for i in zf.infolist() if not i.filename.isascii())  # CP8.21: ASCII names need no flag
                 assert zf.namelist() == [
                     "Shorts/T29_S01_Một.mp4", "Shorts/T29_S02_Hai.mp4", "Shorts/T29_S03_Ba.mp4",
-                    "KhaiThị/T29_TK01_Khai một.mp4", "KhaiThị/T29_TK02_Khai hai.mp4"]
+                    "KhaiThị/T29_KT01_Khai một.mp4", "KhaiThị/T29_KT02_Khai hai.mp4"]
                 got = {n: hashlib.sha256(zf.read(n)).hexdigest() for n in zf.namelist()}
             bodies.append(got)
         assert bodies[0] == bodies[1]

@@ -56,23 +56,23 @@ def make_pair(cfg):
 
 def test_download_name_format():
     assert download_name("29", 1, 20, "Tâm thiện?") == "T29_S01_Tâm thiện.mp4"
-    assert download_name("29", 1, 20, "Tâm thiện", khaithi=True) == "T29_TK01_Tâm thiện.mp4"
+    assert download_name("29", 1, 20, "Tâm thiện", khaithi=True) == "T29_KT01_Tâm thiện.mp4"
     assert download_name("29", 7, 100, None) == "T29_S007.mp4"
-    assert download_name("29", 3, 5, "???", khaithi=True) == "T29_TK03.mp4"
+    assert download_name("29", 3, 5, "???", khaithi=True) == "T29_KT03.mp4"
 
 
 def test_copy_text_prefix():
     assert copy_prefix("29", 1, 20) == "T29_S01_"
-    assert copy_prefix("29", 1, 20, khaithi=True) == "Khai Thị: T29_TK01_"
+    assert copy_prefix("29", 1, 20, khaithi=True) == "T29_KT01_"
     text, kept = copy_text("Tâm thiện", SERIES, TAGS, prefix=copy_prefix("29", 1, 20))
     assert text == "T29_S01_Tâm thiện #ThậpThiệnNghiệpĐạoKinh #TịnhKhông #LờiPhậtDạy" and len(kept) == 3
     text, _ = copy_text("Tâm thiện", None, TAGS, prefix=copy_prefix("29", 2, 20, khaithi=True))
-    assert text == "Khai Thị: T29_TK02_Tâm thiện #TịnhKhông #LờiPhậtDạy"
+    assert text == "T29_KT02_Tâm thiện #TịnhKhông #LờiPhậtDạy"
 
 
 def test_copy_text_prefix_counts_towards_100_and_title_not_cut():
-    prefix = copy_prefix("29", 1, 20, khaithi=True)  # 19 chars
-    title = "x" * 50
+    prefix = copy_prefix("29", 1, 20, khaithi=True)  # 9 chars
+    title = "x" * 60
     text, kept = copy_text(title, SERIES, TAGS, prefix=prefix)
     assert len(text) <= 100 and text.startswith(prefix + title) and kept == ["#ThậpThiệnNghiệpĐạoKinh"]
     long = "y" * 99
@@ -87,9 +87,9 @@ def test_view_names_and_copy_text(tcfg):
         login(c)
         s, k = c.get(f"/api/episodes/{VID}").json(), c.get(f"/api/episodes/{KT}").json()
         assert s["shorts"][0]["download_name"] == "T29_S01_Một.mp4"
-        assert k["shorts"][1]["download_name"] == "T29_TK02_Khai hai.mp4"
+        assert k["shorts"][1]["download_name"] == "T29_KT02_Khai hai.mp4"
         assert s["shorts"][0]["copy_text"].startswith("T29_S01_Một #")
-        assert k["shorts"][0]["copy_text"].startswith("Khai Thị: T29_TK01_Khai một #")
+        assert k["shorts"][0]["copy_text"].startswith("T29_KT01_Khai một #")
         assert s["zip_name"] == f"{SERIES}_Tập29_Shorts.zip"  # zip name unchanged
         assert k["zip_name"] == f"{SERIES}_Tập29_KhaiThị.zip"
         assert s["shorts"][0]["title"]["text"] == "Một"  # the title in the video / titles.json is unchanged

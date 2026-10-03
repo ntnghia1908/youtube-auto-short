@@ -1,4 +1,4 @@
-"""Download file names of Shorts (CP8.5 X1, CP8.21 D3): ``T<episode>_S<NN>_<title>.mp4`` (khai thị: ``TK<NN>``) and ``[<series>_]Tập<episode>_Shorts.zip``,
+"""Download file names of Shorts (CP8.5 X1, CP8.21 D3): ``T<episode>_S<NN>_<title>.mp4`` (khai thị: ``KT<NN>``) and ``[<series>_]Tập<episode>_Shorts.zip``,
 plus the ``Content-Disposition`` header (RFC 6266 / RFC 5987). Pure functions, no I/O.
 
 Files on disk keep their CP7 names (``shorts/<clip_id>.mp4``); only the name offered to the browser changes.
@@ -49,26 +49,22 @@ def episode_label(episode: str | None, episode_id: str) -> str:
 
 
 def short_code(episode: str, number: int, total: int, *, khaithi: bool = False) -> str:
-    """``T<episode>_S<NN>`` (CP8.21 D3); a khai thị episode (CP8.9 K8) uses ``TK<NN>``."""
-    return f"T{episode}_{'TK' if khaithi else 'S'}{number:0{index_width(total)}d}"
+    """``T<episode>_S<NN>`` (CP8.21 D3); a khai thị episode (CP8.9 K8) uses ``KT<NN>``."""
+    return f"T{episode}_{'KT' if khaithi else 'S'}{number:0{index_width(total)}d}"
 
 
 def download_name(episode: str, number: int, total: int, title: str | None, *, khaithi: bool = False) -> str:
     """``T<episode>_S<NN>_<title>.mp4``: ``number`` = 1-based position of the clip in clips.json (kept when
     other Shorts are deleted), ``total`` = number of clips (width of ``NN``), ``title`` = the title in the file.
-    No title left after cleaning -> ``T<episode>_S<NN>.mp4``. A khai thị episode uses ``TK<NN>``."""
+    No title left after cleaning -> ``T<episode>_S<NN>.mp4``. A khai thị episode uses ``KT<NN>``."""
     head = short_code(episode, number, total, khaithi=khaithi)
     t = truncate_utf8(clean_part(title))
     return f"{head}_{t}.mp4" if t else f"{head}.mp4"
 
 
-KHAITHI_COPY_PREFIX = "Khai Thị: "  # CP8.21 D3: start of the YouTube title of a khai thị video
-
-
 def copy_prefix(episode: str, number: int, total: int, *, khaithi: bool = False) -> str:
-    """Start of the copy text (CP8.21 D3): ``T29_S01_``; khai thị: ``Khai Thị: T29_TK01_``."""
-    code = short_code(episode, number, total, khaithi=khaithi) + "_"
-    return KHAITHI_COPY_PREFIX + code if khaithi else code
+    """Start of the copy text (CP8.21 D3): ``T29_S01_``; khai thị: ``T29_KT01_`` (no extra prefix)."""
+    return short_code(episode, number, total, khaithi=khaithi) + "_"
 
 
 MAX_SERIES_BYTES = 80  # UTF-8 bytes of the bộ kinh part of a zip name (CP8.17 D4)
