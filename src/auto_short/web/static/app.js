@@ -95,6 +95,7 @@ const AutoShort = (() => {
 
   // CP8.10 queue lanes: "đang tải trước" (prepare lane running), "đợi GPU" / "đợi render" (waiting between lanes).
   function laneLabel(job) {
+    if (job && job.status === "running" && job.hd_wait) return "đợi HD"; // CP13.1b: parked after titling, holds no lane
     if (!job || job.status !== "running" || !job.lane) return null;
     const pos = job.queue_position ? ` (vị trí ${job.queue_position})` : "";
     if (job.waiting && job.lane === "ai") return (job.gpu_wait ? "đợi GPU (mất kết nối)" : "đợi GPU") + pos;
@@ -565,6 +566,64 @@ const AutoShort = (() => {
     renderEpisode(data);
     const running = jobActive(data.job) || data.stages.some((s) => s.status === "running");
     if (running) pollTimer = setTimeout(refreshEpisode, POLL_MS);
+    else if (enhanceBusy(data.enhance)) pollTimer = setTimeout(refreshEpisode, POLL_MS * 2);
+  }
+
+  // --- CP13.1b enhance (E10): status line + buttons on the episode page ---------------------------------
+
+  const ENHANCE_BUSY = ["queued", "running", "assembling"];
+  function enhanceBusy(e) { return !!(e && e.exists && ENHANCE_BUSY.includes(e.state)); }
+
+  function enhanceText(e) {
+    const base = e.follows ? ` (chung với video ${e.follows})` : "";
+    const wait = e.waiting_hd ? " · đợi HD rồi render" : "";
+    if (e.state === "off") return (e.override ? "Enhance đang tắt (bạn đã chọn)." : `Không cần enhance (${e.reason || "nguồn đủ nét"}).`) + base;
+    if (e.state === "queued") return "Cần enhance · đợi máy GPU" + wait + base;
+    if (e.state === "running") {
+      const who = e.gpu || e.worker || "máy GPU";
+      return `Đang enhance trên ${who}: ${e.segments_done}/${e.segments_total} đoạn` + wait + base;
+    }
+    if (e.state === "assembling") return "Đang ghép bản HD…" + wait + base;
+    if (e.state === "failed") return `Lỗi ghép bản HD: ${e.error || "?"} (bấm "Bật enhance" để thử lại).` + base;
+    if (e.state === "done") {
+      const dr = e.rendered_from_hd ? "Short đã dựng từ bản HD." : (e.rendered ? "Short chưa dựng từ bản HD." : "");
+      return `Đã enhance${e.finished_at ? ` (${fmtTime(e.finished_at)})` : ""}. ${dr}`.trim() + base;
+    }
+    return "";
+  }
+
+  async function enhancePost(path, body, btn, confirmText) {
+    if (confirmText && !confirm(confirmText)) return;
+    btn.disabled = true;
+    try {
+      await api("/api/episodes/" + encodeURIComponent(episodeId) + path, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+    } catch (e) { alert(e.message); }
+    refreshEpisode();
+  }
+
+  function renderEnhance(d) {
+    const box = $("#enhance-box");
+    const e = d.enhance;
+    if (!box) return;
+    if (!e || (!e.exists && !e.can_enable)) { box.hidden = true; return; }
+    box.hidden = false;
+    const busy = jobActive(d.job) && !(d.job && d.job.hd_wait);
+    $("#enhance-status").textContent = e.exists ? enhanceText(e) : "Chưa enhance (nguồn này không tự vào hàng đợi).";
+    const toggle = $("#enhance-toggle");
+    toggle.hidden = !(e.wanted || e.can_enable);
+    toggle.textContent = e.wanted ? "Tắt enhance" : "Bật enhance";
+    toggle.onclick = () => enhancePost("/enhance", { enabled: !e.wanted }, toggle,
+      e.wanted ? "Tắt enhance cho video này (cả Short và khai thị)? Phần đã enhance được giữ." : null);
+    const orig = $("#enhance-original");
+    orig.hidden = !(e.exists && e.waiting_hd);
+    orig.onclick = () => enhancePost("/enhance/render-original", null, orig,
+      "Render ngay bằng bản gốc (không đợi HD) và tắt enhance cho video này?");
+    const again = $("#enhance-rerender");
+    again.hidden = !e.can_rerender;
+    again.disabled = busy;
+    again.onclick = () => enhancePost("/enhance/rerender", null, again,
+      "Render lại từ bản HD? Short đã đăng sẽ thành \"đã đăng bản cũ\".");
   }
 
   function renderEpisode(d) {
@@ -634,6 +693,7 @@ const AutoShort = (() => {
     $("#delete-note").hidden = !jobActive(job) || !d.stages.length;
 
     lastData = d;
+    renderEnhance(d);
     renderShorts(d);
     setEditsLocked(jobActive(job));
   }
@@ -2092,7 +2152,42 @@ const AutoShort = (() => {
   function initStorage() {
     loadStorage();
     checkDisk();
+    loadEnhance();
   }
+
+  // CP13.1b E10: one place for the enhance workers + the global "Tạm dừng enhance" (read from /api/enhance/status).
+  async function loadEnhance() {
+    const card = $("#enhance-card");
+    if (!card) return;
+    let d;
+    try { d = await api("/api/enhance/status"); } catch (_) { setTimeout(loadEnhance, POLL_MS * 4); return; }
+    card.hidden = !d.enabled && !d.workers.length && !d.items.length;
+    const c = d.counts;
+    $("#enhance-summary").textContent = (d.enabled ? "" : "Enhance đang tắt ([enhance] enabled = false). ") +
+      (d.paused ? "ĐANG TẠM DỪNG. " : "") +
+      `Hàng đợi: ${c.queued || 0} đợi máy GPU, ${c.running || 0} đang enhance, ${c.assembling || 0} đang ghép` +
+      (c.failed ? `, ${c.failed} lỗi` : "") + (c.waiting_hd ? `; ${c.waiting_hd} đang đợi HD để render` : "") + ".";
+    const pause = $("#enhance-pause");
+    pause.textContent = d.paused ? "Chạy tiếp enhance" : "Tạm dừng enhance";
+    pause.onclick = async () => {
+      pause.disabled = true;
+      try { await api("/api/enhance-pause", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paused: !d.paused }) }); } catch (e) { alert(e.message); }
+      pause.disabled = false;
+      loadEnhance();
+    };
+    $("#enhance-workers").replaceChildren(...(d.workers.length ? d.workers.map((w) => el("li", {},
+      el("b", { text: w.label || w.name }), el("span", { class: "muted small",
+        text: ` · ${w.gpu || "GPU ?"}${w.yield ? " · nhường Ollama" : ""} · liên lạc ${fmtTime(w.last_seen)}` +
+          (w.episode_id ? ` · đang làm ` : " · rảnh") }),
+      w.episode_id ? el("a", { href: "/episodes/" + encodeURIComponent(w.episode_id), text: w.episode_id }) : null,
+      w.progress && w.progress.segments_total ? el("span", { class: "muted small",
+        text: ` (${w.progress.segments_uploaded || 0}/${w.progress.segments_total} đoạn)` }) : null))
+      : [el("li", { class: "muted", text: "Chưa có worker nào liên lạc (từ lúc khởi động server)." })]));
+    clearTimeout(enhTimer);
+    enhTimer = setTimeout(loadEnhance, POLL_MS * 2);
+  }
+  let enhTimer = null;
 
   function recReason(r) {
     if (r.rule === "all_published") return (r.episodes || []).length > 1 ? "Đã đăng hết Short và khai thị." : "Đã đăng hết.";
@@ -2160,7 +2255,8 @@ const AutoShort = (() => {
         el("div", { class: "disk-nums small", text: `Đã dùng ${fmtBytes(k.used)} / ${fmtBytes(k.total)} (${pct} %) · còn trống ${fmtBytes(k.free)}` }));
     }));
     const t = d.totals;
-    $("#storage-meta").textContent = `Các tập: ${fmtBytes(t.episodes)} (video nguồn ${fmtBytes(t.source)}, Short ${fmtBytes(t.shorts)}, khác ${fmtBytes(t.other)}). ` +
+    $("#storage-meta").textContent = `Các tập: ${fmtBytes(t.episodes)} (video nguồn ${fmtBytes(t.source)}, Short ${fmtBytes(t.shorts)}, khác ${fmtBytes(t.other)}` +
+      (t.hd || t.enhance_tmp ? `; trong đó bản HD ${fmtBytes(t.hd || 0)}, đoạn enhance tạm ${fmtBytes(t.enhance_tmp || 0)}` : "") + `). ` +
       `Tính lúc ${fmtTime(d.computed_at)} (làm mới tối đa 30 giây một lần).`;
 
     const recs = $("#recs");

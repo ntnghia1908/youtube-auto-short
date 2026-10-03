@@ -242,6 +242,26 @@ class StorageConfig:
 
 
 @dataclass(frozen=True)
+class EnhanceConfig:
+    """Enhance worker (docs/decisions/CP13.1-enhance-worker-contract.md E9): recover detail of low-resolution sources on
+    external GPU workers. Execution-only (no stage hash uses it; the render sees only ``source_hd.mp4``);
+    ``model`` .. ``segment_seconds`` form the ``config_hash`` of the segments."""
+
+    enabled: bool = False
+    min_height: int = 720  # source height below this -> the video wants enhance (E1)
+    model: str = "realesr-general-x4v3"
+    denoise: float = 1.0
+    pre_height: int = 360
+    out_height: int = 1080
+    segment_seconds: int = 60
+    lease_hours: float = 48.0
+    max_segment_mb: int = 200
+    # E7 (CP13.1b amendment): token names of the workers that give way to Ollama (the VM cannot see the worker's own
+    # ``yield_to_ollama`` setting: ``may-run`` carries only the name).
+    yield_workers: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class PostConfig:
     """Community post text of a Short (docs/decisions/CP8.15-community-post-contract.md P11): AI punctuation /
     paragraphs via Ollama (P3), the image library (P5) and link fetching (P5b)."""
@@ -301,6 +321,7 @@ class Config:
     khaithi: KhaithiConfig = field(default_factory=KhaithiConfig)
     post: PostConfig = field(default_factory=PostConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
+    enhance: EnhanceConfig = field(default_factory=EnhanceConfig)
 
 
 def _section(data: dict, name: str) -> dict:
@@ -602,6 +623,26 @@ def _storage(data: dict) -> StorageConfig:
     )
 
 
+def _enhance(data: dict) -> EnhanceConfig:
+    en = _section(data, "enhance")
+    d, w = EnhanceConfig(), "enhance"
+    yields = en.get("yield_workers", list(d.yield_workers))
+    if not isinstance(yields, list) or not all(isinstance(x, str) and x for x in yields):
+        raise ConfigError(f"{w}.yield_workers must be a list of non-empty strings")
+    return EnhanceConfig(
+        enabled=_bool(en, "enabled", d.enabled, w),
+        min_height=_int(en, "min_height", d.min_height, w, lo=1, hi=8640),
+        model=_str(en, "model", d.model, w),
+        denoise=_number(en, "denoise", d.denoise, w, lo=0, hi=1),
+        pre_height=_int(en, "pre_height", d.pre_height, w, lo=0, hi=4320),
+        out_height=_int(en, "out_height", d.out_height, w, lo=0, hi=8640),
+        segment_seconds=_int(en, "segment_seconds", d.segment_seconds, w, lo=1, hi=3600),
+        lease_hours=_number(en, "lease_hours", d.lease_hours, w, lo=0.001, hi=720),
+        max_segment_mb=_int(en, "max_segment_mb", d.max_segment_mb, w, lo=1, hi=4096),
+        yield_workers=tuple(yields),
+    )
+
+
 def _queue_mode(section: dict, default: str) -> str:
     value = section.get("queue_mode", default)
     if value not in WEB_QUEUE_MODES:
@@ -714,6 +755,7 @@ def from_dict(data: dict) -> Config:
         khaithi=_khaithi(data),
         post=_post(data),
         storage=_storage(data),
+        enhance=_enhance(data),
     )
 
 

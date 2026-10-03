@@ -186,6 +186,23 @@ soft_label_max_seconds = 5.0
 auto_archive = true
 auto_archive_grace_minutes = 30      # 0 = no wait
 
+[enhance]
+# Recover detail of low-resolution sources on GPU workers (docs/decisions/CP13.1-enhance-worker-contract.md E9; worker:
+# tools/enhance_worker/, guide docs/guides/enhance-worker-windows.md). Off by default. A video whose source height is
+# below `min_height` is enhanced to `out_height` as `source_hd.mp4`; Shorts / khai thi are then rendered from it
+# ("đợi HD" after titling). Worker tokens come from the env of the web process (never from this file):
+#   AUTO_SHORT_ENHANCE_TOKENS="rtx3090=<token>,rtx3050=<token>"   (make one with `auto-short enhance-token`)
+enabled = false
+min_height = 720
+model = "realesr-general-x4v3"
+denoise = 1.0
+pre_height = 360             # downscale to this height before the x4 model (0 = none)
+out_height = 1080
+segment_seconds = 60         # segment length given to the workers
+lease_hours = 48             # a worker that is silent this long loses the video (finished segments are kept)
+max_segment_mb = 200         # PUT size limit of one segment
+yield_workers = []           # token names that give way to Ollama (e.g. ["rtx3090"]: the machine that hosts Ollama)
+
 [post]
 # Community post text of a Short (docs/decisions/CP8.15-community-post-contract.md): AI adds punctuation /
 # paragraph breaks only (never changes words) to the Short's caption text via Ollama, plus the image library

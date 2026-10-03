@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import html
 import io
 import json
 import logging
+import re
 import shutil
 import threading
 import time
@@ -18,13 +20,19 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import parse_qs, quote
 
-from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response,
+                               StreamingResponse)
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, StrictBool
 
 from .. import khaithi
 from ..config import Config
+from ..enhance import state as enh_state
+from ..enhance.service import EnhanceService
+from ..enhance.state import EnhanceError
+from ..enhance.tokens import authenticate as enhance_authenticate
+from ..enhance.tokens import tokens_from_env
 from ..pipeline import PIPELINE_STAGES, PreflightError, ollama_preflight, run_pipeline
 from ..post import corrections as post_corrections
 from ..post import doc as post_doc
@@ -45,8 +53,9 @@ from ..review.names import hashtags as review_hashtags
 from . import episodes as ep
 from .auth import COOKIE_NAME, SessionSigner, load_or_create_secret
 from .storage import BLOCK_MESSAGE, StorageCache, auto_archive_plan, episode_sizes, video_id
-from .jobs import (KIND_ADD, KIND_PIPELINE, KIND_POST, KIND_POST_SEARCH, KIND_RENDER, POST_IMAGES_KEY, JobRunner,
-                   add_short_target, image_search_target, pipeline_target, post_compose_target, render_target)
+from .jobs import (KIND_ADD, KIND_ENHANCE, KIND_PIPELINE, KIND_POST, KIND_POST_SEARCH, KIND_RENDER, POST_IMAGES_KEY,
+                   JobRunner, add_short_target, enhance_assemble_target, image_search_target, pipeline_target,
+                   post_compose_target, render_target)
 from . import playlists as playlists_mod
 from .playlists import LIST_TIMEOUT, PlaylistError, PlaylistStore, ytdlp_list
 from .urls import ASK, PLAYLIST, UrlError, canonical_url, classify_url, valid_playlist_id
@@ -62,6 +71,9 @@ ZIP_CHUNK = 1 << 20
 AUTO_ARCHIVE_INTERVAL = 300.0  # seconds between auto clean-up passes (W9 S5)
 QUEUE_FILE = ".web_queue.json"  # CP8.22 Q2: saved job queue, in the workspace dir next to ``.web_secret``
 KINDS = ("short", "khaithi")  # CP8.9 A1.1, in job order
+ENHANCE_PREFIX = "/api/enhance/"  # CP13.1 E8: worker routes, token auth (no cookie); the one exception is below
+ENHANCE_UI_PATHS = {"/api/enhance/status"}  # read-only status for the UI: cookie, like every other web route
+_LEASE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
 class SubmitIn(BaseModel):
@@ -74,6 +86,27 @@ class SubmitIn(BaseModel):
     kinds: Any = None
     min_minutes: Any = None
     max_minutes: Any = None
+
+
+class EnhanceLeaseIn(BaseModel):
+    worker: str | None = Field(default=None, max_length=80)
+    gpu: str | None = Field(default=None, max_length=80)
+
+
+class EnhanceBeatIn(BaseModel):
+    progress: Any = None
+
+
+class EnhanceReleaseIn(BaseModel):
+    reason: Any = None
+
+
+class EnhanceSwitchIn(BaseModel):
+    enabled: StrictBool
+
+
+class EnhancePauseIn(BaseModel):
+    paused: StrictBool
 
 
 class QueuePauseIn(BaseModel):
@@ -253,7 +286,8 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                post_compose: Callable | None = None,
                post_preflight: Callable[[Config], None] | None = post_stage.preflight,
                post_search: Callable | None = None, doc_prepare: Callable | None = None,
-               auto_archive_interval: float = AUTO_ARCHIVE_INTERVAL) -> FastAPI:
+               auto_archive_interval: float = AUTO_ARCHIVE_INTERVAL,
+               enhance_tokens: dict[str, str] | None = None, enhance_service: EnhanceService | None = None) -> FastAPI:
     """``preflight`` / ``pipeline`` / ``render`` are injectable for tests (defaults: CP8 ``ollama_preflight`` /
     ``run_pipeline``, CP7/CP8.2 ``run_render``); so are ``disk_usage`` (``shutil.disk_usage``) and ``clock`` (epoch
     seconds, ages of the storage recommendations) for CP8.6; ``playlist_lister`` (yt-dlp flat listing) and
@@ -262,8 +296,11 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     :func:`auto_short.post.stage.compose_posts` / ``.preflight``) and ``post_search`` (default
     :func:`auto_short.post.fetch.search_images`) for CP8.15; ``doc_prepare`` (default
     :func:`auto_short.post.doc.prepare`, the "Văn bản gốc" check of ``PUT /api/playlists/{id}/doc``) for CP8.19;
-    ``auto_archive_interval`` (seconds between auto clean-up passes, W9 S5; 0 = only at start-up)."""
+    ``auto_archive_interval`` (seconds between auto clean-up passes, W9 S5; 0 = only at start-up); for CP13.1
+    ``enhance_tokens`` (``name -> token`` of the enhance workers, default: env ``AUTO_SHORT_ENHANCE_TOKENS``, E8) and
+    ``enhance_service`` (default: an :class:`EnhanceService` on ``config``)."""
     runner = runner or JobRunner(config.web.queue_mode)
+    tokens = dict(enhance_tokens) if enhance_tokens is not None else tokens_from_env()
     storage = StorageCache(config, disk_usage=disk_usage, clock=clock)
     playlists = PlaylistStore(config, lister=playlist_lister, timeout=playlist_timeout)
     # Serialises "no active job for the episode?" + review.json write + job submit (W5: no title write while a
@@ -273,6 +310,61 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     post_lock = threading.Lock()  # posts.json read-modify-write (CP8.15 P7: allowed even while a job runs)
     signer = SessionSigner(secret if secret is not None else load_or_create_secret(Path(config.workspace.dir)),
                            password, config.web.session_days)
+
+    # --- CP13.1b: enhance (HD source) -------------------------------------------------------------------------
+
+    svc = enhance_service or EnhanceService(config, ai_busy=runner.ai_busy)
+    svc.ai_busy = runner.ai_busy
+
+    def _enhance_complete(eid: str) -> None:
+        """All segments of ``eid`` arrived (or a restart / retry): queue the assembly job (render lane)."""
+        job, created = runner.submit(eid, KIND_ENHANCE, enhance_assemble_target(svc, after=_hd_ready))
+        log.info("web: ghép HD [%s] -> job %s%s", eid, job.id, "" if created else " (đã có)")
+
+    def _hd_ready(eid: str) -> None:
+        """The HD source of the video is ready: its parts leave "đợi HD" / re-render (E6)."""
+        for part in enh_state.video_parts(config, eid):
+            _release_hd(part)
+
+    def _hd_published(eid: str, rm: dict | None) -> bool:
+        """Is any rendered Short of the episode ticked "Đã đăng" for its current file? (then no auto re-render)"""
+        if rm is None:
+            return False
+        return any(v.get("published") and not v.get("stale") for v in ep._publish(config, eid, rm)[0].values())
+
+    def _release_hd(eid: str, *, force_render: bool = False) -> str:
+        """Let ``eid`` carry on without waiting: unpark its job (render queue); no job + it was waiting -> a render job;
+        an episode rendered earlier from the original source is re-rendered when none of its Shorts is ticked "Đã
+        đăng" (E6). Returns what was done: ``unparked`` | ``render`` | ``busy`` | ``kept`` | ``none``."""
+        with submit_lock:
+            if runner.unpark(eid) is not None:
+                svc.clear_waiting(eid)
+                return "unparked"
+            doc = enh_state.read(Path(config.workspace.dir) / eid)
+            waiting = bool(doc and doc.get("waiting_hd"))
+            current = runner.latest(eid)
+            if current is not None and current.active:
+                return "busy"  # its own render step will read the HD source
+            rm = ep._render_manifest(config, eid)
+            hd = doc.get("source_hd_sha256") if doc and doc.get("state") == enh_state.DONE else None
+            if not waiting and not force_render:
+                if rm is None or hd is None or rm.get("source_sha256") == hd:
+                    return "none"
+                if _hd_published(eid, rm):
+                    return "kept"
+            if not (Path(config.workspace.dir) / eid / "manifest.json").is_file():
+                return "none"
+            svc.clear_waiting(eid)
+            runner.submit(eid, KIND_RENDER, render_target(config, render=render))
+            return "render"
+
+    def _recheck_parked(job) -> None:
+        """A job just parked (or was restored parked): carry on at once when its HD is already there / not wanted."""
+        if not svc.hold(job.episode_id):
+            _release_hd(job.episode_id)
+
+    svc.on_complete = _enhance_complete
+    runner.on_parked = _recheck_parked
 
     def auto_archive_pass() -> list[str]:
         """W9 S5 / D4: remove the source video of every video whose parts are all "Xong" for at least the grace
@@ -288,6 +380,9 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                 if any((j := runner.latest(eid)) is not None and j.active for eid in parts):
                     continue
                 for eid in item["episodes"]:
+                    if enh_state.has_hd(Path(config.workspace.dir) / eid) \
+                            or enh_state.is_pending(enh_state.read(Path(config.workspace.dir) / eid)):
+                        continue  # CP13.1 E5: an enhanced / enhancing video keeps its source (never automatic)
                     try:
                         result = archive_source(eid, config, auto=True)
                     except ReviewError as exc:
@@ -328,11 +423,14 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             series, episode = spec.get("series"), spec.get("episode")
             return pipeline_target(url, config, series=series if isinstance(series, str) else None,
                                    episode=episode if isinstance(episode, str) else None, pipeline=pipeline,
-                                   preflight=preflight, episode_id=kt, disk_blocked=storage.block_message)
+                                   preflight=preflight, episode_id=kt, disk_blocked=storage.block_message,
+                                   enhance=svc)
         if not (ws / eid).is_dir():
             return None
         if kind == KIND_RENDER:
             return render_target(config, render=render)
+        if kind == KIND_ENHANCE:
+            return enhance_assemble_target(svc, after=_hd_ready)
         if kind == KIND_ADD:
             clip = spec.get("clip_id")
             return add_short_target(config, clip, render=render, preflight=preflight, titler=titler) \
@@ -350,6 +448,9 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     async def lifespan(_app: FastAPI):
         runner.restore()  # CP8.22 Q2: before the lanes start and before the auto clean-up sweeps
         runner.start()
+        for eid in svc.resume_assembly():  # CP13.1b: segments all there but never assembled (restart)
+            _enhance_complete(eid)
+        runner.recheck_parked()  # CP13.1b: "đợi HD" jobs whose HD is ready by now
         sweeper = asyncio.create_task(_auto_archive_loop())
         try:
             yield
@@ -367,7 +468,10 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     @app.middleware("http")
     async def auth_middleware(request: Request, call_next):
         path = request.url.path
-        if path not in PUBLIC_PATHS and not signer.verify(request.cookies.get(COOKIE_NAME)):
+        worker_route = path.startswith(ENHANCE_PREFIX) and path not in ENHANCE_UI_PATHS
+        if worker_route:  # CP13.1 E8: the route checks the worker token itself; the web cookie never opens it
+            response = await call_next(request)
+        elif path not in PUBLIC_PATHS and not signer.verify(request.cookies.get(COOKIE_NAME)):
             if path.startswith("/api/") or path.startswith("/files/") or request.method != "GET":
                 response = JSONResponse({"detail": "chưa đăng nhập"}, status_code=401)
             else:
@@ -552,7 +656,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                     pipeline_target(url, config, series=series, episode=episode, pipeline=pipeline,
                                     preflight=preflight,
                                     episode_id=i["episode_id"] if i["kind"] == khaithi.KIND else None,
-                                    disk_blocked=storage.block_message))
+                                    disk_blocked=storage.block_message, enhance=svc))
                 i.update(created=created, job=job)
         playlists.invalidate(video_id)
         storage.invalidate()
@@ -821,6 +925,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         view["job"] = _job_view(job)
         view["gpu"] = runner.gpu_status()  # FIX-ollama-wait O7
         view["post_job"] = _job_view(runner.latest_post(episode_id))  # CP8.16 R3 (job stays the episode's own job)
+        view["enhance"] = _enhance_view(episode_id)  # CP13.1 E10
         if job is not None and job.active and job.kind in (KIND_RENDER, KIND_ADD):
             for short in view["shorts"]:
                 short["rendering"] = short["clip_id"] in job.clip_ids
@@ -1446,9 +1551,12 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         if not ep.valid_episode_id(episode_id):
             return JSONResponse({"detail": "không có episode này"}, status_code=404)
         with submit_lock:
+            runner.drop_parked(episode_id)  # CP13.1b: a job only waiting for its HD source does not block the deletion
             current = runner.latest(episode_id)
             if current is None or not current.active:
                 current = runner.latest_post(episode_id)  # CP8.16 R3: a compose job also blocks the deletion
+            if current is None or not current.active:
+                current = runner.latest_enhance(episode_id)  # CP13.1b: so does the assembly of the HD source
             if current is not None and current.active:
                 return JSONResponse({"detail": "episode đang có job chạy/đợi; xóa sau khi job xong",
                                      "job": _job_view(current)}, status_code=409)
@@ -1464,6 +1572,182 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             playlists.invalidate(episode_id)
         log.warning("web: deleted episode %s (%s)", episode_id, ", ".join(str(p) for p in removed))
         return {"deleted": episode_id}
+
+    # --- CP13.1b: enhance workers (token auth, E3 / E8) -------------------------------------------------------
+
+    async def _worker(request: Request) -> str:
+        name = enhance_authenticate(tokens, request.headers.get("authorization"))
+        if name is None:
+            raise HTTPException(status_code=401, detail="token enhance sai hoặc thiếu")
+        return name
+
+    def _enh_error(exc: EnhanceError) -> JSONResponse:
+        return JSONResponse({"detail": str(exc)}, status_code=exc.status)
+
+    def _lease_id_ok(lease_id: str) -> bool:
+        return bool(_LEASE_ID_RE.match(lease_id))
+
+    @app.post("/api/enhance/lease")
+    def api_enhance_lease(body: EnhanceLeaseIn, name: str = Depends(_worker)):
+        """E3: the next video for the worker ``{episode_id, lease_id, expires_at, source_url, ...}`` or 204."""
+        info = svc.lease(name, body.worker, body.gpu)
+        return Response(status_code=204) if info is None else JSONResponse(info)
+
+    @app.get("/api/enhance/may-run")
+    def api_enhance_may_run(worker: str | None = None, name: str = Depends(_worker)):
+        """E7: ``{run, reason}`` for the worker (the token name decides; ``worker`` is only a display label)."""
+        svc.ping(name, worker[:80] if worker else None)
+        run, reason = svc.may_run(name)
+        return {"run": run, "reason": reason}
+
+    @app.get("/api/enhance/status")
+    def api_enhance_status():
+        """E8 / E10: read-only status for the UI (web cookie, not a worker route)."""
+        return svc.status()
+
+    @app.get("/api/enhance/{lease_id}/source")
+    def api_enhance_source(lease_id: str, name: str = Depends(_worker)):
+        """E3: the source video (``Range`` supported)."""
+        if not _lease_id_ok(lease_id):
+            return JSONResponse({"detail": "lease không hợp lệ"}, status_code=409)
+        try:
+            path = svc.source_path(name, lease_id)
+        except EnhanceError as exc:
+            return _enh_error(exc)
+        return FileResponse(path, media_type=SOURCE_TYPES.get(path.suffix.lower(), "application/octet-stream"),
+                            headers={"Cache-Control": "no-store"})
+
+    @app.put("/api/enhance/{lease_id}/seg/{n}")
+    async def api_enhance_put(lease_id: str, n: int, request: Request, name: str = Depends(_worker)):
+        """E3: one enhanced segment (mp4 body, header ``X-Sha256``): checked, stored (idempotent), renews the lease."""
+        if not _lease_id_ok(lease_id) or not 0 <= n <= 99999:
+            return JSONResponse({"detail": "lease / đoạn không hợp lệ"}, status_code=400)
+        limit = config.enhance.max_segment_mb * 2 ** 20
+        try:
+            declared = int(request.headers.get("content-length") or 0)
+        except ValueError:
+            declared = 0
+        if declared > limit:
+            return JSONResponse({"detail": f"đoạn lớn hơn {config.enhance.max_segment_mb} MB"}, status_code=413)
+        try:
+            ctx = await asyncio.to_thread(svc.check_put, name, lease_id, n)
+        except EnhanceError as exc:
+            return _enh_error(exc)
+        try:
+            digest, size = hashlib.sha256(), 0
+            with open(ctx.tmp, "wb") as fh:
+                async for chunk in request.stream():
+                    size += len(chunk)
+                    if size > limit:
+                        return JSONResponse({"detail": f"đoạn lớn hơn {config.enhance.max_segment_mb} MB"},
+                                            status_code=413)
+                    digest.update(chunk)
+                    await asyncio.to_thread(fh.write, chunk)
+            result = await asyncio.to_thread(svc.accept, ctx, request.headers.get("x-sha256"), digest.hexdigest())
+            return result
+        except EnhanceError as exc:
+            return _enh_error(exc)
+        finally:
+            ctx.cleanup()  # no-op after a successful rename
+
+    @app.post("/api/enhance/{lease_id}/heartbeat")
+    def api_enhance_heartbeat(lease_id: str, body: EnhanceBeatIn, name: str = Depends(_worker)):
+        if not _lease_id_ok(lease_id):
+            return JSONResponse({"detail": "lease không hợp lệ"}, status_code=409)
+        try:
+            return svc.heartbeat(name, lease_id, body.progress)
+        except EnhanceError as exc:
+            return _enh_error(exc)
+
+    @app.post("/api/enhance/{lease_id}/release")
+    def api_enhance_release(lease_id: str, body: EnhanceReleaseIn, name: str = Depends(_worker)):
+        if not _lease_id_ok(lease_id):
+            return JSONResponse({"detail": "lease không hợp lệ"}, status_code=409)
+        try:
+            return svc.release(name, lease_id, body.reason)
+        except EnhanceError as exc:
+            return _enh_error(exc)
+
+    # --- CP13.1b: enhance, web side (cookie) ------------------------------------------------------------------
+
+    def _enhance_view(episode_id: str) -> dict:
+        view = svc.episode_view(episode_id)
+        if view.get("exists"):
+            rm = ep._render_manifest(config, episode_id)
+            doc = enh_state.read(Path(config.workspace.dir) / episode_id) or {}
+            view["rendered"] = rm is not None
+            view["rendered_from_hd"] = bool(rm and doc.get("source_hd_sha256")
+                                            and rm.get("source_sha256") == doc.get("source_hd_sha256"))
+            view["can_rerender"] = bool(view.get("hd_ready") and rm is not None and not view["rendered_from_hd"])
+        job = runner.latest_enhance(episode_id)
+        view["assembling_job"] = job.status if job is not None and job.active else None
+        return view
+
+    @app.post("/api/enhance-pause")
+    def api_enhance_pause(body: EnhancePauseIn):
+        """E7 "Tạm dừng enhance" (global): every worker's ``may-run`` answers ``run: false``; no new lease."""
+        svc.set_paused(body.paused)
+        return svc.status()
+
+    def _enhance_episode(episode_id: str) -> JSONResponse | None:
+        if (bad := _episode_or_404(episode_id)) is not None:
+            return bad
+        if not (Path(config.workspace.dir) / episode_id / "manifest.json").is_file():
+            return JSONResponse({"detail": "không có episode này"}, status_code=404)
+        return None
+
+    @app.post("/api/episodes/{episode_id}/enhance")
+    def api_episode_enhance(episode_id: str, body: EnhanceSwitchIn):
+        """E1 / E10 "Bật / Tắt enhance" (the whole video: Short + khai thị). Off while waiting for HD -> the render runs at
+        once from the original source."""
+        if (bad := _enhance_episode(episode_id)) is not None:
+            return bad
+        try:
+            doc = svc.set_wanted(episode_id, body.enabled)
+        except EnhanceError as exc:
+            return _enh_error(exc)
+        owner = doc.get("follows") or episode_id
+        done = None
+        if not body.enabled:
+            done = {part: _release_hd(part) for part in enh_state.video_parts(config, owner)}
+        elif doc.get("state") == enh_state.ASSEMBLING:
+            _enhance_complete(owner)
+        elif doc.get("state") == enh_state.DONE:
+            _hd_ready(owner)
+        log.info("web: enhance %s [%s]%s", "on" if body.enabled else "off", episode_id,
+                 f" -> {done}" if done else "")
+        return {"enhance": _enhance_view(episode_id)}
+
+    @app.post("/api/episodes/{episode_id}/enhance/render-original")
+    def api_episode_render_original(episode_id: str):
+        """E6 "Render bằng bản gốc": turn enhance off for the video and render now from the original source."""
+        if (bad := _enhance_episode(episode_id)) is not None:
+            return bad
+        try:
+            doc = svc.set_wanted(episode_id, False)
+        except EnhanceError as exc:
+            return _enh_error(exc)
+        outcome = {part: _release_hd(part, force_render=part == episode_id)
+                   for part in enh_state.video_parts(config, doc.get("follows") or episode_id)}
+        log.info("web: render bằng bản gốc [%s]: %s", episode_id, outcome)
+        return {"enhance": _enhance_view(episode_id), "outcome": outcome}
+
+    @app.post("/api/episodes/{episode_id}/enhance/rerender")
+    def api_episode_rerender_hd(episode_id: str):
+        """E6 "Render lại bản HD" (Shorts already ticked "Đã đăng" were kept): render job from the HD source."""
+        if (bad := _enhance_episode(episode_id)) is not None:
+            return bad
+        view = _enhance_view(episode_id)
+        if not view.get("hd_ready"):
+            return JSONResponse({"detail": "chưa có bản HD"}, status_code=409)
+        with submit_lock:
+            if (busy := _busy(episode_id)) is not None:
+                return busy
+            if is_archived(Path(config.workspace.dir) / episode_id):
+                return JSONResponse({"detail": str(ArchivedError(episode_id))}, status_code=409)
+            job, _ = runner.submit(episode_id, KIND_RENDER, render_target(config, render=render))
+        log.info("web: render lại bản HD [%s] -> job %s", episode_id, job.id)
+        return JSONResponse({"job": _job_view(job), "enhance": _enhance_view(episode_id)}, status_code=202)
 
     # --- storage (CP8.6) ---------------------------------------------------------------------------
 

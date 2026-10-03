@@ -120,6 +120,16 @@ deleted single episodes are listed under "Đã xóa" on the home page ("Xóa kh�
 YouTube's 100-character title limit. A bộ kinh page can set its own ordered hashtag list (CP8.8, "Hashtag khi Copy
 tiêu đề": add / remove / reorder, preview, "Khôi phục mặc định"), used for every episode of that bộ kinh.
 
+Enhance (CP13.1, off by default): videos whose source is below `[enhance] min_height` (720 px) are enhanced on
+external GPU workers (`tools/enhance_worker/`, Windows guide `docs/guides/enhance-worker-windows.md`; the workers
+*pull* work through token-authenticated `/api/enhance/*` routes) and the Short / khai thị are rendered from the
+resulting `work/<id>/source_hd.mp4`. Such an episode runs transcript → titling on the original source and then waits
+("đợi HD", no lane held) until the HD source is assembled; "Render bằng bản gốc" skips the wait, "Bật / Tắt enhance"
+overrides the decision per video, and the storage tab lists the workers with a global "Tạm dừng enhance". An
+enhanced video's source is never cleaned up automatically. Worker tokens: `auto-short enhance-token --name rtx3090`
+prints one (once); put it in `AUTO_SHORT_ENHANCE_TOKENS='name=token,…'` in the environment of `auto-short web`
+(never in config). Contract: `docs/decisions/CP13.1-enhance-worker-contract.md`.
+
 Khai thị videos (CP8.9): besides Shorts, a video can give longer "khai thị" videos (same 9:16 template, one
 complete teaching each, length within a chosen minute range after silence trimming; default 4–7 minutes, at most
 15) in a separate episode `<video id>.kt` next to the Short episode. On the home page both boxes "Short" and

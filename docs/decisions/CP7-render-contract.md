@@ -109,6 +109,7 @@ Kiểm trên trạng thái sau commit (CP8.2 T5: file của Short encode lần n
 
 - Yêu cầu `titling` = `done` và `clips.json`, `titles.json`, `candidates.json`, `metadata.json` tồn tại; không thì `failed` + `error`, không file.
 - `inputs` = 4 file trên (relative + sha256) + `review.json` nếu có (CP8.2 T4) + media nguồn (hash cache CP2 D6).
+- **Sửa đổi CP13.1b (HUMAN LEAD 2026-10-03):** khi `work/<id>/source_hd.mp4` hợp lệ (`enhance.json` `state: done`, sha256 khớp) render đọc nó thay `source.*` (input media + `source_sha256` của `render_key` / manifest là của bản HD); các stage khác không đổi. Canonical: `docs/decisions/CP13.1-enhance-worker-contract.md` E5 / E6.
 - **Sửa đổi CP8.6:** episode đã dọn video nguồn (`archive.json`) → `render` từ chối trước khi đụng manifest (không ghi `failed`, render cuối giữ nguyên). Canonical: `docs/decisions/CP8.3-web-contract.md` W9.
 - `config_hash` = mọi key `[render]` trừ `output_dir`, `threads`, `jobs`, cộng `font_sha256`. Đổi config stage khác không chạy lại render; chạy lại titling/selection → render `stale` (D6).
 - `artifacts` = `render_manifest.json` + các mp4 (absolute).

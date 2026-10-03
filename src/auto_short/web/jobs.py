@@ -51,6 +51,7 @@ KIND_RENDER = "render"
 KIND_ADD = "add"  # CP9 C7: AI title of a Short added by hand (lane ai), then render (lane render)
 KIND_POST = "post"  # CP8.15 P1: compose / recompose community post text (lane ai; no render)
 KIND_POST_SEARCH = "post_search"  # CP8.15 P5b: find images from a link (lane prepare; no Ollama)
+KIND_ENHANCE = "enhance"  # CP13.1b: assemble ``source_hd.mp4`` from the received segments (lane render; runs under enhance_key)
 POST_IMAGES_KEY = "_post_images"  # CP8.15 P9: pseudo episode id for the (single, global) image search job
 EPISODE_KINDS = (KIND_PIPELINE, KIND_RENDER, KIND_ADD)  # jobs of an episode that run the render step (CP8.16 R2a)
 
@@ -58,6 +59,17 @@ EPISODE_KINDS = (KIND_PIPELINE, KIND_RENDER, KIND_ADD)  # jobs of an episode tha
 def post_key(episode_id: str) -> str:
     """CP8.16 R3: the runner key of the ``post`` job of an episode (separate from the episode's own job)."""
     return f"{episode_id}#post"
+
+def enhance_key(episode_id: str) -> str:
+    """CP13.1b: the runner key of the assembly job of an episode (separate from the episode's own job, which may be
+    parked waiting for this very HD source)."""
+    return f"{episode_id}#hd"
+
+
+def job_key(kind: str, episode_id: str) -> str:
+    return post_key(episode_id) if kind == KIND_POST else enhance_key(episode_id) if kind == KIND_ENHANCE \
+        else episode_id
+
 
 MODE_LANES, MODE_SERIAL = "lanes", "serial"
 PREPARE, AI, RENDER = "prepare", "ai", "render"
@@ -140,6 +152,7 @@ class Job:
     t0: float = field(default=0.0, repr=False)  # monotonic start
     pause_requeue: bool = field(default=False, repr=False)  # CP8.22: interrupted by "pause now" -> back to the head
     resume: tuple[str, int] | None = field(default=None, repr=False)  # CP8.22: (lane, step) interrupted by stop()
+    hd_wait: bool = False  # CP13.1b: parked after titling until the HD source is ready ("đợi HD"): in no lane queue
 
     @property
     def active(self) -> bool:
@@ -157,7 +170,7 @@ class Job:
             "created_at": self.created_at, "started_at": self.started_at, "finished_at": self.finished_at,
             "stage": self.stage, "stages": list(self.stages), "error": self.error, "summary": self.summary,
             "clip_ids": list(self.clip_ids), "lane": self.lane, "waiting": self.waiting,
-            "gpu_wait": self.gpu_wait,
+            "gpu_wait": self.gpu_wait, "hd_wait": self.hd_wait,
         }
         if logs:
             out["logs"] = list(self.logs)
@@ -219,6 +232,10 @@ class JobRunner:
         # ``done`` or ``failed``; set by the web app, which submits the ``post`` job.
         self.on_finished: Callable[[Job], None] | None = None
         self._stopping = False
+        # CP13.1b: pipeline jobs parked after titling until their HD source is ready (key -> job); in no lane queue,
+        # so they hold no lane; ``on_parked(job)`` (set by the web app) re-checks the HD right after a job parks.
+        self._parked: dict[str, Job] = {}
+        self.on_parked: Callable[[Job], None] | None = None
         self._handler = _JobLogHandler(self)
         # FIX-ollama-wait O5: state of the ai lane's Ollama connection (under ``_lock``); "down" only after a job of
         # the lane hit OllamaUnavailable, back to "ok" as soon as a later check gets an answer.
@@ -296,11 +313,11 @@ class JobRunner:
         lane_steps = getattr(target, "lane_steps", None)
         if lane_steps is not None:
             return list(lane_steps())
-        return [Step(RENDER if kind == KIND_RENDER else PREPARE, target)]
+        return [Step(RENDER if kind in (KIND_RENDER, KIND_ENHANCE) else PREPARE, target)]
 
     def _enqueue_locked(self, episode_id: str, kind: str, target: Callable[[Job], None],
                         clip_ids: list[str] | None) -> Job:
-        key = post_key(episode_id) if kind == KIND_POST else episode_id
+        key = job_key(kind, episode_id)
         job = Job(id=str(next(self._ids)), episode_id=episode_id, kind=kind, target=target, key=key,
                   clip_ids=list(clip_ids or []), steps=self._steps(kind, target))
         self._jobs[job.id] = job
@@ -321,7 +338,7 @@ class JobRunner:
         ``post`` request never gets lost: while the job *waits* its ``clips`` are merged into that job; while it
         *runs* they are kept for one more pass (``auto`` + those clips) queued right after it. The existing job is
         returned either way."""
-        key = post_key(episode_id) if kind == KIND_POST else episode_id
+        key = job_key(kind, episode_id)
         with self._lock:
             latest = self._latest.get(key)
             if latest is not None and latest.active:
@@ -348,6 +365,11 @@ class JobRunner:
         with self._lock:
             return self._latest.get(post_key(episode_id))
 
+    def latest_enhance(self, episode_id: str) -> Job | None:
+        """The newest HD assembly job of the episode (CP13.1b)."""
+        with self._lock:
+            return self._latest.get(enhance_key(episode_id))
+
     def job(self, job_id: str) -> Job | None:
         with self._lock:
             return self._jobs.get(job_id)
@@ -356,12 +378,13 @@ class JobRunner:
         """Drop the finished jobs of a deleted episode (CP8.5 X3) so it leaves every view; refused (False) while
         one of its jobs is queued/running."""
         with self._lock:
-            for key in (episode_id, post_key(episode_id)):
+            for key in (episode_id, post_key(episode_id), enhance_key(episode_id)):
                 latest = self._latest.get(key)
                 if latest is not None and latest.active:
                     return False
             self._latest.pop(episode_id, None)
             self._latest.pop(post_key(episode_id), None)
+            self._latest.pop(enhance_key(episode_id), None)
             for job_id in [j.id for j in self._jobs.values() if j.episode_id == episode_id]:
                 del self._jobs[job_id]
         return True
@@ -409,6 +432,16 @@ class JobRunner:
         """O7: ``{state, since, error, next_check}`` of the ai lane's last Ollama check (``ok`` at start)."""
         with self._lock:
             return dict(self._gpu)
+
+    def ai_busy(self) -> bool:
+        """CP13.1b E7: does the ``ai`` lane (Ollama) run a job or have one waiting? (jobs waiting while the whole queue is
+        paused do not count: nothing uses Ollama then.) In serial mode every running job counts."""
+        with self._lock:
+            lane = AI if AI in self._queues else _SERIAL
+            running = self._current.get(lane) is not None
+            if lane == _SERIAL:
+                return running
+            return running or (bool(self._queues[AI]) and self._paused is None)
 
     def _gpu_down(self) -> bool:
         return self._gpu["state"] == GPU_DOWN
@@ -581,6 +614,15 @@ class JobRunner:
     def _after(self, lane: str, job: Job, ok: bool) -> None:
         last = not ok or job.step + 1 >= len(job.steps)
         job._reachable = None
+        park = False
+        if not last and job.kind == KIND_PIPELINE and job.steps[job.step + 1].lane == RENDER \
+                and not self._stopping:
+            hold = getattr(job.target, "hd_hold", None)  # CP13.1b E6: "đợi HD" - the render waits for the HD source
+            if hold is not None:
+                try:
+                    park = bool(hold(job))
+                except Exception:  # a bug in the hook must not strand the job
+                    log.exception("web: hd hold hook failed for job %s [%s]", job.id, job.episode_id)
         if ok and last:
             job.status = DONE
             log.info("web: job %s done in %.1f s [%s]%s", job.id, time.monotonic() - job.t0,
@@ -602,6 +644,12 @@ class JobRunner:
                     follow = follow() if follow is not None else None
                     if follow is not None:  # R3: one more pass for the trigger that arrived meanwhile
                         self._enqueue_locked(job.episode_id, KIND_POST, follow, None)
+            elif park:  # CP13.1b: waits outside every lane queue until unpark()
+                job.step += 1
+                job.lane, job.waiting, job.hd_wait = None, True, True
+                job.stage = LANE_STAGES[job.steps[job.step].lane][0]
+                self._parked[job.key] = job
+                log.info("web: job %s [%s] waits for the HD source", job.id, job.episode_id)
             else:  # tail of the next lane's queue
                 job.step += 1
                 nxt = job.steps[job.step].lane
@@ -611,6 +659,54 @@ class JobRunner:
                 self._sync_gpu_wait_locked()
             self._save_locked()
             self._lock.notify_all()
+        if park and self.on_parked is not None and not self._stopping:
+            try:  # the HD may have become ready between the hold check and the parking
+                self.on_parked(job)
+            except Exception:
+                log.exception("web: on_parked hook failed for job %s [%s]", job.id, job.episode_id)
+
+    # --- CP13.1b: parked ("đợi HD") jobs -------------------------------------------------------------------------
+
+    def parked(self) -> list[Job]:
+        with self._lock:
+            return list(self._parked.values())
+
+    def unpark(self, episode_id: str) -> Job | None:
+        """The HD source is ready (or the user chose the original): the parked job joins the tail of the ``render`` queue.
+        Returns the job, or None when the episode has none parked."""
+        with self._lock:
+            job = self._parked.pop(episode_id, None)
+            if job is None:
+                return None
+            job.hd_wait, job.lane, job.waiting = False, RENDER, True
+            self._queues[RENDER].append(job)
+            self._sync_gpu_wait_locked()
+            self._save_locked()
+            self._lock.notify_all()
+        log.info("web: job %s [%s] leaves the HD wait -> render queue", job.id, episode_id)
+        return job
+
+    def drop_parked(self, episode_id: str) -> bool:
+        """Cancel the parked job of an episode (the episode is being deleted); its stages stay done on disk."""
+        with self._lock:
+            job = self._parked.pop(episode_id, None)
+            if job is None:
+                return False
+            job.status, job.error, job.finished_at = INTERRUPTED, "hủy khi đợi HD", _now()
+            job.hd_wait, job.waiting, job.lane = False, False, None
+            self._save_locked()
+            self._lock.notify_all()
+        return True
+
+    def recheck_parked(self) -> None:
+        """Start-up: ask ``on_parked`` about every restored parked job (its HD may be ready by now)."""
+        if self.on_parked is None:
+            return
+        for job in self.parked():
+            try:
+                self.on_parked(job)
+            except Exception:
+                log.exception("web: on_parked hook failed for job %s [%s]", job.id, job.episode_id)
 
     # --- CP8.22: pause / resume ------------------------------------------------------------------
 
@@ -694,7 +790,9 @@ class JobRunner:
                        for j in heads]
             entries += [self._entry(j, j.step) for j in self._queues[lane]]
             lanes[lane] = entries
-        return {"version": 1, "mode": self.mode, "paused": self._paused is not None, "lanes": lanes}
+        parked = [self._entry(j, j.step) for j in sorted(self._parked.values(), key=lambda j: int(j.id))]
+        return {"version": 1, "mode": self.mode, "paused": self._paused is not None, "lanes": lanes,
+                "parked": parked}
 
     def _save_locked(self) -> None:
         if self._state_path is None or self._restoring:
@@ -720,6 +818,8 @@ class JobRunner:
             log.warning("web: hàng đợi đã lưu %s không đọc được, bỏ qua: %s", self._state_path, exc)
             return 0
         same_mode = data.get("mode") == self.mode
+        parked_entries = data.get("parked") if isinstance(data.get("parked"), list) and same_mode \
+            and self.mode == MODE_LANES else []
         entries: list[tuple[str, dict]] = []
         for lane in (self._lane_names if same_mode else LANES + (_SERIAL,)):
             for entry in lanes.get(lane) or []:
@@ -736,6 +836,13 @@ class JobRunner:
                         log.warning("web: bỏ qua việc đã lưu %r: %s: %s", entry, type(exc).__name__, exc)
                         continue
                     restored += 1 if job is not None else 0
+                for entry in parked_entries:  # CP13.1b: "đợi HD" jobs stay parked until their HD source is ready
+                    try:
+                        job = self._restore_one_locked(RENDER, entry, same_mode, parked=True)
+                    except Exception as exc:
+                        log.warning("web: bỏ qua việc đợi HD đã lưu %r: %s: %s", entry, type(exc).__name__, exc)
+                        continue
+                    restored += 1 if job is not None else 0
             finally:
                 self._restoring = False
             self._sync_gpu_wait_locked()
@@ -744,12 +851,12 @@ class JobRunner:
             log.info("web: khôi phục hàng đợi: %d việc%s", restored, ", đang tạm ngưng" if self._paused else "")
         return restored
 
-    def _restore_one_locked(self, lane: str, entry: dict, same_mode: bool) -> Job | None:
+    def _restore_one_locked(self, lane: str, entry: dict, same_mode: bool, parked: bool = False) -> Job | None:
         kind, episode_id = entry["kind"], entry["episode_id"]
         spec, clip_ids = entry.get("spec") or {}, list(entry.get("clip_ids") or [])
         if not isinstance(kind, str) or not isinstance(episode_id, str) or not isinstance(spec, dict):
             raise ValueError("malformed entry")
-        key = post_key(episode_id) if kind == KIND_POST else episode_id
+        key = job_key(kind, episode_id)
         latest = self._latest.get(key)
         if latest is not None and latest.active:
             log.warning("web: bỏ qua việc đã lưu trùng [%s] (%s)", episode_id, kind)
@@ -761,6 +868,17 @@ class JobRunner:
         job = Job(id=str(next(self._ids)), episode_id=episode_id, kind=kind, target=target, key=key,
                   clip_ids=clip_ids, steps=self._steps(kind, target))
         step = entry.get("step", 0)
+        if parked:  # the step after the ``ai`` lane: the render
+            if kind != KIND_PIPELINE or not isinstance(step, int) or not 0 < step < len(job.steps) \
+                    or job.steps[step].lane != RENDER:
+                raise ValueError("a parked job must be a pipeline job waiting for its render step")
+            job.step = step
+            job.status, job.started_at, job.t0 = RUNNING, _now(), time.monotonic()
+            job.lane, job.waiting, job.hd_wait, job.stage = None, True, True, LANE_STAGES[RENDER][0]
+            self._jobs[job.id] = job
+            self._latest[key] = job
+            self._parked[key] = job
+            return job
         if not (same_mode and isinstance(step, int) and 0 <= step < len(job.steps) and job.steps[step].lane == lane):
             step = 0
         job.step = step
@@ -787,10 +905,12 @@ class PipelineTarget:
     def __init__(self, url: str, config: Config, *, series: str | None = None, episode: str | None = None,
                  pipeline: Callable = run_pipeline,
                  preflight: Callable[[Config], None] | None = ollama_preflight,
-                 episode_id: str | None = None, disk_blocked: Callable[[], str | None] | None = None):
+                 episode_id: str | None = None, disk_blocked: Callable[[], str | None] | None = None,
+                 enhance=None):
         self.url, self.config, self.series, self.episode = url, config, series, episode
         self.pipeline, self.preflight, self.episode_id = pipeline, preflight, episode_id
         self.disk_blocked = disk_blocked
+        self.enhance = enhance  # CP13.1b: object with ``decide(episode_id)`` / ``hold(episode_id) -> bool``, or None
         self._resolved: str | None = episode_id  # episode id for the ai / render lanes
 
     def _run(self, job: Job, stages: tuple[str, ...] | None, *, preflight: bool, episode_id: str | None):
@@ -801,6 +921,10 @@ class PipelineTarget:
 
         def on_stage(run: StageRun) -> None:
             job.stages.append({"stage": run.stage, "ran": run.ran, "seconds": run.seconds})
+            if run.stage == "ingest" and self.enhance is not None:  # CP13.1b E1: decide right after the download
+                eid = getattr(run.result, "episode_id", None) or episode_id
+                if eid:
+                    self.enhance.decide(eid)
             i = PIPELINE_STAGES.index(run.stage)
             job.stage = PIPELINE_STAGES[i + 1] if i + 1 < len(PIPELINE_STAGES) else None
 
@@ -866,6 +990,10 @@ class PipelineTarget:
     def render(self, job: Job) -> None:
         self._finish(job, self._run(job, LANE_STAGES[RENDER], preflight=False, episode_id=self._later_id(job)))
 
+    def hd_hold(self, job: Job) -> bool:
+        """CP13.1b E6: the runner asks after the ``ai`` lane whether the render must wait for the HD source ("đợi HD")."""
+        return self.enhance is not None and bool(self.enhance.hold(self._later_id(job)))
+
     def lane_steps(self) -> list[Step]:
         return [Step(PREPARE, self.prepare), Step(AI, self.ai), Step(RENDER, self.render)]
 
@@ -878,10 +1006,10 @@ def pipeline_target(url: str, config: Config, *, series: str | None = None, epis
                     pipeline: Callable = run_pipeline,
                     preflight: Callable[[Config], None] | None = ollama_preflight,
                     episode_id: str | None = None,
-                    disk_blocked: Callable[[], str | None] | None = None) -> PipelineTarget:
+                    disk_blocked: Callable[[], str | None] | None = None, enhance=None) -> PipelineTarget:
     """See :class:`PipelineTarget`."""
     return PipelineTarget(url, config, series=series, episode=episode, pipeline=pipeline, preflight=preflight,
-                          episode_id=episode_id, disk_blocked=disk_blocked)
+                          episode_id=episode_id, disk_blocked=disk_blocked, enhance=enhance)
 
 
 # --- render job (W4 title edit) ------------------------------------------------------------------------
@@ -1083,3 +1211,43 @@ class ImageSearchTarget:
 def image_search_target(config: Config, url: str, *, search: Callable | None = None) -> ImageSearchTarget:
     """See :class:`ImageSearchTarget`."""
     return ImageSearchTarget(config, url, search=search)
+
+
+# --- HD assembly job (CP13.1b E3) ----------------------------------------------------------------------------------
+
+class EnhanceAssembleTarget:
+    """Job target assembling the received segments of a video into ``source_hd.mp4`` (lane ``render``: CPU-light stream
+    copy), then calling ``after(episode_id)`` (the web app: unpark the waiting jobs / re-render, E6). Runs under
+    :func:`enhance_key`, so it never collides with the episode's own (possibly parked) job."""
+
+    def __init__(self, service, after: Callable[[str], None] | None = None):
+        self.service, self.after_hd = service, after
+
+    def run(self, job: Job) -> None:
+        from ..enhance.state import EnhanceError
+        job.stage = "enhance"
+        t0 = time.monotonic()
+        try:
+            doc = self.service.assemble(job.episode_id)
+        except EnhanceError as exc:
+            raise JobFailed(f"enhance: {exc}") from exc
+        job.stages.append({"stage": "enhance", "ran": True, "seconds": round(time.monotonic() - t0, 3)})
+        job.stage = None
+        job.summary = f"HD {doc.get('frames')} khung" + (f" ({', '.join(doc.get('workers') or [])})"
+                                                          if doc.get("workers") else "")
+        if self.after_hd is not None:
+            self.after_hd(job.episode_id)
+
+    def __call__(self, job: Job) -> None:
+        self.run(job)
+
+    def lane_steps(self) -> list[Step]:
+        return [Step(RENDER, self.run)]
+
+    def spec(self) -> dict:
+        return {}
+
+
+def enhance_assemble_target(service, after: Callable[[str], None] | None = None) -> EnhanceAssembleTarget:
+    """See :class:`EnhanceAssembleTarget`."""
+    return EnhanceAssembleTarget(service, after)

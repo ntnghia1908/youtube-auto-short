@@ -273,3 +273,7 @@ body.modal-open { overflow: hidden; }
 .corr-row .corr-pair { font-weight: 600; word-break: break-word; }
 .corr-row input[type="text"], .corr-add input { flex: 1 1 10rem; min-width: 0; }
 .corr-add { flex-wrap: wrap; }
+
+/* CP13.1b enhance (E10) */
+.enhance-box { border-left: 3px solid var(--accent-bg); padding: .1rem .6rem; margin: .5rem 0; }
+.enhance-box[hidden], .enhance-box [hidden] { display: none; }
