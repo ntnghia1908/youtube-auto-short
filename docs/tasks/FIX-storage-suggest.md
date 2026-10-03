@@ -83,7 +83,7 @@ Không chạm database hay security model. Có hành vi tự xóa dữ liệu �
 - Bảng gợi ý trước (code cũ) -> sau (mới), dữ liệu thật:
   - Trước: 14 gợi ý `all_published`: `yzR1eCK_iV0` (Dọn nguồn 702 806 278 B + Xóa 969 928 647 B) và 13 dòng riêng (7 tập `.kt`, 6 tập Short) chỉ "Xóa cả tập".
   - Sau: 6 gợi ý `all_published` (một mỗi video): `Bi7kVGbnPfE` (Xóa 665 911 485 B), `4oOZz2CBz3g` (570 945 392), `Irmcm5Ep478` (532 810 088; còn 12 bài đăng chưa tick), `rbjfCfFq3Dk` (540 348 843), `7axON1RpRjo` (550 070 640), `7w4nSj3PguI` (521 878 485); chỉ "Xóa cả tập" (đã archived). `yzR1eCK_iV0` không còn gợi ý (khai thị chưa xong); `X8ao0_7ufto.kt` (Xong, đã archived) không còn gợi ý riêng vì Short `X8ao0_7ufto` chưa Xong.
-- Review:
+- Review: ORCHESTRATOR round 1: F1 cộng trùng byte nguồn hard link → round 2 sửa (`2806ad0`), ACCEPTED 2026-10-03. ORCHESTRATOR xác nhận `tests/test_web_cp9.py::test_cut_save_reset_and_409[lanes|serial]` cũng FAIL trên `main` `07a5ae9` với `-n auto` (job post tự soạn gọi Ollama thật) — lỗi có sẵn, ngoài scope; đề xuất FIX riêng tiêm `post_compose` giả.
 - Important findings / decisions: gợi ý cũ 14 -> mới 6 vì gộp theo video. `Irmcm5Ep478` còn 12 bài đăng chưa tick (cảnh báo D3 hoạt động trên dữ liệu thật).
 - Known limitations: (1) bảng từng tập vẫn tính riêng mỗi workspace (hard link dùng chung hiện ở cả hai dòng); gợi ý đã dedupe theo inode (review F1); (2) "tự dọn" nhận biết "đã đăng hết" từ tick + mtime, nên sửa tay file trong `work/` / `output/` dời mốc ân hạn; (3) nguồn enhance (CP13) chưa có nên chưa được loại trừ; (4) server chưa được chạy với config repo chính (theo yêu cầu an toàn), UI chỉ kiểm bằng `node --check` + test API, chưa thử trình duyệt.
 - PR:
