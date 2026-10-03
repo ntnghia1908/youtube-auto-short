@@ -216,16 +216,16 @@ def test_get_fields_names_and_zip(tcfg, tmp_path):
         assert items[KT]["kind"] == "khaithi" and items[KT]["base_episode_id"] == EID
         assert items[EID]["khaithi_episode_id"] == KT
         # K8 names: <episode> = base id (write_episode's titles.json has no header fields)
-        assert k["shorts"][0]["download_name"] == f"Tập{EID}_KT01_Khai thị một.mp4"
+        assert k["shorts"][0]["download_name"] == f"T{EID}_TK01_Khai thị một.mp4"
         assert k["zip_name"] == f"Tập{EID}_KhaiThị.zip"
-        assert s["shorts"][0]["download_name"].startswith(f"Tập{EID}_S01_")
+        assert s["shorts"][0]["download_name"].startswith(f"T{EID}_S01_")
         r = c.get(f"/files/{KT}/shorts.zip")
         assert r.status_code == 200 and "filename*=UTF-8''T%E1%BA%ADp" in r.headers["content-disposition"]
         assert "KhaiTh%E1%BB%8B.zip" in r.headers["content-disposition"]
         names = zipfile.ZipFile(io.BytesIO(r.content)).namelist()
-        assert names[0].startswith(f"Tập{EID}_KT01_")
+        assert names[0].startswith(f"T{EID}_TK01_")
         r = c.get(f"/files/{KT}/k02.mp4?download=1")
-        assert "_KT02_" in r.headers["content-disposition"] or "KT02" in r.headers["content-disposition"]
+        assert "_TK02_" in r.headers["content-disposition"] or "TK02" in r.headers["content-disposition"]
 
 
 def test_header_episode_label_and_playlist_hashtags(tcfg, tmp_path):
@@ -244,7 +244,7 @@ def test_header_episode_label_and_playlist_hashtags(tcfg, tmp_path):
     with client(tcfg) as c:
         _login(c)
         k = c.get(f"/api/episodes/{KT}").json()
-        assert k["shorts"][0]["download_name"] == "Tập29_KT01_Khai thị một.mp4"
+        assert k["shorts"][0]["download_name"] == "T29_TK01_Khai thị một.mp4"
         assert k["zip_name"] == "Kinh A_Tập29_KhaiThị.zip"  # CP8.17 D4: series of the khai thị titles.json
         assert k["shorts"][0]["hashtags"] == ["#BộKinhA", "#TịnhĐộ"]  # CP8.8 H4 via the base video
         items = {i["id"]: i for i in c.get("/api/episodes").json()["episodes"]}

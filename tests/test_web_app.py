@@ -220,7 +220,7 @@ def test_files_range_download_and_zip(wcfg):
     files = write_episode(wcfg, VID, titles={"k01": "Đánh mắng trẻ là có tội không?", "k02": 'Chữ "hiếu" là gì'})
     (wcfg.workspace.dir / VID / "titles.json").write_text(
         json.dumps({"header": {"fields": {"episode": "29"}}}), encoding="utf-8")
-    k01, k02 = "Tập29_S01_Đánh mắng trẻ là có tội không.mp4", "Tập29_S02_Chữ hiếu là gì.mp4"
+    k01, k02 = "T29_S01_Đánh mắng trẻ là có tội không.mp4", "T29_S02_Chữ hiếu là gì.mp4"
     with make_client(wcfg) as c:
         login(c)
         r = c.get(f"/files/{VID}/k01.mp4")
@@ -235,8 +235,8 @@ def test_files_range_download_and_zip(wcfg):
         r = c.get(f"/files/{VID}/k02.mp4?download=1")
         assert r.status_code == 200 and r.content == files["k02"]
         assert r.headers["content-disposition"] == \
-            "attachment; filename=\"Tap29_S02_Chu hieu la gi.mp4\"; filename*=UTF-8''" \
-            "T%E1%BA%ADp29_S02_Ch%E1%BB%AF%20hi%E1%BA%BFu%20l%C3%A0%20g%C3%AC.mp4"
+            "attachment; filename=\"T29_S02_Chu hieu la gi.mp4\"; filename*=UTF-8''" \
+            "T29_S02_Ch%E1%BB%AF%20hi%E1%BA%BFu%20l%C3%A0%20g%C3%AC.mp4"
         assert c.get(f"/api/episodes/{VID}").json()["shorts"][1]["download_name"] == k02
 
         r = c.get(f"/files/{VID}/shorts.zip")
@@ -269,7 +269,7 @@ def test_files_rejects_unknown_and_traversal(wcfg, tmp_path):
             assert b"secret" not in r.content
         with zipfile.ZipFile(io.BytesIO(c.get(f"/files/{VID}/shorts.zip").content)) as zf:
             # no titles.json: <episode> = episode id; numbers = position among the 5 manifest entries
-            assert zf.namelist() == [f"Tập{VID}_S01_Tiêu đề k01.mp4", f"Tập{VID}_S02_Tiêu đề k02.mp4"]
+            assert zf.namelist() == [f"T{VID}_S01_Tiêu đề k01.mp4", f"T{VID}_S02_Tiêu đề k02.mp4"]
         d = c.get(f"/api/episodes/{VID}").json()
         skipped = next(s for s in d["shorts"] if s["clip_id"] == "k11")
         assert skipped["video_url"] is None and skipped["skip_reason"] == "untitled"

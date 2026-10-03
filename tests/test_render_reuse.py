@@ -272,3 +272,52 @@ def test_rejected_untitled_and_every_short_deleted(ws, rcfg):
     assert r.ran and enc == [] and r.rendered == 0
     assert [s["skip_reason"] for s in _rm(rcfg)["shorts"]] == ["rejected", "rejected"]
     assert not list(_out(rcfg).glob("shorts/*.mp4"))
+
+
+# --- CP8.21 D1: khai thị episode renders with the pre-CP8.14 layout, a Short is unchanged ----------------------
+
+SHORT_CONFIG_HASH_C2007C6 = "de0b688d5755f64bf5e1bf2483081492f4e91fdbcfe1bceccbca49631d795cfb"  # at c2007c6
+
+
+def test_short_config_hash_unchanged_and_khaithi_differs():
+    from auto_short.hashing import config_hash
+    from auto_short.render.stage import used_config
+    assert config_hash(used_config(RenderConfig(), "f" * 64)) == SHORT_CONFIG_HASH_C2007C6
+    kt_cfg = plan.render_config_for(RenderConfig(), True)
+    assert plan.render_config_for(RenderConfig(), False) == RenderConfig()
+    assert config_hash(used_config(kt_cfg, "f" * 64, True)) != SHORT_CONFIG_HASH_C2007C6
+
+
+def test_khaithi_layout_is_the_pre_cp814_one():
+    g = plan.geometry(plan.render_config_for(RenderConfig(), True), khaithi=True)
+    assert (g.header_w, g.header_h, g.video_h, g.title_w, g.title_h) == (853, 292, 1210, 875, 292)
+    assert g.title_max_h == 358
+    lay = plan.layout(g, g.title_h, 1440, 1080)
+    assert lay.header.as_dict() == {"x": 113, "y": 55, "w": 853, "h": 292, "radius": 59}
+    assert lay.video.y == 347 + 5 and lay.title.y == lay.video.y + 1210 + 11
+    # block centred vertically
+    assert lay.title.y + lay.title.h + lay.header.y == plan.HEIGHT
+    # a Short (V16) is not affected
+    s = plan.layout(plan.geometry(RenderConfig()), 227, 1440, 1080)
+    assert s.title.y + s.title.h == 1600 and s.header.y == 22
+
+
+def _make_khaithi(ws):
+    from auto_short import khaithi
+    khaithi.write(ws.dir, khaithi.KhaiThi("base", 5, 15))
+
+
+def test_khaithi_episode_renders_old_layout_short_keeps_v16(ws, rcfg):
+    r, enc = _render(rcfg)
+    short_doc = _rm(rcfg)
+    short_keys = [s["render_key"] for s in short_doc["shorts"]]
+    assert short_doc["layout"]["header_panel"] == {"x": 81, "y": 22, "w": 918, "h": 184, "radius": 59}
+    _make_khaithi(ws)
+    r, enc = _render(rcfg)  # config hash changed -> whole episode encoded again
+    assert enc == ["k01", "k02"]
+    doc = _rm(rcfg)
+    assert doc["layout"]["header_panel"] == {"x": 113, "y": 55, "w": 853, "h": 292, "radius": 59}
+    assert all(s["title_font_size"] <= 88 for s in doc["shorts"])
+    assert [s["render_key"] for s in doc["shorts"]] != short_keys
+    r, enc = _render(rcfg)
+    assert not r.ran

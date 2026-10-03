@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: CHANGE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -87,8 +87,22 @@ Không chạm database hay security model. Chạm web API nội bộ (thêm endp
 ## Result
 
 - Main changes:
-- Tests:
-- Review:
+  - D1: `render/plan.py` — `KHAITHI_LAYOUT` (hằng số trước CP8.14, không phải key `[render]`), `render_config_for(cfg, khaithi)`, `Geometry.khaithi` / `gap_video_title`, `geometry(cfg, khaithi)`, `layout()` chọn khối căn giữa dọc cho khai thị; `render/stage.py` `episode_render_config` / `is_khaithi` (theo `khaithi.json`), `used_config` thêm `render.layout` chỉ cho khai thị; `review/titles.py` xem trước title dùng cùng layout. Hash Short không đổi.
+  - D2: trang Bài đăng "Xem Khai thị" theo `view.kind`.
+  - D3: `review/names.py` `short_code` / `copy_prefix`, `download_name` (`T<tập>_S<NN>` / `T<tập>_TK<NN>`), `copy_text(prefix=)`; `web/episodes.py` truyền tiền tố.
+  - D4: `review/watched.py` (`watched.json`, file riêng, schema như `publish.json`), `POST …/shorts/{clip}/watched`, field `watched` / `watched_stale` / `watched_at`; JS `watchedControl` (ô "Đã xem", tự tick khi `ended` hoặc quay từ cuối về đầu khi Lặp lại).
+  - D5: `[web] show_advanced` (mặc định false), `GET /api/ui`; JS ẩn "Sửa đầu/cuối" + "Từ điển sửa lỗi".
+  - D6: nút icon SVG inline (Tải về, Xóa, Lặp lại; `title` + `aria-label`, ≥ 44 px).
+  - Docs: CP7 R4, CP8.3 (W6 / W8 / Config), CP8.9, project-profile, README, `config.example.toml`.
+- Tests: `python -m pytest -q -n auto` → 1337 passed, 1 skipped; `node scripts/framework-check.mjs` → PASS. Test mới: `tests/test_web_cp821.py` (10), 3 test trong `tests/test_render_reuse.py` (layout khai thị, hash Short `de0b688d…` = c2007c6, render khai thị thật bằng ffmpeg); test cũ cập nhật theo format tên mới. Server 8081 trên bản sao `~/.cache/auto-short-cp821-test/`: tập `2mVA5If4M3w` render lại = "skip (up to date)" (hash Short không đổi trên dữ liệu thật); `2mVA5If4M3w.kt` render lại 6 video (5 ph 44 s), ảnh khung trước / sau `~/.cache/auto-short-cp821-test/frames/{before,after}_kt_k01.png`; HTTP: tên file / Copy / `Content-Disposition` đúng, tick / bỏ tick "Đã xem" ghi `watched.json`, `/api/ui` = `{"advanced": false}`. Server đã tắt; `work/` / `output/` chính không đổi.
+- Review: chưa.
 - Important findings / decisions:
+  - Layout khai thị là hằng số (không thêm key `[render]`): người dùng chỉ chỉnh `[render]` cho Short.
+  - "Đã xem" lưu trong `watched.json` riêng (không thêm field vào `publish.json`: schema nghiêm ngặt, `_order` sẽ xóa field lạ, code cũ trên 8080 sẽ báo hỏng).
+  - `ended` không bắn khi `loop` bật; nên tính thêm một lần quay từ cuối về đầu (timeupdate). Kéo thanh tua từ cuối về đầu khi đang Lặp lại cũng bị tính là đã xem (bỏ tick tay được).
+  - Header khai thị ở font 0.062 tách 3 dòng với tên bộ kinh dài (như layout cũ).
 - Known limitations:
+  - Không có trình duyệt trong môi trường: phần JS (icon, "Đã xem" tự tick, ẩn nút, "Xem Khai thị") chỉ kiểm bằng `node --check` + test chuỗi trong script; manual test checklist trên điện thoại là gate của HUMAN LEAD.
+  - Preview hashtag bộ kinh (W10) vẫn tính trên title mẫu không tiền tố.
+  - Với mã tập dài (id) tiền tố `T<id>_S<NN>_` làm bớt hashtag nhiều hơn (tập không có `header.fields.episode`).
 - PR:

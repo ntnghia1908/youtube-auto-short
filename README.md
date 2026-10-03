@@ -97,8 +97,8 @@ resumes it (finished stages are skipped). Title changes use the same rules and `
 Shorts stay playable while one is re-rendered. Plain HTTP: use it on a trusted network only. Contract:
 `docs/decisions/CP8.3-web-contract.md`.
 
-Review workflow (CP8.5): downloads are named `Tập<episode>_S<NN>_<title>.mp4` (e.g.
-`Tập29_S01_Đánh mắng trẻ là có tội không.mp4`; the zip is `Tập29_Shorts.zip`; characters not allowed in file
+Review workflow (CP8.5): downloads are named `T<episode>_S<NN>_<title>.mp4` (khai thị: `TK<NN>`; CP8.21; e.g.
+`T29_S01_Đánh mắng trẻ là có tội không.mp4`; the zip is `Tập29_Shorts.zip`; characters not allowed in file
 names such as `?` and `"` are dropped). "Xóa Short" deletes a Short's mp4 (soft delete, kept in `review.json`
 `rejected`; "Hiện Short đã xóa" → "Khôi phục" re-renders it). "Xóa tập này" permanently deletes the episode's
 `work/<id>/` (including the downloaded video) and `output/<id>/`; a local source file outside the workspace is

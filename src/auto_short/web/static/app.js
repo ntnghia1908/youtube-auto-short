@@ -20,6 +20,34 @@ const AutoShort = (() => {
 
   const $ = (sel) => document.querySelector(sel);
 
+  // CP8.21 D5: UI flags from the server (``[web] show_advanced``): "Sửa đầu/cuối" and "Từ điển sửa lỗi" are hidden
+  // by default (code and API stay).
+  let uiFlags = { advanced: false };
+  async function loadUi() {
+    try { uiFlags = await fetch("/api/ui", { credentials: "same-origin" }).then((r) => (r.ok ? r.json() : uiFlags)); }
+    catch (_) { /* keep the default: hidden */ }
+  }
+
+  // CP8.21 D6: inline SVG icons (no dependency); the button carries ``title`` + ``aria-label``.
+  const ICONS = {
+    download: ["M12 3v12", "M7 10l5 5 5-5", "M5 20h14"],
+    trash: ["M4 7h16", "M9 7V4h6v3", "M6 7l1 13h10l1-13", "M10 11v6", "M14 11v6"],
+    loop: ["M4 11V9a3 3 0 0 1 3-3h11", "M15 3l3 3-3 3", "M20 13v2a3 3 0 0 1-3 3H6", "M9 21l-3-3 3-3"],
+  };
+  function icon(name) {
+    const ns = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(ns, "svg");
+    for (const [k, v] of Object.entries({ viewBox: "0 0 24 24", width: "22", height: "22", fill: "none",
+      stroke: "currentColor", "stroke-width": "2", "stroke-linecap": "round", "stroke-linejoin": "round",
+      "aria-hidden": "true", focusable: "false" })) svg.setAttribute(k, v);
+    for (const d of ICONS[name]) {
+      const path = document.createElementNS(ns, "path");
+      path.setAttribute("d", d);
+      svg.append(path);
+    }
+    return svg;
+  }
+
   function el(tag, attrs = {}, ...children) {
     const node = document.createElement(tag);
     for (const [k, v] of Object.entries(attrs)) {
@@ -342,7 +370,7 @@ const AutoShort = (() => {
     }));
     $("#show-deleted").addEventListener("click", () => { showDeleted = !showDeleted; applyFilter(); });
     initAddDialog(); // CP9 C7
-    refreshEpisode();
+    loadUi().then(refreshEpisode);
     checkDisk();
   }
 
@@ -624,7 +652,7 @@ const AutoShort = (() => {
 
   function cardKey(s) {
     return JSON.stringify([s.status, s.sha256, s.title, s.pending_title, s.override, s.rendering, s.editable,
-      s.alternatives.length, s.deleted, s.rejected, s.published, s.published_stale, s.download_name, archived,
+      s.alternatives.length, s.deleted, s.rejected, s.published, s.published_stale, s.watched, s.watched_stale, s.download_name, archived, uiFlags.advanced,
       s.origin, s.cut]);
   }
 
@@ -752,13 +780,13 @@ const AutoShort = (() => {
       s.pending_title ? el("p", { class: "pending small", text: s.pending_title.text
         ? `Tiêu đề mới (${TITLE_SOURCE_LABELS[s.pending_title.origin] || s.pending_title.origin}), chưa render: ${s.pending_title.text}`
         : "Sẽ bỏ qua ở lần render tới (không có tiêu đề)" }) : null,
-      s.status === "rendered" || s.published ? publishBox(s) : null,
+      s.status === "rendered" || s.published ? publishBox(s, video) : null,
       el("div", { class: "short-actions" },
         s.download_url ? downloadLink(s) : null,
         video ? loopButton(s.clip_id, video) : null,
         s.editable && !(archived && s.deleted) ? deleteButton(s) : null),
       s.editable && !s.deleted && !archived ? titleEditor(s) : el("div", { class: "title-edit", hidden: true }),
-      s.editable && !s.deleted && !archived ? cutEditor(s) : null);
+      s.editable && !s.deleted && !archived && uiFlags.advanced ? cutEditor(s) : null);
     card.append(body);
     return card;
   }
@@ -827,8 +855,8 @@ const AutoShort = (() => {
   function loopButton(clipId, video) {
     const on = loops.get(clipId) === true;
     video.loop = on;
-    const b = el("button", { class: "btn loop-btn", type: "button", "aria-pressed": on ? "true" : "false",
-      title: "Xem hết tự phát lại từ đầu", text: "🔁 Lặp lại" });
+    const b = el("button", { class: "btn icon-btn loop-btn", type: "button", "aria-pressed": on ? "true" : "false",
+      title: "Lặp lại", "aria-label": "Lặp lại" }, icon("loop"));
     b.addEventListener("click", () => {
       const next = loops.get(clipId) !== true;
       loops.set(clipId, next);
@@ -840,13 +868,14 @@ const AutoShort = (() => {
 
   // CP8.7: a download ticks "Đã đăng" server-side; show it on the next refresh.
   function downloadLink(s) {
-    const a = el("a", { class: "btn", href: s.download_url, download: s.download_name || "", text: "Tải về" });
+    const a = el("a", { class: "btn icon-btn", href: s.download_url, download: s.download_name || "", title: "Tải về",
+      "aria-label": "Tải về" }, icon("download"));
     a.addEventListener("click", () => setTimeout(refreshEpisode, 1500));
     return a;
   }
 
   // "Đã đăng" (X4): user state only, no job, allowed while a job runs; updated in place (no card rebuild).
-  function publishBox(s) {
+  function publishBox(s, video) {
     const box = el("div", { class: "publish" });
     const input = el("input", { type: "checkbox", checked: s.published });
     input.disabled = s.status !== "rendered" && !s.published;
@@ -856,6 +885,7 @@ const AutoShort = (() => {
     stale.append(renew);
     const msg = el("span", { class: "error small", hidden: true });
     box.append(label, stale, msg);
+    if (video) box.append(watchedControl(s, video));
     async function send(value) {
       input.disabled = renew.disabled = true;
       msg.hidden = true;
@@ -881,11 +911,59 @@ const AutoShort = (() => {
     return box;
   }
 
+  // CP8.21 D4 "Đã xem": user state (``watched.json``), no job; ticked by hand or when the video plays to its end
+  // for the first time. ``ended`` does not fire while "Lặp lại" is on (loop), so a wrap from the end back to the
+  // start counts as well.
+  function watchedControl(s, video) {
+    const wrap = el("span", { class: "watched" });
+    const input = el("input", { type: "checkbox", checked: s.watched });
+    const label = el("label", { class: "publish-label" }, input, " Đã xem");
+    const stale = el("span", { class: "stale small", hidden: !s.watched_stale }, "đã xem bản cũ ");
+    const renew = el("button", { class: "btn link-dark small", type: "button", text: "đánh dấu bản này" });
+    stale.append(renew);
+    const msg = el("span", { class: "error small", hidden: true });
+    wrap.append(label, stale, msg);
+    let busy = false;
+    async function send(value) {
+      busy = true;
+      input.disabled = renew.disabled = true;
+      msg.hidden = true;
+      try {
+        const r = await api(`/api/episodes/${encodeURIComponent(episodeId)}/shorts/${encodeURIComponent(s.clip_id)}/watched`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value }),
+        });
+        s.watched = r.watched; s.watched_stale = r.stale; s.watched_at = r.at;
+        const entry = cards.get(s.clip_id);
+        if (entry) entry.key = cardKey(s);
+      } catch (e) {
+        msg.textContent = e.message;
+        msg.hidden = false;
+      }
+      input.checked = s.watched;
+      stale.hidden = !s.watched_stale;
+      input.disabled = renew.disabled = false;
+      busy = false;
+    }
+    input.addEventListener("change", () => send(input.checked));
+    renew.addEventListener("click", () => send(true));
+    const finished = () => { if (!busy && (!s.watched || s.watched_stale)) send(true); };
+    let prev = 0;
+    video.addEventListener("ended", finished);
+    video.addEventListener("timeupdate", () => {
+      const t = video.currentTime, d = video.duration;
+      if (video.loop && d > 0 && prev >= d * 0.85 && t < prev * 0.5) finished();
+      prev = t;
+    });
+    return wrap;
+  }
+
   // Delete (X2, soft: review.json + render job that removes the mp4) / restore (render job re-encodes it).
   function deleteButton(s) {
     const restore = s.deleted;
-    const btn = el("button", { class: "btn small needs-idle" + (restore ? "" : " danger"), type: "button",
-      text: restore ? "Khôi phục" : `Xóa ${noun()}` });
+    const btn = restore
+      ? el("button", { class: "btn small needs-idle", type: "button", text: "Khôi phục" })
+      : el("button", { class: "btn icon-btn needs-idle danger", type: "button", title: `Xóa ${noun()}`,
+        "aria-label": `Xóa ${noun()}` }, icon("trash")); // CP8.21 D6
     btn.disabled = editsLocked;
     btn.addEventListener("click", async () => {
       const title = (s.title && s.title.text) || s.clip_id;
@@ -1343,6 +1421,7 @@ const AutoShort = (() => {
     initImageDialog();
     $("#posts-compose-missing").addEventListener("click", composeMissing);
     initCorrections();
+    loadUi().then(() => { $("#corr-open").hidden = !uiFlags.advanced; }); // CP8.21 D5
     checkDisk();
     loadPostsPage();
   }
@@ -1525,7 +1604,7 @@ const AutoShort = (() => {
     const head = el("div", { class: "short-head" },
       el("span", { class: "clip-id", text: s.clip_id }),
       s.video_url ? el("a", { class: "btn small", href: s.video_url, target: "_blank", rel: "noopener",
-        text: "Xem Short" }) : null);
+        text: g.view.kind === "khaithi" ? "Xem Khai thị" : "Xem Short" }) : null);
     card.append(head, el("p", { class: "short-title", text: (s.title && s.title.text) || "(không có tiêu đề)" }));
     const panel = el("div", { class: "post-panel" });
     card.append(panel);

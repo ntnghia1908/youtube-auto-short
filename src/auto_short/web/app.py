@@ -39,7 +39,7 @@ from ..render import run_render
 from ..review import (ArchivedError, EpisodeNotFound, ReviewError, TitlePreview, archive_source, content_disposition,
                       list_tombstones, mark_downloaded, remove_tombstone,
                       delete_episode, is_archived, list_titles, preview_title, reject_archived_clip, reject_clip,
-                      reset_title, restore_clip, set_alternative, set_published, set_title)
+                      reset_title, restore_clip, set_alternative, set_published, set_title, set_watched)
 from ..review import shorts as review_shorts
 from ..review.names import hashtags as review_hashtags
 from . import episodes as ep
@@ -713,6 +713,11 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         log.info("web: playlist %s removed (episodes kept)", playlist_id)
         return {"deleted": playlist_id}
 
+    @app.get("/api/ui")
+    def api_ui():
+        """CP8.21 D5: UI flags (``[web] show_advanced``: "Sửa đầu/cuối" and "Từ điển sửa lỗi" buttons)."""
+        return {"advanced": bool(config.web.show_advanced)}
+
     @app.get("/api/episodes/{episode_id}")
     def api_episode(episode_id: str):
         if not ep.valid_episode_id(episode_id):
@@ -943,6 +948,18 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         playlists.invalidate(episode_id)
         storage.invalidate()
         return result
+
+    @app.post("/api/episodes/{episode_id}/shorts/{clip_id}/watched")
+    def api_short_watched(episode_id: str, clip_id: str, body: PublishedIn):
+        """CP8.21 D4: tick / untick "Đã xem" (``watched.json``) — user state only: no job, allowed while a job runs,
+        render not stale."""
+        if (bad := _check_clip(episode_id, clip_id)) is not None:
+            return bad
+        with publish_lock:
+            try:
+                return set_watched(episode_id, config, clip_id, body.value)
+            except ReviewError as exc:
+                return JSONResponse({"detail": str(exc)}, status_code=422)
 
     # --- CP8.15: community post text ------------------------------------------------------------------------
 

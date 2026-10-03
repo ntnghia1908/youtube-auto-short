@@ -207,6 +207,8 @@ class WebConfig:
     # CP8.10: "lanes" = prepare / ai / render lanes run in parallel (one job per lane); "serial" = one job at a
     # time through all six stages (W5 before CP8.10)
     queue_mode: str = "lanes"
+    # CP8.21 D5: show "Sửa đầu/cuối" (CP9) and "Từ điển sửa lỗi" (CP8.18); hidden by default (UI only, API unchanged)
+    show_advanced: bool = False
 
 
 WEB_QUEUE_MODES = ("lanes", "serial")
@@ -576,6 +578,7 @@ def _web(data: dict) -> WebConfig:
         session_days=_int(we, "session_days", d.session_days, w, lo=1, hi=365),
         hashtags=_hashtags(we, d.hashtags),
         queue_mode=_queue_mode(we, d.queue_mode),
+        show_advanced=_bool(we, "show_advanced", d.show_advanced, w),
     )
 
 

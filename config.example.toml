@@ -160,6 +160,9 @@ hashtags = ["TịnhKhông", "LờiPhậtDạy", "TịnhĐộ", "NiệmPhật"]
 # Job queue (CP8.10): "lanes" = ingest/transcript/analysis, AI (selection/titling) and render of different videos
 # run at the same time (one job per lane); "serial" = one video through all six stages at a time.
 queue_mode = "lanes"
+# CP8.21: false = hide the "Sửa đầu/cuối" button (episode page) and the "Từ điển sửa lỗi" button (Bài đăng tab);
+# true = show them. UI only: the API and the already approved correction rules keep working.
+show_advanced = false
 
 [khaithi]
 # Khai thị videos: `auto-short run <url> --khai-thi --min-minutes N --max-minutes M` / web "Khai thị"

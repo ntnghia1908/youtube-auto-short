@@ -13,10 +13,11 @@ from pathlib import Path
 from .. import khaithi
 from ..config import Config
 from ..pipeline import PIPELINE_STAGES
-from ..review.names import copy_text
+from ..review.names import copy_prefix, copy_text
 from ..review import (ReviewError, download_name, episode_complete, episode_label, list_titles, publish_status,
                       read_archive, zip_name)
 from ..review.publish import PUBLISH_NAME, read_publish
+from ..review.watched import WATCHED_NAME, read_watched, watched_status
 from ..workspace import DONE, PENDING, Workspace, WorkspaceError, iter_manifests, validate_episode_id
 from .urls import UrlError, parse_youtube_url
 
@@ -78,10 +79,10 @@ def _source_url(manifest: dict) -> str | None:
         return None
 
 
-def _copy(title: str | None, series: str | None, tags: tuple[str, ...]) -> dict:
+def _copy(title: str | None, series: str | None, tags: tuple[str, ...], prefix: str = "") -> dict:
     if not title:
         return {"copy_text": None, "hashtags": []}
-    text, kept = copy_text(title, series, tags)
+    text, kept = copy_text(title, series, tags, prefix=prefix)
     return {"copy_text": text, "hashtags": kept}
 
 
@@ -133,6 +134,15 @@ def _names(config: Config, episode_id: str, doc: dict) -> dict[str, str]:
             for n, s in enumerate(shorts, 1) if isinstance(s, dict) and isinstance(s.get("clip_id"), str)}
 
 
+def _copy_prefixes(config: Config, episode_id: str, doc: dict) -> dict[str, str]:
+    """Start of the copy text of every Short (CP8.21 D3): same number / width as the download name."""
+    kf = kind_fields(config, episode_id)
+    label, shorts = _label(config, episode_id, kf), doc.get("shorts") or []
+    kt = kf["kind"] == khaithi.KIND
+    return {s["clip_id"]: copy_prefix(label, n, len(shorts), khaithi=kt)
+            for n, s in enumerate(shorts, 1) if isinstance(s, dict) and isinstance(s.get("clip_id"), str)}
+
+
 def _publish(config: Config, episode_id: str, doc: dict) -> tuple[dict[str, dict], str | None]:
     """X4 status per clip (``publish.json``) + an error message when the file is broken."""
     try:
@@ -140,6 +150,15 @@ def _publish(config: Config, episode_id: str, doc: dict) -> tuple[dict[str, dict
     except ReviewError as exc:
         return {}, str(exc)
     return publish_status(pub, [s for s in doc.get("shorts") or [] if isinstance(s, dict)]), None
+
+
+def _watched(config: Config, episode_id: str, doc: dict) -> dict[str, dict]:
+    """CP8.21 D4 status per clip (``watched.json``); a missing / broken file = nothing watched (a read never fails)."""
+    try:
+        w = read_watched(Path(config.workspace.dir) / episode_id / WATCHED_NAME, episode_id)
+    except ReviewError:
+        return {}
+    return watched_status(w, [s for s in doc.get("shorts") or [] if isinstance(s, dict)])
 
 
 def is_complete(config: Config, episode_id: str, manifest: dict, doc: dict | None) -> bool:
@@ -155,8 +174,8 @@ def is_complete(config: Config, episode_id: str, manifest: dict, doc: dict | Non
 
 
 def _short_view(episode_id: str, short: dict, titles: dict | None, *, name: str | None = None,
-                published: dict | None = None, series: str | None = None,
-                tags: tuple[str, ...] = ()) -> dict | None:
+                published: dict | None = None, watched: dict | None = None, series: str | None = None,
+                tags: tuple[str, ...] = (), prefix: str = "") -> dict | None:
     clip_id = short.get("clip_id")
     if not isinstance(clip_id, str) or not valid_clip_id(clip_id):
         return None
@@ -178,7 +197,7 @@ def _short_view(episode_id: str, short: dict, titles: dict | None, *, name: str 
         "download_url": f"{base}?download=1" if rendered else None,
         "download_name": name if rendered else None,
         # CP8.7 (bổ sung HUMAN LEAD): what the "Copy" button copies: title in the file + hashtags, ≤ 100 chars
-        **_copy(short.get("title"), series, tags),
+        **_copy(short.get("title"), series, tags, prefix),
         # CP8.5 X2: ``deleted`` = the last render skipped it as rejected; ``rejected`` = review.json says deleted
         # (differs from ``deleted`` while the render job runs).
         "deleted": short.get("status") == "skipped" and short.get("skip_reason") == "rejected",
@@ -186,6 +205,9 @@ def _short_view(episode_id: str, short: dict, titles: dict | None, *, name: str 
         "published": bool((published or {}).get("published")),
         "published_stale": bool((published or {}).get("stale")),
         "published_at": (published or {}).get("at"),
+        "watched": bool((watched or {}).get("watched")),
+        "watched_stale": bool((watched or {}).get("stale")),
+        "watched_at": (watched or {}).get("at"),
         "editable": titles is not None,
         "ai_title": None, "alternatives": [], "override": None,
         "pending_title": None,  # title the next render will use, when it differs from the file's
@@ -226,13 +248,15 @@ def episode_view(config: Config, episode_id: str, *, hashtags: list[str] | None 
     doc = _render_manifest(config, episode_id)
     titles, ignored, titles_error = _titles(config, episode_id) if doc else ({}, [], None)
     names = _names(config, episode_id, doc) if doc else {}
+    prefixes = _copy_prefixes(config, episode_id, doc) if doc else {}
     published, publish_error = _publish(config, episode_id, doc) if doc else ({}, None)
+    watched = _watched(config, episode_id, doc) if doc else {}
     # hashtags: the full list of the episode's bộ kinh (custom), else #<series> + [web] hashtags
     series, tags = (None, tuple(hashtags)) if hashtags is not None else \
         (_series(config, episode_id), tuple(config.web.hashtags))
     shorts = [v for v in (_short_view(episode_id, s, titles.get(s.get("clip_id")) if not titles_error else None,
                                       name=names.get(s.get("clip_id")), published=published.get(s.get("clip_id")),
-                                      series=series, tags=tags)
+                                      watched=watched.get(s.get("clip_id")), series=series, tags=tags, prefix=prefixes.get(s.get("clip_id"), ""))
                           for s in (doc or {}).get("shorts", []) if isinstance(s, dict)) if v]
     rendered = sum(1 for s in shorts if s["status"] == "rendered")
     kf = kind_fields(config, episode_id)

@@ -42,14 +42,14 @@ def _review(ws):
 # --- X1 download names ---------------------------------------------------------------------------------------
 
 @pytest.mark.parametrize("episode, n, total, title, name", [
-    ("29", 1, 20, "Đánh mắng trẻ là có tội không?", "Tập29_S01_Đánh mắng trẻ là có tội không.mp4"),
-    ("29", 3, 20, 'Chữ "hiếu" là gì', "Tập29_S03_Chữ hiếu là gì.mp4"),
-    ("29", 12, 20, "a/b\\c:d*e?f\"g<h>i|j", "Tập29_S12_abcdefghij.mp4"),
-    ("29", 5, 99, "  nhiều   khoảng\ttrắng\x00\x1f ", "Tập29_S05_nhiều khoảng trắng.mp4"),
-    ("29", 7, 100, "Ba chữ số", "Tập29_S007_Ba chữ số.mp4"),
-    ("29", 123, 150, "x", "Tập29_S123_x.mp4"),
-    ("29", 4, 20, "???", "Tập29_S04.mp4"),
-    ("29", 4, 20, None, "Tập29_S04.mp4"),
+    ("29", 1, 20, "Đánh mắng trẻ là có tội không?", "T29_S01_Đánh mắng trẻ là có tội không.mp4"),
+    ("29", 3, 20, 'Chữ "hiếu" là gì', "T29_S03_Chữ hiếu là gì.mp4"),
+    ("29", 12, 20, "a/b\\c:d*e?f\"g<h>i|j", "T29_S12_abcdefghij.mp4"),
+    ("29", 5, 99, "  nhiều   khoảng\ttrắng\x00\x1f ", "T29_S05_nhiều khoảng trắng.mp4"),
+    ("29", 7, 100, "Ba chữ số", "T29_S007_Ba chữ số.mp4"),
+    ("29", 123, 150, "x", "T29_S123_x.mp4"),
+    ("29", 4, 20, "???", "T29_S04.mp4"),
+    ("29", 4, 20, None, "T29_S04.mp4"),
 ])
 def test_download_name(episode, n, total, title, name):
     assert download_name(episode, n, total, title) == name
@@ -59,7 +59,7 @@ def test_download_name_nfc_and_truncation():
     decomposed = "Tâm thiện".encode("utf-8").decode("utf-8")
     import unicodedata
     nfd = unicodedata.normalize("NFD", "Tâm thiện")
-    assert download_name("29", 1, 2, nfd) == "Tập29_S01_Tâm thiện.mp4" == download_name("29", 1, 2, decomposed)
+    assert download_name("29", 1, 2, nfd) == "T29_S01_Tâm thiện.mp4" == download_name("29", 1, 2, decomposed)
     long = " ".join(["Thập Thiện Nghiệp Đạo"] * 20)
     t = truncate_utf8(clean_part(long))
     assert len(t.encode("utf-8")) <= MAX_TITLE_BYTES and long.startswith(t) and long[len(t)] == " "
@@ -77,11 +77,11 @@ def test_episode_label_and_zip():
 
 
 def test_content_disposition_rfc5987():
-    name = "Tập29_S01_Đánh mắng trẻ là có tội không.mp4"
-    assert ascii_fallback(name) == "Tap29_S01_Danh mang tre la co toi khong.mp4"
+    name = "T29_S01_Đánh mắng trẻ là có tội không.mp4"
+    assert ascii_fallback(name) == "T29_S01_Danh mang tre la co toi khong.mp4"
     assert content_disposition(name) == (
-        'attachment; filename="Tap29_S01_Danh mang tre la co toi khong.mp4"; filename*=UTF-8\'\''
-        "T%E1%BA%ADp29_S01_%C4%90%C3%A1nh%20m%E1%BA%AFng%20tr%E1%BA%BB%20l%C3%A0%20c%C3%B3%20t%E1%BB%99i"
+        'attachment; filename="T29_S01_Danh mang tre la co toi khong.mp4"; filename*=UTF-8\'\''
+        "T29_S01_%C4%90%C3%A1nh%20m%E1%BA%AFng%20tr%E1%BA%BB%20l%C3%A0%20c%C3%B3%20t%E1%BB%99i"
         "%20kh%C3%B4ng.mp4")
     assert ascii_fallback("心") == "download"
 
