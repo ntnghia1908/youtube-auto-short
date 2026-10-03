@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: CHANGE
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -76,9 +76,9 @@ Không chạm database, security model hay public API. HUMAN LEAD xem các cặp
 
 ## Result
 
-- Main changes:
-- Tests:
-- Review:
-- Important findings / decisions:
-- Known limitations:
-- PR:
+- Main changes: `scripts/measure_doc_cut_title.py` (M1–M5, không đổi `src/`); báo cáo `docs/decisions/CP8.20-doc-cut-title-report.md` (số liệu M1–M4, bảng title 50 Short, mẫu M5, khuyến nghị nháp PROPOSED). Dữ liệu bản sao + kết quả thô + mẫu: `~/.cache/auto-short-cp820-test/` (`results/`, `samples/`).
+- Tests: `python -m pytest -q -n auto` — 1324 passed, 1 skipped (81 s); `node scripts/framework-check.mjs` — PASS. Script chạy trên bản sao (m1m2, m3, m4, m5, tables).
+- Review: chờ ORCHESTRATOR (đọc số liệu, đánh dấu lỗi title, viết lại khuyến nghị).
+- Important findings / decisions: AI chấm 100% Short trọn đầu/cuối nhưng 74% đầu và 61% cuối giữa câu (31 Short); caption YouTube: unit gần như không trùng ranh giới câu (7–13%), lọc bắt buộc → Thập Thiện 6 còn 0 candidate mục tiêu; Whisper (Cảm Ứng Thiên) ổn; nhãn câu (M3 b) tăng Short trọn câu (Bi7k 1/11 → 6/6, 4oOZ 6/9 → 10/12) nhưng không tạo ranh giới mới; title từ văn bản hợp lệ 50/50.
+- Known limitations: mẫu nhỏ (3 tập, 1 tập Whisper); chạy lại selection có nhiễu (4oOZ base 9 ≠ 7 đã lưu); M3/M5 không chạy cho tập `.kt`; Ollama có `qwen3:14b` nạp sẵn lúc M5; file ở repo chính đổi trong lúc chạy là do web 8080 (không do script).
+- PR: chưa (không push).
