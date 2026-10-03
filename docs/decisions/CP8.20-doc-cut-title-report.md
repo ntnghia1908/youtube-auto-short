@@ -133,88 +133,92 @@ Nhận xét:
 
 Cùng model / prompt / validate production (`titling` v2; `evidence` phải nằm trong text đưa vào — ở đây là đoạn văn bản gốc D5 nối bằng dấu cách; prompt không đổi nên vẫn nói "caption tự động không dấu câu"). 50 Short: 50/50 có title hợp lệ (không Short nào `untitled`; 0 Short bị `…`), 4 title giống hệt bản cũ. Văn bản gốc dài hơn lời nói của Short do mở rộng D5: cột "Đầu/cuối thêm" (token); title mới có thể nói về phần ngoài Short (ví dụ Bi7k k10 "May mắn gặp được kinh điển này…" từ 20 + 10 token thêm).
 
-Cột "Từ lạ cũ / mới" là đánh dấu sơ bộ tự động: từ trong title không xuất hiện ở văn bản gốc của tập (gợi ý lỗi chính tả / thuật ngữ, hay chỉ là từ đồng nghĩa — **ORCHESTRATOR chốt**). Cột "Lỗi cũ / mới" để trống cho ORCHESTRATOR.
+Cột "Từ lạ cũ / mới" là đánh dấu sơ bộ tự động: từ trong title không xuất hiện ở văn bản gốc của tập (gợi ý lỗi chính tả / thuật ngữ, hay chỉ là từ đồng nghĩa — **ORCHESTRATOR chốt**). Cột "Lỗi cũ / mới" do ORCHESTRATOR chốt (đọc title + `old_evidence` / `new_evidence` + `doc_text` trong `results/m4.json`; dò thêm cặp từ của title cũ có trong caption mà không có trong văn bản):
+
+- **Title cũ**: 1/50 lỗi chính tả mang từ caption vào title — yzR1 k04 "không cùng tận số" (gốc "không cùng tần số"), title thành vô nghĩa. Các "từ lạ" tự động còn lại là từ thường / đồng nghĩa, không phải lỗi. Caption có lỗi ở evidence (ví dụ "nge", "Thoát Ly") nhưng AI ít khi chép nguyên vào title.
+- **Title mới**: 0 lỗi chính tả. Lỗi khác: 4/50 viết thường chữ đầu (một có "phật"), 1 viết hoa thừa — do prompt vẫn nói "caption không dấu câu", sửa được bằng prompt / hậu xử lý; 3/50 lấy evidence một phần từ phần mở rộng D5 nằm ngoài Short (title có thể nói điều người xem không nghe).
+- Thuật ngữ: title mới dùng đúng thuật ngữ văn bản (ví dụ "tin hiểu … hành chứng", "Ấn Tổ", "nhất chân pháp giới"); về nội dung hai cột ngang nhau, không bên nào rõ ràng hay hơn.
 
 
 #### Bi7kVGbnPfE
 
 | Short | s | Title cũ (caption) | Title mới (văn bản gốc) | Đầu/cuối thêm (token) | Từ lạ cũ | Từ lạ mới | Lỗi cũ | Lỗi mới |
 |---|---|---|---|---|---|---|---|---|
-| k01 | 90 | Mỗi bộ kinh đều có 4 phần quan trọng | Bộ Kinh nào cũng có 4 phần quan trọng | 31/1 | 4 | 4 |  |  |
-| k02 | 97 | Chữ Phật nghĩa là gì? Ai cũng biết | Chữ Phật được tạo ra như thế nào? | 13/1 | - | - |  |  |
-| k03 | 136 | Làm sao biết mình đã giác ngộ? | Nghe khen vui, nghe chê khó chịu là chưa giác ngộ | 11/1 | - | khen |  |  |
-| k04 | 52 | Không giúp người, không thể phá được chướng ngại | Không giúp người, không thể phá được chướng ngại | 36/8 | ngại | ngại |  |  |
-| k05 | 67 | Học Phật rồi khổ sẽ hết mãi mãi? | Không thành Phật, bạn sẽ phải chịu khổ mãi mãi? | 15/1 | mãi, mãi | mãi, mãi |  |  |
-| k06 | 94 | Làm giường nghỉ ngơi bên cạnh niệm Phật đường | Niệm mệt thì nghỉ, khỏe lại niệm tiếp | 15/0 | - | - |  |  |
-| k07 | 87 | Phật pháp cần người trẻ phát tâm hoằng pháp | 48 người thành Phật thì còn gì bằng? | 21/1 | - | - |  |  |
-| k08 | 38 | Cách làm công đức lớn nhất theo Phật dạy | Làm công đức to lớn nhất như thế nào? | 19/1 | theo | - |  |  |
-| k09 | 110 | Phật dạy chỉ có một con đường thành Phật | Pháp nhất thừa là pháp thành Phật | 0/0 | - | - |  |  |
-| k10 | 54 | Mỗi câu kinh đều nói về quả Phật | May mắn gặp được kinh điển này là điều hiếm có | 20/10 | - | hiếm |  |  |
-| k11 | 55 | Niệm Phật là nhân, quả báo sẽ đến như thế nào? | Niệm Phật mỗi ngày, quả báo hiện tiền | 0/1 | - | - |  |  |
+| k01 | 90 | Mỗi bộ kinh đều có 4 phần quan trọng | Bộ Kinh nào cũng có 4 phần quan trọng | 31/1 | 4 | 4 | - | viết hoa thừa "Bộ Kinh" |
+| k02 | 97 | Chữ Phật nghĩa là gì? Ai cũng biết | Chữ Phật được tạo ra như thế nào? | 13/1 | - | - | - | - |
+| k03 | 136 | Làm sao biết mình đã giác ngộ? | Nghe khen vui, nghe chê khó chịu là chưa giác ngộ | 11/1 | - | khen | - | - |
+| k04 | 52 | Không giúp người, không thể phá được chướng ngại | Không giúp người, không thể phá được chướng ngại | 36/8 | ngại | ngại | - | - |
+| k05 | 67 | Học Phật rồi khổ sẽ hết mãi mãi? | Không thành Phật, bạn sẽ phải chịu khổ mãi mãi? | 15/1 | mãi, mãi | mãi, mãi | - | - |
+| k06 | 94 | Làm giường nghỉ ngơi bên cạnh niệm Phật đường | Niệm mệt thì nghỉ, khỏe lại niệm tiếp | 15/0 | - | - | - | - |
+| k07 | 87 | Phật pháp cần người trẻ phát tâm hoằng pháp | 48 người thành Phật thì còn gì bằng? | 21/1 | - | - | - | - |
+| k08 | 38 | Cách làm công đức lớn nhất theo Phật dạy | Làm công đức to lớn nhất như thế nào? | 19/1 | theo | - | - | - |
+| k09 | 110 | Phật dạy chỉ có một con đường thành Phật | Pháp nhất thừa là pháp thành Phật | 0/0 | - | - | - | - |
+| k10 | 54 | Mỗi câu kinh đều nói về quả Phật | May mắn gặp được kinh điển này là điều hiếm có | 20/10 | - | hiếm | - | - |
+| k11 | 55 | Niệm Phật là nhân, quả báo sẽ đến như thế nào? | Niệm Phật mỗi ngày, quả báo hiện tiền | 0/1 | - | - | - | - |
 
 #### 4oOZz2CBz3g
 
 | Short | s | Title cũ (caption) | Title mới (văn bản gốc) | Đầu/cuối thêm (token) | Từ lạ cũ | Từ lạ mới | Lỗi cũ | Lỗi mới |
 |---|---|---|---|---|---|---|---|---|
-| k01 | 51 | Phân biệt thế pháp và Phật pháp từ tâm bạn | Tâm có vọng tưởng là thế gian pháp | 0/0 | - | - |  |  |
-| k02 | 72 | Làm sao được thần linh bảo hộ? | Giữ tâm thiện, nói lời thiện, làm việc thiện thì sao? | 17/1 | - | - |  |  |
-| k03 | 76 | Giúp người già thay đổi suy nghĩ về cái chết | Sinh tử là chuyển đổi, không phải kết thúc | 0/0 | - | - |  |  |
-| k04 | 56 | Vì sao trồng dưa được dưa, trồng đậu được đậu? | Trồng nhân thiện được quả thiện, trồng nhân ác nhận ác báo | 0/0 | - | - |  |  |
-| k05 | 157 | Điều kiện đầu tiên để thành đạo là gì? | Tại sao người phàm phu dễ bị hoàn cảnh ảnh hưởng? | 27/19 | - | dễ |  |  |
-| k06 | 51 | Làm sao kết duyên với thiện tri thức mỗi ngày | Học Phật mỗi ngày như thế nào? | 0/0 | - | - |  |  |
-| k07 | 55 | Làm sao hóa giải kiếp nạn đang đến? | Thiên tai nhân họa có phải do ác nghiệp gây ra? | 0/11 | - | gây |  |  |
+| k01 | 51 | Phân biệt thế pháp và Phật pháp từ tâm bạn | Tâm có vọng tưởng là thế gian pháp | 0/0 | - | - | - | - |
+| k02 | 72 | Làm sao được thần linh bảo hộ? | Giữ tâm thiện, nói lời thiện, làm việc thiện thì sao? | 17/1 | - | - | - | - |
+| k03 | 76 | Giúp người già thay đổi suy nghĩ về cái chết | Sinh tử là chuyển đổi, không phải kết thúc | 0/0 | - | - | - | - |
+| k04 | 56 | Vì sao trồng dưa được dưa, trồng đậu được đậu? | Trồng nhân thiện được quả thiện, trồng nhân ác nhận ác báo | 0/0 | - | - | - | - |
+| k05 | 157 | Điều kiện đầu tiên để thành đạo là gì? | Tại sao người phàm phu dễ bị hoàn cảnh ảnh hưởng? | 27/19 | - | dễ | - | evidence một phần ngoài Short (phần mở rộng D5) |
+| k06 | 51 | Làm sao kết duyên với thiện tri thức mỗi ngày | Học Phật mỗi ngày như thế nào? | 0/0 | - | - | - | - |
+| k07 | 55 | Làm sao hóa giải kiếp nạn đang đến? | Thiên tai nhân họa có phải do ác nghiệp gây ra? | 0/11 | - | gây | - | evidence một phần ngoài Short (phần mở rộng D5) |
 
 #### yzR1eCK_iV0
 
 | Short | s | Title cũ (caption) | Title mới (văn bản gốc) | Đầu/cuối thêm (token) | Từ lạ cũ | Từ lạ mới | Lỗi cũ | Lỗi mới |
 |---|---|---|---|---|---|---|---|---|
-| k01 | 138 | Tâm không loạn, mọi kinh đều hiện ra | Tâm loạn thì pháp giới thay đổi như thế nào? | 5/0 | - | - |  |  |
-| k02 | 124 | Có thể quay về quá khứ nếu vượt qua tốc độ ánh sáng? | Có thể quay về quá khứ nếu vượt qua tốc độ ánh sáng? | 15/1 | - | - |  |  |
-| k03 | 66 | Phật không trụ nơi nào cả, chỉ đến nơi có duyên | Phật không trụ nơi nào, chỉ đến nơi có duyên | 17/1 | - | - |  |  |
-| k04 | 124 | Đi vào không gian không cùng tận số | Người mạt pháp nên tu pháp môn nào? | 8/1 | - | - |  |  |
-| k05 | 175 | Tâm không định được, làm sao tu thành? | tụng niệm khó giữ tâm được không? | 12/0 | - | giữ |  |  |
-| k06 | 117 | Tất cả pháp như mộng, không nên chấp trước | Tất cả pháp như mộng huyễn, không nên chấp trước | 0/1 | - | - |  |  |
-| k07 | 39 | Đại tỳ kheo khác gì tỳ kheo thường? | Số lượng trong kinh có ý nghĩa gì? | 25/2 | - | - |  |  |
-| k08 | 49 | Tại sao đoàn thể Phật tử được tôn trọng nhất? | Tại sao đoàn thể Phật tử được tôn kính nhất? | 16/1 | - | - |  |  |
-| k09 | 53 | Tâm nghĩ thiện hay ác quyết định nghiệp thiện ác | Hành động của bạn bắt nguồn từ suy nghĩ nào? | 8/8 | - | nguồn |  |  |
-| k10 | 87 | Tại sao xã hội và thế giới có hòa bình hay không? | muốn hiểu xã hội, hãy xem tâm người | 10/8 | - | - |  |  |
-| k11 | 66 | Tham Phật pháp cũng đọa cõi ngạ quỷ? | Tham Phật pháp cũng đọa cõi ngạ quỷ? | 13/1 | - | - |  |  |
-| k12 | 141 | Tham Phật pháp có phải điều tốt không? | phật pháp không phải để tham | 5/0 | - | - |  |  |
-| k13 | 98 | Cách nhìn người khác quyết định thế giới bạn sống | Cách nhìn người quyết định môi trường sống | 16/1 | - | - |  |  |
+| k01 | 138 | Tâm không loạn, mọi kinh đều hiện ra | Tâm loạn thì pháp giới thay đổi như thế nào? | 5/0 | - | - | - | - |
+| k02 | 124 | Có thể quay về quá khứ nếu vượt qua tốc độ ánh sáng? | Có thể quay về quá khứ nếu vượt qua tốc độ ánh sáng? | 15/1 | - | - | - | - |
+| k03 | 66 | Phật không trụ nơi nào cả, chỉ đến nơi có duyên | Phật không trụ nơi nào, chỉ đến nơi có duyên | 17/1 | - | - | - | - |
+| k04 | 124 | Đi vào không gian không cùng tận số | Người mạt pháp nên tu pháp môn nào? | 8/1 | - | - | chính tả từ caption: "tận số" (gốc "tần số") → title vô nghĩa | - |
+| k05 | 175 | Tâm không định được, làm sao tu thành? | tụng niệm khó giữ tâm được không? | 12/0 | - | giữ | - | viết thường chữ đầu |
+| k06 | 117 | Tất cả pháp như mộng, không nên chấp trước | Tất cả pháp như mộng huyễn, không nên chấp trước | 0/1 | - | - | - | - |
+| k07 | 39 | Đại tỳ kheo khác gì tỳ kheo thường? | Số lượng trong kinh có ý nghĩa gì? | 25/2 | - | - | - | evidence một phần ngoài Short (phần mở rộng D5) |
+| k08 | 49 | Tại sao đoàn thể Phật tử được tôn trọng nhất? | Tại sao đoàn thể Phật tử được tôn kính nhất? | 16/1 | - | - | - | - |
+| k09 | 53 | Tâm nghĩ thiện hay ác quyết định nghiệp thiện ác | Hành động của bạn bắt nguồn từ suy nghĩ nào? | 8/8 | - | nguồn | - | - |
+| k10 | 87 | Tại sao xã hội và thế giới có hòa bình hay không? | muốn hiểu xã hội, hãy xem tâm người | 10/8 | - | - | - | viết thường chữ đầu |
+| k11 | 66 | Tham Phật pháp cũng đọa cõi ngạ quỷ? | Tham Phật pháp cũng đọa cõi ngạ quỷ? | 13/1 | - | - | - | - |
+| k12 | 141 | Tham Phật pháp có phải điều tốt không? | phật pháp không phải để tham | 5/0 | - | - | - | viết thường chữ đầu, "phật" |
+| k13 | 98 | Cách nhìn người khác quyết định thế giới bạn sống | Cách nhìn người quyết định môi trường sống | 16/1 | - | - | - | - |
 
 #### Bi7kVGbnPfE.kt
 
 | Short | s | Title cũ (caption) | Title mới (văn bản gốc) | Đầu/cuối thêm (token) | Từ lạ cũ | Từ lạ mới | Lỗi cũ | Lỗi mới |
 |---|---|---|---|---|---|---|---|---|
-| k01 | 317 | Học kinh không chỉ hiểu mà phải thực hành | học kinh không chỉ tin hiểu mà phải hành chứng | 31/1 | hiểu | hiểu |  |  |
-| k02 | 255 | Học Phật phải luôn tỉnh thức mỗi lúc | Học Phật mà không tự kiểm điểm thì chưa phải là Phật | 16/1 | - | - |  |  |
-| k03 | 332 | Không giúp người, không thể thành Phật | Không giúp người, không thể thành Phật | 7/12 | - | - |  |  |
-| k04 | 404 | Vì sao duyên khác, kết quả khác | Tại sao gặp chánh pháp vẫn thoái tâm? | 26/1 | kết | - |  |  |
-| k05 | 377 | 48 người cùng chí nguyện niệm Phật có thể thành Phật | 48 người cùng chí hướng có thể thành Phật | 0/0 | - | - |  |  |
-| k06 | 277 | Phật dạy chỉ có một pháp duy nhất để thành Phật | Phật nói ba thừa, hai thừa là để làm gì? | 0/10 | duy | - |  |  |
+| k01 | 317 | Học kinh không chỉ hiểu mà phải thực hành | học kinh không chỉ tin hiểu mà phải hành chứng | 31/1 | hiểu | hiểu | - | viết thường chữ đầu |
+| k02 | 255 | Học Phật phải luôn tỉnh thức mỗi lúc | Học Phật mà không tự kiểm điểm thì chưa phải là Phật | 16/1 | - | - | - | - |
+| k03 | 332 | Không giúp người, không thể thành Phật | Không giúp người, không thể thành Phật | 7/12 | - | - | - | - |
+| k04 | 404 | Vì sao duyên khác, kết quả khác | Tại sao gặp chánh pháp vẫn thoái tâm? | 26/1 | kết | - | - | - |
+| k05 | 377 | 48 người cùng chí nguyện niệm Phật có thể thành Phật | 48 người cùng chí hướng có thể thành Phật | 0/0 | - | - | - | - |
+| k06 | 277 | Phật dạy chỉ có một pháp duy nhất để thành Phật | Phật nói ba thừa, hai thừa là để làm gì? | 0/10 | duy | - | - | - |
 
 #### 4oOZz2CBz3g.kt
 
 | Short | s | Title cũ (caption) | Title mới (văn bản gốc) | Đầu/cuối thêm (token) | Từ lạ cũ | Từ lạ mới | Lỗi cũ | Lỗi mới |
 |---|---|---|---|---|---|---|---|---|
-| k01 | 243 | Tâm có vọng tưởng là thế gian pháp | Phân biệt pháp từ tâm hay từ pháp? | 0/0 | - | - |  |  |
-| k02 | 397 | Ba cuốn sách này cứu được kiếp nạn | Ba cuốn sách giúp cứu kiếp nạn theo lời Ấn Tổ | 0/5 | cuốn | cuốn |  |  |
-| k03 | 245 | Vì sao dịch sách này ra nhiều thứ tiếng? | Dịch sách ra nhiều thứ tiếng giúp mọi người hiểu rõ hơn | 13/1 | - | - |  |  |
-| k04 | 378 | Cảm ứng là đạo lý gì? | Một ý niệm nhỏ cũng ảnh hưởng lớn | 0/1 | - | - |  |  |
-| k05 | 338 | Tại sao phải hiểu rõ bốn câu này? | Tại sao người phàm phu dễ bị ảnh hưởng bởi môi trường? | 36/1 | - | dễ, môi, trường |  |  |
-| k06 | 299 | Tại sao mỗi người đều phải chịu báo ứng? | Báo ứng cá nhân và gia đình có thật không? | 0/0 | - | cá |  |  |
+| k01 | 243 | Tâm có vọng tưởng là thế gian pháp | Phân biệt pháp từ tâm hay từ pháp? | 0/0 | - | - | - | - |
+| k02 | 397 | Ba cuốn sách này cứu được kiếp nạn | Ba cuốn sách giúp cứu kiếp nạn theo lời Ấn Tổ | 0/5 | cuốn | cuốn | - | - |
+| k03 | 245 | Vì sao dịch sách này ra nhiều thứ tiếng? | Dịch sách ra nhiều thứ tiếng giúp mọi người hiểu rõ hơn | 13/1 | - | - | - | - |
+| k04 | 378 | Cảm ứng là đạo lý gì? | Một ý niệm nhỏ cũng ảnh hưởng lớn | 0/1 | - | - | - | - |
+| k05 | 338 | Tại sao phải hiểu rõ bốn câu này? | Tại sao người phàm phu dễ bị ảnh hưởng bởi môi trường? | 36/1 | - | dễ, môi, trường | - | - |
+| k06 | 299 | Tại sao mỗi người đều phải chịu báo ứng? | Báo ứng cá nhân và gia đình có thật không? | 0/0 | - | cá | - | - |
 
 #### yzR1eCK_iV0.kt
 
 | Short | s | Title cũ (caption) | Title mới (văn bản gốc) | Đầu/cuối thêm (token) | Từ lạ cũ | Từ lạ mới | Lỗi cũ | Lỗi mới |
 |---|---|---|---|---|---|---|---|---|
-| k01 | 306 | Thời gian không gian có thật không? | Tâm quy nhất, một niệm không sanh là gì? | 5/1 | - | - |  |  |
-| k02 | 353 | Phật không trụ nơi nào cả, chỉ đến nơi có duyên | Phật không trụ nơi nào, chỉ đến nơi có duyên | 17/1 | - | - |  |  |
-| k03 | 345 | Tất cả pháp chỉ là ảo ảnh, không nên chấp trước | Tất cả pháp đều như giấc mộng | 11/1 | ảo | giấc |  |  |
-| k04 | 385 | Cảnh giới địa ngục do tâm tưởng của chính mình tạo ra | Tâm nghĩ khác, nghiệp tạo khác | 26/1 | - | - |  |  |
-| k05 | 347 | Tham Phật pháp cũng đọa cõi ngạ quỷ? | Tâm tham có thể đưa bạn đến cõi ngạ quỷ | 13/1 | - | đưa |  |  |
-| k06 | 274 | Chướng ngại của bạn là gì? Tìm ra để vượt qua | Người niệm Phật mà không vãng sanh là vì sao? | 12/1 | - | - |  |  |
-| k07 | 409 | Chỉ nhìn khuyết điểm người khác, cuộc đời hỏng ngay | Tất cả mọi việc đều do tâm mình tạo ra | 11/1 | - | - |  |  |
+| k01 | 306 | Thời gian không gian có thật không? | Tâm quy nhất, một niệm không sanh là gì? | 5/1 | - | - | - | - |
+| k02 | 353 | Phật không trụ nơi nào cả, chỉ đến nơi có duyên | Phật không trụ nơi nào, chỉ đến nơi có duyên | 17/1 | - | - | - | - |
+| k03 | 345 | Tất cả pháp chỉ là ảo ảnh, không nên chấp trước | Tất cả pháp đều như giấc mộng | 11/1 | ảo | giấc | - | - |
+| k04 | 385 | Cảnh giới địa ngục do tâm tưởng của chính mình tạo ra | Tâm nghĩ khác, nghiệp tạo khác | 26/1 | - | - | - | - |
+| k05 | 347 | Tham Phật pháp cũng đọa cõi ngạ quỷ? | Tâm tham có thể đưa bạn đến cõi ngạ quỷ | 13/1 | - | đưa | - | - |
+| k06 | 274 | Chướng ngại của bạn là gì? Tìm ra để vượt qua | Người niệm Phật mà không vãng sanh là vì sao? | 12/1 | - | - | - | - |
+| k07 | 409 | Chỉ nhìn khuyết điểm người khác, cuộc đời hỏng ngay | Tất cả mọi việc đều do tâm mình tạo ra | 11/1 | - | - | - | - |
 
 ## 6. M5 — mẫu để xem / nghe
 
@@ -246,16 +250,25 @@ Title của các mẫu là title production (caption) của từng workspace ph�
 - M3 / M5 không chạy cho tập `.kt` (prompt `kt1`, cửa sổ lớn hơn); M1, M2, M4 có.
 - Thay đổi file ở repo chính trong lúc chạy (web 8080 của HUMAN LEAD: `archive.json` các tập này, `review.json` / render các tập khác) không do script: script từ chối `workspace.dir` / `output_dir` thuộc repo chính và chỉ ghi vào bản sao.
 
-## 8. Khuyến nghị (PROPOSED — ORCHESTRATOR viết lại)
+## 8. Khuyến nghị (PROPOSED — chưa có quyết định HUMAN LEAD)
 
-Nháp để ORCHESTRATOR hoàn thiện; chưa phải quyết định.
+### 8.1 Title từ văn bản gốc — PROPOSED: không làm bây giờ
 
-**Title từ văn bản gốc.** Các Short của 3 tập đều gióng được (`match` ≥ 0,81), title mới hợp lệ 50/50. Cái giá: CP6 (nguồn text của titling thành `clip_text` hoặc đoạn D5 khi có văn bản), prompt cần sửa ("caption không dấu câu") → prompt version mới → `prompt_sha256` đổi → hash stage `titling` đổi → mọi tập cũ có `titles.json` stale (chạy lại titling + render). Phụ thuộc: bộ kinh có `doc_url`, `match` ≥ 0,6; D5 mở rộng có thể làm title nói về phần ngoài Short (cần giới hạn text ở phần gióng trực tiếp thay vì mở rộng câu?). Chọn: có / không / chỉ khi có văn bản.
+- Lợi: tránh lỗi chính tả từ caption, nhưng lỗi này hiếm (1/50 title ở 3 tập) và HUMAN LEAD đã sửa title tay được (CP8.2 / CP9).
+- Giá: CP6 đổi nguồn text + prompt mới → hash stage `titling` đổi → mọi tập cũ có `titles.json` stale (chạy lại titling + render, tick "Đã đăng" thành stale); titling phụ thuộc `post/doc.py` + mạng (`ph.tinhtong.vn`); phải cắt text về phần gióng trực tiếp (bỏ mở rộng D5) để title không nói về đoạn ngoài Short; sửa prompt để viết hoa đúng.
+- Nếu HUMAN LEAD vẫn muốn: làm S2 riêng, chỉ áp dụng khi tập có văn bản (`match` ≥ 0,8), text = phần gióng trực tiếp, chỉ áp cho tập mới (không tự render lại tập cũ).
 
-**Điểm cắt theo câu.**
-- Bắt buộc (a): không khả thi cho caption YouTube (Thập Thiện 6 còn 0 candidate mục tiêu); khả thi cho Whisper.
-- Ưu tiên (b, nhãn câu trong text đưa AI): giúp ở tập có nhiều ranh giới (Bi7k 1/11 → 6/6; 4oOZ 6/9 → 10/12), không giúp khi candidate không có ranh giới câu (yzR1 1/8). Cái giá: CP5 (prompt + nhãn từ văn bản, prompt version mới, hash stage `selection` → `titling` → `render` đổi; tập cũ stale), selection phụ thuộc `post/doc.py` (hiện chỉ post).
-- Muốn giải quyết gốc rễ: CP4 sinh điểm cắt ở ranh giới câu của văn bản (tách unit theo timestamp chữ) — chỉ hợp với transcript Whisper (khoảng ngắt thật ở 92/151 điểm); với caption YouTube cần ranh giới thời gian thật của từ (không có). Đổi CP4 → mọi artifact analysis, selection, titling, render stale.
-- Tuỳ chọn thay: giữ cắt như cũ và để post (CP8.19 D5) mở rộng tới câu (đã có) — Short vẫn giữa câu.
+### 8.2 Điểm cắt theo câu — PROPOSED: "ưu tiên" (biến thể b), chỉ áp cho tập mới
 
-Quyết định cần HUMAN LEAD: title từ văn bản (có / không); điểm cắt theo câu (không / ưu tiên / bắt buộc / đổi CP4).
+- **Bắt buộc (a)**: không khả thi — tập caption YouTube còn 0–3 candidate trong mục tiêu (Thập Thiện 6: 0).
+- **Ưu tiên (b)**: nhãn `[ĐẦU CÂU]` / `[CUỐI CÂU]` trong text đưa AI + đoạn giải thích trong prompt. Trọn câu hai đầu: Bi7k 1/11 → 6/6, 4oOZ 6/9 → 10/12; score gần như không đổi; thời gian như cũ. Không giúp khi candidate không có ranh giới câu (yzR1 1/8) và có thể giảm số Short (Bi7k 11 → 6). Giá: CP5 (prompt version mới, selection phụ thuộc `post/doc.py`, fallback = không nhãn khi không có văn bản); hash `selection` → `titling` → `render` đổi → tập cũ stale nếu chạy lại. Đề xuất: khi làm, đo lại trên 2–3 tập mới (mỗi biến thể chạy ≥ 2 lần vì nhiễu).
+- **Gốc rễ (đổi CP4)**: tách unit tại ranh giới câu theo timestamp chữ. Chỉ hợp với Whisper (khoảng ngắt thật ở 92/151 điểm); caption YouTube không có thời điểm kết thúc thật của từ → dễ cắt cụt tiếng. Muốn áp cho tập caption phải chuyển các tập đó sang Whisper (chậm hơn, xem CP11) — lớn, để sau (b).
+- **Rẻ nhất, độc lập**: lỗi cuối câu thiếu đúng **1 từ** (19/31 Short cuối giữa câu, phần lớn 1 token) vì CP4 cắt ở khoảng lặng giữa hai từ cuối câu. Một sửa nhỏ ở bước dựng đoạn (kéo điểm cuối tới hết từ kết câu khi có văn bản) có thể xử lý đa số "cuối giữa câu" mà không cần đổi selection — nên đo riêng trước (b).
+- **Nguồn transcript quyết định nhiều hơn mọi thứ**: tập Whisper (4oOZ) đã trọn câu 5/7 không cần làm gì; tập caption 0–1/11–13.
+
+### 8.3 HUMAN LEAD chọn
+
+1. Title từ văn bản: không (đề xuất) / có, chỉ tập mới.
+2. Điểm cắt: không / ưu tiên (b) (đề xuất) / sửa "thiếu 1 từ cuối" trước / đổi CP4 + Whisper.
+
+Mỗi lựa chọn "có" là một task S2 riêng; không đổi production trước khi HUMAN LEAD duyệt.

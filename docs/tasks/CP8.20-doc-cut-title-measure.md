@@ -8,7 +8,7 @@
 - Owner: HUMAN LEAD
 - Execution profile: dual-agent
 - Implementer: `.claude/agents/implementer` (Sonnet) — mặc định dual-agent của project; viết script đo và chạy thí nghiệm, ORCHESTRATOR review số liệu, đọc mẫu và viết khuyến nghị.
-- Base commit / branch: `59e5b6a` (`fix/post-doc-no-gpu`, xếp chồng trên #48 + #49 vì cần `post/doc.py`; rebase lên `main` khi hai PR merge) / `feature/cp8.20-doc-measure` (worktree `../youtube-auto-short-cp820`)
+- Base commit / branch: `59e5b6a` (`fix/post-doc-no-gpu`), rebase lên `main` `c2007c6` sau khi #48 + #50 merge / `feature/cp8.20-doc-measure` (worktree `../youtube-auto-short-cp820`)
 - Human Lead approval: APPROVED (HUMAN LEAD 2026-10-02, nguyên bản)
 - Implementation authorized: YES
 
@@ -78,7 +78,7 @@ Không chạm database, security model hay public API. HUMAN LEAD xem các cặp
 
 - Main changes: `scripts/measure_doc_cut_title.py` (M1–M5, không đổi `src/`); báo cáo `docs/decisions/CP8.20-doc-cut-title-report.md` (số liệu M1–M4, bảng title 50 Short, mẫu M5, khuyến nghị nháp PROPOSED). Dữ liệu bản sao + kết quả thô + mẫu: `~/.cache/auto-short-cp820-test/` (`results/`, `samples/`).
 - Tests: `python -m pytest -q -n auto` — 1324 passed, 1 skipped (81 s); `node scripts/framework-check.mjs` — PASS. Script chạy trên bản sao (m1m2, m3, m4, m5, tables).
-- Review: chờ ORCHESTRATOR (đọc số liệu, đánh dấu lỗi title, viết lại khuyến nghị).
+- Review: ORCHESTRATOR round 1 ACCEPTED (2026-10-03): kiểm số liệu M1–M3 khớp kiểm chéo `doc.compose`; chốt cột lỗi title (cũ 1 lỗi chính tả từ caption; mới 0 chính tả, 5 viết hoa/thường, 3 evidence ngoài Short); viết lại §8 khuyến nghị PROPOSED.
 - Important findings / decisions: AI chấm 100% Short trọn đầu/cuối nhưng 74% đầu và 61% cuối giữa câu (31 Short); caption YouTube: unit gần như không trùng ranh giới câu (7–13%), lọc bắt buộc → Thập Thiện 6 còn 0 candidate mục tiêu; Whisper (Cảm Ứng Thiên) ổn; nhãn câu (M3 b) tăng Short trọn câu (Bi7k 1/11 → 6/6, 4oOZ 6/9 → 10/12) nhưng không tạo ranh giới mới; title từ văn bản hợp lệ 50/50.
 - Known limitations: mẫu nhỏ (3 tập, 1 tập Whisper); chạy lại selection có nhiễu (4oOZ base 9 ≠ 7 đã lưu); M3/M5 không chạy cho tập `.kt`; Ollama có `qwen3:14b` nạp sẵn lúc M5; file ở repo chính đổi trong lúc chạy là do web 8080 (không do script).
 - PR: chưa (không push).
