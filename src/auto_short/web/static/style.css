@@ -101,6 +101,10 @@ summary { cursor: pointer; color: var(--muted); }
 .disk-banner a { color: #fff; }
 .disk-banner[hidden] { display: none; }
 .gpu-banner { background: var(--busy); }
+.queue-bar { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; padding: .35rem .75rem; background: #ecece6; font-size: .9rem; }
+.queue-bar.paused { background: var(--busy); color: #fff; font-weight: 600; }
+.queue-bar[hidden], .queue-bar [hidden] { display: none; }
+.queue-bar .btn { min-height: 40px; }
 .disk { margin: .4rem 0; }
 .bar { height: .7rem; background: #eee; border-radius: 999px; overflow: hidden; margin-top: .25rem; }
 .bar-used { height: 100%; background: var(--accent); }

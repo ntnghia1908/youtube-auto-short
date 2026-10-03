@@ -2608,5 +2608,45 @@ const AutoShort = (() => {
     if (busy) plTimer = setTimeout(loadPlaylist, POLL_MS * 2);
   }
 
+  // --- CP8.22 queue bar (every page except login): "Hàng đợi đang tạm ngưng — n việc chờ · Chạy tiếp" -----------
+
+  function initQueueBar() {
+    const header = $("header.topbar");
+    if (!header) return;
+    const bar = el("div", { id: "queue-bar", class: "queue-bar", hidden: true });
+    header.after(bar);
+    const note = el("span", { class: "queue-note" });
+    const post = (path, body) => api(path, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined }).then(render, (e) => { note.textContent = e.message; });
+    const btn = (text, fn) => { const b = el("button", { class: "btn small", type: "button", text }); b.addEventListener("click", fn); return b; };
+    const resume = btn("Chạy tiếp", () => post("/api/queue/resume"));
+    const after = btn("Tạm ngưng sau bước hiện tại", () => post("/api/queue/pause", { mode: "after" }));
+    const now = btn("Tạm ngưng ngay", () => {
+      if (confirm("Tạm ngưng ngay: bước đang chạy bị ngắt và sẽ làm lại từ đầu bước khi Chạy tiếp. Tiếp tục?")) post("/api/queue/pause", { mode: "now" });
+    });
+    bar.append(note, resume, after, now);
+    function render(q) {
+      if (!q) return;
+      const busy = q.running + q.pending > 0;
+      bar.hidden = !(q.paused || busy);
+      bar.classList.toggle("paused", q.paused);
+      resume.hidden = !q.paused;
+      after.hidden = q.paused;
+      now.hidden = q.paused && q.running === 0;
+      if (q.paused) {
+        note.textContent = "Hàng đợi đang tạm ngưng — " + q.pending + " việc chờ" +
+          (q.running ? ` (đang đợi ${q.running} bước chạy xong)` : "") + " · ";
+      } else {
+        note.textContent = `Hàng đợi: ${q.running} đang chạy, ${q.pending} chờ · `;
+      }
+    }
+    async function poll() {
+      try { render(await api("/api/queue")); } catch (_) { /* keep the last state */ }
+      setTimeout(poll, POLL_MS * 2);
+    }
+    poll();
+  }
+  document.addEventListener("DOMContentLoaded", initQueueBar);
+
   return { initIndex, initEpisode, initStorage, initPlaylist, initPosts };
 })();

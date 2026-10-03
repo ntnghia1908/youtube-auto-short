@@ -10,7 +10,8 @@ the AI of one episode overlaps with the render (CPU) of another and the next epi
 An episode has at most one queued/running job (also while it waits between two lanes), so two jobs never write the
 same manifest. The community-post compose job (``post``, CP8.16 R3) is the exception: it runs under its own key
 :func:`post_key` (at most one per episode too), so it never blocks editing a Short. The queue lives in memory: a
-server restart forgets it (manifests stay; resubmitting resumes, CP8 E3). FIX-ollama-wait: when Ollama is
+server restart no longer forgets it (CP8.22): the queue is saved to a state file (``JobRunner.configure_persistence``)
+and restored at start-up through the same targets; a global pause stops the lanes taking new steps. FIX-ollama-wait: when Ollama is
 unreachable the ``ai`` lane does not fail jobs; it keeps them at the head of its queue and re-checks every
 ``GPU_RETRY_SECONDS`` (docs/tasks/FIX-ollama-wait.md O5). Contract: docs/decisions/CP8.3-web-contract.md W5.
 """
@@ -19,6 +20,7 @@ from __future__ import annotations
 
 import ctypes
 import itertools
+import json
 import logging
 import os
 import signal
@@ -36,6 +38,7 @@ from ..pipeline import (PIPELINE_STAGES, OllamaUnavailable, PipelineError, Prefl
 from ..post import fetch as post_fetch
 from ..post import stage as post_stage
 from ..render import RenderError, run_render
+from ..workspace import atomic_write_json
 from ..selection.client import ChatUnavailable
 
 log = logging.getLogger("auto_short")
@@ -135,6 +138,8 @@ class Job:
     requeued: bool = field(default=False, repr=False)  # came back to the ai queue via GpuUnavailable (O5)
     step: int = field(default=0, repr=False)  # index of the running / next step
     t0: float = field(default=0.0, repr=False)  # monotonic start
+    pause_requeue: bool = field(default=False, repr=False)  # CP8.22: interrupted by "pause now" -> back to the head
+    resume: tuple[str, int] | None = field(default=None, repr=False)  # CP8.22: (lane, step) interrupted by stop()
 
     @property
     def active(self) -> bool:
@@ -220,6 +225,12 @@ class JobRunner:
         self.gpu_retry_seconds = gpu_retry_seconds
         self._gpu: dict = {"state": GPU_OK, "since": None, "error": None, "next_check": None}
         self._gpu_next = 0.0  # monotonic deadline of the next check while down
+        # CP8.22: global pause (``None`` | ``"now"`` | ``"after"``), kept on disk with the queue
+        self._paused: str | None = None
+        self._in_step: dict[str, Job] = {}  # lane -> job whose step may be interrupted by "pause now"
+        self._state_path: Path | None = None
+        self._rebuild: Callable[[str, str, dict, list[str]], Callable[[Job], None] | None] | None = None
+        self._restoring = False
 
     # --- lifecycle -----------------------------------------------------------------------------
 
@@ -240,11 +251,13 @@ class JobRunner:
         """Stop every lane. Each running job gets KeyboardInterrupt on its lane thread (the stage records
         ``failed`` / ``interrupted``, CP2) and the child processes SIGINT; waits up to ``timeout`` seconds in total.
         A stage blocked in a long call that ignores the interrupt keeps ``running`` in the manifest and resumes on
-        resubmit. Jobs waiting between two lanes end ``interrupted``; queued jobs are forgotten with the process."""
+        resubmit. Jobs waiting between two lanes end ``interrupted``. CP8.22: the queue is saved first and again
+        at the end, so every job that did not finish is restored at the next start."""
         with self._lock:
             self._stopping = True
             self._lock.notify_all()
             running = [(lane, job) for lane, job in self._current.items() if job is not None]
+            self._save_locked()  # Q3: the queue (running jobs at the head of their lane) is on disk before any interrupt
         for lane, job in running:
             thread = self._threads.get(lane)
             if thread is not None and thread.ident is not None:
@@ -270,6 +283,7 @@ class JobRunner:
                         job.error = "interrupted while waiting for GPU" if job.gpu_wait \
                             else f"interrupted while waiting for {job.lane}"
                         job.finished_at, job.waiting, job.gpu_wait = _now(), False, False
+            self._save_locked()  # jobs cut by the stop come back first; those that finished meanwhile are gone
             self._lock.notify_all()
         log.removeHandler(self._handler)
         self._threads = {}
@@ -293,6 +307,7 @@ class JobRunner:
         self._latest[key] = job
         self._queues[job.steps[0].lane].append(job)
         self._sync_gpu_wait_locked()
+        self._save_locked()
         self._lock.notify_all()
         return job
 
@@ -314,6 +329,7 @@ class JobRunner:
                 if latest.kind == KIND_POST and new is not None:
                     if latest.status == QUEUED or (latest.status == RUNNING and latest.waiting):
                         latest.target.merge(new)  # not started yet (or back in the queue waiting for the GPU)
+                        self._save_locked()
                     elif latest.status == RUNNING:
                         latest.again = True
                         latest.target.merge_pending(new)
@@ -436,6 +452,9 @@ class JobRunner:
         check time (``Condition.wait``, so ``stop()`` never waits it out), but an ``add`` job (CP9) never waits."""
         queue = self._queues[lane]
         while not self._stopping:
+            if self._paused is not None:  # CP8.22: nothing new starts while paused
+                self._lock.wait()
+                continue
             if lane == AI and queue and self._gpu_down():
                 # an ``add`` job never waits; nor does a ``post`` job that has not run yet (it may need no AI:
                 # FIX-post-doc-no-gpu F3). A job that came back via GpuUnavailable waits for the next check.
@@ -456,17 +475,26 @@ class JobRunner:
 
     def _work(self, lane: str) -> None:
         self._idents[threading.get_ident()] = lane
-        try:
-            self._loop(lane)
-        except KeyboardInterrupt:  # stop() raced with the end of a job
-            pass
+        while True:
+            try:
+                self._loop(lane)
+                return
+            except KeyboardInterrupt:  # stop() raced with the end of a job
+                if self._stopping:
+                    return
+                # CP8.22: a late "pause now" interrupt landed outside the job; the lane must survive it
 
     def _loop(self, lane: str) -> None:
         while True:
+            ok = False
+            requeue: str | None = None
+            paused_back = False
             with self._lock:
                 job = self._take_locked(lane)
                 if job is None:
                     return
+                job.pause_requeue = False
+                self._in_step[lane] = job
                 first = job.status == QUEUED
                 if first:
                     job.status, job.started_at, job.t0 = RUNNING, _now(), time.monotonic()
@@ -475,8 +503,6 @@ class JobRunner:
                 job._reachable = self._gpu_reachable if lane == AI else None
                 self._current[lane] = job
                 self._lock.notify_all()  # a shorter ai queue may let the prepare lane start (Q2)
-            ok = False
-            requeue: str | None = None
             try:
                 if first:
                     log.info("web: start %s job %s [%s]", job.kind, job.id, job.episode_id)
@@ -485,8 +511,14 @@ class JobRunner:
                 job.steps[job.step].run(job)
                 ok = True
             except KeyboardInterrupt:
-                job.status, job.error = INTERRUPTED, f"interrupted during {job.stage or 'start'}"
-                log.info("web: job %s interrupted [%s]", job.id, job.episode_id)
+                if job.pause_requeue and not self._stopping:  # CP8.22: "pause now": back to the head of the lane
+                    paused_back = True
+                    log.info("web: job %s paused during %s [%s]", job.id, job.stage or "start", job.episode_id)
+                else:
+                    job.status, job.error = INTERRUPTED, f"interrupted during {job.stage or 'start'}"
+                    if self._stopping:
+                        job.resume = (lane, job.step)
+                    log.info("web: job %s interrupted [%s]", job.id, job.episode_id)
             except GpuUnavailable as exc:
                 if lane == AI and not self._stopping:  # O5: back to the head of the queue, wait for the GPU
                     requeue = str(exc)
@@ -501,20 +533,49 @@ class JobRunner:
                 job.status, job.error = FAILED, f"{type(exc).__name__}: {exc}"
                 log.exception("web: job %s crashed [%s]", job.id, job.episode_id)
             finally:
-                if requeue is not None:
-                    self._requeue(lane, job, requeue)
-                else:
-                    self._after(lane, job, ok)
+                for _attempt in range(3):  # a late "pause now" interrupt must not skip the bookkeeping
+                    try:
+                        if paused_back:
+                            self._requeue_paused(lane, job)
+                        elif requeue is not None:
+                            self._requeue(lane, job, requeue)
+                        else:
+                            self._after(lane, job, ok)
+                        break
+                    except KeyboardInterrupt:
+                        if self._stopping:
+                            break
+
+    def _requeue_paused(self, lane: str, job: Job) -> None:
+        """CP8.22: a step cut by "pause now" returns to the head of its lane (not failed); its stages rerun later."""
+        with self._lock:
+            self._current[lane] = None
+            self._in_step.pop(lane, None)
+            job.pause_requeue, job._reachable, job.error = False, None, None
+            lane_stages = LANE_STAGES.get(lane, ())
+            job.stages[:] = [st for st in job.stages if lane_stages and st["stage"] not in lane_stages] \
+                if lane != _SERIAL else []
+            if job.step == 0:
+                job.status, job.started_at, job.lane, job.waiting, job.stage = QUEUED, None, None, False, None
+            else:
+                job.lane, job.waiting = lane, True
+                job.stage = LANE_STAGES[lane][0] if lane in LANE_STAGES else None
+            self._queues[lane].appendleft(job)
+            self._sync_gpu_wait_locked()
+            self._save_locked()
+            self._lock.notify_all()
 
     def _requeue(self, lane: str, job: Job, error: str) -> None:
         with self._lock:
             self._current[lane] = None
+            self._in_step.pop(lane, None)
             job.lane, job.waiting, job._reachable = lane, True, None
             job.requeued = True
             if job.kind == KIND_PIPELINE:
                 job.stage = LANE_STAGES[lane][0]
             self._queues[lane].appendleft(job)
             self._set_gpu_down_locked(error)
+            self._save_locked()
             self._lock.notify_all()
 
     def _after(self, lane: str, job: Job, ok: bool) -> None:
@@ -533,6 +594,7 @@ class JobRunner:
                 log.exception("web: on_finished hook failed for job %s [%s]", job.id, job.episode_id)
         with self._lock:
             self._current[lane] = None
+            self._in_step.pop(lane, None)
             if last:
                 job.finished_at, job.lane, job.waiting = _now(), None, False
                 if job.again and job.kind == KIND_POST and job.status != INTERRUPTED and not self._stopping:
@@ -547,7 +609,168 @@ class JobRunner:
                 job.stage = LANE_STAGES[nxt][0]
                 self._queues[nxt].append(job)
                 self._sync_gpu_wait_locked()
+            self._save_locked()
             self._lock.notify_all()
+
+    # --- CP8.22: pause / resume ------------------------------------------------------------------
+
+    def pause(self, mode: str = "after") -> dict:
+        """Global pause: no lane starts a new step (a job finishing a step keeps waiting in the next lane's queue).
+        ``"after"`` lets the running steps finish; ``"now"`` interrupts them like :meth:`stop` (KeyboardInterrupt +
+        SIGINT to the child processes) and each job returns, not failed, to the head of its lane. Pausing again with
+        ``"now"`` after ``"after"`` interrupts what still runs."""
+        if mode not in ("now", "after"):
+            raise ValueError(f"unknown pause mode {mode!r}")
+        cut: list[tuple[str, Job]] = []
+        with self._lock:
+            if self._paused != "now":
+                self._paused = mode
+            log.info("web: queue paused (%s): %d waiting", mode, self._pending_locked())
+            self._save_locked()
+            if mode == "now":
+                for lane, job in self._in_step.items():
+                    thread = self._threads.get(lane)
+                    if job is self._current.get(lane) and thread is not None and thread.ident is not None:
+                        job.pause_requeue = True
+                        cut.append((lane, job))
+                        _interrupt(thread.ident)
+            self._lock.notify_all()
+        if cut:
+            for pid in _child_pids():
+                try:
+                    os.kill(pid, signal.SIGINT)
+                except OSError:
+                    pass
+        return self.queue_state()
+
+    def resume(self) -> dict:
+        """Lanes take work again, in their old order."""
+        with self._lock:
+            if self._paused is not None:
+                log.info("web: queue resumed: %d waiting", self._pending_locked())
+            self._paused = None
+            self._save_locked()
+            self._lock.notify_all()
+        return self.queue_state()
+
+    def _pending_locked(self) -> int:
+        return sum(len(q) for q in self._queues.values())
+
+    def queue_state(self) -> dict:
+        """``{paused, mode, running, pending}``: ``mode`` = ``"now"`` | ``"after"`` | None; ``running`` = steps in
+        progress; ``pending`` = jobs waiting in a lane queue (also between two lanes)."""
+        with self._lock:
+            return {"paused": self._paused is not None, "mode": self._paused,
+                    "running": sum(1 for j in self._current.values() if j is not None),
+                    "pending": self._pending_locked()}
+
+    # --- CP8.22: persistence ---------------------------------------------------------------------
+
+    def configure_persistence(self, path: Path,
+                              rebuild: Callable[[str, str, dict, list[str]], Callable[[Job], None] | None]) -> None:
+        """Keep the queue in ``path`` (written atomically each time it changes). ``rebuild(kind, episode_id, spec,
+        clip_ids)`` returns the target of a saved job, or None when it cannot be recreated."""
+        self._state_path, self._rebuild = Path(path), rebuild
+
+    def _entry(self, job: Job, step: int) -> dict:
+        spec = getattr(job.target, "spec", None)
+        try:
+            spec = spec() if callable(spec) else {}
+        except Exception:  # a broken spec must not stop the queue from being saved
+            spec = {}
+        return {"kind": job.kind, "episode_id": job.episode_id, "spec": spec, "clip_ids": list(job.clip_ids),
+                "step": step}
+
+    def _snapshot_locked(self) -> dict:
+        lanes: dict[str, list[dict]] = {}
+        for lane in self._lane_names:
+            heads: list[Job] = []
+            current = self._current.get(lane)
+            if current is not None:
+                heads.append(current)
+            heads += sorted((j for j in self._jobs.values() if j.resume is not None and j.resume[0] == lane
+                             and j.status == INTERRUPTED and j is not current), key=lambda j: int(j.id))
+            entries = [self._entry(j, j.resume[1] if j.resume is not None and j.status == INTERRUPTED else j.step)
+                       for j in heads]
+            entries += [self._entry(j, j.step) for j in self._queues[lane]]
+            lanes[lane] = entries
+        return {"version": 1, "mode": self.mode, "paused": self._paused is not None, "lanes": lanes}
+
+    def _save_locked(self) -> None:
+        if self._state_path is None or self._restoring:
+            return
+        try:
+            atomic_write_json(self._state_path, self._snapshot_locked())
+        except Exception as exc:  # disk full etc.: the queue keeps running in memory
+            log.warning("web: không ghi được hàng đợi %s: %s", self._state_path, exc)
+
+    def restore(self) -> int:
+        """Recreate the saved queue (call before :meth:`start`); returns the number of jobs restored. A job that
+        cannot be recreated is skipped with a log line; a missing / unreadable file restores nothing."""
+        if self._state_path is None or self._rebuild is None:
+            return 0
+        try:
+            data = json.loads(self._state_path.read_text(encoding="utf-8"))
+            lanes = data["lanes"]
+            if not isinstance(lanes, dict):
+                raise ValueError("lanes is not an object")
+        except FileNotFoundError:
+            return 0
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            log.warning("web: hàng đợi đã lưu %s không đọc được, bỏ qua: %s", self._state_path, exc)
+            return 0
+        same_mode = data.get("mode") == self.mode
+        entries: list[tuple[str, dict]] = []
+        for lane in (self._lane_names if same_mode else LANES + (_SERIAL,)):
+            for entry in lanes.get(lane) or []:
+                entries.append((lane, entry))
+        restored = 0
+        with self._lock:
+            self._restoring = True
+            try:
+                self._paused = "after" if data.get("paused") else None
+                for lane, entry in entries:
+                    try:
+                        job = self._restore_one_locked(lane, entry, same_mode)
+                    except Exception as exc:
+                        log.warning("web: bỏ qua việc đã lưu %r: %s: %s", entry, type(exc).__name__, exc)
+                        continue
+                    restored += 1 if job is not None else 0
+            finally:
+                self._restoring = False
+            self._sync_gpu_wait_locked()
+            self._save_locked()
+        if restored or self._paused:
+            log.info("web: khôi phục hàng đợi: %d việc%s", restored, ", đang tạm ngưng" if self._paused else "")
+        return restored
+
+    def _restore_one_locked(self, lane: str, entry: dict, same_mode: bool) -> Job | None:
+        kind, episode_id = entry["kind"], entry["episode_id"]
+        spec, clip_ids = entry.get("spec") or {}, list(entry.get("clip_ids") or [])
+        if not isinstance(kind, str) or not isinstance(episode_id, str) or not isinstance(spec, dict):
+            raise ValueError("malformed entry")
+        key = post_key(episode_id) if kind == KIND_POST else episode_id
+        latest = self._latest.get(key)
+        if latest is not None and latest.active:
+            log.warning("web: bỏ qua việc đã lưu trùng [%s] (%s)", episode_id, kind)
+            return None
+        target = self._rebuild(kind, episode_id, spec, clip_ids)
+        if target is None:
+            log.warning("web: bỏ qua việc đã lưu [%s] (%s): không tạo lại được", episode_id, kind)
+            return None
+        job = Job(id=str(next(self._ids)), episode_id=episode_id, kind=kind, target=target, key=key,
+                  clip_ids=clip_ids, steps=self._steps(kind, target))
+        step = entry.get("step", 0)
+        if not (same_mode and isinstance(step, int) and 0 <= step < len(job.steps) and job.steps[step].lane == lane):
+            step = 0
+        job.step = step
+        if step > 0:  # finished its earlier lanes: waiting for this one
+            job.status, job.started_at, job.t0 = RUNNING, _now(), time.monotonic()
+            job.lane, job.waiting, job.stage = job.steps[step].lane, True, LANE_STAGES.get(job.steps[step].lane, (None,))[0]
+        self._jobs[job.id] = job
+        self._latest[key] = job
+        self._queues[job.steps[step].lane].append(job)
+        return job
 
 
 # --- pipeline job (W4) ---------------------------------------------------------------------------
@@ -646,6 +869,10 @@ class PipelineTarget:
     def lane_steps(self) -> list[Step]:
         return [Step(PREPARE, self.prepare), Step(AI, self.ai), Step(RENDER, self.render)]
 
+    def spec(self) -> dict:
+        """CP8.22: what a restart needs to recreate this target."""
+        return {"url": self.url, "series": self.series, "episode": self.episode, "episode_id": self.episode_id}
+
 
 def pipeline_target(url: str, config: Config, *, series: str | None = None, episode: str | None = None,
                     pipeline: Callable = run_pipeline,
@@ -677,6 +904,7 @@ def render_target(config: Config, *, render: Callable = run_render) -> Callable[
         else:
             job.summary = "render up to date (nothing to encode)"
 
+    target.spec = lambda: {}  # type: ignore[attr-defined]  # CP8.22: nothing but the episode id is needed
     return target
 
 
@@ -731,6 +959,9 @@ class AddShortTarget:
 
     def lane_steps(self) -> list[Step]:
         return [Step(AI, self.ai), Step(RENDER, self.render)]
+
+    def spec(self) -> dict:
+        return {"clip_id": self.clip_id}
 
 
 def add_short_target(config: Config, clip_id: str, *, render: Callable = run_render,
@@ -807,6 +1038,9 @@ class PostComposeTarget:
     def lane_steps(self) -> list[Step]:
         return [Step(AI, self.run)]
 
+    def spec(self) -> dict:
+        return {"clips": self.clips}
+
 
 def post_compose_target(config: Config, clips: "list[str] | str", *, compose: Callable | None = None,
                         preflight: Callable[[Config], None] | None = post_stage.preflight,
@@ -841,6 +1075,9 @@ class ImageSearchTarget:
 
     def lane_steps(self) -> list[Step]:
         return [Step(PREPARE, self.run)]
+
+    def spec(self) -> dict:
+        return {"url": self.url}
 
 
 def image_search_target(config: Config, url: str, *, search: Callable | None = None) -> ImageSearchTarget:

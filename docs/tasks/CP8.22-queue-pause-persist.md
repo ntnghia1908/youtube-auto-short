@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -69,8 +69,22 @@ Không chạm database / security model; đổi job model + thêm API → manual
 ## Result
 
 - Main changes:
-- Tests:
-- Review:
+  - `web/jobs.py` (`JobRunner`): cờ tạm ngưng toàn cục (`pause("now" | "after")`, `resume()`, `queue_state()`); `_take_locked` không giao việc khi tạm ngưng; "ngay" dùng `_interrupt` + SIGINT tiến trình con như `stop()`, job về đầu hàng làn (`_requeue_paused`: `queued` nếu chưa qua làn nào, `running` + `waiting` nếu đã qua; xóa `stages` của làn bị ngắt); thread làn sống sót khi interrupt đến muộn (`_work` lặp lại, `_after` thử lại).
+  - Lưu hàng đợi: `<workspace.dir>/.web_queue.json` (cạnh `.web_secret`), `atomic_write_json` mỗi lần hàng đợi / cờ đổi; `spec()` trên từng target (pipeline / add / post / post_search / render), không lưu closure; `restore()` gọi trong lifespan của `create_app` trước `runner.start()` và trước vòng tự dọn nguồn; `_rebuild_job` trong `app.py` dựng lại target như lúc gửi; job hỏng bị bỏ qua + log, file hỏng không chặn khởi động.
+  - Q3: `stop()` ghi hàng đợi trước khi ngắt và sau khi các làn dừng (job bị ngắt về đầu làn của nó).
+  - API `GET /api/queue`, `POST /api/queue/pause {mode}`, `POST /api/queue/resume`; `GET /api/episodes` thêm `queue`. UI: thanh hàng đợi trên mọi trang (`app.js` `initQueueBar`, `style.css`).
+  - Authority: `docs/decisions/CP8.3-web-contract.md` W5 / W6 / W7; `docs/ai/project-profile.md` module map.
+- Tests: `PYTHONPATH=<worktree>/src python -m pytest -q -n auto` = 1365 passed, 1 skipped (kể cả `tests/test_web_cp9.py::test_cut_save_reset_and_409`, lần này PASS). Tests mới `tests/test_web_queue_cp822.py` (10, chạy 5 lần liên tiếp đều PASS): tạm ngưng sau bước / ngay, xếp job lúc tạm ngưng, file lưu đúng thứ tự + step + spec, stop → restore (job chạy đầu hàng, cờ tạm ngưng giữ), entry hỏng / file hỏng, đổi `queue_mode`, API + khởi động lại app (khai thị giữ số phút, tự dọn nguồn không dọn), workspace mất. `node scripts/framework-check.mjs` PASS.
+  - Server thật 8081 (`~/.cache/auto-short-cp8.22-test/`, bản sao `By0ZVJTPW3Y` + `E4QhRRXFbIM`, 2 job `render` sửa title, `[render] jobs = 1`), log rút gọn:
+    - `pause now` khi job 1 đang encode (con của server: 1 ffmpeg) -> `web: queue paused (now): 1 waiting`, `web: job 1 paused during render`; sau 1,5 s con của server = 0; hàng `[1 queued vị trí 1, 2 vị trí 2]`; manifest stage render `failed interrupted` (CP2); file hàng đợi `paused: true`, 2 job render đúng thứ tự.
+    - Tắt server (SIGINT) khi đang tạm ngưng, mở lại -> `web: khôi phục hàng đợi: 2 việc, đang tạm ngưng`, `GET /api/queue` = `{paused: true, pending: 2}`, không chạy gì.
+    - `resume` -> job 1 chạy; `pause after` ngay lúc đó -> job 1 chạy xong (`done in 38.3 s: 10/10 Shorts (1 encoded, 9 reused)` = chỉ Short bị sửa encode), job 2 vẫn `queued`, `running 0`.
+    - `resume`, job 2 chạy, SIGINT server -> `web: stopping, interrupting job 2`, `job 2 interrupted`, file hàng đợi còn 1 job (E4QhRRXFbIM) -> mở lại `web: khôi phục hàng đợi: 1 việc`, `web: start render job 1 [E4QhRRXFbIM]` -> `done in 35.6 s`; hàng trống. 8081 đã tắt.
+- Review: chưa.
 - Important findings / decisions:
-- Known limitations:
-- PR:
+  - Job `post` / `post_search` / `add` theo hàng như job khác, không ngoại lệ khi tạm ngưng (đề xuất mặc định của contract).
+  - Khôi phục luôn đặt cờ ở kiểu `after`. Sau khi bấm Chạy tiếp, job `render` chạy lại bước đã bị ngắt (re-encode lại Short đang dở; Short khác reuse).
+  - Job `ai` đang đợi GPU được lưu như job chờ ở làn `ai` (đợi GPU thật chỉ được chứng minh bằng unit test của lưu/khôi phục + FIX-ollama-wait; 8081 không dùng Ollama cho bước hàng đợi, trừ job tự soạn bài sau render).
+  - Tập có job khôi phục được tính "có job" vì `restore()` chạy trước vòng tự dọn nguồn (test `test_api_pause_resume_submit_while_paused_and_restart`).
+- Known limitations: async interrupt có cửa sổ race rất hẹp giữa lúc bước vừa xong và `_after` (đã làm lân cận an toàn: thử lại 3 lần, thread làn không chết); `pause now` ngắt cả tiến trình con không thuộc job (cùng cách với `stop()`); lịch sử job / log không khôi phục; `.web_queue.json` ngay trong `work/` (không phải episode, như `.web_secret`).
+- PR: chưa (chờ HUMAN LEAD).

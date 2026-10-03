@@ -60,6 +60,7 @@ PUBLIC_PATHS = {"/login", "/static/style.css"}
 MAX_FIELD = 100
 ZIP_CHUNK = 1 << 20
 AUTO_ARCHIVE_INTERVAL = 300.0  # seconds between auto clean-up passes (W9 S5)
+QUEUE_FILE = ".web_queue.json"  # CP8.22 Q2: saved job queue, in the workspace dir next to ``.web_secret``
 KINDS = ("short", "khaithi")  # CP8.9 A1.1, in job order
 
 
@@ -73,6 +74,10 @@ class SubmitIn(BaseModel):
     kinds: Any = None
     min_minutes: Any = None
     max_minutes: Any = None
+
+
+class QueuePauseIn(BaseModel):
+    mode: Literal["now", "after"] = "after"  # CP8.22 Q1
 
 
 class PreviewIn(BaseModel):
@@ -307,8 +312,43 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                 return
             await asyncio.sleep(auto_archive_interval)
 
+    def _rebuild_job(kind: str, eid: str, spec: dict, clip_ids: list[str]):
+        """CP8.22 Q2: the target of a job saved in the queue file, built like at submit time; None = cannot be
+        recreated (bad id / parameters, workspace gone, episode archived) -> the runner skips it with a log line."""
+        ws = Path(config.workspace.dir)
+        if kind == KIND_POST_SEARCH:
+            url = spec.get("url")
+            return image_search_target(config, url, search=post_search) if isinstance(url, str) and url else None
+        if not ep.valid_episode_id(eid) or is_archived(ws / eid):
+            return None
+        if kind == KIND_PIPELINE:
+            url, kt = spec.get("url"), spec.get("episode_id")
+            if not isinstance(url, str) or not url or (kt is not None and (kt != eid or not (ws / eid).is_dir())):
+                return None
+            series, episode = spec.get("series"), spec.get("episode")
+            return pipeline_target(url, config, series=series if isinstance(series, str) else None,
+                                   episode=episode if isinstance(episode, str) else None, pipeline=pipeline,
+                                   preflight=preflight, episode_id=kt, disk_blocked=storage.block_message)
+        if not (ws / eid).is_dir():
+            return None
+        if kind == KIND_RENDER:
+            return render_target(config, render=render)
+        if kind == KIND_ADD:
+            clip = spec.get("clip_id")
+            return add_short_target(config, clip, render=render, preflight=preflight, titler=titler) \
+                if isinstance(clip, str) and clip else None
+        if kind == KIND_POST:
+            clips = spec.get("clips")
+            if not (isinstance(clips, str) or (isinstance(clips, list) and all(isinstance(c, str) for c in clips))):
+                return None
+            return post_compose_target(config, clips, compose=post_compose, preflight=post_preflight, lock=post_lock)
+        return None
+
+    runner.configure_persistence(Path(config.workspace.dir) / QUEUE_FILE, _rebuild_job)
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        runner.restore()  # CP8.22 Q2: before the lanes start and before the auto clean-up sweeps
         runner.start()
         sweeper = asyncio.create_task(_auto_archive_loop())
         try:
@@ -433,7 +473,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             item["publish_group"] = ep.publish_group(item)
             # CP8.7: home page "Tập lẻ" = not in a bộ kinh; CP8.9 K8: a khai thị episode follows its base video
             item["in_playlist"] = (item.get("base_episode_id") or item["id"]) in in_playlists
-        return {"episodes": items, "gpu": runner.gpu_status()}  # FIX-ollama-wait O7
+        return {"episodes": items, "gpu": runner.gpu_status(), "queue": runner.queue_state()}  # O7, CP8.22
 
     def _kinds(body: SubmitIn) -> list[str] | JSONResponse:
         """CP8.9 A1.1: ``kinds`` (absent = Short + khai thị), always in the order Short then khai thị."""
@@ -1430,6 +1470,19 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     @app.get("/storage")
     async def storage_page():
         return FileResponse(STATIC_DIR / "storage.html", headers={"Cache-Control": "no-cache"})
+
+    @app.get("/api/queue")
+    def api_queue():
+        """CP8.22 Q1: ``{paused, mode, running, pending}`` of the job queue (top bar of every page)."""
+        return runner.queue_state()
+
+    @app.post("/api/queue/pause")
+    def api_queue_pause(body: QueuePauseIn):
+        return runner.pause(body.mode)
+
+    @app.post("/api/queue/resume")
+    def api_queue_resume():
+        return runner.resume()
 
     @app.get("/api/storage")
     def api_storage():
