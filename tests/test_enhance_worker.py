@@ -303,6 +303,26 @@ def test_wrong_token_stops_with_log(server, run):
 
 @needs_ffmpeg
 @needs_torch
+def test_401_waits_and_rereads_config(server, run):
+    """VM chua co API (login middleware tra 401) / token rong: worker khong thoat; sua token trong config -> tiep tuc."""
+    s = server()
+    s.api_401 = True
+    r = run(s, token="", auth_retry_seconds=1)
+    p = r.start()
+    n401 = lambda: sum(1 for x in s.status_log if x[2] == 401)  # noqa: E731
+    wait_for(lambda: n401() >= 2, 30, "2 lan 401")
+    assert p.poll() is None and "VM tra 401" in r.log()
+    s.api_401 = False
+    r.cfg["token"] = TOK
+    (r.dir / "config.json").write_text(json.dumps(r.cfg))      # khong restart worker
+    wait_for(lambda: len(s.received) == 4, 120, "enhance xong sau khi sua token")
+    p.send_signal(signal.SIGTERM)
+    assert r.finish(p, 30) == 0
+    assert TOK not in r.log()
+
+
+@needs_ffmpeg
+@needs_torch
 def test_404_keeps_polling(server, run):
     s = server()
     s.no_api = True
@@ -355,6 +375,18 @@ def test_self_test_reports_vm_states(server, run):
     s.no_api = True
     p = self_test()
     assert p.returncode == 0 and "chua co API enhance (404" in p.stdout
+    s.no_api = False
+    s.api_401 = True                                             # VM truoc CP13.1b: 401 cho moi /api/*
+    r.cfg["token"] = ""
+    (r.dir / "config.json").write_text(json.dumps(r.cfg))
+    p = self_test()
+    assert p.returncode == 0 and "reachable-unauthorized" in p.stdout and "chua co token" in p.stdout
+    assert "SELF-TEST OK voi canh bao" in p.stdout and "FAIL" not in p.stdout
+    r.cfg["token"] = "x"
+    (r.dir / "config.json").write_text(json.dumps(r.cfg))
+    p = self_test()
+    assert p.returncode == 0 and "token sai hoac VM chua co API" in p.stdout
+    s.api_401 = False
     s.stop()
     p = self_test()
     assert p.returncode == 0 and "khong noi duoc" in p.stdout

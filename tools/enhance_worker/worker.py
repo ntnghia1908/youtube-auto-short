@@ -76,6 +76,7 @@ DEFAULTS = {
     "upload_backoff_seconds": 5,
     "upload_backoff_max_seconds": 120,
     "drain_seconds": 30,
+    "auth_retry_seconds": 600,  # 401: nghi roi doc lai config (token) va thu lai
 }
 
 
@@ -664,8 +665,10 @@ class Engine:
 
 class Worker:
     def __init__(self, cfg: dict, once=False, max_segments=0, stop: threading.Event | None = None,
-                 engine: Engine | None = None):
+                 engine: Engine | None = None, config_path: str | None = None, overrides: dict | None = None):
         self.cfg = cfg
+        self.config_path = config_path
+        self.overrides = overrides
         self.once = once
         self.max_segments = max_segments
         self.stop = stop or threading.Event()
@@ -716,9 +719,34 @@ class Worker:
     def run(self) -> int:
         log.info("worker v%s '%s' -> %s (yield_to_ollama=%s)", __version__,
                  self.cfg["worker_name"], self.cfg["server_url"], self.cfg["yield_to_ollama"])
-        if not self.cfg["token"]:
-            log.error("Chua cau hinh token (config.json 'token').")
-            return EXIT_AUTH
+        while not self.stop.is_set():
+            try:
+                return self._loop()
+            except AuthError as e:
+                if self.once:
+                    log.error("XAC THUC THAT BAI: %s. Kiem tra token trong config (VM cap, E8). Dung.", e)
+                    return EXIT_AUTH
+                wait = self.cfg["auth_retry_seconds"]
+                log.warning("VM tra 401 (%s token; token sai, chua cap, hoac VM chua co API enhance) - "
+                            "thu lai sau %ss (doc lai config)", "chua co" if not self.cfg["token"] else "co",
+                            wait)
+                if self.sleep(wait):
+                    break
+                self.reload_config()
+        return EXIT_OK
+
+    def reload_config(self):
+        if not self.config_path:
+            return
+        try:
+            new = load_config(self.config_path, self.overrides)
+        except (OSError, ValueError) as e:
+            log.warning("khong doc lai duoc config: %s", e)
+            return
+        self.cfg.update(new)
+        self.api = Api(self.cfg["server_url"], self.cfg["token"], self.cfg["http_timeout"])
+
+    def _loop(self) -> int:
         try:
             while not self.stop.is_set():
                 lease = self.state.lease
@@ -747,9 +775,6 @@ class Worker:
                     return EXIT_OK
                 if self.once:
                     return EXIT_OK
-        except AuthError as e:
-            log.error("XAC THUC THAT BAI: %s. Kiem tra token trong config (VM cap, E8). Dung.", e)
-            return EXIT_AUTH
         except KeyboardInterrupt:
             pass
         return EXIT_OK
@@ -1178,9 +1203,13 @@ def self_test(cfg: dict) -> int:
         vm = "ket noi duoc, VM chua co API enhance (404 - binh thuong truoc CP13.1b)"
         out(" OK ", f"VM: {vm}")
     except AuthError:
-        vm = "token bi tu choi (401)"
-        fail.append("token")
-        out("FAIL", f"VM: {vm}")
+        reach = "reachable-unauthorized"
+        if not cfg["token"]:
+            vm = f"{reach}: VM tra 401: chua co token (VM cap o CP13.1b) - tunnel OK"
+        else:
+            vm = f"{reach}: VM tra 401: token sai hoac VM chua co API enhance (CP13.1b) - tunnel OK"
+        warn_list.append("vm")
+        out("WARN", f"VM: {vm}")
     except NetError as e:
         vm = f"khong noi duoc ({e}) - kiem tra tunnel {cfg['server_url']}"
         warn_list.append("vm")
@@ -1228,7 +1257,8 @@ def main(argv=None) -> int:
             except (ValueError, OSError):
                 pass
     try:
-        return Worker(cfg, once=a.once, max_segments=a.max_segments, stop=stop).run()
+        return Worker(cfg, once=a.once, max_segments=a.max_segments, stop=stop,
+                      config_path=a.config, overrides={"device": a.device}).run()
     except Exception:
         log.exception("worker loi khong xu ly duoc")
         return EXIT_ERROR

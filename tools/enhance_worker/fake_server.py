@@ -76,6 +76,7 @@ class FakeServer:
         # dieu khien
         self.may_run = True            # bool hoac callable(calls:int)->bool
         self.no_api = False            # moi route /api/enhance/* -> 404
+        self.api_401 = False           # nhu VM truoc CP13.1b: middleware dang nhap tra 401 cho moi /api/*
         self.cut_source_after: int | None = None  # dut ket noi sau N byte (mot lan)
         self.on_put = None             # callback(n) sau khi nhan doan
         self._lease_seq = 0
@@ -153,6 +154,10 @@ class FakeServer:
             return self._send(h, 404, {"error": "not found"})
         # doc het than de giu ket noi keep-alive hop le
         length = int(h.headers.get("Content-Length") or 0)
+        if self.api_401:
+            if length:
+                h.rfile.read(min(length, self.max_bytes))
+            return self._send(h, 401, {"error": "login required"})
         if self.no_api:
             if length:
                 h.rfile.read(min(length, self.max_bytes))
