@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: READY
+- Status: IN_PROGRESS
 - Type: CHANGE
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -11,6 +11,10 @@
 - Base commit / branch: `b57fc29` (`main`) / `feature/cp13-enhance-measure` (worktree `../youtube-auto-short-enh`)
 - Human Lead approval: APPROVED (HUMAN LEAD 2026-10-03, nguyên bản)
 - Implementation authorized: YES
+
+## Amendment 1 (HUMAN LEAD 2026-10-03)
+
+Nguồn hiện có trong `work/` **đã là bản đã xử lý — không enhance lại**. Đối tượng enhance là video cũ chưa xử lý, ví dụ playlist "Kinh Địa Tạng Bồ Tát Bổn Nguyện (102 tập)" (`PLOynZc0cJJfDMY5-Fd0su_Ea3TGdZ2wk4`: 102 tập, ≈ 98 giờ, tối đa 640×480). Thêm **E1b**: lặp E1 (`g10`, `g05`, Lanczos; không RRDB) trên 2 đoạn 10 s của tập 1 (`9NQFsvecC04`) và một tập cuối, 640×480 → 1080p, + video so sánh / ảnh crop; thêm đoạn 640×480 vào mẫu E2 và hướng dẫn Windows; E3 tính lại cho 98 giờ (cả tập và chỉ đoạn dùng cho Short). Status quay lại IN_PROGRESS tới khi E1b xong.
 
 Lifecycle: `DRAFT → APPROVED → IN_PROGRESS → READY`. DONE suy ra từ Git sau khi merge.
 
