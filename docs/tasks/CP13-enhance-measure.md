@@ -73,7 +73,7 @@ Không chạm database, security model hay public API.
 
 - Main changes: `scripts/enhance_bench_win.py` (E2, độc lập, CPU/CUDA), `scripts/cp13_e1_bench.py` (E1), `docs/guides/enhance-gpu-windows.md`, báo cáo `docs/decisions/CP13-enhance-report.md` (PROPOSED). Video so sánh + ảnh crop ở `~/.cache/auto-short-cp13-test/out/compare/` (ngoài repo). Không đổi `src/`.
 - Tests: E1 chạy đủ 3 đoạn × 4–5 cấu hình (CPU); `enhance_bench_win.py` chạy chế độ CPU trên VM (và tile); `python -m pytest -q -n auto` + `node scripts/framework-check.mjs` — PASS (1337 passed, 1 skipped; framework-check PASS).
-- Review:
+- Review: ORCHESTRATOR round 1 ACCEPTED (2026-10-03): xem ảnh crop A_face / C_face (g10 nét nhất nhưng da "nhựa"); script GPU chạy thử CPU trên VM OK; viết lại §5 (model, phạm vi, kiến trúc worker kéo việc chịu mất mạng theo yêu cầu HUMAN LEAD). E2 GPU chưa đo — báo cáo ghi rõ.
 - Important findings / decisions: bản cũ `AH5jLu40RMs` chỉ 352×262; `general-x4v3` tốt nhất, RRDB nhấp nháy + chậm; mọi model per-frame nhấp nháy hơn Lanczos; Short dùng nguồn 1:1 → enhance theo từng clip rẻ hơn cả tập ≈ 8–15×; E2 GPU chưa đo.
 - Known limitations: chưa đo GPU (E2 chờ HUMAN LEAD); không thử GFPGAN / model video; ước lượng GPU là FLOPs giả định.
 - PR:

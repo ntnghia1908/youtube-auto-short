@@ -2,7 +2,7 @@
 
 | Metadata | Value |
 |---|---|
-| Status | PROPOSED — số liệu E1 (CPU) có; E2 (GPU Windows) chờ HUMAN LEAD chạy; khuyến nghị nháp, ORCHESTRATOR viết lại |
+| Status | PROPOSED — số liệu E1 (CPU) có; E2 (GPU Windows) chờ HUMAN LEAD chạy; khuyến nghị §5 chờ HUMAN LEAD chọn |
 | Task contract | `docs/tasks/CP13-enhance-measure.md` |
 | Người viết | IMPLEMENTER (nháp), 2026-10-03 |
 | Dữ liệu / video mẫu | `~/.cache/auto-short-cp13-test/` (ngoài repo): `out/compare/`, `out/metrics.json`, `out/*.json` |
@@ -125,20 +125,38 @@ Dung lượng (đo trên mẫu, x264 `medium`, 1080p `g10_p360`): crf 20 → 0.7
 
 Ảnh hưởng tới render (đọc contract CP7, chưa chạy thử): nguồn enhance cùng kích thước 1440×1080 / 1454×1080 → bước crop / scale giữ nguyên; giải mã h264 CFR nhẹ hơn vp9 / av1 nhưng encode/lưu thêm; `render_key` / hash nguồn: nếu nguồn đổi sha256 thì analysis / transcript / selection / titling stale — cần dùng "nguồn HD" chỉ cho bước render, không đổi nguồn của các stage trước (xem §5).
 
-## 5. Khuyến nghị (nháp — ORCHESTRATOR viết lại)
+## 5. Khuyến nghị (PROPOSED — chờ HUMAN LEAD)
 
-1. **Model**: `realesr-general-x4v3` denoise 1.0, hạ 360p (đoạn 960×720 / 1440×1080) hoặc giữ nguyên (nguồn ≤ 262p); 540p chỉ nếu GPU thừa sức. Không dùng RRDB (`x4plus` / `x2plus`).
-2. **Phạm vi**: ưu tiên enhance **chỉ các đoạn được dùng để render** (clip của `clips.json` + Short thêm tay CP9 + khai thị). ≈ 7 Short × ≈ 60 s ≈ 7 phút / tập ≈ 12–13 k khung (≈ 12% một tập 1 giờ) → `g10_p360` trên RTX 3060 ≈ 0.15–0.5 giờ / tập (ước). Cả tập chỉ cần nếu muốn có bản HD cho mục đích khác. (Quyết định HUMAN LEAD: hiện đã ghi "cả video nguồn".)
-3. **Cần kiểm trước khi S2**: (a) E2 trên RTX 3060; (b) nhấp nháy `g10` có chấp nhận được khi xem video thật (mẫu `out/compare/*_compare_10s.mp4`); nếu không, thử bổ sung hòa trộn thời gian ở vùng tĩnh hoặc model video trên GPU (task đo riêng).
-4. **Chưa khuyến nghị GFPGAN / model video** cho đến khi mẫu cho thấy cần.
+### 5.1 Model
 
-### Phác thảo kiến trúc S2 (cần ADR: kiến trúc + dependency + worker mạng mới)
+- **Ứng viên duy nhất: `realesr-general-x4v3`** (nhẹ nhất: 1,2–5,4 s/khung CPU, nhanh hơn RRDB 3–15 lần). RRDB loại: `x4plus` thêm hạt / họa tiết giả, `x2plus` gần như không hơn Lanczos, cả hai nhấp nháy 2–5×.
+- ORCHESTRATOR xem ảnh crop (A_face, C_face): `g10` sạch và nét nhất (lông mày, mắt, chữ Hán) nhưng **da bị "nhựa"** (mịn quá, mất nếp da) — rõ nhất ở C `g10_p360`; `g05` và `g10_p540` tự nhiên hơn một chút; bản HD của kênh gốc mềm hơn `g10` nhưng tự nhiên. Đây là đánh đổi cảm quan → **HUMAN LEAD chọn bằng mắt** trên video so sánh (`out/compare/*_compare_10s.mp4`, `*_compare_2s.mp4`): `g10` hay `g05`, hạ 360p hay 540p.
+- Nhấp nháy: mọi cấu hình per-frame đều hơn Lanczos (`g10` 1,2–1,7×; bản HD kênh gốc 1,86×) → mức của `g10` không tệ hơn kênh gốc; chấp nhận nếu HUMAN LEAD xem video thấy ổn.
 
-- **Worker Windows** (Python + PyTorch CUDA; dependency nằm trên máy Windows, không vào `pyproject` của project): dịch vụ HTTP nghe `127.0.0.1:11438` qua SSH reverse tunnel (như Ollama 11437); không phải lúc nào cũng mở. Endpoint: `GET /health` (model, VRAM, queue), `POST /enhance` (đoạn → đoạn), nhận / trả theo **đoạn video** (vài chục giây, h264 lossless nhẹ hoặc PNG batch) kèm `segment_id`, `model`, `denoise`, `pre_height`, `config_hash` — để dừng / chạy tiếp theo đoạn và kiểm cache. Xác thực bằng token trong env (cổng chỉ có trên tunnel).
-- **Làn `enhance`** trong CP8.10 queue: chỉ chạy khi các làn khác rỗng và `/health` sống; kiểm lại mỗi N giây; mất kết nối giữa chừng → đợi và chạy tiếp từ đoạn dở (mẫu: FIX-ollama-wait).
-- **Artifact**: `work/<id>/enhanced/<hash>/seg_NNNN.mp4` + `enhance.json` (nguồn sha256, model, tham số, danh sách đoạn / trạng thái) → ghép / tham chiếu như `source_hd.mp4` hoặc theo từng clip. Stage hash mới `enhance`; **các stage analysis / transcript / selection / titling vẫn dùng nguồn gốc** (không stale); chỉ `render` đọc nguồn HD khi có (`render_key` thêm khóa nguồn HD).
-- **Tập đã đăng / khai thị**: enhance không tự render lại tập đã đăng (tick "Đã đăng" stale — cùng lý do CP8.14); thêm nút / cờ để HUMAN LEAD chọn. Tập khai thị (`.kt`) dùng chung nguồn, hưởng cùng bản enhance.
-- **Giá**: một worker + giao thức mới (ADR), dependency GPU trên Windows (HUMAN LEAD cài, có hướng dẫn kiểu E2), +≈ 1 GiB / giờ video dung lượng, thời gian GPU (§4), tập cũ cần chạy enhance bù theo hàng đợi, rủi ro chất lượng (nhấp nháy, da "nhựa") cần HUMAN LEAD duyệt mẫu.
+### 5.2 Phạm vi
+
+HUMAN LEAD đã chọn **cả video nguồn**. Ước lượng `g10_p360` (chưa đo GPU): 1 giờ video ≈ 1,2–4 giờ RTX 3060; thư viện hiện có 21,4 giờ video → ≈ 1–3,5 ngày GPU liên tục. Phương án rẻ hơn 8–15 lần (chỉ đoạn dùng cho Short / khai thị) ghi lại để HUMAN LEAD cân nhắc nếu E2 cho thấy 3060 chậm; không đổi quyết định khi chưa có số GPU.
+
+### 5.3 Kiến trúc S2 — worker **kéo việc** (pull), chịu được mất mạng
+
+HUMAN LEAD 2026-10-03: máy RTX 3060 có thể đứt mạng → worker phải tự làm khi mất mạng và gửi kết quả khi có mạng lại. Vì vậy **đảo chiều** so với Ollama (VM gọi vào GPU): worker Windows là **client**, VM là server.
+
+1. **Nhận việc** (khi online): worker gọi API VM `POST /api/enhance/lease` (token riêng) → nhận một tập + tham số (model, denoise, `pre_height`, `config_hash`) + lease ≈ 48 giờ. Tải video nguồn về ổ Windows bằng HTTP Range (đứt thì tải tiếp).
+2. **Làm offline**: enhance theo đoạn ≈ 60 s, mỗi đoạn xong ghi xuống ổ (`seg_NNNN.mp4`, mã hóa NVENC) + file trạng thái → mất mạng / mất điện / khởi động lại máy vẫn làm tiếp từ đoạn dở.
+3. **Gửi lên** (khi online lại): `PUT /api/enhance/<id>/seg/<n>` từng đoạn kèm sha256; VM kiểm và lưu `work/<id>/enhanced/<config_hash>/`; đoạn hỏng → gửi lại đúng đoạn đó. Gia hạn lease khi còn làm.
+4. **Ghép**: đủ đoạn → VM ghép (concat, không mã hóa lại) thành `source_hd.mp4` (+ `enhance.json`: sha256 nguồn, model, tham số, danh sách đoạn). Bước ghép / render lại chạy ở làn VM khi hàng đợi rảnh.
+5. **Hết lease** (worker mất tích > 48 giờ) → tập trả về hàng đợi (sau này có thể giao 3090). Đoạn đã nhận vẫn giữ (cùng `config_hash`).
+
+- **Kết nối**: worker gọi API web của VM qua chính kết nối SSH đang có (thêm `-L` vào lệnh SSH hiện tại); không cần mở / giữ port 11438 trên Windows. Token riêng cho worker (không dùng mật khẩu web).
+- **Pipeline**: transcript / analysis / selection / titling dùng nguồn gốc (không stale); chỉ `render` đọc `source_hd.mp4` khi có (khóa nguồn HD vào `render_key`). Tập đã đăng không tự render lại (tick "Đã đăng" stale, lý do như CP8.14) — HUMAN LEAD bấm render lại khi muốn; khai thị `.kt` dùng chung nguồn HD.
+- **Worker Windows**: một chương trình Python chạy nền (Task Scheduler khi đăng nhập / khởi động), dependency chỉ trên Windows (PyTorch CUDA, opencv; NVENC qua ffmpeg). Cài theo hướng dẫn từng bước như E2.
+- **Giá**: ADR mới (kiến trúc + API worker + token = security model), API mới trên web, worker Windows, dung lượng +≈ 0,5–1 GiB / giờ video (`source_hd.mp4`; có thể xóa nguồn gốc sau khi ghép nếu HUMAN LEAD muốn), mạng ≈ 0,7 GiB tải xuống + 0,5–1 GiB gửi lên mỗi giờ video, tập cũ enhance bù theo hàng đợi.
+
+### 5.4 Bước tiếp theo đề xuất
+
+1. HUMAN LEAD xem video so sánh → chọn cấu hình (`g10` / `g05`, 360p / 540p) hoặc dừng nếu da "nhựa" không chấp nhận được.
+2. HUMAN LEAD chạy E2 trên RTX 3060 → ORCHESTRATOR điền §3, cập nhật §4.
+3. Nếu tiếp tục: ADR + contract S2 theo §5.3 (dual-agent).
 
 ## 6. Giới hạn / sai lệch
 
