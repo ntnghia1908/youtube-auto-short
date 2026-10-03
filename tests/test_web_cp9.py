@@ -17,6 +17,7 @@ from auto_short.titling.added import AddedTitle  # noqa: E402
 from auto_short.web import app as app_mod  # noqa: E402
 
 from cp9_helpers import EID, make_cp9_episode  # noqa: E402
+from test_web_post_cp815 import FakeComposeAI  # noqa: E402
 from web_helpers import fake_pipeline  # noqa: E402
 
 PW = "pw"
@@ -69,7 +70,8 @@ class FakeTitler:
 
 def make_client(cfg, *, render=None, titler=None, preflight=lambda c: None):
     app = app_mod.create_app(cfg, PW, preflight=preflight, render=render or FakeRender(),
-                             pipeline=fake_pipeline([]), titler=titler or FakeTitler())
+                             pipeline=fake_pipeline([]), titler=titler or FakeTitler(),
+                             post_compose=FakeComposeAI(), post_preflight=lambda c: None)  # FIX-test-speed T2: no real Ollama
     c = TestClient(app, follow_redirects=False)
     return c, app
 

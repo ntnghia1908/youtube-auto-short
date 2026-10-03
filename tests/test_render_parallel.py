@@ -98,6 +98,7 @@ def test_concurrency_bounded_by_jobs(ws, tmp_path):
     assert gate.peak == 4
 
 
+@pytest.mark.slow
 def test_jobs_one_is_sequential(ws, tmp_path):
     gate = Gate(delay=0.05)
     run_render(EID, _cfg(tmp_path, 1), run=gate)

@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: CHANGE
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -59,9 +59,24 @@ Không chạm database / security / public API. Không cần manual test ngoài 
 
 ## Result
 
-- Main changes:
-- Tests:
+- Main changes: marker `slow` + `addopts = "-m 'not slow'"` (`pyproject.toml`); 10 worker torch tests + 5 render tests marked `slow`; autouse guard in `tests/conftest.py` (blocks Ollama ports 11434 / 11437 and non-loopback connects) + `tests/test_no_real_services_guard.py`; `test_web_cp9.py` injects `FakeComposeAI` + no-op `post_preflight`; Test policy §8 + README updated.
+- Tests changed (intent kept):
+  - `tests/test_web_cp9.py::make_client`: adds `post_compose=FakeComposeAI()` (from test_web_post_cp815), `post_preflight=lambda c: None`; assertions untouched.
+  - `tests/test_web_lanes_cp810.py::_tree` (used by `test_lanes_artifacts_identical_to_serial`): `*_log.json` hashed without per-call `seconds` fields (wall-clock, rounded to ms; this test failed under load on `selection_log.json` / `titling_log.json`). All other artifacts still compared byte for byte.
+  - `slow` marker only (bodies unchanged): all 10 `@needs_torch` tests in `test_enhance_worker.py` (self-test 163-187 s alone; others 20-39 s); `test_render_reuse.py::{test_force_config_and_plan_version_encode_all, test_cli_title_render}`, `test_render_parallel.py::test_jobs_one_is_sequential`, `test_render_stage.py::{test_ffmpeg_failure_keeps_previous_render, test_force_rerender_is_byte_identical}` (each 17-32 s real render; lighter siblings keep the same behaviours covered).
+  - Not changed: self-test stays real (slow), no fake enhance.
+- Measurements (VM shared with 8080 + another IMPLEMENTER; load 16-31 during runs, so AC1 "load <= 20" not met):
+  | Command | Time | Notes |
+  |---|---|---|
+  | before (contract, main 27f9238) `-n auto` | 305 s | load 18-20, 2 flaky fails |
+  | after `-n auto` x5 | 121 (1 fail, lanes log), 118, 120, 114, 118 s (after lanes fix 114-120) | load 17-33 |
+  | after `-n 12` x2 | 211, 158, 135 s | slower |
+  | after `-n 8` x2 | 148, 166 s | slower |
+  | `-m slow -n auto` | 195 s, 15 passed | |
+  Top after: render_reuse override 35 s, lanes_identical 25 s, render_cp9 cut 23 s, render_stage resume 23 s, web_titles 21 s, render_parallel 20 s, dissolve 20 s...
+  Suite CPU is ~560 s in ~40 real-render tests; wall is bound by CPU shared with 8080, so <= 90 s not reached (best 114 s at load ~25). Dropping more real-render tests would cut core coverage (out of scope).
+- Verification: standard command x5 PASS (1367 passed, 1 skipped) after lanes fix; `pytest -n auto tests/test_web_cp9.py` x5 PASS (14 passed, ~4 s); `-m slow` 15 passed; `node scripts/framework-check.mjs` PASS.
 - Review:
-- Important findings / decisions:
-- Known limitations:
+- Important findings / decisions: `-n auto` best. Cause of cp9 flake was real Ollama in the auto-compose post job.
+- Known limitations: AC1 time target missed under load (see above).
 - PR:

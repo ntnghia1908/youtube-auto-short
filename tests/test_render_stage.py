@@ -198,6 +198,7 @@ def test_config_hash_keys():
     assert config_hash(a) != config_hash(used_config(RenderConfig(), "0" * 64))
 
 
+@pytest.mark.slow
 def test_force_rerender_is_byte_identical(ws, rcfg):
     run_render(EID, rcfg)
     out = _out(rcfg)
@@ -270,6 +271,7 @@ def test_missing_glyph_and_fit_failures(ws, rcfg):
     _assert_failed(ws, rcfg, "does not fit")
 
 
+@pytest.mark.slow
 def test_ffmpeg_failure_keeps_previous_render(ws, rcfg):
     run_render(EID, rcfg)
     before = _snapshot(rcfg)

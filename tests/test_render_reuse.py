@@ -115,6 +115,7 @@ def test_override_reencodes_only_that_short(ws, rcfg, caplog):
     assert [s["title_origin"] for s in _rm(rcfg)["shorts"]] == ["ai", "ai"]
 
 
+@pytest.mark.slow
 def test_force_config_and_plan_version_encode_all(ws, rcfg, monkeypatch):
     _render(rcfg)
     base = _shas(rcfg)
@@ -224,6 +225,7 @@ def test_invalid_review_json_fails_render(ws, rcfg):
         run_render(EID, rcfg)
 
 
+@pytest.mark.slow
 def test_cli_title_render(ws, rcfg, tmp_path, capsys):
     cfg_file = tmp_path / "config.toml"
     cfg_file.write_text(f'[workspace]\ndir = "{rcfg.workspace.dir.as_posix()}"\n'

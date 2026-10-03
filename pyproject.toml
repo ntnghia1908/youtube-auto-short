@@ -37,3 +37,7 @@ packages = ["src/auto_short"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-m 'not slow'"
+markers = [
+    "slow: heavy integration tests (enhance worker on torch CPU, ~20-160 s each); skipped by default, run with `-m slow`",
+]

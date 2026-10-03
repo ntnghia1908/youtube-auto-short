@@ -91,4 +91,7 @@ Canonical owner; áp dụng cho mọi IMPLEMENTER bất kể tool (HUMAN LEAD 20
 - Trong vòng sửa: chạy test liên quan tới thay đổi (file hoặc `-k`), nên dùng `-x --tb=short`.
 - Toàn bộ suite: một lần trước khi báo READY và một lần sau mỗi vòng fix review; không chạy toàn bộ sau từng lần sửa.
 - Lệnh chuẩn: `python -m pytest -q -n auto` (cần `pytest-xdist`, extra `dev`); chạy tuần tự (không `-n`) vẫn hợp lệ.
+- Marker `slow` (FIX-test-speed): `addopts` của pytest bỏ qua test `slow` (`-m 'not slow'`), nên lệnh chuẩn không chạy chúng. `python -m pytest -q -n auto -m slow` chạy riêng: bắt buộc (và phải PASS) khi sửa `tools/enhance_worker/` hoặc phần render / worker liên quan; test worker torch cần env `enhance-bench` (`ENHANCE_WORKER_PYTHON`, `ENHANCE_TEST_MODELS`), thiếu thì SKIP. Test mới nặng (> ~20 s, torch, render lặp lại) đánh dấu `slow` nếu đã có test nhẹ hơn cùng ý kiểm.
+- Không test nào được gọi dịch vụ thật: `tests/conftest.py` có chốt chặn autouse làm fail khi kết nối tới Ollama (cổng 11434 / 11437) hoặc host không phải loopback; test web tiêm `post_compose` / `post_preflight` giả vào `create_app`.
+- Số worker: `-n auto` (24 CPU) nhanh nhất khi đo; `-n 12` / `-n 8` chậm hơn.
 - Không nới `docs/ai/workflow.md` §7: required verification trong task contract vẫn phải chạy và PASS trước READY.
