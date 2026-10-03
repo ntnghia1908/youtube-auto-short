@@ -233,6 +233,15 @@ def _default_corrections_path() -> Path:
 
 
 @dataclass(frozen=True)
+class StorageConfig:
+    """Auto clean-up of the source video of a finished video (docs/decisions/CP8.3-web-contract.md W9 S5).
+    Execution-only: no stage uses it."""
+
+    auto_archive: bool = True
+    auto_archive_grace_minutes: int = 30  # "đã đăng hết" must stay stable this long before the source is removed
+
+
+@dataclass(frozen=True)
 class PostConfig:
     """Community post text of a Short (docs/decisions/CP8.15-community-post-contract.md P11): AI punctuation /
     paragraphs via Ollama (P3), the image library (P5) and link fetching (P5b)."""
@@ -291,6 +300,7 @@ class Config:
     learning: LearningConfig = field(default_factory=LearningConfig)
     khaithi: KhaithiConfig = field(default_factory=KhaithiConfig)
     post: PostConfig = field(default_factory=PostConfig)
+    storage: StorageConfig = field(default_factory=StorageConfig)
 
 
 def _section(data: dict, name: str) -> dict:
@@ -582,6 +592,16 @@ def _web(data: dict) -> WebConfig:
     )
 
 
+def _storage(data: dict) -> StorageConfig:
+    st = _section(data, "storage")
+    d, w = StorageConfig(), "storage"
+    return StorageConfig(
+        auto_archive=_bool(st, "auto_archive", d.auto_archive, w),
+        auto_archive_grace_minutes=_int(st, "auto_archive_grace_minutes", d.auto_archive_grace_minutes, w,
+                                        lo=0, hi=1440),
+    )
+
+
 def _queue_mode(section: dict, default: str) -> str:
     value = section.get("queue_mode", default)
     if value not in WEB_QUEUE_MODES:
@@ -693,6 +713,7 @@ def from_dict(data: dict) -> Config:
         learning=_learning(data),
         khaithi=_khaithi(data),
         post=_post(data),
+        storage=_storage(data),
     )
 
 

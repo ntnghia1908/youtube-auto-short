@@ -621,7 +621,7 @@ const AutoShort = (() => {
     const an = $("#archived-note");
     an.hidden = !archived;
     if (archived) {
-      an.textContent = `Đã dọn video nguồn${d.archived.freed ? ` (giải phóng ${fmtBytes(d.archived.freed)})` : ""}` +
+      an.textContent = `${d.archived.auto ? "Đã tự dọn video nguồn" : "Đã dọn video nguồn"}${d.archived.freed ? ` (giải phóng ${fmtBytes(d.archived.freed)})` : ""}` +
         `${d.archived.at ? `, ${fmtTime(d.archived.at)}` : ""}: chỉ xem / tải / đánh dấu đã đăng / xóa ${noun()}. ` +
         `Muốn sửa tiêu đề hay khôi phục ${noun()} thì xóa tập rồi chạy lại.`;
     }
@@ -2095,30 +2095,37 @@ const AutoShort = (() => {
   }
 
   function recReason(r) {
-    if (r.rule === "all_published") return "Đã đăng hết Short.";
+    if (r.rule === "all_published") return (r.episodes || []).length > 1 ? "Đã đăng hết Short và khai thị." : "Đã đăng hết.";
     if (r.rule === "old_source") return `Dựng Short xong ${r.age_days} ngày trước, còn video nguồn.`;
     return `Lỗi / dở dang, không hoạt động ${r.age_days} ngày.`;
   }
 
   async function runAction(r, a, btn) {
     const name = r.title || r.episode_id;
+    const ids = a.episodes || [r.episode_id];
+    const parts = ids.length > 1 ? ` (${ids.length} phần: Short + khai thị)` : "";
+    const postWarn = r.post_unticked ? `\n\nCòn ${r.post_unticked} bài đăng chưa đăng — xóa cả tập sẽ mất bài đã soạn.` : "";
     const msg = a.action === "archive"
-      ? `Dọn video nguồn của "${name}" (${r.episode_id})? Giải phóng ${fmtBytes(a.frees)}.\n\n` +
+      ? `Dọn video nguồn của "${name}" (${r.episode_id})${parts}? Giải phóng ${fmtBytes(a.frees)}.\n\n` +
         "Short vẫn xem / tải được. Sau đó KHÔNG sửa tiêu đề, khôi phục Short hay chạy lại được nữa " +
         "(muốn sửa thì xóa tập rồi chạy lại từ đầu)."
-      : `Xóa toàn bộ tập "${name}" (${r.episode_id})? Giải phóng ${fmtBytes(a.frees)}.\n\n` +
-        "Sẽ xóa video nguồn đã tải, mọi Short và dữ liệu xử lý. KHÔNG khôi phục được.";
+      : `Xóa toàn bộ tập "${name}" (${r.episode_id})${parts}? Giải phóng ${fmtBytes(a.frees)}.\n\n` +
+        "Sẽ xóa video nguồn đã tải, mọi Short và dữ liệu xử lý. KHÔNG khôi phục được." + postWarn;
     if (!confirm(msg)) return;
     btn.disabled = true;
     const out = $("#rec-msg");
     try {
-      if (a.action === "archive") {
-        const res = await api(`/api/episodes/${encodeURIComponent(r.episode_id)}/archive`, { method: "POST" });
-        out.textContent = `Đã dọn video nguồn "${name}": giải phóng ${fmtBytes(res.freed)}.`;
-      } else {
-        await api(`/api/episodes/${encodeURIComponent(r.episode_id)}`, { method: "DELETE" });
-        out.textContent = `Đã xóa tập "${name}".`;
+      let freed = 0;
+      for (const id of ids) {
+        if (a.action === "archive") {
+          const res = await api(`/api/episodes/${encodeURIComponent(id)}/archive`, { method: "POST" });
+          freed += res.freed || 0;
+        } else {
+          await api(`/api/episodes/${encodeURIComponent(id)}`, { method: "DELETE" });
+        }
       }
+      out.textContent = a.action === "archive" ? `Đã dọn video nguồn "${name}": giải phóng ${fmtBytes(freed)}.`
+        : `Đã xóa tập "${name}".`;
       out.className = "small ok";
     } catch (e) {
       out.textContent = e.message;
@@ -2163,10 +2170,11 @@ const AutoShort = (() => {
       recs.replaceChildren(...d.recommendations.map((r) => el("li", { class: "rec" },
         el("a", { href: "/episodes/" + encodeURIComponent(r.episode_id), class: "ep-name clamp2", text: r.title || r.episode_id }),
         el("span", { class: "muted small", text: `${r.episode_id} · ${recReason(r)}` }),
+        r.post_unticked ? el("span", { class: "small error", text: `Còn ${r.post_unticked} bài đăng chưa đăng — xóa cả tập sẽ mất bài đã soạn.` }) : null,
         recButtons(r))));
     }
     const recOf = {};
-    for (const r of d.recommendations) recOf[r.episode_id] = r;
+    for (const r of d.recommendations) recOf[r.episode_id] = r; // video-level: buttons on the first part's row
     const epLink = (e) => (e.state === "orphan" ? el("span", { class: "clamp2", text: e.id })
       : el("a", { class: "clamp2", href: "/episodes/" + encodeURIComponent(e.id), text: e.title || e.id }));
     const src = (e) => (e.source_kind === "local" ? "(file local)" : fmtBytes(e.source));

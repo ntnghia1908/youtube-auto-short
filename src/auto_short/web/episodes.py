@@ -292,7 +292,7 @@ def _archived_view(ws_dir: Path) -> dict | None:
     if doc is None:
         return None
     removed = doc.get("removed") if isinstance(doc.get("removed"), list) else []
-    return {"at": doc.get("archived_at"),
+    return {"at": doc.get("archived_at"), "auto": doc.get("auto") is True,
             "freed": sum(r.get("size", 0) for r in removed if isinstance(r, dict) and isinstance(r.get("size"), int))}
 
 

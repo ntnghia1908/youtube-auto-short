@@ -137,13 +137,14 @@ def test_recommendations_rules_and_priority():
     recs = {r["episode_id"]: r for r in recommend(rows, NOW)}
     assert set(recs) == {"allPub", "allPubArchived", "old8", "failed8", "incomplete9"}
     assert recs["allPub"]["rule"] == "all_published"
-    assert recs["allPub"]["actions"] == [{"action": "archive", "frees": 650 * 10**6},
-                                         {"action": "delete", "frees": 903 * 10**6}]
-    assert recs["allPubArchived"]["actions"] == [{"action": "delete", "frees": 253 * 10**6}]
+    assert recs["allPub"]["actions"] == [{"action": "archive", "frees": 650 * 10**6, "episodes": ["allPub"]},
+                                         {"action": "delete", "frees": 903 * 10**6, "episodes": ["allPub"]}]
+    assert recs["allPubArchived"]["actions"] == [{"action": "delete", "frees": 253 * 10**6,
+                                                  "episodes": ["allPubArchived"]}]
     assert recs["old8"]["rule"] == "old_source" and recs["old8"]["age_days"] == 8
-    assert recs["old8"]["actions"] == [{"action": "archive", "frees": 650 * 10**6}]
+    assert recs["old8"]["actions"] == [{"action": "archive", "frees": 650 * 10**6, "episodes": ["old8"]}]
     assert recs["failed8"]["rule"] == "stale_unfinished"
-    assert recs["failed8"]["actions"] == [{"action": "delete", "frees": 903 * 10**6}]
+    assert recs["failed8"]["actions"] == [{"action": "delete", "frees": 903 * 10**6, "episodes": ["failed8"]}]
     assert [r["episode_id"] for r in recommend(rows, NOW)][:2] == ["allPub", "allPubArchived"]  # input order
 
 

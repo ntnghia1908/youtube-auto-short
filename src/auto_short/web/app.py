@@ -44,7 +44,7 @@ from ..review import shorts as review_shorts
 from ..review.names import hashtags as review_hashtags
 from . import episodes as ep
 from .auth import COOKIE_NAME, SessionSigner, load_or_create_secret
-from .storage import BLOCK_MESSAGE, StorageCache
+from .storage import BLOCK_MESSAGE, StorageCache, auto_archive_plan, episode_sizes, video_id
 from .jobs import (KIND_ADD, KIND_PIPELINE, KIND_POST, KIND_POST_SEARCH, KIND_RENDER, POST_IMAGES_KEY, JobRunner,
                    add_short_target, image_search_target, pipeline_target, post_compose_target, render_target)
 from . import playlists as playlists_mod
@@ -59,6 +59,7 @@ LOGIN_DELAY = 1.0  # seconds to wait after a wrong password
 PUBLIC_PATHS = {"/login", "/static/style.css"}
 MAX_FIELD = 100
 ZIP_CHUNK = 1 << 20
+AUTO_ARCHIVE_INTERVAL = 300.0  # seconds between auto clean-up passes (W9 S5)
 KINDS = ("short", "khaithi")  # CP8.9 A1.1, in job order
 
 
@@ -246,7 +247,8 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                playlist_timeout: float = LIST_TIMEOUT, titler: Callable | None = None,
                post_compose: Callable | None = None,
                post_preflight: Callable[[Config], None] | None = post_stage.preflight,
-               post_search: Callable | None = None, doc_prepare: Callable | None = None) -> FastAPI:
+               post_search: Callable | None = None, doc_prepare: Callable | None = None,
+               auto_archive_interval: float = AUTO_ARCHIVE_INTERVAL) -> FastAPI:
     """``preflight`` / ``pipeline`` / ``render`` are injectable for tests (defaults: CP8 ``ollama_preflight`` /
     ``run_pipeline``, CP7/CP8.2 ``run_render``); so are ``disk_usage`` (``shutil.disk_usage``) and ``clock`` (epoch
     seconds, ages of the storage recommendations) for CP8.6; ``playlist_lister`` (yt-dlp flat listing) and
@@ -254,7 +256,8 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     :func:`auto_short.titling.added.title_added`) for CP9; ``post_compose`` / ``post_preflight`` (default
     :func:`auto_short.post.stage.compose_posts` / ``.preflight``) and ``post_search`` (default
     :func:`auto_short.post.fetch.search_images`) for CP8.15; ``doc_prepare`` (default
-    :func:`auto_short.post.doc.prepare`, the "Văn bản gốc" check of ``PUT /api/playlists/{id}/doc``) for CP8.19."""
+    :func:`auto_short.post.doc.prepare`, the "Văn bản gốc" check of ``PUT /api/playlists/{id}/doc``) for CP8.19;
+    ``auto_archive_interval`` (seconds between auto clean-up passes, W9 S5; 0 = only at start-up)."""
     runner = runner or JobRunner(config.web.queue_mode)
     storage = StorageCache(config, disk_usage=disk_usage, clock=clock)
     playlists = PlaylistStore(config, lister=playlist_lister, timeout=playlist_timeout)
@@ -266,17 +269,58 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     signer = SessionSigner(secret if secret is not None else load_or_create_secret(Path(config.workspace.dir)),
                            password, config.web.session_days)
 
+    def auto_archive_pass() -> list[str]:
+        """W9 S5 / D4: remove the source video of every video whose parts are all "Xong" for at least the grace
+        period (``[storage] auto_archive``). A video with a queued / running job on any part waits. Returns the
+        episode ids archived."""
+        if not config.storage.auto_archive:
+            return []
+        done: list[str] = []
+        rows = episode_sizes(config, {j.episode_id for j in runner.jobs() if j.active})
+        for item in auto_archive_plan(rows, clock(), config.storage.auto_archive_grace_minutes * 60):
+            with submit_lock:
+                parts = [r["id"] for r in rows if r["state"] != "orphan" and video_id(r["id"]) == item["video_id"]]
+                if any((j := runner.latest(eid)) is not None and j.active for eid in parts):
+                    continue
+                for eid in item["episodes"]:
+                    try:
+                        result = archive_source(eid, config, auto=True)
+                    except ReviewError as exc:
+                        log.warning("web: tự dọn nguồn %s: bỏ qua: %s", eid, exc)
+                        continue
+                    if result.changed:
+                        done.append(eid)
+                        log.warning("web: tự dọn nguồn %s: removed %s (%d bytes), video đã đăng hết từ %s", eid,
+                                    ", ".join(result.removed) or "-", result.freed,
+                                    datetime.fromtimestamp(item["since"], timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+        if done:
+            storage.invalidate()
+        return done
+
+    async def _auto_archive_loop() -> None:
+        while True:
+            try:
+                await asyncio.to_thread(auto_archive_pass)
+            except Exception:  # never stop the loop (disk errors, a half-written workspace)
+                log.exception("web: tự dọn nguồn: lỗi")
+            if auto_archive_interval <= 0:
+                return
+            await asyncio.sleep(auto_archive_interval)
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         runner.start()
+        sweeper = asyncio.create_task(_auto_archive_loop())
         try:
             yield
         finally:
+            sweeper.cancel()
             await asyncio.to_thread(runner.stop)
 
     app = FastAPI(title="auto-short web", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.state.runner = runner
     app.state.storage = storage
+    app.state.auto_archive_pass = auto_archive_pass
     app.state.playlists = playlists
     app.state.signer = signer
 
