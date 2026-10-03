@@ -87,4 +87,5 @@ Không chạm database / security model; đổi job model + thêm API → manual
   - Job `ai` đang đợi GPU được lưu như job chờ ở làn `ai` (đợi GPU thật chỉ được chứng minh bằng unit test của lưu/khôi phục + FIX-ollama-wait; 8081 không dùng Ollama cho bước hàng đợi, trừ job tự soạn bài sau render).
   - Tập có job khôi phục được tính "có job" vì `restore()` chạy trước vòng tự dọn nguồn (test `test_api_pause_resume_submit_while_paused_and_restart`).
 - Known limitations: async interrupt có cửa sổ race rất hẹp giữa lúc bước vừa xong và `_after` (đã làm lân cận an toàn: thử lại 3 lần, thread làn không chết); `pause now` ngắt cả tiến trình con không thuộc job (cùng cách với `stop()`); lịch sử job / log không khôi phục; `.web_queue.json` ngay trong `work/` (không phải episode, như `.web_secret`).
-- PR: chưa (chờ HUMAN LEAD).
+- Manual test: HUMAN LEAD 2026-10-03 bỏ qua gate ("chuyển luôn qua 8080 khỏi test"); 8080 chạy `2a62994` (branch), hàng đợi 47 job gửi lại qua API rồi được lưu `work/.web_queue.json`.
+- PR: #58 chưa (chờ HUMAN LEAD).
