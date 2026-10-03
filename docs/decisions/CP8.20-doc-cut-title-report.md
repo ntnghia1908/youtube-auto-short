@@ -2,7 +2,7 @@
 
 | Metadata | Value |
 |---|---|
-| Status | PROPOSED — báo cáo đo, khuyến nghị chưa có quyết định HUMAN LEAD |
+| Status | ACCEPTED — HUMAN LEAD 2026-10-03: chất lượng video hiện tại ổn, không đổi title / điểm cắt (§8.3: không chọn mục nào) |
 | Task | `docs/tasks/CP8.20-doc-cut-title-measure.md` (S1) |
 | Script | `scripts/measure_doc_cut_title.py` (không đổi `src/`) |
 | Dữ liệu | bản sao `~/.cache/auto-short-cp820-test/` (work + output + `config.toml` riêng); kết quả thô `results/*.json` |
@@ -272,3 +272,5 @@ Title của các mẫu là title production (caption) của từng workspace ph�
 2. Điểm cắt: không / ưu tiên (b) (đề xuất) / sửa "thiếu 1 từ cuối" trước / đổi CP4 + Whisper.
 
 Mỗi lựa chọn "có" là một task S2 riêng; không đổi production trước khi HUMAN LEAD duyệt.
+
+**Quyết định (HUMAN LEAD 2026-10-03):** không làm — title giữ từ caption, điểm cắt giữ như hiện tại. Các khuyến nghị trên lưu làm tham khảo nếu sau này cần.
