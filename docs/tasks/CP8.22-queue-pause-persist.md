@@ -80,7 +80,7 @@ Không chạm database / security model; đổi job model + thêm API → manual
     - Tắt server (SIGINT) khi đang tạm ngưng, mở lại -> `web: khôi phục hàng đợi: 2 việc, đang tạm ngưng`, `GET /api/queue` = `{paused: true, pending: 2}`, không chạy gì.
     - `resume` -> job 1 chạy; `pause after` ngay lúc đó -> job 1 chạy xong (`done in 38.3 s: 10/10 Shorts (1 encoded, 9 reused)` = chỉ Short bị sửa encode), job 2 vẫn `queued`, `running 0`.
     - `resume`, job 2 chạy, SIGINT server -> `web: stopping, interrupting job 2`, `job 2 interrupted`, file hàng đợi còn 1 job (E4QhRRXFbIM) -> mở lại `web: khôi phục hàng đợi: 1 việc`, `web: start render job 1 [E4QhRRXFbIM]` -> `done in 35.6 s`; hàng trống. 8081 đã tắt.
-- Review: chưa.
+- Review: ORCHESTRATOR round 1 ACCEPTED (2026-10-03): đọc `_rebuild_job` (spec không lưu closure, bỏ qua tập archived / workspace mất), restore trước runner.start và trước tự dọn; chạy lại `test_web_queue_cp822.py` + `test_web_lanes_cp810.py` = 24 passed; 8081 đã tắt. Manual test 8080 là gate trước merge.
 - Important findings / decisions:
   - Job `post` / `post_search` / `add` theo hàng như job khác, không ngoại lệ khi tạm ngưng (đề xuất mặc định của contract).
   - Khôi phục luôn đặt cờ ở kiểu `after`. Sau khi bấm Chạy tiếp, job `render` chạy lại bước đã bị ngắt (re-encode lại Short đang dở; Short khác reuse).
