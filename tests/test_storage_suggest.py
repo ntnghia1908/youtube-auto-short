@@ -263,3 +263,21 @@ def test_config_storage_section(tmp_path):
     cfg = load_config(p)
     assert (cfg.storage.auto_archive, cfg.storage.auto_archive_grace_minutes) == (False, 5)
     assert Config().storage == StorageConfig(True, 30)
+
+
+def test_hard_linked_source_counted_once(video):
+    """F1: the khai thị source is a hard link of the Short source -> a merged suggestion counts it once."""
+    import os
+    root = Path(video.workspace.dir)
+    (root / KT / "source.mp4").unlink()
+    os.link(root / EID / "source.mp4", root / KT / "source.mp4")
+    _tick_all(video)
+    rows = episode_sizes(video)
+    (rec,) = recommend(rows, time.time())
+    by = {r["id"]: r for r in rows}
+    assert by[EID]["source"] == by[KT]["source"] == 4096  # table: each workspace on its own
+    arch, delete = rec["actions"]
+    assert arch["frees"] == 4096 and arch["episodes"] == [EID, KT]
+    assert delete["frees"] == by[EID]["total"] + by[KT]["total"] - 4096
+    plan = auto_archive_plan(rows, time.time() + 10 * GRACE, GRACE)
+    assert plan[0]["freed"] == 4096

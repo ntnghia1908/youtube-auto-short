@@ -244,7 +244,7 @@ Cảnh báo bài đăng (D3): mỗi gợi ý có `post_unticked` = số bài đ�
 
 Payload `recommendations`: `[{episode_id (phần đầu), episodes, video_id, title, rule, post_unticked, age_days?, actions: [{action: archive|delete, frees, episodes}]}]`.
 
-"Bây giờ" lấy từ `clock` của app (tiêm được trong test). Byte của hai phần dùng chung một inode nguồn (hard link, CP8.9) vẫn được cộng cả hai (như cột nguồn của bảng).
+"Bây giờ" lấy từ `clock` của app (tiêm được trong test). Số byte của gợi ý = dung lượng thật giải phóng: file hard link dùng chung giữa các phần của video (cùng `(st_dev, st_ino)`, vd nguồn của `<id>` và `<id>.kt`, CP8.9) chỉ đếm một lần trong một gợi ý (`_sum` trong `web/storage.py`). Cột nguồn / tổng của bảng từng tập (S1) vẫn tính riêng từng workspace.
 
 ### Dọn video nguồn, episode archived (S3)
 

@@ -63,6 +63,30 @@ def tree_size(path: Path) -> int:
     return total
 
 
+def tree_links(path: Path) -> dict[tuple[int, int], int]:
+    """Regular files under ``path`` with more than one hard link: ``{(st_dev, st_ino): size}``. Only these can be
+    shared between two workspaces (e.g. the source of ``<id>`` and ``<id>.kt``, CP8.9)."""
+    out: dict[tuple[int, int], int] = {}
+    stack = [path]
+    while stack:
+        cur = stack.pop()
+        try:
+            with os.scandir(cur) as it:
+                for entry in it:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(Path(entry.path))
+                        elif entry.is_file(follow_symlinks=False):
+                            st = entry.stat(follow_symlinks=False)
+                            if st.st_nlink > 1:
+                                out[(st.st_dev, st.st_ino)] = st.st_size
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+    return out
+
+
 def parse_time(value: object) -> float | None:
     """``YYYY-MM-DDTHH:MM:SSZ`` (manifest / job times) -> epoch seconds."""
     if not isinstance(value, str):
@@ -136,6 +160,12 @@ def episode_sizes(config: Config, active: set[str] | None = None) -> list[dict]:
         source = sum(p.lstat().st_size for p in src_files)
         work_total = tree_size(ws.dir)
         shorts = tree_size(out_root / eid)
+        src_links = {}
+        for p in src_files:
+            st = p.lstat()
+            if st.st_nlink > 1 and not p.is_symlink():
+                src_links[(st.st_dev, st.st_ino)] = st.st_size
+        links = {**tree_links(ws.dir), **tree_links(out_root / eid)}
         stages = manifest.get("stages") or {}
         statuses = [(stages.get(s) or {}).get("status") for s in ep.PIPELINE_STAGES]
         archive = read_archive(ws.dir)
@@ -183,6 +213,7 @@ def episode_sizes(config: Config, active: set[str] | None = None) -> list[dict]:
             "source": source, "shorts_bytes": shorts, "other": work_total - source, "total": work_total + shorts,
             "shorts": len(rendered), "published": published, "complete": complete,
             "post_unticked": post_unticked, "complete_since": complete_since,
+            "links": links, "source_links": src_links,  # hard-linked files, for de-duplicated sums (not in the API)
             "render_finished_at": parse_time((stages.get("render") or {}).get("finished_at"))
             if (stages.get("render") or {}).get("status") == DONE else None,
             "last_activity": _last_activity(manifest, mtime),
@@ -199,6 +230,18 @@ def episode_sizes(config: Config, active: set[str] | None = None) -> list[dict]:
                          "render_finished_at": None, "last_activity": entry.stat().st_mtime, "archived_at": None})
     rows.sort(key=lambda r: (-r["total"], r["id"]))
     return rows
+
+
+def _sum(parts: list[dict], field: str, links_field: str) -> int:
+    """Bytes freed by acting on ``parts``: ``sum(field)`` counting a hard-linked file (same ``(st_dev, st_ino)``
+    in several parts, e.g. the source of ``<id>`` and ``<id>.kt``) once."""
+    total, seen = sum(r[field] for r in parts), set()
+    for r in parts:
+        for key, size in (r.get(links_field) or {}).items():
+            if key in seen:
+                total -= size
+            seen.add(key)
+    return total
 
 
 def _can_archive(r: dict) -> bool:
@@ -237,21 +280,21 @@ def recommend(rows: list[dict], now: float, *, old_days: int = OLD_DAYS) -> list
                 "post_unticked": sum(r.get("post_unticked", 0) for r in parts)}
         arch = [r for r in parts if _can_archive(r)]
         if all(r.get("complete") for r in parts):
-            actions = [{"action": "delete", "frees": sum(r["total"] for r in parts),
+            actions = [{"action": "delete", "frees": _sum(parts, "total", "links"),
                         "episodes": [r["id"] for r in parts]}]
             if arch:
-                actions.insert(0, {"action": "archive", "frees": sum(r["source"] for r in arch),
+                actions.insert(0, {"action": "archive", "frees": _sum(arch, "source", "source_links"),
                                    "episodes": [r["id"] for r in arch]})
             out.append({**base, "rule": "all_published", "actions": actions})
         elif arch and all(r["render_finished_at"] is not None and r["render_finished_at"] < limit for r in arch):
             out.append({**base, "rule": "old_source",
                         "age_days": min(int((now - r["render_finished_at"]) // 86400) for r in arch),
-                        "actions": [{"action": "archive", "frees": sum(r["source"] for r in arch),
+                        "actions": [{"action": "archive", "frees": _sum(arch, "source", "source_links"),
                                      "episodes": [r["id"] for r in arch]}]})
         elif all(r["state"] in (FAILED, INCOMPLETE) and r["last_activity"] < limit for r in parts):
             out.append({**base, "rule": "stale_unfinished",
                         "age_days": min(int((now - r["last_activity"]) // 86400) for r in parts),
-                        "actions": [{"action": "delete", "frees": sum(r["total"] for r in parts),
+                        "actions": [{"action": "delete", "frees": _sum(parts, "total", "links"),
                                      "episodes": [r["id"] for r in parts]}]})
     return out
 
@@ -269,7 +312,7 @@ def auto_archive_plan(rows: list[dict], now: float, grace_seconds: float) -> lis
         since = max((r.get("complete_since") or now for r in parts), default=now)
         if arch and now - since >= grace_seconds:
             plan.append({"video_id": vid, "episodes": [r["id"] for r in arch],
-                         "freed": sum(r["source"] for r in arch), "since": since})
+                         "freed": _sum(arch, "source", "source_links"), "since": since})
     return plan
 
 
@@ -313,7 +356,7 @@ class StorageCache:
         report = {
             "computed_at": datetime.fromtimestamp(now, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "disks": disks, **warning(disks),
-            "episodes": rows,
+            "episodes": [{k: v for k, v in r.items() if k not in ("links", "source_links")} for r in rows],
             "totals": {"source": sum(r["source"] for r in rows), "shorts": sum(r["shorts_bytes"] for r in rows),
                        "other": sum(r["other"] for r in rows), "episodes": sum(r["total"] for r in rows)},
             "caches": [{"name": "Model Whisper", "path": str(models), "bytes": tree_size(models),
