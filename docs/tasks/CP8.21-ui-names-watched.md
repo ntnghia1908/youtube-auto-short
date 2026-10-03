@@ -95,7 +95,7 @@ Không chạm database hay security model. Chạm web API nội bộ (thêm endp
   - D6: nút icon SVG inline (Tải về, Xóa, Lặp lại; `title` + `aria-label`, ≥ 44 px).
   - Docs: CP7 R4, CP8.3 (W6 / W8 / Config), CP8.9, project-profile, README, `config.example.toml`.
 - Tests: `python -m pytest -q -n auto` → 1337 passed, 1 skipped; `node scripts/framework-check.mjs` → PASS. Test mới: `tests/test_web_cp821.py` (10), 3 test trong `tests/test_render_reuse.py` (layout khai thị, hash Short `de0b688d…` = c2007c6, render khai thị thật bằng ffmpeg); test cũ cập nhật theo format tên mới. Server 8081 trên bản sao `~/.cache/auto-short-cp821-test/`: tập `2mVA5If4M3w` render lại = "skip (up to date)" (hash Short không đổi trên dữ liệu thật); `2mVA5If4M3w.kt` render lại 6 video (5 ph 44 s), ảnh khung trước / sau `~/.cache/auto-short-cp821-test/frames/{before,after}_kt_k01.png`; HTTP: tên file / Copy / `Content-Disposition` đúng, tick / bỏ tick "Đã xem" ghi `watched.json`, `/api/ui` = `{"advanced": false}`. Server đã tắt; `work/` / `output/` chính không đổi.
-- Review: chưa.
+- Review: ORCHESTRATOR round 1 ACCEPTED (2026-10-03): đọc diff (render layout theo kind, names, `watched.json` + API, JS watched/icon/cờ ẩn), chạy lại `PYTHONPATH=<worktree>/src pytest -q -n auto` = 1337 passed, 1 skipped; xem khung khai thị trước/sau. JS chưa kiểm trên trình duyệt — manual test là gate.
 - Important findings / decisions:
   - Layout khai thị là hằng số (không thêm key `[render]`): người dùng chỉ chỉnh `[render]` cho Short.
   - "Đã xem" lưu trong `watched.json` riêng (không thêm field vào `publish.json`: schema nghiêm ngặt, `_order` sẽ xóa field lạ, code cũ trên 8080 sẽ báo hỏng).
