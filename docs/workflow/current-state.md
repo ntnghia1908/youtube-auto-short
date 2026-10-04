@@ -16,7 +16,7 @@ Auto Short (cập nhật 2026-10-04): `main` = `abd6704`. Phiên 2026-10-04 đã
 - Enhance BẬT, cấu hình GFPGAN (`[enhance] face = "gfpgan_v1.4"`); worker v3 trên 3090 + 3050 (cài lại 2026-10-04, self-test "GFPGAN OK"); 7 tập HD cũ đã bấm "Enhance lại"; ước ≈ 6 h / tập (3090), ≈ 13 h (3050), ≈ 18 ngày cả bộ. 3090 GPU 100 % — thêm worker không nhanh hơn.
 - 13 video bộ khác lỗi YouTube chặn bot đêm 2026-10-03 đã xếp lại đầu hàng (một số đã xong).
 
-Hạ tầng: VM 32 nhân, 125 GB RAM; IP đổi `10.8.102.101` → **`10.8.102.100`** khi reboot 2026-10-04 (DHCP) — ssh config 3090 / 3050 đã sửa; nên xin IP cố định. `setup-gpu-node-v4.ps1` mặc định `-ServerHost 10.8.102.101` (cũ) → chạy với `-ServerHost 10.8.102.100`. `config.toml` repo chính: `[enhance] lease_hours = 8`, `face = "gfpgan_v1.4"`; `[web] prepare_workers = 4`, `worker_nice = 10`; `[transcript.whisper] cpu_threads = 24`, `cpu_threads_per_job = 8`; `[render] jobs = 2` (bản sao lưu `~/.cache/config.toml.bak-pre-*`).
+Hạ tầng: VM 32 nhân, 125 GB RAM; IP đổi `10.8.102.101` → **`10.8.102.100`** khi reboot 2026-10-04 (DHCP) — ssh config 3090 / 3050 đã sửa; nên xin IP cố định. `setup-gpu-node-v4.ps1` mặc định `-ServerHost 10.8.102.101` (cũ) → chạy với `-ServerHost 10.8.102.100`. `config.toml` repo chính: `[enhance] lease_hours = 12`, `face = "gfpgan_v1.4"`; `[web] prepare_workers = 4`, `worker_nice = 10`; `[transcript.whisper] cpu_threads = 24`, `cpu_threads_per_job = 8`; `[render] jobs = 2` (bản sao lưu `~/.cache/config.toml.bak-pre-*`).
 
 Chinese Learning (CL1, bản đồ: `docs/tasks/CL1-roadmap.md`): CL1.1, CL1.2 MERGED. G6A / G6B: PENDING HUMAN LEAD DECISION. CL1.3, CL1.4 chờ.
 
