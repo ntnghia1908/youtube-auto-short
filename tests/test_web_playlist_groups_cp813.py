@@ -167,11 +167,12 @@ def test_playlist_page_seven_tabs_and_empty_notes(tcfg):
     filters = html[start:html.index("</div>", start)]
     tabs = re.findall(r'data-filter="(\w+)">([^(<]+) \(<span class="n">0</span>\)</button>', filters)
     assert tabs == [("all", "Tất cả"), ("todo", "Chưa xử lý"), ("running", "Đang xử lý"),
-                    ("failed", "Lỗi / dở dang"), ("doing", "Đang làm"), ("done", "Xong")]
+                    ("failed", "Lỗi / dở dang"), ("prepared", "Chờ cắt"), ("doing", "Đang làm"),
+                    ("done", "Xong")]  # CP13.2: "Chờ cắt" added
     assert '<p id="pl-running-empty" class="muted small" hidden>Không có tập nào đang xử lý</p>' in html
     assert '<p id="pl-failed-empty" class="muted small" hidden>Không có tập nào lỗi / dở dang</p>' in html
     for needle in ('let plFilter = "doing";',
-                   'const PL_FILTERS = ["all", "todo", "running", "failed", "doing", "done"];',
+                   'const PL_FILTERS = ["all", "todo", "running", "failed", "prepared", "doing", "done"];',
                    "if (PL_FILTERS.includes(savedFilter)) plFilter = savedFilter;",
                    'li.hidden = plFilter !== "all" && li.dataset.group !== plFilter;',
                    '$("#pl-failed-empty").hidden = !(plFilter === "failed" && shown === 0);',

@@ -180,6 +180,13 @@ of the text, widened to whole sentences and kept in the document's paragraphs (l
 link reports how well episode N matches ("Khớp 88%") and recomposes the unposted posts of the bộ kinh; Shorts that do
 not match (or an episode that matches below 60%) keep the AI path. Contract: P15 of the same file.
 
+"Chuẩn bị + HD" (CP13.2): on a bộ kinh page, the button of that name queues, in episode order, a prepare-only job for
+every episode not processed yet (download, transcript, analysis, then the enhance decision; no AI, no render, no khai
+thị job); the episode then shows "đã chuẩn bị — chờ cắt" with its HD progress (tab "Chờ cắt", not an error) while the
+enhance workers take the episodes in episode order. "Chạy tiếp" on such an episode, or "Chạy tiếp cả bộ" for all of them,
+runs AI then render for the Short and the khai thị (the render waits for the HD source). Task:
+`docs/tasks/CP13.2-hd-first.md`.
+
 Storage tab (CP8.6, "Bộ nhớ" in the top bar, `/storage`): free / used space of the drive holding `work/` and
 `output/`, the size of every episode (source video / Shorts / other) and of the Whisper models, and clean-up
 suggestions with a "Làm" button (asks first; nothing is ever deleted automatically): episodes whose Shorts are all

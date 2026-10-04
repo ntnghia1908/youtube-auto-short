@@ -39,6 +39,7 @@ from ..post import fetch as post_fetch
 from ..post import stage as post_stage
 from ..render import RenderError, run_render
 from ..workspace import atomic_write_json
+from . import prepared
 from ..selection.client import ChatUnavailable
 
 log = logging.getLogger("auto_short")
@@ -906,8 +907,9 @@ class PipelineTarget:
                  pipeline: Callable = run_pipeline,
                  preflight: Callable[[Config], None] | None = ollama_preflight,
                  episode_id: str | None = None, disk_blocked: Callable[[], str | None] | None = None,
-                 enhance=None):
+                 enhance=None, prepare_only: bool = False):
         self.url, self.config, self.series, self.episode = url, config, series, episode
+        self.prepare_only = prepare_only  # CP13.2 H1: "Chuẩn bị + HD": only the prepare lane, then stop
         self.pipeline, self.preflight, self.episode_id = pipeline, preflight, episode_id
         self.disk_blocked = disk_blocked
         self.enhance = enhance  # CP13.1b: object with ``decide(episode_id)`` / ``hold(episode_id) -> bool``, or None
@@ -956,7 +958,14 @@ class PipelineTarget:
 
     def __call__(self, job: Job) -> None:
         """Whole pipeline in one call (serial mode, W5 before CP8.10)."""
-        self._finish(job, self._run(job, None, preflight=True, episode_id=self.episode_id))
+        if self.prepare_only:
+            self.prepare_only_step(job)
+            return
+        result = self._run(job, None, preflight=True, episode_id=self.episode_id)
+        eid = getattr(result, "episode_id", None) or self.episode_id
+        if eid:
+            prepared.clear(self.config, eid)  # CP13.2: a full run takes the episode out of "chờ cắt"
+        self._finish(job, result)
 
     # lanes (CP8.10)
 
@@ -969,12 +978,21 @@ class PipelineTarget:
         result = self._run(job, LANE_STAGES[PREPARE], preflight=False, episode_id=self.episode_id)
         self._resolved = result.episode_id or self._resolved
 
+    def prepare_only_step(self, job: Job) -> None:
+        """CP13.2 H1 "Chuẩn bị + HD": ingest → transcript → analysis (+ the enhance decision after ingest), then the job
+        ends ``done`` with the marker :mod:`prepared`: no AI, no render, no khai thị."""
+        self.prepare(job)
+        prepared.mark(self.config, self._later_id(job))
+        job.stage = None
+        job.summary = "Đã chuẩn bị — chờ cắt"
+
     def _later_id(self, job: Job) -> str:
         return self._resolved or job.episode_id
 
     def ai(self, job: Job) -> None:
         # a run after waiting for the GPU repeats the lane: forget the stages the interrupted run reported
         job.stages[:] = [st for st in job.stages if st["stage"] not in LANE_STAGES[AI]]
+        prepared.clear(self.config, self._later_id(job))  # CP13.2: "Chạy tiếp" took the episode out of "chờ cắt"
         try:
             self._run(job, LANE_STAGES[AI], preflight=True, episode_id=self._later_id(job))
         except StageFailed as exc:  # O5: a stage failed - was it Ollama going away, or a real error?
@@ -995,21 +1013,28 @@ class PipelineTarget:
         return self.enhance is not None and bool(self.enhance.hold(self._later_id(job)))
 
     def lane_steps(self) -> list[Step]:
+        if self.prepare_only:
+            return [Step(PREPARE, self.prepare_only_step)]
         return [Step(PREPARE, self.prepare), Step(AI, self.ai), Step(RENDER, self.render)]
 
     def spec(self) -> dict:
         """CP8.22: what a restart needs to recreate this target."""
-        return {"url": self.url, "series": self.series, "episode": self.episode, "episode_id": self.episode_id}
+        out = {"url": self.url, "series": self.series, "episode": self.episode, "episode_id": self.episode_id}
+        if self.prepare_only:
+            out["prepare_only"] = True
+        return out
 
 
 def pipeline_target(url: str, config: Config, *, series: str | None = None, episode: str | None = None,
                     pipeline: Callable = run_pipeline,
                     preflight: Callable[[Config], None] | None = ollama_preflight,
                     episode_id: str | None = None,
-                    disk_blocked: Callable[[], str | None] | None = None, enhance=None) -> PipelineTarget:
+                    disk_blocked: Callable[[], str | None] | None = None, enhance=None,
+                    prepare_only: bool = False) -> PipelineTarget:
     """See :class:`PipelineTarget`."""
     return PipelineTarget(url, config, series=series, episode=episode, pipeline=pipeline, preflight=preflight,
-                          episode_id=episode_id, disk_blocked=disk_blocked, enhance=enhance)
+                          episode_id=episode_id, disk_blocked=disk_blocked, enhance=enhance,
+                          prepare_only=prepare_only)
 
 
 # --- render job (W4 title edit) ------------------------------------------------------------------------

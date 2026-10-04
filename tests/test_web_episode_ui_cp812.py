@@ -153,7 +153,7 @@ def test_playlist_page_running_filter_static(tcfg):
         js = c.get("/static/app.js").text
     filters = html[html.index('<div id="pl-filters"'):html.index("</div>", html.index('<div id="pl-filters"'))]
     order = [m.group(1) for m in re.finditer(r'data-filter="(\w+)"', filters)]
-    assert order == ["all", "todo", "running", "failed", "doing", "done"]
+    assert order == ["all", "todo", "running", "failed", "prepared", "doing", "done"]  # CP13.2: + "Chờ cắt"
     assert '>Đang xử lý (<span class="n">0</span>)</button>' in filters
     assert '<p id="pl-running-empty" class="muted small" hidden>Không có tập nào đang xử lý</p>' in html
     for needle in ('const RUNNING_STATES = ["queued", "processing"];',
