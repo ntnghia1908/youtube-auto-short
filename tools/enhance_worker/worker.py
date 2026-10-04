@@ -40,9 +40,11 @@ import urllib.request
 from fractions import Fraction
 from pathlib import Path
 
-__version__ = "2"  # 2: gui kem so lieu GPU (gpu_stats, CP8.28)
+__version__ = "3"  # 2: gui kem so lieu GPU (gpu_stats, CP8.28); 3: phuc hoi mat GFPGAN + capabilities (CP13.4)
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))  # srvgg.py canh worker.py
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # srvgg.py, face.py canh worker.py
+import face as face_mod  # noqa: E402  (khong nap torch o muc module)
+
 EXIT_OK, EXIT_ERROR, EXIT_AUTH = 0, 1, 3
 
 log = logging.getLogger("enhance_worker")
@@ -77,6 +79,7 @@ DEFAULTS = {
     "upload_backoff_max_seconds": 120,
     "drain_seconds": 30,
     "auth_retry_seconds": 600,  # 401: nghi roi doc lai config (token) va thu lai
+    "face": "auto",            # CP13.4: auto = nhan viec phuc hoi mat khi du goi + trong so | off = khong bao gio nhan
 }
 
 
@@ -512,6 +515,39 @@ def read_gpu_stats(cfg: dict, run=subprocess.run) -> dict | None:
         return None
 
 
+class _EachFrame:
+    """Dang goi mot ham khung -> khung (ham gia trong test) nhu luong push / flush."""
+
+    def __init__(self, fn):
+        self.fn = fn
+
+    def push(self, frame):
+        return [self.fn(frame)]
+
+    def flush(self):
+        return []
+
+
+def face_stream(face, params: dict):
+    """CP13.4 / G5: luong `push(frame) -> [khung xong]` + `flush()` cho mot doan; None khi khong co buoc mat."""
+    if face is None:
+        return None
+    if hasattr(face, "restore_frames"):
+        return face_mod.SparseFace(face, int(params.get("face_detect_every", 1) or 1))
+    return _EachFrame(face)
+
+
+def _stack_checked(frames, like):
+    """np.stack cac khung da phuc hoi (None neu rong); sai kich thuoc / kieu la loi ro rang."""
+    if not frames:
+        return None
+    import numpy as np
+    for f in frames:
+        if f.shape != like.shape[1:] or f.dtype != like.dtype:
+            raise RuntimeError("buoc phuc hoi mat tra khung sai kich thuoc / kieu")
+    return np.ascontiguousarray(np.stack(frames))
+
+
 class Engine:
     """Giu mang tren GPU (hoac CPU), enhance mot doan: doc khung | batch GPU | ma hoa."""
 
@@ -534,6 +570,9 @@ class Engine:
         self.net = None
         self.net_key = None
         self.on_device = False
+        self.face = None            # CP13.4: callable(frame BGR uint8) -> frame, hoac None
+        self.face_key = None
+        self.face_factory = self._load_face   # test thay bang ham gia
         self.encoder = detect_encoder(cfg)
         self.gpu = gpu_name(cfg, dev)
 
@@ -553,9 +592,36 @@ class Engine:
             self.net = self.net.to(self.dev)
             self.on_device = True
 
+    def _load_face(self, params: dict):
+        t0 = time.time()
+        fr = face_mod.FaceRestorer(Path(self.cfg["models_dir"]), self.dev, float(params.get("face_weight", 1.0)),
+                                   half=self.dev == "cuda")
+        log.info("nap %s weight=%s (%.1fs)", face_mod.FACE_MODEL, fr.weight, time.time() - t0)
+        return fr
+
+    def ensure_face(self, params: dict):
+        """CP13.4: ham phuc hoi mat cho `params` (None khi `face` = none). Model la la loi ro rang, khong bo qua im lang."""
+        name = params.get("face") or "none"
+        if name == "none":
+            return None
+        if name != face_mod.FACE_MODEL:
+            raise ValueError(f"face khong ho tro: {name!r} (can cap nhat worker)")
+        key = (name, float(params.get("face_weight", 1.0)))
+        if self.face is None or self.face_key != key:
+            self.face, self.face_key = self.face_factory(params), key
+        elif hasattr(self.face, "reload"):
+            self.face.reload()
+        return self.face
+
     def release_vram(self):
         """E7: nhuong Ollama - giu trong so tren CPU, tra VRAM."""
-        if self.dev != "cuda" or self.net is None or not self.on_device:
+        if self.dev != "cuda":
+            return
+        if self.face is not None and hasattr(self.face, "offload"):
+            self.face.offload()
+        if self.net is None or not self.on_device:
+            if self.face is not None:
+                self.torch.cuda.empty_cache()
             return
         self.net = self.net.float().to("cpu")
         self.on_device = False
@@ -580,6 +646,8 @@ class Engine:
         import numpy as np
         import torch.nn.functional as F
         self.ensure(params)
+        face = self.ensure_face(params)
+        fstream = face_stream(face, params)
         ext_abort = abort
         abort = threading.Event()  # noi bo: bao luong doc / ghi dung khi run_segment ket thuc / loi
         w, h = src_wh
@@ -613,7 +681,18 @@ class Engine:
                             return
                         continue
                     if item is _DONE:
+                        if fstream is not None:   # G5: khung con lai cua lan do thua
+                            tail = fstream.flush()
+                            if tail:
+                                proc.stdin.write(memoryview(_stack_checked(tail, like=tail[0][None])))
                         return
+                    if fstream is not None:   # CP13.4: sau SRVGG, truoc ma hoa (luong rieng: chong len GPU cua batch ke tiep)
+                        outs = []
+                        for fr in item:
+                            outs += fstream.push(fr)
+                        item = _stack_checked(outs, like=item)
+                        if item is None:
+                            continue
                     proc.stdin.write(memoryview(item))
             except BaseException as e:
                 werr.append(e)
@@ -683,6 +762,7 @@ class Engine:
         os.replace(tmp, out_path)
         stats["seconds"] = round(time.time() - t0, 2)
         stats["out_size"] = f"{ow}x{oh}"
+        stats["face"] = params.get("face") or "none"
         return stats
 
 
@@ -744,6 +824,12 @@ class Worker:
             log.info("thiet bi: %s (%s), encoder: %s, batch %s", self.engine.dev, self.engine.gpu,
                      self.engine.encoder, self.cfg["batch_size"])
         return self.engine
+
+    def capabilities(self) -> list[str]:
+        """CP13.4: nhung viec ngoai model co ban may nay nhan duoc (VM chi giao viec co mat cho worker co 'face:...')."""
+        if self.cfg.get("face", "auto") == "off":
+            return []
+        return [] if face_mod.support_problem(Path(self.cfg["models_dir"])) else [face_mod.CAPABILITY]
 
     def gpu_label(self) -> str:
         if not self._gpu:
@@ -817,7 +903,7 @@ class Worker:
 
     def acquire_lease(self):
         try:
-            body = {"worker": self.cfg["worker_name"], "gpu": self.gpu_label()}
+            body = {"worker": self.cfg["worker_name"], "gpu": self.gpu_label(), "capabilities": self.capabilities()}
             stats = self.gpu_stats()
             if stats:
                 body["gpu_stats"] = stats  # CP8.28: truong tuy chon, VM cu bo qua
@@ -871,6 +957,9 @@ class Worker:
                 return f"thieu params.{k}"
         if int(d["frames"]) <= 0 or int(d["segment_frames"]) <= 0:
             return "frames / segment_frames phai > 0"
+        face = p.get("face") or "none"
+        if face != "none" and face != face_mod.FACE_MODEL:
+            return f"face khong ho tro: {face!r} (can cap nhat worker)"
         return ""
 
     def resume_check(self, lease) -> bool:
@@ -923,6 +1012,14 @@ class Worker:
         if params.get("model") != "realesr-general-x4v3":
             self.release(lease, f"model khong ho tro: {params.get('model')}")
             return "released"
+        if (params.get("face") or "none") != "none":   # CP13.4: khong am tham bo qua buoc mat
+            problem = "worker dat face = off" if self.cfg.get("face", "auto") == "off" \
+                else face_mod.support_problem(Path(self.cfg["models_dir"]))
+            if problem:
+                log.error("viec can phuc hoi mat (%s) nhung worker v%s chua dung duoc: %s - CAN CAP NHAT WORKER",
+                          params.get("face"), __version__, problem)
+                self.release(lease, f"can cap nhat worker: {problem}")
+                return "released"
 
         if not self.ensure_source(lease, src):
             return "stopped" if self.stop.is_set() else "released"
@@ -987,9 +1084,10 @@ class Worker:
             self.state.set_seg(n, "encoded", sha, out.stat().st_size)
             self.stats["encoded"] += 1
             done_this_run += 1
-            log.info("doan %d/%d xong: %d khung %s %.1fs (%.1f khung/s) batch<=%d luong doc=%s enc=%s",
+            log.info("doan %d/%d xong: %d khung %s %.1fs (%.1f khung/s) batch<=%d luong doc=%s enc=%s face=%s",
                      n + 1, nseg, st["frames"], st["out_size"], st["seconds"],
-                     st["frames"] / max(st["seconds"], 1e-6), st["max_batch"], st["reader_thread"], st["encoder"])
+                     st["frames"] / max(st["seconds"], 1e-6), st["max_batch"], st["reader_thread"], st["encoder"],
+                     st.get("face", "none"))
             n += 1
         # cho upload het
         limit = time.time() + (self.cfg["drain_seconds"] if self.max_segments and done_this_run >= self.max_segments else 10 ** 9)
@@ -1237,6 +1335,24 @@ def self_test(cfg: dict) -> int:
         except Exception as e:
             fail.append("enhance")
             out("FAIL", f"enhance doan mau: {e}")
+
+    # GFPGAN (CP13.4): buoc phuc hoi mat
+    if eng is not None:
+        if cfg.get("face", "auto") == "off":
+            out(" OK ", "phuc hoi mat: tat (config face = off) - worker khong nhan viec co mat")
+        else:
+            problem = face_mod.support_problem(Path(cfg["models_dir"]))
+            if problem:
+                warn_list.append("face")
+                out("WARN", f"GFPGAN chua dung duoc: {problem} -> worker KHONG nhan viec phuc hoi mat")
+            else:
+                try:
+                    t0 = time.time()
+                    fr = eng.face_factory({"face": face_mod.FACE_MODEL, "face_weight": 1.0})
+                    out(" OK ", f"GFPGAN OK: {fr.selftest()} ({time.time() - t0:.1f}s)")
+                except Exception as e:
+                    fail.append("gfpgan")
+                    out("FAIL", f"GFPGAN: {e}")
 
     # VM
     api = Api(cfg["server_url"], cfg["token"], 10)

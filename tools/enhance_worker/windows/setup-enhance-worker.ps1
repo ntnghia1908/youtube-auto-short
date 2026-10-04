@@ -9,7 +9,9 @@
   - Them block SSH rieng "Enhance Worker v1" (Host gpu-worker-v4, LocalForward 18080 -> VM 8080);
     KHONG sua block / task Ollama v4.
   - Dang ky 2 Task Scheduler rieng (tunnel + worker), tu chay khi dang nhap, tu khoi dong lai.
-  - Cuoi cung chay worker.py --self-test.
+  - CP13.4: cai them gfpgan + facexlib + basicsr (chi trong env cua worker) va tai trong so GFPGAN v1.4 +
+    RetinaFace + ParseNet (kiem sha256) de worker v3 nhan viec "phuc hoi mat". Bo qua bang -SkipFace.
+  - Cuoi cung chay worker.py --self-test (phai bao "GFPGAN OK" tru khi -SkipFace).
 
   Chay trong thu muc `tools\enhance_worker\windows` (da chep ca thu muc `enhance_worker` sang may nay).
   Huong dan: docs/guides/enhance-worker-windows.md
@@ -89,6 +91,8 @@ param(
     [string]$WorkerTaskName = "EnhanceWorker-Worker",
 
     [switch]$SkipTorch,
+    # CP13.4: khong cai GFPGAN (phuc hoi mat); worker van chay viec thuong, khong nhan viec co mat
+    [switch]$SkipFace,
     [switch]$SkipSelfTest,
     [switch]$NoTask,
 
@@ -126,6 +130,15 @@ $WeightsBase = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.
 $Weights = @(
     @{ Name = "realesr-general-x4v3.pth";     Sha256 = "8dc7edb9ac80ccdc30c3a5dca6616509367f05fbc184ad95b731f05bece96292" },
     @{ Name = "realesr-general-wdn-x4v3.pth"; Sha256 = "1641f8c4464b9f097c9fdda5589273713f67cf59f3d909e0bd688f0cee269dca" }
+)
+# CP13.4: phuc hoi mat GFPGAN v1.4 (Apache-2.0) + facexlib (MIT); facexlib doc models\facexlib\weights\
+$FaceWeights = @(
+    @{ Name = "GFPGANv1.4.pth"; Rel = "GFPGANv1.4.pth"; Sha256 = "e2cd4703ab14f4d01fd1383a8a8b266f9a5833dacee8e6a79d3bf21a1b6be5ad";
+       Url = "https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth" },
+    @{ Name = "detection_Resnet50_Final.pth"; Rel = "facexlib\weights\detection_Resnet50_Final.pth"; Sha256 = "6d1de9c2944f2ccddca5f5e010ea5ae64a39845a86311af6fdf30841b0a5a16d";
+       Url = "https://github.com/xinntao/facexlib/releases/download/v0.1.0/detection_Resnet50_Final.pth" },
+    @{ Name = "parsing_parsenet.pth"; Rel = "facexlib\weights\parsing_parsenet.pth"; Sha256 = "3d558d8d0e42c20224f13cf5a29c79eba2d59913419f945545d8cf7b72920de2";
+       Url = "https://github.com/xinntao/facexlib/releases/download/v0.2.2/parsing_parsenet.pth" }
 )
 $FfmpegUrl = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
 
@@ -282,6 +295,32 @@ function Ensure-Packages {
     }
 }
 
+function Ensure-FacePackages {
+    # CP13.4: chi trong env cua worker. --no-deps de khong keo opencv-python (trung opencv-python-headless) va
+    # tb-nightly; chi cai nhung goi ma buoc mat thuc su import (face.py). basicsr bien dich loi tren mot so may
+    # Windows ("KeyError: __version__") -> thu ban basicsr-fixed.
+    param([string]$Py)
+    if ($SkipFace) { Info "Bo qua GFPGAN (-SkipFace)."; return }
+    $probe = "import sys; sys.path.insert(0, r'$SourceDir'); import face; face.shim_basicsr(); import basicsr, facexlib; from gfpgan.archs.gfpganv1_clean_arch import GFPGANv1Clean; print('ok')"
+    $r = Invoke-Native -Exe $Py -Arguments @("-c", $probe)
+    if ($r.Code -eq 0) { Ok "GFPGAN / facexlib / basicsr da co trong env."; return }
+    Info "Cai torchvision + goi phu cua GFPGAN..."
+    & $Py -m pip install --upgrade torchvision --index-url $TorchIndexUrl | Out-Host
+    if ($LASTEXITCODE -ne 0) { Fail "pip install torchvision that bai." }
+    & $Py -m pip install scipy pyyaml requests tqdm pillow addict future | Out-Host
+    if ($LASTEXITCODE -ne 0) { Fail "pip install goi phu (scipy, pyyaml, ...) that bai." }
+    Info "Cai basicsr + facexlib + gfpgan (--no-deps)..."
+    & $Py -m pip install --no-deps basicsr facexlib gfpgan | Out-Host
+    if ($LASTEXITCODE -ne 0) {
+        Warn "pip install basicsr that bai -> thu basicsr-fixed."
+        & $Py -m pip install --no-deps basicsr-fixed facexlib gfpgan | Out-Host
+        if ($LASTEXITCODE -ne 0) { Fail "Khong cai duoc basicsr / basicsr-fixed + facexlib + gfpgan. Gui dong loi cho ORCHESTRATOR hoac chay lai voi -SkipFace." }
+    }
+    $r = Invoke-Native -Exe $Py -Arguments @("-c", $probe)
+    if ($r.Code -ne 0) { Fail "Khong import duoc gfpgan / facexlib / basicsr sau khi cai: $(($r.Output | Out-String).Trim())" }
+    Ok "GFPGAN / facexlib / basicsr: import duoc."
+}
+
 function Test-FfmpegNvenc {
     param([string]$Exe)
     $r = Invoke-Native -Exe $Exe -Arguments @("-hide_banner", "-encoders")
@@ -349,14 +388,39 @@ function Ensure-Weights {
     }
 }
 
+function Ensure-FaceWeights {
+    if ($SkipFace) { return }
+    foreach ($w in $FaceWeights) {
+        $dest = Join-Path $ModelsDir $w.Rel
+        New-Item -ItemType Directory -Path (Split-Path -Parent $dest) -Force | Out-Null
+        if (Test-Path $dest) {
+            if ((Get-FileHash -Path $dest -Algorithm SHA256).Hash.ToLower() -eq $w.Sha256) {
+                Ok "Trong so da co, sha256 khop: $($w.Rel)"
+                continue
+            }
+            Warn "Trong so sai sha256, tai lai: $($w.Rel)"
+            Remove-Item $dest -Force
+        }
+        Info "Tai trong so $($w.Name)..."
+        Invoke-WebRequest -Uri $w.Url -OutFile $dest -UseBasicParsing
+        $h = (Get-FileHash -Path $dest -Algorithm SHA256).Hash.ToLower()
+        if ($h -ne $w.Sha256) {
+            Remove-Item $dest -Force
+            Fail "sha256 trong so $($w.Name) khong khop (nhan $h). Khong dung file nay."
+        }
+        Ok "Trong so OK: $($w.Rel)"
+    }
+}
+
 function Copy-App {
-    foreach ($f in @("worker.py", "srvgg.py")) {
+    foreach ($f in @("worker.py", "srvgg.py", "face.py")) {
         $src = Join-Path $SourceDir $f
         if (-not (Test-Path $src)) { Fail "Khong thay $src. Chep ca thu muc tools\enhance_worker sang may nay." }
     }
     New-Item -ItemType Directory -Path $AppDir -Force | Out-Null
     Copy-Item (Join-Path $SourceDir "worker.py") $AppDir -Force
     Copy-Item (Join-Path $SourceDir "srvgg.py") $AppDir -Force
+    Copy-Item (Join-Path $SourceDir "face.py") $AppDir -Force
     Ok "Da chep worker vao $AppDir"
 }
 
@@ -450,6 +514,7 @@ function Write-WorkerConfig {
         cuda_device     = $CudaDevice
         ffmpeg          = $Ffmpeg
         ffprobe         = $ffprobe
+        face            = $(if ($SkipFace) { "off" } else { "auto" })
     }
     New-Item -ItemType Directory -Path $InstallDir, $LogDir, $WorkDir -Force | Out-Null
     $json = $cfg | ConvertTo-Json -Depth 4
@@ -635,8 +700,10 @@ if (-not (Get-Command Register-ScheduledTask -ErrorAction SilentlyContinue)) {
 New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 $py = Ensure-Env
 Ensure-Packages -Py $py
+Ensure-FacePackages -Py $py
 $ffmpeg = Ensure-Ffmpeg
 Ensure-Weights
+Ensure-FaceWeights
 Copy-App
 Update-SshConfig
 Test-WorkerSsh
@@ -668,10 +735,15 @@ if ($SkipSelfTest) {
 }
 else {
     Info "Chay self-test..."
-    & $py (Join-Path $AppDir "worker.py") --config $ConfigFile --self-test
+    $stOut = & $py (Join-Path $AppDir "worker.py") --config $ConfigFile --self-test 2>&1 | Out-String
+    Write-Host $stOut
     if ($LASTEXITCODE -ne 0) {
         $selfTestOk = $false
         Warn "Self-test co loi (xem tren). Sua xong chay lai script nay hoac auto-fix-enhance-worker.ps1."
+    }
+    elseif (-not $SkipFace -and $stOut -notmatch "GFPGAN OK") {
+        $selfTestOk = $false
+        Warn "Self-test khong bao 'GFPGAN OK': worker se KHONG nhan viec phuc hoi mat. Xem dong [WARN] GFPGAN o tren."
     }
 }
 

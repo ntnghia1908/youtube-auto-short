@@ -129,7 +129,8 @@ resulting `work/<id>/source_hd.mp4`. Such an episode runs transcript → titling
 overrides the decision per video, and the storage tab lists the workers with a global "Tạm dừng enhance". An
 enhanced video's source is never cleaned up automatically. Worker tokens: `auto-short enhance-token --name rtx3090`
 prints one (once); put it in `AUTO_SHORT_ENHANCE_TOKENS='name=token,…'` in the environment of `auto-short web`
-(never in config). Contract: `docs/decisions/CP13.1-enhance-worker-contract.md`.
+(never in config). `[enhance] face = "gfpgan_v1.4"` (CP13.4, worker v3) adds GFPGAN face restoration; finished videos keep
+their HD source ("HD cấu hình cũ") until "Enhance lại". Contract: `docs/decisions/CP13.1-enhance-worker-contract.md`.
 
 HD downloads (CP8.27): once `source_hd.mp4` is done, the episode page offers "Tải bản ngang (HD)" (`GET /api/episodes/<id>/source-hd`,
 Range supported, named `[<bộ kinh>_]Tập<N>_HD.mp4`; the playlist page has a download icon per episode) and "Tạo bản dọc" (a

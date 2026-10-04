@@ -29,6 +29,10 @@ HD_NAME = "source_hd.mp4"
 ENHANCED_DIR = "enhanced"
 SCHEMA_VERSION = 1
 PLAN_VERSION = 1  # bump when the segment format changes (part of the config_hash)
+FACE_PLAN_VERSION = 2  # CP13.4: plan version of segments with a face-restoration step (``params.face`` != none)
+FACE_NONE = "none"
+FACE_GFPGAN = "gfpgan_v1.4"
+FACE_MODELS = (FACE_NONE, FACE_GFPGAN)
 
 PENDING, ASSEMBLING, DONE, FAILED = "pending", "assembling", "done", "failed"
 
@@ -91,12 +95,22 @@ def new_doc(episode_id: str) -> dict:
             "follows": None, "state": PENDING, "waiting_hd": False, "wanted_at": None, "height": None, "width": None,
             "fps": None, "frames": None, "segment_frames": None, "source_sha256": None, "config_hash": None,
             "params": None, "lease": None, "segments": {}, "profile": None, "error": None,
-            "source_hd_sha256": None, "source_hd_size": None, "source_hd_mtime_ns": None, "finished_at": None,
+            "redo": False, "hd_config_hash": None, "source_hd_sha256": None, "source_hd_size": None, "source_hd_mtime_ns": None, "finished_at": None,
             "workers": []}
 
 
 def params_of(cfg: EnhanceConfig) -> dict:
-    return {"model": cfg.model, "denoise": cfg.denoise, "pre_height": cfg.pre_height, "out_height": cfg.out_height}
+    """The model parameters the worker gets in the lease. ``face`` = none keeps the original four keys (CP13.4: the
+    ``config_hash`` of an episode enhanced before stays valid); another ``face`` adds ``face`` + ``face_weight``."""
+    params = {"model": cfg.model, "denoise": cfg.denoise, "pre_height": cfg.pre_height, "out_height": cfg.out_height}
+    if cfg.face != FACE_NONE:
+        params.update(face=cfg.face, face_weight=cfg.face_weight, face_detect_every=cfg.face_detect_every)
+    return params
+
+
+def has_face(params: dict | None) -> bool:
+    """Do these params ask the worker for a face-restoration step (CP13.4)?"""
+    return bool(params) and (params.get("face") or FACE_NONE) != FACE_NONE
 
 
 def segment_frames_of(fps: Fraction, seconds: int) -> int:
@@ -105,7 +119,8 @@ def segment_frames_of(fps: Fraction, seconds: int) -> int:
 
 def config_hash_of(params: dict, segment_frames: int, source_sha256: str | None) -> str:
     """E2: hash of everything that decides the segment bytes: model parameters, segment length, the source."""
-    return hashing.config_hash({"plan": PLAN_VERSION, "params": params, "segment_frames": segment_frames,
+    plan = FACE_PLAN_VERSION if has_face(params) else PLAN_VERSION
+    return hashing.config_hash({"plan": plan, "params": params, "segment_frames": segment_frames,
                                 "source_sha256": source_sha256})
 
 
@@ -252,6 +267,8 @@ def decide(config: Config, episode_id: str, *, force: bool | None = None, ffprob
         seg = segment_frames_of(Fraction(doc["fps"]), enh.segment_seconds)
         new_hash = config_hash_of(params, seg, source_sha)
         if doc["config_hash"] not in (None, new_hash):  # [enhance] parameters changed: segments of the old hash are useless
+            if doc["state"] == DONE and not doc.get("hd_config_hash"):
+                doc["hd_config_hash"] = doc["config_hash"]  # CP13.4 G3: the HD source keeps the config it was made with
             shutil.rmtree(segments_dir(ws.dir, doc["config_hash"]), ignore_errors=True)
             doc.update(segments={}, profile=None, lease=None)
             if doc["state"] != DONE:
@@ -260,7 +277,7 @@ def decide(config: Config, episode_id: str, *, force: bool | None = None, ffprob
         if doc["state"] == FAILED and force is True:
             doc.update(state=PENDING, error=None)
     else:
-        doc.update(lease=None)  # the workers lose the video: their next call answers 409
+        doc.update(lease=None, redo=False)  # the workers lose the video: their next call answers 409
     write(ws.dir, doc)
     log.info("enhance: %s wanted=%s (%s)", ws.episode_id, wanted, reason)
     mirror(config, ws.episode_id)
@@ -302,15 +319,36 @@ def mirror(config: Config, base_id: str, *, only: str | None = None) -> dict | N
     doc = {**new_doc(kid), **(old or {})}
     for key in ("wanted", "reason", "override", "state", "wanted_at", "height", "width", "fps", "frames",
                 "segment_frames", "source_sha256", "config_hash", "params", "error", "source_hd_sha256",
-                "source_hd_size", "source_hd_mtime_ns", "finished_at"):
+                "source_hd_size", "source_hd_mtime_ns", "finished_at", "redo", "hd_config_hash"):
         doc[key] = base.get(key)
     doc.update(follows=base_id, lease=None, segments={}, profile=None, workers=[])
-    if base.get("state") == DONE and hd_path(root / base_id).is_file():
+    if _hd_usable(base) and hd_path(root / base_id).is_file():
         link_hd(root / base_id, root / kid, doc)
-    elif base.get("state") != DONE:
+    elif not _hd_usable(base):
         hd_path(root / kid).unlink(missing_ok=True)
     write(root / kid, doc)
     return doc
+
+
+def _hd_usable(doc: dict | None) -> bool:
+    """Is the HD source of the document one the render may read? Done, or a "Enhance lại" (CP13.4 G3: ``redo``) keeps the
+    previous HD source in use until the new one is assembled."""
+    return bool(doc) and (doc.get("state") == DONE or (doc.get("state") == PENDING and bool(doc.get("redo"))))
+
+
+def hd_is_old_config(config: Config, doc: dict | None, ws_dir: Path | None = None) -> bool:
+    """CP13.4 G3: is the HD source made with another ``[enhance]`` configuration than the current one ("HD cấu hình cũ")?
+    False when there is no usable HD source or the video does not want enhance."""
+    if not doc or not doc.get("wanted") or not _hd_usable(doc) or not (doc.get("fps") and doc.get("source_sha256")):
+        return False
+    try:
+        cur = config_hash_of(params_of(config.enhance),
+                             segment_frames_of(Fraction(doc["fps"]), config.enhance.segment_seconds),
+                             doc.get("source_sha256"))
+    except (ValueError, ZeroDivisionError):
+        return False
+    made = doc.get("hd_config_hash") or doc.get("config_hash")
+    return bool(made) and made != cur
 
 
 def link_hd(src_dir: Path, dst_dir: Path, doc: dict) -> None:
@@ -339,7 +377,7 @@ def hd_fingerprint(ws_dir: Path) -> FileFingerprint | None:
     is none or the file does not match the record (then the render uses the original source)."""
     doc = read(ws_dir)
     path = hd_path(ws_dir)
-    if not doc or doc.get("state") != DONE or not doc.get("source_hd_sha256") or not path.is_file():
+    if not doc or not _hd_usable(doc) or not doc.get("source_hd_sha256") or not path.is_file():
         return None
     try:
         st = path.stat()

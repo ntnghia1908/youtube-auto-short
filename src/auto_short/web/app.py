@@ -104,6 +104,7 @@ class EnhanceLeaseIn(BaseModel):
     worker: str | None = Field(default=None, max_length=80)
     gpu: str | None = Field(default=None, max_length=80)
     gpu_stats: Any = None  # CP8.28: optional ``nvidia-smi`` numbers (an old worker never sends them)
+    capabilities: Any = None  # CP13.4: optional, e.g. ``["face:gfpgan_v1.4"]`` (an old worker never sends it)
 
 
 class EnhanceBeatIn(BaseModel):
@@ -1760,7 +1761,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     @app.post("/api/enhance/lease")
     def api_enhance_lease(body: EnhanceLeaseIn, name: str = Depends(_worker)):
         """E3: the next video for the worker ``{episode_id, lease_id, expires_at, source_url, ...}`` or 204."""
-        info = svc.lease(name, body.worker, body.gpu, body.gpu_stats)
+        info = svc.lease(name, body.worker, body.gpu, body.gpu_stats, body.capabilities)
         return Response(status_code=204) if info is None else JSONResponse(info)
 
     @app.get("/api/enhance/may-run")
@@ -1857,6 +1858,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             view["rendered_from_hd"] = bool(rm and doc.get("source_hd_sha256")
                                             and rm.get("source_sha256") == doc.get("source_hd_sha256"))
             view["can_rerender"] = bool(view.get("hd_ready") and rm is not None and not view["rendered_from_hd"])
+            view["can_redo"] = bool(view.get("state") == "done" and view.get("hd_old_config"))  # CP13.4 G3
         job = runner.latest_enhance(episode_id)
         view["assembling_job"] = job.status if job is not None and job.active else None
         return view
@@ -1909,6 +1911,39 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                    for part in enh_state.video_parts(config, doc.get("follows") or episode_id)}
         log.info("web: render bằng bản gốc [%s]: %s", episode_id, outcome)
         return {"enhance": _enhance_view(episode_id), "outcome": outcome}
+
+    @app.post("/api/episodes/{episode_id}/enhance/redo")
+    def api_episode_enhance_redo(episode_id: str):
+        """CP13.4 G3 "Enhance lại": queue the video again with the current ``[enhance]`` configuration (the previous HD
+        source stays in use until the new one is assembled; no render until then)."""
+        if (bad := _enhance_episode(episode_id)) is not None:
+            return bad
+        try:
+            svc.redo(episode_id)
+        except EnhanceError as exc:
+            return _enh_error(exc)
+        log.info("web: enhance lại [%s]", episode_id)
+        return {"enhance": _enhance_view(episode_id)}
+
+    @app.post("/api/playlists/{playlist_id}/enhance-redo")
+    def api_playlist_enhance_redo(playlist_id: str):
+        """CP13.4 G3 "Enhance lại cả bộ": every video of the bộ kinh whose HD source was made with another configuration
+        is queued again (episode order); the others are skipped."""
+        doc = _playlist_or_404(playlist_id)
+        if doc is None:
+            return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
+        view = playlists.view(doc, _jobs_by_episode())
+        todo = _by_episode_order([e for e in view["entries"] if e.get("video_id") and (e.get("hd") or {}).get("old_config")
+                                  and e["hd"]["state"] == "done"])
+        redone, errors = 0, []
+        for e in todo:
+            try:
+                svc.redo(e["video_id"])
+                redone += 1
+            except EnhanceError as exc:
+                errors.append({"episode_id": e["video_id"], "detail": str(exc)})
+        log.info("web: playlist %s enhance lại: %d / %d tập, %d lỗi", playlist_id, redone, len(todo), len(errors))
+        return {"playlist_id": playlist_id, "episodes": len(todo), "queued": redone, "errors": errors}
 
     @app.post("/api/episodes/{episode_id}/enhance/rerender")
     def api_episode_rerender_hd(episode_id: str):

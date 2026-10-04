@@ -78,6 +78,7 @@ class EnhanceService:
         self.ffmpeg, self.ffprobe = ffmpeg, ffprobe
         self.lock = threading.RLock()
         self._workers: dict[str, dict] = {}
+        self._warned_caps: set[tuple[str, str]] = set()  # (worker, video) pairs already logged "cần cập nhật worker"
         self._paused = self._load_paused()
 
     # --- global switches ---------------------------------------------------------------------------------------
@@ -151,7 +152,7 @@ class EnhanceService:
                **extra) -> dict:
         w = self._workers.setdefault(name, {"name": name, "label": name, "gpu": None, "last_seen": None,
                                             "episode_id": None, "lease_id": None, "progress": None,
-                                            "gpu_stats": None, "gpu_stats_at": None})
+                                            "gpu_stats": None, "gpu_stats_at": None, "capabilities": []})
         stats = clean_gpu_stats(gpu_stats)  # CP8.28: optional; an old worker never sends it
         if stats is not None:
             w["gpu_stats"], w["gpu_stats_at"] = stats, self._now_iso()
@@ -240,13 +241,37 @@ class EnhanceService:
 
         return sorted(cands, key=sort_key)
 
+    @staticmethod
+    def clean_capabilities(obj: object) -> list[str]:
+        """CP13.4: the optional ``capabilities`` a worker sends with ``POST lease`` (``["face:gfpgan_v1.4"]``); anything
+        unusable -> []. An old worker (v2) sends none: it can only do the plain model."""
+        if not isinstance(obj, list):
+            return []
+        return sorted({x[:40] for x in obj[:20] if isinstance(x, str) and x})
+
+    def _can_take(self, name: str, params: dict | None, caps: list[str], eid: str) -> bool:
+        """CP13.4 G2: may the worker (with ``caps``) take a video enhanced with ``params``? A face step needs the matching
+        capability; an old worker is never given one (it would silently skip the step)."""
+        if not st.has_face(params):
+            return True
+        if f"face:{params.get('face')}" in caps:
+            return True
+        key = (name, eid)
+        if key not in self._warned_caps:
+            self._warned_caps.add(key)
+            log.warning("enhance: worker %s không hỗ trợ face=%s của %s - cần cập nhật worker (setup-enhance-worker.ps1); "
+                        "video này chỉ giao cho worker hỗ trợ", name, params.get("face"), eid)
+        return False
+
     def lease(self, name: str, label: str | None = None, gpu: str | None = None,
-              gpu_stats: object = None) -> dict | None:
+              gpu_stats: object = None, capabilities: object = None) -> dict | None:
         """E3 ``POST lease``: the worker's own valid lease, else the next video (waiting for HD first, then by
-        ``wanted_at``); None = 204 (nothing to do, or the worker may not run now)."""
+        ``wanted_at``); None = 204 (nothing to do, or the worker may not run now). ``capabilities`` (CP13.4): what the
+        worker can do beyond the plain model; a video with a face step goes only to a worker that can."""
         completed: list[str] = []
+        caps = self.clean_capabilities(capabilities)
         with self.lock:
-            self._touch(name, label, gpu, gpu_stats=gpu_stats)
+            self._touch(name, label, gpu, gpu_stats=gpu_stats, capabilities=caps)
             ok, _reason = self.may_run(name)
             if not ok:
                 return None
@@ -256,15 +281,19 @@ class EnhanceService:
                 lease = doc.get("lease")
                 if lease and lease.get("token") == name and self._lease_valid(lease) and doc.get("wanted") \
                         and doc.get("state") == st.PENDING:
-                    ours = (eid, d, doc)
-                    break
+                    if self._can_take(name, doc.get("params"), caps, eid):
+                        ours = (eid, d, doc)
+                        break
+                    doc["lease"] = None  # the worker lost a capability (downgraded): the video goes to another one
+                    st.write(d, doc)
+                    continue
                 if not doc.get("wanted") or doc.get("follows") or doc.get("state") != st.PENDING:
                     continue
                 cands.append((eid, d, doc))
             if ours is None:
                 for eid, d, doc in self._lease_order(cands):
                     doc = self._eligible(eid, d, doc)
-                    if doc is None:
+                    if doc is None or not self._can_take(name, doc.get("params"), caps, eid):
                         continue
                     if len(st.stored_segments(d, doc)) >= st.total_segments(doc):  # complete but never assembled
                         doc.update(state=st.ASSEMBLING, lease=None)
@@ -489,7 +518,7 @@ class EnhanceService:
                               if r.get("worker")})
             cur.update(state=st.DONE, error=None, lease=None, source_hd_sha256=sha, source_hd_size=stat.st_size,
                        source_hd_mtime_ns=stat.st_mtime_ns, finished_at=self._now_iso(), workers=workers,
-                       waiting_hd=cur.get("waiting_hd", False))
+                       waiting_hd=cur.get("waiting_hd", False), redo=False, hd_config_hash=cur.get("config_hash"))
             st.write(d, cur)
             shutil.rmtree(d / st.ENHANCED_DIR, ignore_errors=True)
             st.mirror(self.config, eid)
@@ -533,7 +562,7 @@ class EnhanceService:
             doc = st.read(d)
             if doc is None:
                 return False
-            hold = self.enabled and st.is_pending(doc)
+            hold = self.enabled and st.is_pending(doc) and not doc.get("redo")  # redo: the previous HD source is in use
             if bool(doc.get("waiting_hd")) != hold:
                 doc["waiting_hd"] = hold
                 st.write(d, doc)
@@ -568,6 +597,36 @@ class EnhanceService:
                 st.mirror(self.config, owner)
             return doc
 
+    def redo(self, eid: str) -> dict:
+        """CP13.4 G3 "Enhance lại": queue the video again with the *current* ``[enhance]`` configuration. The previous HD
+        source stays in use (renders keep reading it) until the new one is assembled; segments of another ``config_hash``
+        are never reused. Raises :class:`EnhanceError` (409) when there is nothing to redo."""
+        with self.lock:
+            owner = st.base_of(self.config, eid) or eid
+            d = self._dir(owner)
+            doc = st.read(d)
+            if not self.enabled:
+                raise EnhanceError("enhance đang tắt ([enhance] enabled = false)", 409)
+            if doc is None or not doc.get("wanted") or doc.get("follows"):
+                raise EnhanceError("video này không (còn) enhance", 409)
+            if is_archived(d):
+                raise EnhanceError("đã dọn video nguồn: không còn gì để enhance", 409)
+            if doc.get("state") != st.DONE:
+                raise EnhanceError("video đang chờ / đang enhance: chưa cần làm lại", 409)
+            doc = st.decide(self.config, owner, force=True if doc.get("override") else None, ffprobe=self.ffprobe,
+                            clock=self.clock())
+            if doc is None or not doc.get("wanted"):
+                raise EnhanceError("video này không (còn) enhance", 409)
+            if doc.get("state") != st.DONE:
+                return doc
+            if not st.hd_is_old_config(self.config, doc):
+                raise EnhanceError("bản HD đã theo cấu hình hiện hành", 409)
+            doc.update(state=st.PENDING, redo=True, error=None, lease=None, segments={}, waiting_hd=False)
+            st.write(d, doc)
+            st.mirror(self.config, owner)
+            log.info("enhance: redo %s with %s", owner, doc.get("params"))
+            return doc
+
     # --- views --------------------------------------------------------------------------------------------------
 
     def _summary(self, eid: str, d: Path, doc: dict) -> dict:
@@ -593,7 +652,9 @@ class EnhanceService:
                 "segments_uploaded": prog.get("segments_uploaded"), "segments_encoded": prog.get("segments_encoded"),
                 "worker": (lease or {}).get("worker"), "gpu": (lease or {}).get("gpu"),
                 "lease_expires_at": (lease or {}).get("expires_at"), "error": doc.get("error"),
-                "finished_at": doc.get("finished_at"), "workers": doc.get("workers") or []}
+                "finished_at": doc.get("finished_at"), "workers": doc.get("workers") or [],
+                "hd_old_config": st.hd_is_old_config(self.config, doc), "redo": bool(doc.get("redo")),
+                "face": (doc.get("params") or {}).get("face") if st.has_face(doc.get("params")) else None}
 
     def episode_view(self, eid: str) -> dict:
         """What the episode page shows (E10); ``exists`` False = no enhance.json yet."""
@@ -631,6 +692,8 @@ class EnhanceService:
                     items.append(s)
             workers = []
             for w in self._workers.values():
-                workers.append({**w, "yield": w["name"] in self.config.enhance.yield_workers})
+                face = self.config.enhance.face
+                workers.append({**w, "yield": w["name"] in self.config.enhance.yield_workers,
+                                "outdated": face != st.FACE_NONE and f"face:{face}" not in (w.get("capabilities") or [])})
             return {"enabled": self.enabled, "paused": self._paused, "ai_busy": bool(self.ai_busy()),
                     "workers": sorted(workers, key=lambda w: w["name"]), "counts": counts, "items": items[:100]}

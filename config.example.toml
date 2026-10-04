@@ -212,6 +212,11 @@ model = "realesr-general-x4v3"
 denoise = 1.0
 pre_height = 360             # downscale to this height before the x4 model (0 = none)
 out_height = 1080
+face = "none"                # CP13.4: "gfpgan_v1.4" = restore faces on every enhanced frame (worker v3+; ~4x GPU time).
+                             # Changing it never redoes a finished video: it keeps its HD source ("HD cấu hình cũ")
+                             # until "Enhance lại"; videos still waiting / enhancing switch to the new setting.
+face_detect_every = 5        # detect faces every N frames, landmarks interpolated between (1 = every frame; CP13.4 G5)
+face_weight = 1.0            # 0..1 blend of the restored face with the enhanced one (CP13.3 "+gfp" = 1.0)
 segment_seconds = 60         # segment length given to the workers
 lease_hours = 48             # a worker that is silent this long loses the video (finished segments are kept)
 max_segment_mb = 200         # PUT size limit of one segment
