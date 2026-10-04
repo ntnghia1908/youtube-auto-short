@@ -79,6 +79,16 @@ def zip_name(episode: str, *, khaithi: bool = False, series: str | None = None, 
     return f"{head}_Tập{episode}_{kind}.zip" if head else f"Tập{episode}_{kind}.zip"
 
 
+def video_name(episode: str | None, video_id: str, suffix: str, *, series: str | None = None) -> str:
+    """CP8.27: ``[<series>_]Tập<episode>_<suffix>.mp4`` (suffix ``HD`` landscape, ``Doc`` vertical); a video with no
+    episode number (titles.json ``header.fields.episode``) -> ``<video id>_<suffix>.mp4``."""
+    label = clean_part(episode) if episode else ""
+    if not label:
+        return f"{clean_part(video_id) or 'video'}_{suffix}.mp4"
+    head = truncate_utf8(clean_part(series), MAX_SERIES_BYTES)
+    return f"{head}_Tập{label}_{suffix}.mp4" if head else f"Tập{label}_{suffix}.mp4"
+
+
 def ascii_fallback(name: str) -> str:
     """Name without diacritics for the plain ``filename=`` parameter (``đ`` -> ``d``); other non-ASCII characters
     are dropped; ``"`` and ``\\`` cannot occur (removed by :func:`clean_part`)."""

@@ -12,8 +12,9 @@ from pathlib import Path
 
 from .. import khaithi
 from ..config import Config
+from ..enhance import state as enh_state
 from ..pipeline import PIPELINE_STAGES
-from ..review.names import copy_prefix, copy_text
+from ..review.names import copy_prefix, copy_text, video_name
 from ..review import (ReviewError, download_name, episode_complete, episode_label, list_titles, publish_status,
                       read_archive, zip_name)
 from ..review.publish import PUBLISH_NAME, read_publish
@@ -402,6 +403,32 @@ def _zip_series(config: Config, episode_id: str, kf: dict) -> str | None:
     if not (series or "").strip() and kf["base_episode_id"]:
         series = _series(config, kf["base_episode_id"])
     return series
+
+
+def hd_owner(episode_id: str) -> str:
+    """CP8.27: the video whose ``source_hd.mp4`` an episode uses (a khai thị ``<id>.kt`` -> ``<id>``)."""
+    suffix = khaithi.SUFFIX
+    return episode_id[:-len(suffix)] if episode_id.endswith(suffix) and len(episode_id) > len(suffix) else episode_id
+
+
+def hd_file(config: Config, episode_id: str) -> Path | None:
+    """CP8.27 H1: the finished HD source of the video (``enhance.json`` state done, size / mtime or sha256 match),
+    else None. Always inside ``work/<id>/``."""
+    if not valid_episode_id(episode_id):
+        return None
+    fp = enh_state.hd_fingerprint(Path(config.workspace.dir) / hd_owner(episode_id))
+    return fp.path if fp is not None else None
+
+
+def video_download_name(config: Config, episode_id: str, suffix: str) -> str:
+    """CP8.27: ``[<series>_]Tập<N>_HD.mp4`` (landscape) / ``…_Doc.mp4`` (vertical); no episode number ->
+    ``<video id>_<suffix>.mp4``. Series / episode come from the video's own titles.json (CP8.17 D4)."""
+    owner = hd_owner(episode_id)
+    doc = _read_json(Path(config.workspace.dir) / owner / "titles.json") or {}
+    fields = (doc.get("header") or {}).get("fields") or {}
+    episode = fields.get("episode") if isinstance(fields, dict) else None
+    return video_name(episode if isinstance(episode, str) else None, owner, suffix,
+                      series=_series(config, owner))
 
 
 def all_zip(config: Config, episode_id: str) -> tuple[list[tuple[str, Path, str]], str] | None:

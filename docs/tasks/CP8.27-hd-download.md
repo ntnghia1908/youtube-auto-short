@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: FEATURE
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -65,9 +65,10 @@ Không chạm database / security model / public API. Điểm danh trên 8080: t
 
 ## Result
 
-- Main changes:
-- Tests:
+- Main changes: `render/full.py` (`run_vertical`: 1080x1920, Short header panel V16 on top + HD video centre-cropped, no title panel / dissolve / cuts, all audio; `output/<id>/full/vertical.mp4` + `vertical.json` with a key = HD sha256 + render config hash + font + fps + layout + header text; reuse without encode when unchanged; .part + atomic replace); routes `GET /api/episodes/{id}/source-hd`, `GET` / `POST /api/episodes/{id}/vertical` (404 without a valid HD, `.kt` uses the base video's HD; Range via `FileResponse`; names `[<bộ kinh>_]Tập<N>_HD.mp4` / `_Doc.mp4`, `<video id>_HD.mp4` without episode number via `review/names.video_name`); job kind `vertical` (runner key `<id>#vertical`, lane render, `VerticalTarget`, restored from the queue file, label "bản dọc cả tập" in the monitor / queue views); episode view field `hd_video`, playlist entry `hd_url` / `hd_name` (download icon); episode page buttons "Tải bản ngang (HD, x,x GB)", "Tạo bản dọc" / "Tải bản dọc"; README paragraph. Downloads tick nothing (H3).
+- Tests: `tests/test_web_hd_cp827.py` (13: auth, name + Range 206 + no tick, 404 for none / assembling / bad sha / bad size, `.kt`, bad ids, no-episode name, job + reuse, failure, real small ffmpeg vertical encode + reuse + header change); `python -m pytest -q -n auto`: 1509 passed, 1 skipped (2m13 on the shared VM); `-m slow` not run (Short render core untouched); `node scripts/framework-check.mjs` PASS.
+- Real run (AC 5), copy `~/.cache/auto-short-cp827-test/` (hard-linked `source_hd.mp4` of Địa Tạng tập 1 `9NQFsvecC04`, own config / output; production untouched): ffmpeg `-threads 8` (`[render] preset` medium, crf 22), VM under load (other jobs ~15 cores busy): wall 1993.7 s (33 min 14 s) for 3461 s of video (~0.58x realtime), child CPU 10525 s (~5.3 cores avg), output 811.3 MB (1080x1920 h264 yuv420p 30000/1001, 103730 frames, video 3461.124 s = source 3461.124 s; aac 48 kHz stereo 3461.161 s = source). Second call: `ran=False` in 0.22 s (no encode). Frames with banner: `~/.cache/auto-short-cp827-test/frames/vertical_5.png`, `vertical_900.png`, `vertical_2400.png`; file `~/.cache/auto-short-cp827-test/output/9NQFsvecC04/full/vertical.mp4`.
 - Review:
-- Important findings / decisions:
-- Known limitations:
+- Important findings / decisions: layout = Short V16 minus the title panel, so the lower ~25% of the frame (where the Short title panel sits) is black; the video is centre-cropped (1440x1080 -> the middle ~862:1000 part), as the contract asked ("như Short"). Vertical reuse key does not look at config changes other than via the key (job always recomputes the key; the UI "Tải bản dọc" appears only when the stored file matches the current HD sha256, so after a layout / header change use "Tạo bản dọc" again only if the HD changed; a layout-only change is picked up when the job runs, `POST` is always accepted).
+- Known limitations: the button hides "Tạo bản dọc" while a current file exists (no "tạo lại" for layout-only changes; `POST` still works); no progress percentage while encoding (shown as "đang tạo…"); the render lane is busy for the whole encode (~0.5 h under load); `source_hd.mp4` cleanup / disk accounting of `output/<id>/full/` not added.
 - PR:

@@ -606,7 +606,7 @@ const AutoShort = (() => {
     renderEpisode(data);
     const running = jobActive(data.job) || data.stages.some((s) => s.status === "running");
     if (running) pollTimer = setTimeout(refreshEpisode, POLL_MS);
-    else if (enhanceBusy(data.enhance)) pollTimer = setTimeout(refreshEpisode, POLL_MS * 2);
+    else if (enhanceBusy(data.enhance) || verticalBusy(data.hd_video)) pollTimer = setTimeout(refreshEpisode, POLL_MS * 2);
   }
 
   // --- CP13.1b enhance (E10): status line + buttons on the episode page ---------------------------------
@@ -664,6 +664,47 @@ const AutoShort = (() => {
     again.disabled = busy;
     again.onclick = () => enhancePost("/enhance/rerender", null, again,
       "Render lại từ bản HD? Short đã đăng sẽ thành \"đã đăng bản cũ\".");
+  }
+
+  // --- CP8.27: "Tải bản ngang (HD)" + "Tạo bản dọc" / "Tải bản dọc" ---------------------------------------------
+
+  function verticalBusy(h) {
+    const j = h && h.vertical && h.vertical.job;
+    return !!j && (j.status === "queued" || j.status === "running");
+  }
+
+  function fmtGb(n) { return n >= 1e9 ? (n / 1e9).toFixed(1).replace(".", ",") + " GB" : Math.round(n / 1e6) + " MB"; }
+
+  function renderHdVideo(d) {
+    const box = $("#hd-video");
+    if (!box) return;
+    const h = d.hd_video;
+    box.hidden = !h;
+    if (!h) return;
+    const land = $("#hd-landscape");
+    land.href = h.url;
+    land.setAttribute("download", h.name || "");
+    land.textContent = `Tải bản ngang (HD${h.size ? ", " + fmtGb(h.size) : ""})`;
+    const v = h.vertical || {};
+    const job = v.job;
+    const active = !!job && (job.status === "queued" || job.status === "running");
+    const dl = $("#hd-vertical-dl");
+    dl.hidden = !v.ready;
+    if (v.ready) { dl.href = v.url; dl.setAttribute("download", v.name || ""); dl.textContent = `Tải bản dọc${v.size ? " (" + fmtGb(v.size) + ")" : ""}`; }
+    const make = $("#hd-vertical-make");
+    make.hidden = !!v.ready;
+    make.disabled = active;
+    make.textContent = active ? (job.status === "queued" ? "Bản dọc: đang chờ…" : "Bản dọc: đang tạo…") : "Tạo bản dọc";
+    make.onclick = async () => {
+      make.disabled = true;
+      try {
+        await api("/api/episodes/" + encodeURIComponent(episodeId) + "/vertical", { method: "POST" });
+      } catch (e) { alert(e.message); }
+      refreshEpisode();
+    };
+    const note = $("#hd-vertical-note");
+    note.hidden = !(job && job.status === "failed");
+    if (job && job.status === "failed") note.textContent = `Lỗi tạo bản dọc: ${job.error || "?"}`;
   }
 
   function renderEpisode(d) {
@@ -738,6 +779,7 @@ const AutoShort = (() => {
 
     lastData = d;
     renderEnhance(d);
+    renderHdVideo(d);
     renderShorts(d);
     setEditsLocked(jobActive(job));
   }
@@ -2801,6 +2843,10 @@ const AutoShort = (() => {
         b.addEventListener("click", () => processEntry(e, b));
         actions.append(b);
       }
+      if (e.hd_url) { // CP8.27 H2: the landscape HD video of this episode
+        actions.append(el("a", { class: "btn icon-btn", href: e.hd_url, download: e.hd_name || "", title: "Tải video HD (bản ngang)",
+          "aria-label": "Tải video HD (bản ngang)" }, icon("download")));
+      }
       if (e.video_id && !["unavailable", "deleted"].includes(e.state) && !e.complete) actions.append(priorityButton(e.video_id, !!e.priority, loadPlaylist));
       return el("li", { class: "pl-entry " + e.state, "data-group": e.group || "none" },
         el("span", { class: "pl-index muted", text: `${e.index}.` }),
@@ -2818,7 +2864,7 @@ const AutoShort = (() => {
 
   const MON_MS = 4000;
   const LANE_NAMES = { prepare: "Chuẩn bị (tải + phiên âm + phân tích)", ai: "AI (chọn đoạn + đặt tên)", render: "Render", serial: "Tuần tự" };
-  const KIND_NAMES = { pipeline: "xử lý tập", render: "render lại", add: "thêm Short", post: "soạn bài đăng", post_search: "tìm ảnh", enhance: "ghép HD" };
+  const KIND_NAMES = { pipeline: "xử lý tập", render: "render lại", add: "thêm Short", post: "soạn bài đăng", post_search: "tìm ảnh", enhance: "ghép HD", vertical: "bản dọc cả tập" };
   const STAGE_NAMES = { ingest: "tải video", transcript: "phiên âm", analysis: "phân tích", preflight: "kiểm Ollama", selection: "chọn đoạn", titling: "đặt tên", render: "render" };
   const WAIT_NAMES = { hd: "đợi HD", gpu: "đợi GPU / Ollama", youtube: "đợi YouTube" };
 

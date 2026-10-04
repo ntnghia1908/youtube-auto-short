@@ -131,6 +131,12 @@ enhanced video's source is never cleaned up automatically. Worker tokens: `auto-
 prints one (once); put it in `AUTO_SHORT_ENHANCE_TOKENS='name=token,…'` in the environment of `auto-short web`
 (never in config). Contract: `docs/decisions/CP13.1-enhance-worker-contract.md`.
 
+HD downloads (CP8.27): once `source_hd.mp4` is done, the episode page offers "Tải bản ngang (HD)" (`GET /api/episodes/<id>/source-hd`,
+Range supported, named `[<bộ kinh>_]Tập<N>_HD.mp4`; the playlist page has a download icon per episode) and "Tạo bản dọc" (a
+render-lane job writing `output/<id>/full/vertical.mp4`: 1080x1920 with the Short header banner on top, the whole HD video
+centre-cropped below, all audio, no cuts; reused while the HD source / layout / header are unchanged; downloaded as
+`…_Tập<N>_Doc.mp4`). A download never ticks "Đã đăng" / "Đã xem".
+
 Khai thị videos (CP8.9): besides Shorts, a video can give longer "khai thị" videos (same 9:16 template, one
 complete teaching each, length within a chosen minute range after silence trimming; default 4–7 minutes, at most
 15) in a separate episode `<video id>.kt` next to the Short episode. On the home page both boxes "Short" and
