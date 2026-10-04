@@ -54,7 +54,7 @@ Không chạm database / security model / public API. Điểm danh trên 8080: b
 
 - Main changes: `MIN_MATCH` 0.6 → 0.5 (`post/doc.py`); D3 trong CP8.15 contract ghi ngưỡng 0,5 + lý do + ngày; log `stage.py` in ngưỡng động nên không cần sửa.
 - Tests: thêm biên 0.49 / 0.5 / 0.587 và cache `match = 0.587` dùng được không tải lại (`tests/test_post_doc.py`); `pytest -q -n auto`: 1450 passed, 1 skipped; framework-check PASS.
-- Review:
+- Review: ORCHESTRATOR 2026-10-04 — ACCEPTED, không có blocking finding (hằng số + D3 + test biên; D4 giữ nguyên; chạy lại 300 test post PASS). Ghi chú ngoài scope: D1 trong CP8.15 chưa nhắc `doc_videos_per_page` (CP8.24) — pointer nên thêm ở lần sửa decision kế tiếp.
 - Important findings / decisions:
 - Known limitations:
-- PR:
+- PR: #65
