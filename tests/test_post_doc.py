@@ -208,6 +208,25 @@ def test_prepare_low_match_is_cached_but_unusable(tmp_path):  # AC4
     assert again is not None and not again.usable  # no re-download
 
 
+@pytest.mark.parametrize("match,ok", [(0.49, False), (0.5, True), (0.587, True)])
+def test_usable_threshold_boundary(match, ok):  # FIX-doc-match-050 AC1
+    assert doc.MIN_MATCH == 0.5 and doc.build_text("u", ["a b c"], match).usable is ok
+
+
+def test_cached_match_0587_usable_without_refetch(tmp_path):  # FIX-doc-match-050 AC1
+    work = tmp_path / "work"
+    write_playlist(work, "PLa", [("vidAAAAAAA1", "1")])
+    segs = _segments("hoàn toàn khác nhau giữa hai bản giảng này " * 20)
+    doc.prepare("vidAAAAAAA1", work, segs, opener=FakeOpener(full_routes()), resolver=public_resolver)
+    cache = work / "vidAAAAAAA1" / "doc.json"
+    data = json.loads(cache.read_text(encoding="utf-8"))
+    data["match"] = 0.587
+    cache.write_text(json.dumps(data), encoding="utf-8")
+    opener = FakeOpener({})
+    t = doc.prepare("vidAAAAAAA1", work, segs, opener=opener, resolver=public_resolver)
+    assert t is not None and t.usable and not opener.requests
+
+
 def test_prepare_failure_writes_no_cache_and_no_link_is_none(tmp_path):  # AC2, AC4
     work = tmp_path / "work"
     write_playlist(work, "PLa", [("vidAAAAAAA1", "1")])
