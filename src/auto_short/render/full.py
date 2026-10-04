@@ -32,9 +32,11 @@ log = logging.getLogger("auto_short")
 FULL_DIR = "full"
 VIDEO_NAME = "vertical.mp4"
 META_NAME = "vertical.json"
-SPEAKER_SCALE = 1.6  # speaker font size / header font size (Amendment 2: "phóng to lên")
+TOP_SCALE = 1.6  # top panel font size / [render] header font size (Amendment 2: "phóng chữ để lấp đen")
+SPEAKER_SCALE = 2.4  # speaker font size / [render] header font size (even larger than the top panel)
+TOP_SHARE = 0.43  # share of the panel height (video box excluded) taken by the top panel
 _SPEAKER_DOT_RE = re.compile(r"\.(?=[^\W\d_])")  # CP8.16 R5: "HT.Tịnh Không" -> "HT. Tịnh Không"
-FULL_PLAN_VERSION = 2  # bump when the filter graph / ffmpeg command below changes
+FULL_PLAN_VERSION = 3  # bump when the filter graph / ffmpeg command below changes
 DURATION_TOLERANCE = 0.1  # s, audio length vs the source
 
 
@@ -103,16 +105,33 @@ class FullLayout:
 
 
 def full_layout(geo: plan.Geometry, src_w: int, src_h: int) -> FullLayout:
-    """Top panel, video, bottom panel stacked with the same spacing ``s`` (= top margin = gaps = bottom margin); the
-    video takes all the rest of the height (no black band beyond the margins)."""
-    s, ph = geo.min_frame_margin, geo.header_h
+    """The video box and crop of the first CP8.27 version (Short V16 video box, ``[render] video_height``); the rest of
+    the height is shared by the two panels (``TOP_SHARE`` / the remainder) with the same spacing ``s`` (= top margin =
+    gaps = bottom margin), so only the margins stay black."""
+    s = geo.min_frame_margin
+    video_h = geo.video_h
+    panels = plan.HEIGHT - 4 * s - video_h
+    top_h = round(panels * TOP_SHARE)
+    bottom_h = panels - top_h
     x = (plan.WIDTH - geo.header_w) // 2
-    top = plan.Box(x, s, geo.header_w, ph, geo.radius)
-    video_h = plan.HEIGHT - 4 * s - 2 * ph
-    video_h -= video_h % 2  # even
-    video = plan.Box(0, s + ph + s, plan.WIDTH, video_h)
-    bottom = plan.Box(x, plan.HEIGHT - s - ph, geo.header_w, ph, geo.radius)
+    top = plan.Box(x, s, geo.header_w, top_h, geo.radius)
+    video = plan.Box(0, s + top_h + s, plan.WIDTH, video_h)
+    bottom = plan.Box(x, video.y + video_h + s, geo.header_w, bottom_h, geo.radius)
     return FullLayout(top, video, bottom, plan.center_crop(src_w, src_h, plan.WIDTH, video_h))
+
+
+def _one_line(font: Font, text: str, size0: int, panel_height: int, min_scale: float, fit_kw: dict):
+    """The speaker line on ONE line: the largest font size <= ``size0`` where it fits the panel width (a wrapped
+    "HT. Tịnh / Không" is worse than a smaller font); several lines only below ``min_scale`` x ``size0``."""
+    fit_kw = {**fit_kw, "min_font_scale": 1.0}
+    for size in range(size0, round(size0 * min_scale) - 1, -1):
+        try:
+            fit = fit_header(font, [text], size0=size, panel_height=panel_height, **fit_kw)
+        except TextError:
+            continue
+        if len(fit.lines) == 1:
+            return fit
+    return fit_header(font, [text], size0=size0, panel_height=panel_height, **{**fit_kw, "min_font_scale": min_scale})
 
 
 def split_header(lines: list[str], speaker: str | None) -> tuple[list[str], str]:
@@ -211,20 +230,21 @@ def run_vertical(episode_id: str, config: Config, *, run=None, force: bool = Fal
         raise RenderError(f"font file not found: {fpath} (config render.font_file)")
     font_sha = hashing.sha256_file(fpath)
     font = Font(fpath)
-    try:
-        geo = plan.geometry(cfg)
-        fit_kw = dict(line_spacing=cfg.line_spacing, inner_width=geo.header_w - 2 * cfg.panel_padding_x * plan.WIDTH,
-                      panel_height=geo.header_h, padding_y=cfg.panel_padding_y * plan.WIDTH,
-                      min_font_scale=cfg.min_font_scale)
-        header = fit_header(font, top_text, size0=plan.px(cfg.header_font_size), **fit_kw)
-        spk_fit = fit_header(font, [speaker], size0=round(plan.px(cfg.header_font_size) * SPEAKER_SCALE), **fit_kw)
-    except (plan.PlanError, TextError) as exc:
-        raise RenderError(str(exc)) from exc
     src = probe_media(hd.path, runner)
     if src["video"] is None or src["audio"] is None:
         raise RenderError(f"bản HD cần có cả video và audio: {hd.path}")
     fps = plan.output_fps(_rate(src["video"]))
-    lay = full_layout(geo, int(src["video"]["width"]), int(src["video"]["height"]))
+    try:
+        geo = plan.geometry(cfg)
+        lay = full_layout(geo, int(src["video"]["width"]), int(src["video"]["height"]))
+        fit_kw = dict(line_spacing=cfg.line_spacing, inner_width=geo.header_w - 2 * cfg.panel_padding_x * plan.WIDTH,
+                      padding_y=cfg.panel_padding_y * plan.WIDTH, min_font_scale=cfg.min_font_scale)
+        header = fit_header(font, top_text, size0=round(plan.px(cfg.header_font_size) * TOP_SCALE),
+                            panel_height=lay.top.h, **fit_kw)
+        spk_fit = _one_line(font, speaker, round(plan.px(cfg.header_font_size) * SPEAKER_SCALE), lay.bottom.h,
+                            cfg.min_font_scale, fit_kw)
+    except (plan.PlanError, TextError) as exc:
+        raise RenderError(str(exc)) from exc
     key = _sha({"full_plan_version": FULL_PLAN_VERSION, "plan_version": plan.RENDER_PLAN_VERSION,
                 "render_config_hash": hashing.config_hash(used_config(cfg, font_sha)), "font_sha256": font_sha,
                 "hd_sha256": hd.sha256, "fps": plan.fps_text(fps),
@@ -245,9 +265,9 @@ def run_vertical(episode_id: str, config: Config, *, run=None, force: bool = Fal
         with tempfile.TemporaryDirectory(prefix="auto-short-full-") as tmpname:
             tmp = Path(tmpname)
             h_lines = _write_lines(tmp, "h", header.lines, baselines(len(header.lines), font=font, size=header.font_size,
-                                                                     pitch=header.line_pitch, panel_height=geo.header_h))
+                                                                     pitch=header.line_pitch, panel_height=lay.top.h))
             b_lines = _write_lines(tmp, "b", spk_fit.lines, baselines(len(spk_fit.lines), font=font, size=spk_fit.font_size,
-                                                                      pitch=spk_fit.line_pitch, panel_height=geo.header_h))
+                                                                      pitch=spk_fit.line_pitch, panel_height=lay.bottom.h))
             script = tmp / "full.filter"
             script.write_text(filter_graph(fps=fps, lay=lay, font_file=fpath, top_lines=h_lines,
                                            top_size=header.font_size, bottom_lines=b_lines,

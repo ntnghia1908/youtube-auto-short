@@ -258,16 +258,21 @@ def test_split_header_and_dot_space():
     assert full.split_header(["Chỉ một dòng"], "Khác")[0] == ["Chỉ một dòng"]
 
 
-def test_full_layout_two_panels_even_margins(tcfg):
+def test_full_layout_video_as_v1_panels_fill_black(tcfg):
     from auto_short.render import plan
     geo = plan.geometry(tcfg.render)
-    lay = full.full_layout(geo, 1440, 1080)
+    lay = full_layout_of(geo)
     s = geo.min_frame_margin
+    v1 = plan.layout(geo, geo.title_h, 1440, 1080)  # the first CP8.27 version = the Short V16 video box + crop
+    assert lay.video.w == v1.video.w and lay.video.h == v1.video.h and lay.crop == v1.crop
     assert lay.top.y == s and lay.video.y == s + lay.top.h + s
-    assert lay.bottom.y == lay.video.y + lay.video.h + s            # same gap below the video
-    assert lay.bottom.y + lay.bottom.h + s == plan.HEIGHT           # same bottom margin: no black band left
-    assert lay.video.h % 2 == 0 and lay.video.w == plan.WIDTH
-    assert (lay.crop.w * lay.video.h) // lay.crop.h in range(lay.video.w - 2, lay.video.w + 3)  # aspect kept
+    assert lay.bottom.y == lay.video.y + lay.video.h + s
+    assert lay.bottom.y + lay.bottom.h + s == plan.HEIGHT           # nothing black but the margins
+    assert 4 * s <= 0.05 * plan.HEIGHT and lay.bottom.h > lay.top.h > geo.header_h
+
+
+def full_layout_of(geo):
+    return full.full_layout(geo, 1440, 1080)
 
 
 def test_layout_change_changes_reuse_key(tcfg, monkeypatch):
@@ -277,5 +282,5 @@ def test_layout_change_changes_reuse_key(tcfg, monkeypatch):
     write_hd(tcfg, VID, (d / "source_hd.mp4").read_bytes())
     assert full.run_vertical(VID, tcfg).ran
     assert not full.run_vertical(VID, tcfg).ran
-    monkeypatch.setattr(full, "SPEAKER_SCALE", 1.3)
+    monkeypatch.setattr(full, "SPEAKER_SCALE", 2.0)
     assert full.run_vertical(VID, tcfg).ran
