@@ -325,7 +325,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     runner = runner or JobRunner(config.web.queue_mode,
                                  youtube_retry_seconds=config.web.youtube_retry_minutes * 60.0,
                                  youtube_retry_max_seconds=config.web.youtube_retry_max_minutes * 60.0,
-                                 prepare_workers=workers)
+                                 prepare_workers=workers, worker_nice=config.web.worker_nice)
     tokens = dict(enhance_tokens) if enhance_tokens is not None else tokens_from_env()
     storage = StorageCache(config, disk_usage=disk_usage, clock=clock)
     playlists = PlaylistStore(config, lister=playlist_lister, timeout=playlist_timeout)

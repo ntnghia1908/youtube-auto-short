@@ -242,6 +242,31 @@ def _child_pids() -> list[int]:
     return pids
 
 
+_IOPRIO_SYSCALL = {"x86_64": 251, "aarch64": 30}  # ioprio_set
+
+
+def lower_thread_priority(nice: int, *, ionice: bool = True) -> bool:
+    """CP8.29 A1: lower the CPU (``nice``) and I/O (best-effort, lowest level) priority of the *calling thread* (Linux:
+    both are per thread). Threads and child processes (ffmpeg, yt-dlp, the Whisper pool ..) started later from this
+    thread inherit them, so heavy work yields to the web server (normal priority). Returns False when not supported
+    or not allowed (never raises)."""
+    if nice <= 0 or not hasattr(os, "setpriority"):
+        return False
+    try:
+        os.setpriority(os.PRIO_PROCESS, threading.get_native_id(), min(19, nice))
+    except (OSError, AttributeError):
+        return False
+    if ionice:
+        import platform
+        number = _IOPRIO_SYSCALL.get(platform.machine())
+        if number is not None:
+            try:  # IOPRIO_WHO_PROCESS = 1; class best-effort (2) level 7 = lowest
+                ctypes.CDLL(None, use_errno=True).syscall(number, 1, threading.get_native_id(), (2 << 13) | 7)
+            except (OSError, AttributeError):
+                pass
+    return True
+
+
 def _interrupt(thread_ident: int) -> None:
     ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_ulong(thread_ident), ctypes.py_object(KeyboardInterrupt))
 
@@ -252,7 +277,8 @@ class JobRunner:
     def __init__(self, mode: str = MODE_LANES, *, gpu_retry_seconds: float = GPU_RETRY_SECONDS,
                  youtube_retry_seconds: float = YT_RETRY_SECONDS, youtube_retry_max_seconds: float = YT_RETRY_MAX_SECONDS,
                  monotonic: Callable[[], float] = time.monotonic, wall: Callable[[], float] = time.time,
-                 priority: Priority | None = None, prepare_workers: int = 1) -> None:
+                 priority: Priority | None = None, prepare_workers: int = 1,
+                 worker_nice: int = 0) -> None:
         if mode not in (MODE_LANES, MODE_SERIAL):
             raise ValueError(f"unknown queue mode {mode!r}")
         self.mode = mode
@@ -265,6 +291,8 @@ class JobRunner:
         if mode == MODE_LANES:
             for i in range(1, max(1, int(prepare_workers))):
                 self._slot_lane[f"{PREPARE}#{i}"] = PREPARE
+        # CP8.29 A1: nice of the heavy lanes' worker threads (``prepare`` / ``render`` / serial; 0 = unchanged)
+        self.worker_nice = worker_nice
         self.prepare_workers = sum(1 for lane in self._slot_lane.values() if lane == PREPARE)
         self._lock = threading.Condition()
         self._queues: dict[str, deque[Job]] = {lane: deque() for lane in self._lane_names}
@@ -500,7 +528,8 @@ class JobRunner:
         return self._current.get(slot) if slot is not None else None
 
     def _lane_running_locked(self, lane: str) -> list[Job]:
-        return [j for slot, j in self._current.items() if j is not None and self._slot_lane[slot] == lane]
+        jobs = [j for slot, j in self._current.items() if j is not None and self._slot_lane[slot] == lane]
+        return sorted(jobs, key=lambda j: int(j.id))  # oldest first, not in worker-slot order
 
     def running(self) -> dict[str, Job]:
         """Lane -> job it is running (test / diagnostics); the first one for a lane that runs several (CP8.29)."""
@@ -695,6 +724,8 @@ class JobRunner:
     def _work(self, slot: str) -> None:
         self._idents[threading.get_ident()] = slot
         self._tids[threading.get_native_id()] = slot
+        if self._slot_lane[slot] != AI:  # the ai lane only waits for Ollama; keep it responsive
+            lower_thread_priority(self.worker_nice)
         while True:
             try:
                 self._loop(slot)

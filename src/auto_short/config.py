@@ -231,6 +231,9 @@ class WebConfig:
     youtube_retry_max_minutes: int = 120
     # CP8.29 P1: jobs the ``prepare`` lane (ingest -> transcript -> analysis) runs at once; 1 = as before
     prepare_workers: int = 1
+    # CP8.29 A1: heavy lanes (prepare, render) run at this ``nice`` (CPU and I/O priority lowered per worker thread;
+    # child processes and Whisper threads inherit it) so the web server stays responsive; 0 = unchanged
+    worker_nice: int = 10
 
 
 WEB_QUEUE_MODES = ("lanes", "serial")
@@ -642,6 +645,7 @@ def _web(data: dict) -> WebConfig:
         youtube_retry_max_minutes=_int(we, "youtube_retry_max_minutes", d.youtube_retry_max_minutes, w, lo=1,
                                        hi=1440),
         prepare_workers=_int(we, "prepare_workers", d.prepare_workers, w, lo=1, hi=8),
+        worker_nice=_int(we, "worker_nice", d.worker_nice, w, lo=0, hi=19),
     )
 
 

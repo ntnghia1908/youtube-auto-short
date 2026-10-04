@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: CHANGE
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -68,8 +68,35 @@ Không chạm database / security model / public API. Điểm danh trên 8080 sa
 ## Result
 
 - Main changes:
-- Tests:
-- Review:
-- Important findings / decisions:
-- Known limitations:
+  - P1 config: `[web] prepare_workers` (1-8, default 1), `[transcript.whisper] cpu_threads_per_job` (0 = `cpu_threads` (or CPU count) / workers, rounded down, min 1; `cpu_threads` unchanged when workers = 1; `config.whisper_threads_per_job`); `create_app` hands every job the per-job value (execution-only, not in the transcript hash: test).
+  - P2 `web/jobs.py`: worker "slots" (`prepare`, `prepare#1`, ..; other lanes keep one). Rules kept: priority order, pause after / now (every running job is cut and requeued), persistence (all running jobs saved at the head), prefetch (`PREFETCH_LIMIT` on the ai queue, as before; up to N more may land), per-thread job logs. Added: jobs of the same video (`<id>`, `<id>.kt`) never prepare at once; YouTube block: at the retry time only one job makes the try (`Job.probe`), the other download jobs wait for its outcome, a job that was already running when another got the block returns without counting a second failure; no-download jobs still start. Monitor: `lanes[lane].running_all` + `workers` (`running` = the first), UI lists all; `lane_tids` / process rows use the slot (`prepare#1`) -> job.
+  - P3 Whisper: each job builds its own `FasterWhisperBackend` (own model instance), so no sharing between workers; the model cache also got a lock. One instance per job: ~2.3 GB RSS per job (int8 large-v3-turbo).
+  - Amendment 1: `lower_thread_priority` (os.setpriority on the native tid + ioprio_set best-effort level 7); `[web] worker_nice` (0-19, default 10) is applied to every worker thread of the prepare / render lanes (not `ai`). Priority is per thread on Linux and inherited, so ffmpeg / yt-dlp children and the Whisper thread pool (checked: 50 threads nice 10, main thread 0) are low priority with no change to the stages; uvicorn / requests keep normal priority. No `[render] threads` change was needed (exists).
+- Tests: `tests/test_prepare_parallel_cp829.py` (14: 3 workers / 6 jobs order + max concurrency, priority, N = 1 old behaviour, same-video clash, pause after / now, YouTube block + single try, persistence, monitor, per-thread logs, config + hash, app threads per job, nice per thread + child inheritance). Full suite `pytest -q -n 8`: 1516 passed, 1 skipped (CPU of the VM was shared). `node scripts/framework-check.mjs`: PASS.
+- P4 measurement (Whisper large-v3-turbo int8, no nice; 4 clips of 150 s from 4 Dia Tang episodes = 10 min of audio, a new model per clip like production, N workers pull from the queue). Noise: production Whisper (~4.5 cores) + another IMPLEMENTER (enhance bench ~10 cores) + later other jobs; load average 22-60 during the runs, so absolute times are about 2.5x slower than an idle VM; compare back-to-back rows only.
+
+| N x threads | total s | load1 at start / end |
+|---|---|---|
+| 1 x 24 | 539.6 | 26.7 / 22.1 |
+| 2 x 12 | 271.9 | 22.1 / 26.1 |
+| 3 x 8 (4 clips: 2 rounds) | 263.6 | 25.7 / 26.4 |
+| 4 x 6 | 300.2 | 26.4 / 44.7 |
+| 6 x 4 (4 clips: = 4 jobs) | 384.1 | 44.7 / 58.2 |
+| 1 x 24 (repeat, later) | 843.7 | ~50 / 45 |
+| 4 x 6 (repeat, later) | 309.2 | ~45 / 50 |
+
+  Speedup vs 1 x 24: 2.0x (N=2), 2.0x (N=3, limited by 4 clips / 3 workers), 1.8x and 2.7x (N=4: vs the first / the repeat 1 x 24 run, which ran under much heavier load). A single 24-thread job used only ~4-5 cores (production job: ~450 % CPU), so more jobs is the lever, not more threads. AC4 met (>= 1.8x at N = 2..4). With 86 episodes the 4 clips / 3 workers rounding does not apply. Not measured: N=4 with 8 threads each; N > 4 gets slower under this load (6 x 4 = 384 s).
+- AC3 transcript identity: 3 of 4 clips gave identical word-level output for every N / thread count (also vs the 24-thread run). Clip `LeqFAlSS2oA` varied between runs (5 distinct outputs over 7 runs, including two 24-thread runs), i.e. int8 decoding is not bit-reproducible there regardless of N; the config hash does not change with threads / workers (test), as with CP11 R2. Not a regression of this task.
+- A1 check (test server on 8081, own workspace, a 209 MB source served with Range; 3 prepare jobs x 16 + 4 render jobs x 8 busy child processes for 50 s on top of the shared VM at load 50-70; 25 x 2 page requests `/api/monitor/queue` + `/api/episodes`):
+
+| | idle page median / p95 | saturated page median / p95 | Range idle -> saturated |
+|---|---|---|---|
+| `worker_nice = 0` (before) | 5 / 8-9 ms | 14-16 / 37-42 ms | 142-148 -> 76-86 MiB/s |
+| `worker_nice = 10` (after) | 6 / 9-11 ms | 6-7 / 13-15 ms | 183-226 -> 130-151 MiB/s |
+
+  The VM was already loaded by other sessions, so the "idle" rows are not truly idle; with the priority change, saturation costs the web ~25-30 % of the download speed instead of ~45 %, and page latency stays flat. I did not add `ionice`/`nice` wrappers around individual children (inherited from the thread; ionice effect not measured separately).
+- Recommended `config.toml` (ORCHESTRATOR applies after merge): `[web] prepare_workers = 4`, `worker_nice = 10`; `[transcript.whisper] cpu_threads_per_job = 8` (leave `cpu_threads = 24` for N = 1). 4 x 8 = 32 threads in the pool but each job uses ~4-5 cores, ~18-20 cores in total, ~10 GB RAM, all at nice 10 so web and downloads win any contention. `[render] jobs = 4` stays; render now also runs niced. If the 3090 (CP14 later) or other jobs need CPU, `prepare_workers = 3` is nearly as fast in the table. Re-measure on an idle VM if exact numbers matter.
+- Review: pending (ORCHESTRATOR).
+- Important findings / decisions: `worker_nice` default 10 changes the default behaviour (heavy lanes at low priority) even with `prepare_workers = 1`; set 0 to disable. A restart restores the saved queue jobs of any slot into the lane in order; `prepare_workers` can change between restarts.
+- Known limitations: downloads of several prepare jobs may overlap (one YouTube download per worker); `.kt` waits only for a *running* base job (as in serial order); prefetch can overshoot `PREFETCH_LIMIT` by up to N - 1 jobs; ioprio_set only on x86_64 / aarch64.
 - PR:
