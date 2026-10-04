@@ -52,6 +52,7 @@ Run tests (no network needed):
 
 ```bash
 pytest -q -n auto    # parallel (pytest-xdist); plain `pytest -q` runs serially
+pytest -q -n auto -m slow   # heavy tests (enhance worker on torch, repeated real renders); skipped by default
 ```
 
 Test policy for contributors and agents: `docs/ai/project-profile.md` §8.

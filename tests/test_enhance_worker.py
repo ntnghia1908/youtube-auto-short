@@ -211,6 +211,7 @@ def test_reader_is_frame_accurate(tiny):
 
 @needs_ffmpeg
 @needs_torch
+@pytest.mark.slow
 def test_full_episode(server, run, tmp_path):
     s = server()
     r = run(s)
@@ -229,6 +230,7 @@ def test_full_episode(server, run, tmp_path):
 
 @needs_ffmpeg
 @needs_torch
+@pytest.mark.slow
 def test_offline_midway_then_reconnect(server, run):
     s = server()
     s.on_put = lambda n: threading.Thread(target=s.stop).start() if n == 0 else None
@@ -247,6 +249,7 @@ def test_offline_midway_then_reconnect(server, run):
 
 @needs_ffmpeg
 @needs_torch
+@pytest.mark.slow
 def test_restart_resumes_without_redo(server, run):
     s = server()
     r = run(s)
@@ -263,6 +266,7 @@ def test_restart_resumes_without_redo(server, run):
 
 @needs_ffmpeg
 @needs_torch
+@pytest.mark.slow
 def test_restart_with_pending_uploads(server, run):
     s = server()
     s.on_put = lambda n: threading.Thread(target=s.stop).start() if n == 0 else None
@@ -278,6 +282,7 @@ def test_restart_with_pending_uploads(server, run):
 
 @needs_ffmpeg
 @needs_torch
+@pytest.mark.slow
 def test_may_run_false_pauses_after_current_segment(server, run):
     gate = {"open": False}
     s = server()
@@ -294,6 +299,7 @@ def test_may_run_false_pauses_after_current_segment(server, run):
 
 @needs_ffmpeg
 @needs_torch
+@pytest.mark.slow
 def test_wrong_token_stops_with_log(server, run):
     s = server()
     r = run(s, token="sai-token")
@@ -303,6 +309,7 @@ def test_wrong_token_stops_with_log(server, run):
 
 @needs_ffmpeg
 @needs_torch
+@pytest.mark.slow
 def test_401_waits_and_rereads_config(server, run):
     """VM chua co API (login middleware tra 401) / token rong: worker khong thoat; sua token trong config -> tiep tuc."""
     s = server()
@@ -323,6 +330,7 @@ def test_401_waits_and_rereads_config(server, run):
 
 @needs_ffmpeg
 @needs_torch
+@pytest.mark.slow
 def test_404_keeps_polling(server, run):
     s = server()
     s.no_api = True
@@ -337,6 +345,7 @@ def test_404_keeps_polling(server, run):
 
 @needs_ffmpeg
 @needs_torch
+@pytest.mark.slow
 def test_lease_expired_abandons_and_continues(server, run):
     s = server()
     s.on_put = lambda n: s.expire_lease() if n == 0 else None
@@ -349,6 +358,7 @@ def test_lease_expired_abandons_and_continues(server, run):
 
 @needs_ffmpeg
 @needs_torch
+@pytest.mark.slow
 def test_source_download_resumes_with_range(server, run):
     s = server()
     s.cut_source_after = max(1, s.source_size // 2)
@@ -360,6 +370,7 @@ def test_source_download_resumes_with_range(server, run):
 
 @needs_ffmpeg
 @needs_torch
+@pytest.mark.slow
 def test_self_test_reports_vm_states(server, run):
     s = server()
     r = run(s)

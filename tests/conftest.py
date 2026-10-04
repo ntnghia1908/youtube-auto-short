@@ -74,3 +74,30 @@ def _isolate_post_corrections(tmp_path_factory, monkeypatch):
     import auto_short.config as config_mod
     path = tmp_path_factory.mktemp("post-corrections") / "post-corrections.json"
     monkeypatch.setattr(config_mod, "_default_corrections_path", lambda: path)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_services(monkeypatch):
+    """FIX-test-speed T2: no test may open a connection to the real Ollama (ports 11434 / 11437) or to a
+    non-loopback host. Loopback fake servers on other ports (tests' own) stay allowed."""
+    import socket
+    real_connect = socket.socket.connect
+    real_connect_ex = socket.socket.connect_ex
+
+    def _check(addr):
+        if isinstance(addr, tuple) and len(addr) >= 2 and isinstance(addr[0], str):
+            host, port = addr[0], addr[1]
+            loopback = host in ("127.0.0.1", "::1", "localhost") or host.startswith("127.")
+            if port in (11434, 11437) or (not loopback and host not in ("", "0.0.0.0")):
+                raise AssertionError(f"test tried to reach a real service: {host}:{port} (inject a fake)")
+
+    def guarded(self, addr):
+        _check(addr)
+        return real_connect(self, addr)
+
+    def guarded_ex(self, addr):
+        _check(addr)
+        return real_connect_ex(self, addr)
+
+    monkeypatch.setattr(socket.socket, "connect", guarded)
+    monkeypatch.setattr(socket.socket, "connect_ex", guarded_ex)

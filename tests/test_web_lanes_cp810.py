@@ -486,9 +486,26 @@ def test_run_pipeline_stages_argument(tcfg):
 
 # --- AC8 same artifacts as a serial run (real stages, fake Ollama, real ffmpeg) ---------------------------
 
+def _strip_seconds(o):
+    """Drop wall-clock ``seconds`` fields (per-call timing, rounded to ms) before hashing a stage log."""
+    if isinstance(o, dict):
+        return {k: _strip_seconds(v) for k, v in o.items() if k != "seconds"}
+    if isinstance(o, list):
+        return [_strip_seconds(v) for v in o]
+    return o
+
+
 def _tree(d: Path) -> dict[str, str]:
-    return {str(p.relative_to(d)): hashlib.sha256(p.read_bytes()).hexdigest()
-            for p in sorted(d.rglob("*")) if p.is_file()}
+    """sha256 per file; ``*_log.json`` hashed without their timing (FIX-test-speed: flaky under load)."""
+    out = {}
+    for p in sorted(d.rglob("*")):
+        if not p.is_file():
+            continue
+        data = p.read_bytes()
+        if p.name.endswith("_log.json"):
+            data = json.dumps(_strip_seconds(json.loads(data)), sort_keys=True).encode()
+        out[str(p.relative_to(d))] = hashlib.sha256(data).hexdigest()
+    return out
 
 
 def test_lanes_artifacts_identical_to_serial(lecture, tmp_path):
