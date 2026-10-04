@@ -40,7 +40,7 @@ import urllib.request
 from fractions import Fraction
 from pathlib import Path
 
-__version__ = "1"
+__version__ = "2"  # 2: gui kem so lieu GPU (gpu_stats, CP8.28)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # srvgg.py canh worker.py
 EXIT_OK, EXIT_ERROR, EXIT_AUTH = 0, 1, 3
@@ -484,6 +484,34 @@ def gpu_name(cfg: dict, device: str) -> str:
         return "cpu"
 
 
+GPU_STATS_QUERY = "name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw"
+GPU_STATS_KEYS = ("name", "util_pct", "mem_used_mb", "mem_total_mb", "temp_c", "power_w")
+GPU_STATS_TTL = 2.0  # giay: lan lay so lieu nvidia-smi gan nhat con dung duoc
+
+
+def read_gpu_stats(cfg: dict, run=subprocess.run) -> dict | None:
+    """CP8.28 M4: so lieu GPU tu `nvidia-smi` (ten, % GPU, VRAM dung / tong MB, nhiet do, cong suat) hoac None khi
+    khong lay duoc (CPU, khong co nvidia-smi, loi, dau ra la). Moi loi deu bi bo qua: worker khong bao gio dung vi so lieu."""
+    if cfg.get("device") == "cpu":
+        return None
+    try:
+        r = run(["nvidia-smi", f"--query-gpu={GPU_STATS_QUERY}", "--format=csv,noheader,nounits", "-i",
+                 str(cfg.get("cuda_device", 0))], capture_output=True, text=True, timeout=5)
+        line = (r.stdout or "").strip().splitlines()[0]
+        parts = [x.strip() for x in line.split(",")]
+        if len(parts) != len(GPU_STATS_KEYS) or not parts[0]:
+            return None
+        out: dict = {"name": parts[0][:80]}
+        for key, raw in zip(GPU_STATS_KEYS[1:], parts[1:]):
+            try:
+                out[key] = round(float(raw), 1)
+            except ValueError:  # "[N/A]" ..
+                out[key] = None
+        return out
+    except Exception:
+        return None
+
+
 class Engine:
     """Giu mang tren GPU (hoac CPU), enhance mot doan: doc khung | batch GPU | ma hoa."""
 
@@ -681,8 +709,16 @@ class Worker:
         self._fatal: BaseException | None = None
         self.stats = {"encoded": 0, "uploaded": 0, "put_ok": 0}
         self._gpu = ""
+        self._stats: tuple[float, dict | None] = (-1e9, None)
 
     # -- tien ich --
+    def gpu_stats(self) -> dict | None:
+        """CP8.28: so lieu GPU moi nhat (dem 2 s), None neu khong lay duoc."""
+        now = time.monotonic()
+        if now - self._stats[0] >= GPU_STATS_TTL:
+            self._stats = (now, read_gpu_stats(self.cfg))
+        return self._stats[1]
+
     def sleep(self, s: float) -> bool:
         """Ngu `s` giay; True neu bi dung."""
         return self.stop.wait(s)
@@ -781,8 +817,11 @@ class Worker:
 
     def acquire_lease(self):
         try:
-            status, data = self.api.call_json("POST", "/api/enhance/lease",
-                                              {"worker": self.cfg["worker_name"], "gpu": self.gpu_label()})
+            body = {"worker": self.cfg["worker_name"], "gpu": self.gpu_label()}
+            stats = self.gpu_stats()
+            if stats:
+                body["gpu_stats"] = stats  # CP8.28: truong tuy chon, VM cu bo qua
+            status, data = self.api.call_json("POST", "/api/enhance/lease", body)
         except NotFound:
             log.warning("VM chua co API enhance (404; CP13.1b chua trien khai?) - hoi lai sau %ss",
                         self.cfg["not_found_seconds"])
@@ -1039,8 +1078,11 @@ class Worker:
         while not self.stop.is_set():
             self._check_stop_ok()
             try:
-                _, data = self.api.call_json(
-                    "GET", "/api/enhance/may-run?" + urllib.parse.urlencode({"worker": self.cfg["worker_name"]}))
+                query = {"worker": self.cfg["worker_name"]}
+                stats = self.gpu_stats()
+                if stats:
+                    query["gpu_stats"] = json.dumps(stats, separators=(",", ":"))  # CP8.28: VM cu bo qua
+                _, data = self.api.call_json("GET", "/api/enhance/may-run?" + urllib.parse.urlencode(query))
             except (NetError, HttpError) as e:  # offline / VM khong tra loi -> cu lam (E4 offline)
                 log.debug("may-run khong hoi duoc (%s) - coi nhu run=true", e)
                 return True
@@ -1069,9 +1111,13 @@ class Worker:
 
     # -- luong phu --
     def heartbeat_once(self, lease):
-        _, data = self.api.call_json("POST", f"/api/enhance/{lease['lease_id']}/heartbeat", {"progress": {
+        body = {"progress": {
             "segments_uploaded": self.state.count("uploaded"), "segments_encoded": self.state.count("encoded"),
-            "segments_total": total_segments(int(lease["frames"]), int(lease["segment_frames"]))}})
+            "segments_total": total_segments(int(lease["frames"]), int(lease["segment_frames"]))}}
+        stats = self.gpu_stats()
+        if stats:
+            body["gpu_stats"] = stats  # CP8.28: truong tuy chon, VM cu bo qua
+        _, data = self.api.call_json("POST", f"/api/enhance/{lease['lease_id']}/heartbeat", body)
         if isinstance(data, dict) and data.get("expires_at"):
             lease["expires_at"] = data["expires_at"]
 

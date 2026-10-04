@@ -2814,6 +2814,152 @@ const AutoShort = (() => {
     if (busy) plTimer = setTimeout(loadPlaylist, POLL_MS * 2);
   }
 
+  // --- CP8.28 monitor tab: queue detail, VM CPU, Ollama, GPU workers (refresh every few seconds) ---------------
+
+  const MON_MS = 4000;
+  const LANE_NAMES = { prepare: "Chuẩn bị (tải + phiên âm + phân tích)", ai: "AI (chọn đoạn + đặt tên)", render: "Render", serial: "Tuần tự" };
+  const KIND_NAMES = { pipeline: "xử lý tập", render: "render lại", add: "thêm Short", post: "soạn bài đăng", post_search: "tìm ảnh", enhance: "ghép HD" };
+  const STAGE_NAMES = { ingest: "tải video", transcript: "phiên âm", analysis: "phân tích", preflight: "kiểm Ollama", selection: "chọn đoạn", titling: "đặt tên", render: "render" };
+  const WAIT_NAMES = { hd: "đợi HD", gpu: "đợi GPU / Ollama", youtube: "đợi YouTube" };
+
+  function fmtDur(s) {
+    if (s === null || s === undefined) return "";
+    s = Math.round(s);
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+    return h ? `${h} giờ ${m} phút` : m ? `${m} phút ${s % 60} giây` : `${s} giây`;
+  }
+  function fmtClock(iso) { return iso ? new Date(iso).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }) : ""; }
+  function pct(v) { return v === null || v === undefined ? "?" : `${Math.round(v)} %`; }
+
+  function bar(value, cls) {
+    const fill = el("span", { class: "mon-fill" });
+    const v = `${Math.max(0, Math.min(100, value || 0))}%`;
+    if (cls === "core") fill.style.height = v; else fill.style.width = v;
+    return el("span", { class: "mon-bar " + (cls || "") }, fill);
+  }
+
+  function spark(values, max) {
+    const ns = "http://www.w3.org/2000/svg", w = 300, h = 40;
+    const svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+    svg.setAttribute("class", "mon-spark");
+    svg.setAttribute("preserveAspectRatio", "none");
+    const pts = values.map((v, i) => [values.length < 2 ? 0 : (i * w) / (values.length - 1), h - (Math.max(0, Math.min(max, v === null ? 0 : v)) / max) * (h - 2) - 1]);
+    if (pts.length > 1) {
+      const line = document.createElementNS(ns, "polyline");
+      line.setAttribute("points", pts.map((p) => p[0].toFixed(1) + "," + p[1].toFixed(1)).join(" "));
+      line.setAttribute("fill", "none");
+      line.setAttribute("stroke", "currentColor");
+      line.setAttribute("stroke-width", "1.5");
+      svg.append(line);
+    }
+    return svg;
+  }
+
+  function jobName(e) {
+    const ep = e.episode || {};
+    return (ep.label || e.episode_id) + (e.priority ? " ★" : "");
+  }
+  function jobStep(e) {
+    const st = e.stage ? (STAGE_NAMES[e.stage] || e.stage) : "";
+    const pr = e.progress ? ` ${e.progress.done}/${e.progress.total} clip` : "";
+    return [KIND_NAMES[e.kind] || e.kind, st && "bước: " + st + pr].filter(Boolean).join(" · ");
+  }
+
+  function renderQueue(q) {
+    $("#mon-queue-note").textContent = (q.paused ? `ĐANG TẠM NGƯNG (${q.pause_mode === "now" ? "ngay" : "sau bước hiện tại"}). ` : "") +
+      (q.gpu && q.gpu.state === "down" ? "Ollama mất kết nối, làn AI đang đợi GPU. " : "") +
+      (q.youtube && q.youtube.blocked ? `YouTube chặn tải, thử lại lúc ${fmtClock(q.youtube.next_check)}. ` : "");
+    const box = $("#mon-lanes");
+    box.replaceChildren(...Object.entries(q.lanes).map(([lane, info]) => {
+      const run = info.running;
+      const head = el("h3", { class: "small", text: `${LANE_NAMES[lane] || lane} — ${run ? "đang chạy 1" : "rảnh"}, ${info.pending_total} chờ` });
+      const now = run
+        ? el("div", { class: "mon-run" }, el("strong", { text: jobName(run) }),
+          el("div", { class: "small", text: jobStep(run) }),
+          el("div", { class: "muted small", text: `bước này đã chạy ${fmtDur(run.elapsed_seconds)}` + (run.started_at ? ` · cả việc bắt đầu ${fmtClock(run.started_at)}` : "") + ` · id ${run.id}` }))
+        : el("div", { class: "muted small", text: "Không có việc đang chạy." });
+      const items = info.pending.map((e) => el("li", { class: "small" },
+        `${e.position}. ${jobName(e)} `, el("span", { class: "muted", text: jobStep(e) + (e.waiting ? " · từ làn trước sang" : "") })));
+      const more = info.pending_total > info.pending.length
+        ? el("li", { class: "muted small", text: `… còn ${info.pending_total - info.pending.length} việc nữa` }) : null;
+      return el("div", { class: "mon-lane" }, head, now, items.length ? el("ol", { class: "mon-list" }, ...items, more) : null);
+    }));
+    const w = $("#mon-waiting");
+    if (!q.waiting.length) { w.replaceChildren(); return; }
+    const rows = q.waiting.map((e) => el("li", { class: "small" }, `${jobName(e)} `,
+      el("span", { class: "muted", text: `${WAIT_NAMES[e.reason] || e.reason}` + (e.retry_at ? ` · thử lại lúc ${fmtClock(e.retry_at)}` : "") })));
+    w.replaceChildren(el("h3", { class: "small", text: `Đang đợi, không giữ làn (${q.waiting_total})` }), el("ul", { class: "mon-list" }, ...rows));
+  }
+
+  function renderCpu(s) {
+    const box = $("#mon-cpu");
+    const m = s.mem, d = s.disk;
+    const parts = [
+      el("div", {}, `CPU: ${pct(s.cpu_pct)} của ${s.ncpu || "?"} nhân `, bar(s.cpu_pct), el("span", { class: "muted small", text: ` tải 1/5/15 phút: ${(s.load || []).join(" / ")}` })),
+      el("div", {}, `RAM: ${m ? fmtBytes(m.used) + " / " + fmtBytes(m.total) : "?"} (${pct(s.ram_pct)}) `, bar(s.ram_pct)),
+      d ? el("div", {}, `Đĩa work/: ${fmtBytes(d.used)} / ${fmtBytes(d.total)}, còn ${fmtBytes(d.free)} `, bar(d.total ? (100 * d.used) / d.total : 0)) : null,
+      el("div", { class: "mon-chart" }, el("span", { class: "muted small", text: "CPU ~1 giờ" }), spark(s.history.map((r) => r[1]), 100)),
+      el("div", { class: "mon-chart" }, el("span", { class: "muted small", text: "RAM ~1 giờ" }), spark(s.history.map((r) => r[2]), 100)),
+    ];
+    const cores = el("div", { class: "mon-cores", title: "CPU từng nhân" }, ...(s.cores || []).map((c) => bar(c, "core")));
+    const rows = s.top.map((p) => {
+      let job = "";
+      if (p.lane === "web") job = "trong tiến trình web" + (p.job && p.job.jobs.length ? ": " + p.job.jobs.map((j) => `${j.kind} ${j.episode_id}`).join(", ") : "");
+      else if (p.job) job = `${LANE_NAMES[p.lane] || p.lane}: ${p.job.kind} ${p.job.episode_id}`;
+      return el("tr", {}, el("td", { text: String(p.cpu_pct) }), el("td", { text: `${p.rss_mb}` }), el("td", { class: "small", text: p.comm }), el("td", { class: "small muted", text: job || p.cmd.slice(0, 60) }));
+    });
+    const table = el("div", { class: "table-wrap" }, el("table", { class: "storage-table" },
+      el("thead", {}, el("tr", {}, el("th", { text: "CPU % (100 = 1 nhân)" }), el("th", { text: "RAM MB" }), el("th", { text: "Tiến trình" }), el("th", { text: "Việc" }))),
+      el("tbody", {}, ...rows)));
+    box.replaceChildren(...parts, cores, table);
+  }
+
+  function renderOllama(o) {
+    const box = $("#mon-ollama");
+    const lines = [];
+    if (!o.connected) lines.push(el("p", { class: "error", text: "Không kết nối được Ollama" + (o.error ? ` (${o.error})` : "") + "." }));
+    else if (!o.models.length) lines.push(el("p", { class: "muted", text: "Ollama đang rảnh: chưa nạp model nào." }));
+    for (const m of o.models) {
+      lines.push(el("div", {}, el("strong", { text: m.name }),
+        el("span", { class: "muted small", text: ` — ${m.size_mb !== null ? m.size_mb + " MB" : "?"}, trong VRAM ${m.vram_mb !== null ? m.vram_mb + " MB" : "?"}` + (m.expires_at ? `, hết hạn ${fmtClock(m.expires_at)}` : "") })));
+    }
+    lines.push(el("div", { class: "small" }, o.job ? `Làn AI đang chạy: ${(o.job.episode.label)} (${KIND_NAMES[o.job.kind] || o.job.kind}${o.job.stage ? ", " + (STAGE_NAMES[o.job.stage] || o.job.stage) : ""}).` : "Làn AI không có việc đang chạy."));
+    if (o.gpu && o.gpu.state === "down") lines.push(el("div", { class: "error small", text: "Hàng đợi đang đợi GPU" + (o.gpu.next_check ? ` (kiểm lại lúc ${fmtClock(o.gpu.next_check)})` : "") + "." }));
+    box.replaceChildren(...lines);
+  }
+
+  function renderGpu(g) {
+    const box = $("#mon-gpu");
+    if (!g.workers.length) { box.replaceChildren(el("p", { class: "muted", text: "Chưa có máy GPU nào (enhance chưa cấu hình token)." })); return; }
+    box.replaceChildren(...g.workers.map((w) => {
+      const st = w.gpu_stats;
+      const head = el("strong", { text: `${w.label}${w.gpu ? " — " + w.gpu : ""}` });
+      const what = w.episode ? `Đang enhance ${w.episode.label}` + (w.progress && w.progress.segments_total ? ` (đoạn ${w.progress.segments_uploaded || 0}/${w.progress.segments_total})` : "")
+        : w.connected ? "Rảnh." : "Chưa kết nối từ lúc server khởi động.";
+      const stats = st
+        ? el("div", { class: "small" }, `GPU ${pct(st.util_pct)} `, bar(st.util_pct), ` VRAM ${st.mem_used_mb !== null ? Math.round(st.mem_used_mb) : "?"} / ${st.mem_total_mb !== null ? Math.round(st.mem_total_mb) : "?"} MB `,
+          bar(st.mem_total_mb ? (100 * st.mem_used_mb) / st.mem_total_mb : 0), ` · ${st.temp_c !== null ? Math.round(st.temp_c) + " °C" : ""}${st.power_w !== null ? " · " + Math.round(st.power_w) + " W" : ""}`,
+          w.gpu_stats_stale ? el("span", { class: "error", text: ` (số liệu cũ ${fmtDur(w.gpu_stats_age)})` }) : null)
+        : el("div", { class: "muted small", text: "chưa có số liệu GPU (cập nhật worker trên máy Windows)" });
+      return el("div", { class: "mon-gpu" }, head, el("div", { class: "small", text: what + (w.yield ? " · nhường Ollama" : "") }), stats);
+    }));
+  }
+
+  function initMonitor() {
+    const feeds = [["/api/monitor/queue?limit=20", renderQueue], ["/api/monitor/system", renderCpu],
+      ["/api/monitor/ollama", renderOllama], ["/api/monitor/gpu", renderGpu]];
+    async function tick() {
+      if (!document.hidden) {
+        await Promise.all(feeds.map(async ([url, fn]) => {
+          try { fn(await api(url)); } catch (_) { /* keep the last picture of this card */ }
+        }));
+      }
+      setTimeout(tick, MON_MS);
+    }
+    tick();
+  }
+
   // --- CP8.22 queue bar (every page except login): "Hàng đợi đang tạm ngưng — n việc chờ · Chạy tiếp" -----------
 
   function initQueueBar() {
@@ -2821,7 +2967,7 @@ const AutoShort = (() => {
     if (!header) return;
     const bar = el("div", { id: "queue-bar", class: "queue-bar", hidden: true });
     header.after(bar);
-    const note = el("span", { class: "queue-note" });
+    const note = el("a", { class: "queue-note", href: "/monitor", title: "Mở tab Theo dõi" });
     const post = (path, body) => api(path, { method: "POST", headers: { "Content-Type": "application/json" },
       body: body ? JSON.stringify(body) : undefined }).then(render, (e) => { note.textContent = e.message; });
     const btn = (text, fn) => { const b = el("button", { class: "btn small", type: "button", text }); b.addEventListener("click", fn); return b; };
@@ -2854,5 +3000,5 @@ const AutoShort = (() => {
   }
   document.addEventListener("DOMContentLoaded", initQueueBar);
 
-  return { initIndex, initEpisode, initStorage, initPlaylist, initPosts };
+  return { initIndex, initEpisode, initStorage, initPlaylist, initPosts, initMonitor };
 })();

@@ -101,6 +101,23 @@ Khởi động lại máy rồi đăng nhập: hai task tự chạy (kiểm bằ
 
 Sửa `%USERPROFILE%\enhance-worker\config.json`; worker tự đọc lại sau tối đa `auth_retry_seconds` khi gặp 401 (muốn áp dụng ngay: `.\auto-fix-enhance-worker.ps1`; hoặc chạy lại `setup-enhance-worker.ps1 -WorkerName ... -Token <token mới>`). Các khóa: `worker_name`, `token`, `yield_to_ollama`, `batch_size`, `max_disk_gb`, `work_dir`, `device`, `ffmpeg`. Mẫu: `config.example.json`. Không gửi token qua chat / commit vào repo.
 
+## Cập nhật worker đã cài (ví dụ lên bản gửi số liệu GPU cho tab "Theo dõi", CP8.28)
+
+Worker mới (`__version__ = "2"`) gửi thêm số % GPU / VRAM / nhiệt độ cho VM (trường `gpu_stats` tùy chọn). VM cũ và worker cũ vẫn chạy với nhau; worker cũ chỉ khiến tab "Theo dõi" ghi "chưa có số liệu GPU". Cập nhật từng máy (3090 và 3050):
+
+1. Chép lại cả thư mục `tools/enhance_worker` từ repo (nhánh / `main` có CP8.28) sang máy, như Bước 1 (ghi đè `C:\enhance_worker_src`).
+2. Chạy lại **`setup-enhance-worker.ps1`** với đúng tham số lúc cài (an toàn chạy lại; chép `worker.py` mới vào `%USERPROFILE%\enhance-worker\app`, giữ nguyên token trong `config.json`, khởi động lại hai task):
+
+   ```
+   > cd C:\enhance_worker_src\windows
+   > Set-ExecutionPolicy -Scope Process Bypass
+   > .\setup-enhance-worker.ps1 -WorkerName rtx3090 -YieldToOllama     # máy 3090
+   > .\setup-enhance-worker.ps1 -WorkerName rtx3050                    # máy 3050
+   ```
+
+   (`auto-fix-enhance-worker.ps1` **không** đủ: nó chỉ khởi động lại task, không chép `worker.py` mới.)
+3. Kiểm: dòng đầu `%USERPROFILE%\enhance-worker\logs\worker.log` có `worker v2`; trên web mở tab **Theo dõi**, mục "GPU enhance" hiện % GPU / VRAM của máy đó trong vòng một phút.
+
 ## Gỡ
 
 ```

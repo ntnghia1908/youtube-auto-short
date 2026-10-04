@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -68,9 +68,119 @@ Không chạm database / security model / public API web. Điểm danh trên 808
 
 ## Result
 
-- Main changes:
-- Tests:
+- Main changes: tab "Theo dõi" (`/monitor`, link trên 5 trang + thanh tóm tắt hàng đợi; làm mới 4 s, SVG tự vẽ). Mã mới `web/monitor.py` (đọc `/proc`, `Sampler` lịch sử 720 mẫu = 1 giờ trong RAM, `/api/ps` Ollama có đệm 3 s, nhãn tập + tiến độ render k/n từ log job và `clips.json`). `JobRunner.monitor_queue()` + `lane_tids()` (jobs.py; trường `step_t0` / `step_started_at`). Route cookie: `GET /api/monitor/queue?limit=`, `/system`, `/ollama`, `/gpu`. Gán tiến trình cho job qua `/proc/<pid>/task/<tid>/children` của thread làn + cây ppid (tiến trình web: "trong tiến trình web" + các job đang chạy). Worker (`tools/enhance_worker/worker.py`, `__version__ = "2"`) gửi `gpu_stats` (`nvidia-smi`, đệm 2 s, lỗi / `--device cpu` thì bỏ trường) ở lease (body), heartbeat (body), may-run (query JSON); VM (`enhance/service.py`, `app.py`) nhận tùy chọn, `clean_gpu_stats`, giữ số mới nhất trong RAM. Cập nhật `docs/decisions/CP13.1-enhance-worker-contract.md` (bảng API + đoạn `gpu_stats`), `docs/guides/enhance-worker-windows.md` (mục "Cập nhật worker đã cài": chép lại thư mục + chạy lại `setup-enhance-worker.ps1`; `auto-fix` không đủ vì không chép `worker.py`), README. `fake_server.py` ghi lại thân / query để test.
+- Tests: `tests/test_monitor_cp828.py` (17 test: AC1 hàng đợi 3 làn + đợi HD / GPU / YouTube + 30 chờ có ưu tiên + giới hạn 20; AC2 `/proc` giả + lịch sử ≤ 720; AC3 Ollama; AC4 `gpu_stats` qua lease / may-run / heartbeat, worker không gửi, server giả = VM cũ; AC5 đăng nhập + link). Lệnh chuẩn `python -m pytest -q -n auto`: 1496 passed, 1 skipped (trước khi sửa nhỏ regex `expires_at` + 1 assert; file test mới chạy lại: 17 passed). `-m slow` (env `enhance-bench`): 16 passed (lần đầu `-n 8` khi VM tải ~45 do bench CP13.3: `test_self_test_reports_vm_states` quá hạn 120 s; chạy lại `-n 3` PASS). `node scripts/framework-check.mjs`: PASS.
+- Chạy thật 8081 (bản sao `~/.cache/auto-short-cp828-test/`, enhance tắt, token giả, Ollama thật `/api/ps` chỉ đọc; đã dừng): 3 job render + lease giả có `gpu_stats`; ffmpeg của job render được gán đúng làn / job. JSON mẫu (rút gọn):
+
+```json
+{
+ "queue (rút gọn, 8081, render đang chạy)": {
+  "lanes": {
+   "render": {
+    "running": {
+     "id": "1",
+     "episode_id": "By0ZVJTPW3Y",
+     "kind": "render",
+     "stage": "render",
+     "elapsed_seconds": 0.2,
+     "episode": {
+      "label": "Thái Thượng Cảm Ứng Thiên · Tập 5",
+      "kind": "short"
+     },
+     "progress": {
+      "done": 9,
+      "total": 10
+     }
+    },
+    "pending": [
+     {
+      "position": 1,
+      "episode_id": "DoOTuWrXHAg",
+      "episode": {
+       "label": "Thái Thượng Cảm Ứng Thiên · Tập 8"
+      }
+     },
+     {
+      "position": 2,
+      "episode_id": "BeptYl_4Cjw"
+     }
+    ],
+    "pending_total": 2
+   }
+  },
+  "waiting": [],
+  "paused": false
+ },
+ "system (rút gọn)": {
+  "cpu_pct": 90.2,
+  "ncpu": 32,
+  "load": [
+   55.75,
+   47.15,
+   34.21
+  ],
+  "ram_pct": 9.9,
+  "disk.path": "/home/ntnghia/.cache/auto-short-cp828-test/work",
+  "top[lane=render]": {
+   "pid": 206703,
+   "comm": "ffmpeg",
+   "cpu_pct": 315.6,
+   "lane": "render",
+   "job": {
+    "id": "1",
+    "episode_id": "By0ZVJTPW3Y",
+    "kind": "render",
+    "stage": "render"
+   }
+  }
+ },
+ "ollama": {
+  "connected": true,
+  "host": "http://127.0.0.1:11437",
+  "models": [
+   {
+    "name": "qwen3:30b",
+    "size_mb": 20712,
+    "vram_mb": 20712,
+    "expires_at": "2026-10-04T18:03:22.9236555+07:00"
+   }
+  ],
+  "error": null,
+  "gpu": {
+   "state": "ok",
+   "since": null,
+   "error": null,
+   "next_check": null
+  },
+  "job": null
+ },
+ "gpu": [
+  {
+   "name": "rtx3090",
+   "label": "rtx3090-sim",
+   "gpu": "RTX 3090",
+   "connected": true,
+   "last_seen": "2026-10-04T10:59:08Z",
+   "seen_seconds": 4.986949682235718,
+   "yield": false,
+   "episode": null,
+   "progress": null,
+   "gpu_stats": {
+    "name": "NVIDIA GeForce RTX 3090",
+    "util_pct": 87.0,
+    "mem_used_mb": 9000.0,
+    "mem_total_mb": 24576.0,
+    "temp_c": 71.0,
+    "power_w": 310.5
+   },
+   "gpu_stats_age": 4.986949682235718,
+   "gpu_stats_stale": false
+  }
+ ]
+}
+```
+
 - Review:
-- Important findings / decisions:
-- Known limitations:
-- PR:
+- Important findings / decisions: (1) Trường `gpu_stats` ở `may-run` là query JSON (GET không có body). (2) Hạn thử lại YouTube / GPU lấy từ `next_check` có sẵn của runner. (3) Tiến độ render là best-effort (đếm dòng `render: clip <id>:` trong 200 dòng log gần nhất / số clip trong `clips.json`); enhance: số đoạn lấy từ `progress` của worker. (4) `expires_at` Ollama bỏ phần thập phân giây cho mọi trình duyệt parse được. (5) Test dừng runner phải `wait_idle` trước `stop()` (stop ngắt luồng làn bằng async exception có thể kẹt khóa nếu còn việc đang chạy).
+- Known limitations: tiến trình nặng thuộc job chỉ suy được khi là con của luồng làn (ffmpeg / yt-dlp); Whisper / phân tích trong tiến trình web hiện là "trong tiến trình web" cùng danh sách job đang chạy, không tách theo làn. Không có cảnh báo / lịch sử dài / điều khiển (ngoài scope). Số GPU chỉ có sau khi cài lại worker trên 2 máy Windows (manual test checklist, chưa chạy).
+- PR: (chưa; ORCHESTRATOR)

@@ -34,6 +34,22 @@ STATE_FILE = ".enhance_state.json"  # global "Tạm dừng enhance" (workspace r
 MAX_PROGRESS_KEYS = ("segments_uploaded", "segments_encoded", "segments_total")
 
 
+GPU_STATS_KEYS = ("util_pct", "mem_used_mb", "mem_total_mb", "temp_c", "power_w")
+
+
+def clean_gpu_stats(obj: object) -> dict | None:
+    """CP8.28 M4: the optional ``gpu_stats`` a worker sends (``nvidia-smi`` numbers). Anything unusable -> None (the worker
+    entry then keeps its previous numbers); only the known keys are kept, numbers as floats, ``name`` as short text."""
+    if not isinstance(obj, dict):
+        return None
+    out: dict = {"name": obj["name"][:80] if isinstance(obj.get("name"), str) else None}
+    for key in GPU_STATS_KEYS:
+        v = obj.get(key)
+        out[key] = round(float(v), 1) if isinstance(v, (int, float)) and not isinstance(v, bool) and v == v \
+            and abs(v) < 1e9 else None
+    return out if any(v is not None for v in out.values()) else None
+
+
 @dataclass
 class PutContext:
     """A validated ``PUT seg``: where the body goes (a temp file inside the segment dir of the lease's episode)."""
@@ -89,10 +105,10 @@ class EnhanceService:
                 log.warning("enhance: cannot save %s: %s", STATE_FILE, exc)
         log.info("enhance: %s", "paused by HUMAN LEAD" if paused else "resumed")
 
-    def ping(self, name: str, label: str | None = None) -> None:
-        """A worker called an API route: record the contact (worker panel)."""
+    def ping(self, name: str, label: str | None = None, gpu_stats: object = None) -> None:
+        """A worker called an API route: record the contact (worker panel) and its optional GPU numbers (CP8.28)."""
         with self.lock:
-            self._touch(name, label)
+            self._touch(name, label, gpu_stats=gpu_stats)
 
     def may_run(self, name: str) -> tuple[bool, str]:
         """E7: may the worker ``name`` (token name) enhance now?"""
@@ -131,9 +147,14 @@ class EnhanceService:
     def _expires(self) -> str:
         return st.now_iso(self.clock() + self.config.enhance.lease_hours * 3600)
 
-    def _touch(self, name: str, label: str | None = None, gpu: str | None = None, **extra) -> dict:
+    def _touch(self, name: str, label: str | None = None, gpu: str | None = None, gpu_stats: object = None,
+               **extra) -> dict:
         w = self._workers.setdefault(name, {"name": name, "label": name, "gpu": None, "last_seen": None,
-                                            "episode_id": None, "lease_id": None, "progress": None})
+                                            "episode_id": None, "lease_id": None, "progress": None,
+                                            "gpu_stats": None, "gpu_stats_at": None})
+        stats = clean_gpu_stats(gpu_stats)  # CP8.28: optional; an old worker never sends it
+        if stats is not None:
+            w["gpu_stats"], w["gpu_stats_at"] = stats, self._now_iso()
         if label:
             w["label"] = label[:80]
         if gpu:
@@ -219,12 +240,13 @@ class EnhanceService:
 
         return sorted(cands, key=sort_key)
 
-    def lease(self, name: str, label: str | None = None, gpu: str | None = None) -> dict | None:
+    def lease(self, name: str, label: str | None = None, gpu: str | None = None,
+              gpu_stats: object = None) -> dict | None:
         """E3 ``POST lease``: the worker's own valid lease, else the next video (waiting for HD first, then by
         ``wanted_at``); None = 204 (nothing to do, or the worker may not run now)."""
         completed: list[str] = []
         with self.lock:
-            self._touch(name, label, gpu)
+            self._touch(name, label, gpu, gpu_stats=gpu_stats)
             ok, _reason = self.may_run(name)
             if not ok:
                 return None
@@ -290,14 +312,14 @@ class EnhanceService:
         st.write(d, doc)
         return doc["lease"]["expires_at"]
 
-    def heartbeat(self, name: str, lease_id: str, progress: object) -> dict:
+    def heartbeat(self, name: str, lease_id: str, progress: object, gpu_stats: object = None) -> dict:
         with self.lock:
             eid, d, doc = self._find(lease_id, name)
             prog = {k: progress[k] for k in MAX_PROGRESS_KEYS
                     if isinstance(progress, dict) and isinstance(progress.get(k), int)
                     and not isinstance(progress.get(k), bool)} if isinstance(progress, dict) else None
             expires = self._renew(d, doc, progress=prog)
-            self._touch(name, episode_id=eid, lease_id=lease_id, progress=prog)
+            self._touch(name, episode_id=eid, lease_id=lease_id, progress=prog, gpu_stats=gpu_stats)
             return {"ok": True, "expires_at": expires}
 
     def release(self, name: str, lease_id: str, reason: object) -> dict:

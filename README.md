@@ -187,6 +187,15 @@ enhance workers take the episodes in episode order. "Chạy tiếp" on such an e
 runs AI then render for the Short and the khai thị (the render waits for the HD source). Task:
 `docs/tasks/CP13.2-hd-first.md`.
 
+Monitor tab (CP8.28, "Theo dõi" in the top bar, `/monitor`; the queue summary bar links to it; refreshes every 4 s while
+open): per lane the running job (video, step, elapsed, render k/n clips), the jobs waiting for HD / GPU / YouTube with the
+retry time, and the pending jobs in the order the lane will start them (priority ★ first, 20 per lane); the VM's CPU
+(total + per core), load, RAM, `work/` disk, the top processes with the job they belong to and a one-hour in-RAM history;
+Ollama's loaded models (`/api/ps`); and the GPU % / VRAM / temperature of each enhance worker with the episode it is
+enhancing. The worker sends the GPU numbers (optional `gpu_stats`, `nvidia-smi`; reinstall steps in
+`docs/guides/enhance-worker-windows.md`); a worker not yet updated shows "chưa có số liệu GPU". JSON: `/api/monitor/queue`
+(`?limit=`), `/system`, `/ollama`, `/gpu` (login required). Task: `docs/tasks/CP8.28-monitor.md`.
+
 Storage tab (CP8.6, "Bộ nhớ" in the top bar, `/storage`): free / used space of the drive holding `work/` and
 `output/`, the size of every episode (source video / Shorts / other) and of the Whisper models, and clean-up
 suggestions with a "Làm" button (asks first; nothing is ever deleted automatically): episodes whose Shorts are all

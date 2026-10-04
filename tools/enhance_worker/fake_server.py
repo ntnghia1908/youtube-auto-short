@@ -27,6 +27,14 @@ _SEG_RE = re.compile(r"^/api/enhance/([A-Za-z0-9._-]+)/seg/(\d{1,6})$")
 _LEASE_RE = re.compile(r"^/api/enhance/([A-Za-z0-9._-]+)/(source|heartbeat|release)$")
 
 
+def _json_or_empty(raw: bytes) -> dict:
+    try:
+        data = json.loads(raw or b"{}")
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def probe(ffprobe: str, path: Path) -> dict:
     out = subprocess.run(
         [ffprobe, "-v", "error", "-count_packets", "-select_streams", "v:0", "-show_entries",
@@ -71,6 +79,9 @@ class FakeServer:
         self.source_gets = 0
         self.range_requests: list[str] = []
         self.heartbeats = 0
+        self.lease_bodies: list[dict] = []   # CP8.28: than JSON cua POST lease / heartbeat (kiem gpu_stats)
+        self.heartbeat_bodies: list[dict] = []
+        self.may_run_queries: list[str] = []
         self.releases: list[str] = []
         self.status_log: list[tuple[str, str, int]] = []
         # dieu khien
@@ -175,7 +186,7 @@ class FakeServer:
     def _route(self, h, method, path, length):
         query = h.path.partition("?")[2]
         if method == "POST" and path == "/api/enhance/lease":
-            h.rfile.read(length)
+            self.lease_bodies.append(_json_or_empty(h.rfile.read(length)))
             self.lease_calls += 1
             if self.complete:
                 return self._send(h, 204)
@@ -193,6 +204,7 @@ class FakeServer:
                 "done_segments": sorted(self.received)})
         if method == "GET" and path == "/api/enhance/may-run":
             self.may_run_calls += 1
+            self.may_run_queries.append(query)
             run = self.may_run(self.may_run_calls) if callable(self.may_run) else bool(self.may_run)
             return self._send(h, 200, {"run": run, "reason": "" if run else "ollama busy"})
         m = _SEG_RE.match(path)
@@ -201,14 +213,14 @@ class FakeServer:
         m = _LEASE_RE.match(path)
         if m:
             lid, what = m.groups()
-            if length:
-                h.rfile.read(length)
+            raw = h.rfile.read(length) if length else b""
             if not self._lease_ok(lid):
                 return self._send(h, 409, {"error": "lease invalid"})
             if what == "source" and method == "GET":
                 return self._source(h)
             if what == "heartbeat" and method == "POST":
                 self.heartbeats += 1
+                self.heartbeat_bodies.append(_json_or_empty(raw))
                 return self._send(h, 200, {"ok": True})
             if what == "release" and method == "POST":
                 self.releases.append(lid)
