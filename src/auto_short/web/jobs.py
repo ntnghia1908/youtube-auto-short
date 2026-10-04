@@ -58,6 +58,7 @@ KIND_ADD = "add"  # CP9 C7: AI title of a Short added by hand (lane ai), then re
 KIND_POST = "post"  # CP8.15 P1: compose / recompose community post text (lane ai; no render)
 KIND_POST_SEARCH = "post_search"  # CP8.15 P5b: find images from a link (lane prepare; no Ollama)
 KIND_ENHANCE = "enhance"  # CP13.1b: assemble ``source_hd.mp4`` from the received segments (lane render; runs under enhance_key)
+KIND_VERTICAL = "vertical"  # CP8.27 H4: vertical full-episode video from ``source_hd.mp4`` (lane render; runs under vertical_key)
 POST_IMAGES_KEY = "_post_images"  # CP8.15 P9: pseudo episode id for the (single, global) image search job
 EPISODE_KINDS = (KIND_PIPELINE, KIND_RENDER, KIND_ADD)  # jobs of an episode that run the render step (CP8.16 R2a)
 
@@ -72,9 +73,14 @@ def enhance_key(episode_id: str) -> str:
     return f"{episode_id}#hd"
 
 
+def vertical_key(episode_id: str) -> str:
+    """CP8.27 H4: the runner key of the vertical full-episode job of a video (separate from the episode's own job)."""
+    return f"{episode_id}#vertical"
+
+
 def job_key(kind: str, episode_id: str) -> str:
     return post_key(episode_id) if kind == KIND_POST else enhance_key(episode_id) if kind == KIND_ENHANCE \
-        else episode_id
+        else vertical_key(episode_id) if kind == KIND_VERTICAL else episode_id
 
 
 MODE_LANES, MODE_SERIAL = "lanes", "serial"
@@ -352,7 +358,7 @@ class JobRunner:
         lane_steps = getattr(target, "lane_steps", None)
         if lane_steps is not None:
             return list(lane_steps())
-        return [Step(RENDER if kind in (KIND_RENDER, KIND_ENHANCE) else PREPARE, target)]
+        return [Step(RENDER if kind in (KIND_RENDER, KIND_ENHANCE, KIND_VERTICAL) else PREPARE, target)]
 
     def _enqueue_locked(self, episode_id: str, kind: str, target: Callable[[Job], None],
                         clip_ids: list[str] | None) -> Job:
@@ -409,6 +415,11 @@ class JobRunner:
         with self._lock:
             return self._latest.get(enhance_key(episode_id))
 
+    def latest_vertical(self, episode_id: str) -> Job | None:
+        """The newest vertical full-episode job of the video (CP8.27)."""
+        with self._lock:
+            return self._latest.get(vertical_key(episode_id))
+
     def job(self, job_id: str) -> Job | None:
         with self._lock:
             return self._jobs.get(job_id)
@@ -417,13 +428,14 @@ class JobRunner:
         """Drop the finished jobs of a deleted episode (CP8.5 X3) so it leaves every view; refused (False) while
         one of its jobs is queued/running."""
         with self._lock:
-            for key in (episode_id, post_key(episode_id), enhance_key(episode_id)):
+            for key in (episode_id, post_key(episode_id), enhance_key(episode_id), vertical_key(episode_id)):
                 latest = self._latest.get(key)
                 if latest is not None and latest.active:
                     return False
             self._latest.pop(episode_id, None)
             self._latest.pop(post_key(episode_id), None)
             self._latest.pop(enhance_key(episode_id), None)
+            self._latest.pop(vertical_key(episode_id), None)
             for job_id in [j.id for j in self._jobs.values() if j.episode_id == episode_id]:
                 del self._jobs[job_id]
         return True
@@ -1508,3 +1520,40 @@ class EnhanceAssembleTarget:
 def enhance_assemble_target(service, after: Callable[[str], None] | None = None) -> EnhanceAssembleTarget:
     """See :class:`EnhanceAssembleTarget`."""
     return EnhanceAssembleTarget(service, after)
+
+
+# --- vertical full-episode job (CP8.27 H4) -------------------------------------------------------------------------
+
+class VerticalTarget:
+    """Job target making ``output/<id>/full/vertical.mp4`` from the HD source (lane ``render``; one long ffmpeg, so it
+    follows the lane's one-job-at-a-time rule). Runs under :func:`vertical_key`, never colliding with the episode's own
+    job."""
+
+    def __init__(self, config: Config, *, vertical: Callable | None = None):
+        from ..render.full import run_vertical
+        self.config, self.vertical = config, vertical or run_vertical
+
+    def run(self, job: Job) -> None:
+        job.stage = "vertical"
+        t0 = time.monotonic()
+        try:
+            result = self.vertical(job.episode_id, self.config)
+        except RenderError as exc:
+            raise JobFailed(f"bản dọc: {exc}") from exc
+        job.stages.append({"stage": "vertical", "ran": bool(result.ran), "seconds": round(time.monotonic() - t0, 3)})
+        job.stage = None
+        job.summary = f"bản dọc {result.size / 1e6:.0f} MB" + ("" if result.ran else " (dùng lại, không encode)")
+
+    def __call__(self, job: Job) -> None:
+        self.run(job)
+
+    def lane_steps(self) -> list[Step]:
+        return [Step(RENDER, self.run)]
+
+    def spec(self) -> dict:
+        return {}
+
+
+def vertical_target(config: Config, *, vertical: Callable | None = None) -> VerticalTarget:
+    """See :class:`VerticalTarget`."""
+    return VerticalTarget(config, vertical=vertical)

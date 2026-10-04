@@ -44,6 +44,7 @@ from ..post import stage as post_stage
 from ..post import store as post_store
 from ..post import validate as post_validate
 from ..render import run_render
+from ..render import full as render_full
 from ..selection.client import resolve_host
 from ..review import (ArchivedError, EpisodeNotFound, ReviewError, TitlePreview, archive_source, content_disposition,
                       list_tombstones, mark_downloaded, remove_tombstone,
@@ -55,9 +56,9 @@ from . import episodes as ep
 from . import monitor as monitor_mod
 from .auth import COOKIE_NAME, SessionSigner, load_or_create_secret
 from .storage import BLOCK_MESSAGE, StorageCache, auto_archive_plan, episode_sizes, video_id
-from .jobs import (KIND_ADD, KIND_ENHANCE, KIND_PIPELINE, KIND_POST, KIND_POST_SEARCH, KIND_RENDER, POST_IMAGES_KEY,
-                   JobRunner, add_short_target, enhance_assemble_target, image_search_target, pipeline_target,
-                   post_compose_target, render_target)
+from .jobs import (KIND_ADD, KIND_ENHANCE, KIND_PIPELINE, KIND_POST, KIND_POST_SEARCH, KIND_RENDER, KIND_VERTICAL,
+                   POST_IMAGES_KEY, JobRunner, add_short_target, enhance_assemble_target, image_search_target,
+                   pipeline_target, post_compose_target, render_target, vertical_target)
 from . import playlists as playlists_mod
 from .priority import PRIORITY_FILE
 from .playlists import LIST_TIMEOUT, PlaylistError, PlaylistStore, ytdlp_list
@@ -302,7 +303,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                auto_archive_interval: float = AUTO_ARCHIVE_INTERVAL,
                enhance_tokens: dict[str, str] | None = None, enhance_service: EnhanceService | None = None,
                proc_dir: str = "/proc", ollama_ps: Callable[[], dict] | None = None,
-               monitor_interval: float = monitor_mod.SAMPLE_SECONDS) -> FastAPI:
+               monitor_interval: float = monitor_mod.SAMPLE_SECONDS, vertical: Callable | None = None) -> FastAPI:
     """``preflight`` / ``pipeline`` / ``render`` are injectable for tests (defaults: CP8 ``ollama_preflight`` /
     ``run_pipeline``, CP7/CP8.2 ``run_render``); so are ``disk_usage`` (``shutil.disk_usage``) and ``clock`` (epoch
     seconds, ages of the storage recommendations) for CP8.6; ``playlist_lister`` (yt-dlp flat listing) and
@@ -462,6 +463,8 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             return render_target(config, render=render)
         if kind == KIND_ENHANCE:
             return enhance_assemble_target(svc, after=_hd_ready)
+        if kind == KIND_VERTICAL:
+            return vertical_target(config, vertical=vertical)
         if kind == KIND_ADD:
             clip = spec.get("clip_id")
             return add_short_target(config, clip, render=render, preflight=preflight, titler=titler) \
@@ -780,6 +783,10 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         view["youtube"] = runner.youtube_status()  # FIX-youtube-botcheck-wait Y3
         for e in view["entries"]:  # CP8.26
             e["priority"] = bool(e.get("video_id")) and runner.priority.marked(e["video_id"])
+            hd = e.get("hd")  # CP8.27 H2: download icon of the finished HD video
+            if hd and hd.get("state") == "done" and e.get("video_id") and ep.hd_file(config, e["video_id"]) is not None:
+                e["hd_url"] = f"/api/episodes/{e['video_id']}/source-hd"
+                e["hd_name"] = ep.video_download_name(config, e["video_id"], "HD")
         view["priority_count"] = sum(1 for e in view["entries"] if e["priority"])
         kc = config.khaithi  # CP8.9 A2.2: defaults of the kind bar ("Khai thị [min]–[max] phút")
         view["khaithi_defaults"] = {"min_minutes": kc.default_min_minutes, "max_minutes": kc.default_max_minutes,
@@ -1054,10 +1061,27 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         view["youtube"] = runner.youtube_status()  # FIX-youtube-botcheck-wait Y3
         view["post_job"] = _job_view(runner.latest_post(episode_id))  # CP8.16 R3 (job stays the episode's own job)
         view["enhance"] = _enhance_view(episode_id)  # CP13.1 E10
+        view["hd_video"] = _hd_video_view(episode_id)  # CP8.27
         if job is not None and job.active and job.kind in (KIND_RENDER, KIND_ADD):
             for short in view["shorts"]:
                 short["rendering"] = short["clip_id"] in job.clip_ids
         return view
+
+    def _hd_video_view(episode_id: str) -> dict | None:
+        """CP8.27 H2 / H4: the HD download (landscape) and the vertical full-episode file of the video, None while
+        there is no finished HD source."""
+        hd = ep.hd_file(config, episode_id)
+        if hd is None:
+            return None
+        owner = ep.hd_owner(episode_id)
+        ready = render_full.ready_file(config, owner) if render_full.current(config, owner) else None
+        job = runner.latest_vertical(owner)
+        return {"url": f"/api/episodes/{episode_id}/source-hd", "name": ep.video_download_name(config, episode_id, "HD"),
+                "size": hd.stat().st_size,
+                "vertical": {"ready": ready is not None, "url": f"/api/episodes/{episode_id}/vertical",
+                             "name": ep.video_download_name(config, episode_id, "Doc"),
+                             "size": ready.stat().st_size if ready is not None else None,
+                             "job": _job_view(job, logs=False)}}
 
     @app.post("/api/episodes/{episode_id}/priority")
     def api_episode_priority(episode_id: str, body: PublishedIn):
@@ -1895,6 +1919,55 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             job, _ = runner.submit(episode_id, KIND_RENDER, render_target(config, render=render))
         log.info("web: render lại bản HD [%s] -> job %s", episode_id, job.id)
         return JSONResponse({"job": _job_view(job), "enhance": _enhance_view(episode_id)}, status_code=202)
+
+    # --- CP8.27: HD video download + vertical full-episode version ---------------------------------------------
+
+    def _hd_or_404(episode_id: str) -> tuple[Path | None, JSONResponse | None]:
+        if not ep.valid_episode_id(episode_id):
+            return None, JSONResponse({"detail": "không có episode này"}, status_code=404)
+        hd = ep.hd_file(config, episode_id)
+        if hd is None:
+            return None, JSONResponse({"detail": "chưa có bản HD của video này"}, status_code=404)
+        return hd, None
+
+    @app.get("/api/episodes/{episode_id}/source-hd")
+    def api_episode_source_hd(episode_id: str):
+        """H1: the landscape HD video (``source_hd.mp4``, no banner); Range supported (FileResponse). A download never
+        ticks "Đã đăng" / "Đã xem" (H3)."""
+        hd, bad = _hd_or_404(episode_id)
+        if bad is not None:
+            return bad
+        return FileResponse(hd, media_type="video/mp4", headers={
+            "Content-Disposition": content_disposition(ep.video_download_name(config, episode_id, "HD")),
+            "Cache-Control": "private, no-cache"})
+
+    @app.get("/api/episodes/{episode_id}/vertical")
+    def api_episode_vertical(episode_id: str):
+        """H4: the vertical full-episode file, once made from the current HD source."""
+        _hd, bad = _hd_or_404(episode_id)
+        if bad is not None:
+            return bad
+        owner = ep.hd_owner(episode_id)
+        path = render_full.ready_file(config, owner) if render_full.current(config, owner) else None
+        if path is None:
+            return JSONResponse({"detail": "chưa có bản dọc (bấm \"Tạo bản dọc\")"}, status_code=404)
+        return FileResponse(path, media_type="video/mp4", headers={
+            "Content-Disposition": content_disposition(ep.video_download_name(config, episode_id, "Doc")),
+            "Cache-Control": "private, no-cache"})
+
+    @app.post("/api/episodes/{episode_id}/vertical")
+    def api_episode_vertical_make(episode_id: str):
+        """H4 "Tạo bản dọc": queue a render-lane job (reuses the file when nothing changed); 404 without HD."""
+        _hd, bad = _hd_or_404(episode_id)
+        if bad is not None:
+            return bad
+        owner = ep.hd_owner(episode_id)
+        if is_archived(Path(config.workspace.dir) / owner):
+            return JSONResponse({"detail": str(ArchivedError(owner))}, status_code=409)
+        job, created = runner.submit(owner, KIND_VERTICAL, vertical_target(config, vertical=vertical))
+        log.info("web: bản dọc [%s] -> job %s%s", owner, job.id, "" if created else " (đã có)")
+        return JSONResponse({"job": _job_view(job, logs=False), "hd_video": _hd_video_view(episode_id)},
+                            status_code=202 if created else 200)
 
     # --- storage (CP8.6) ---------------------------------------------------------------------------
 
