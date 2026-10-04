@@ -8,7 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 from .. import hashing
@@ -25,10 +25,9 @@ from ..workspace import (
     validate_episode_id,
 )
 from .candidates import (
-    build_units,
+    choose_boundary,
     content_trimmed_seconds,
     detect_content_window,
-    find_cut_points,
     generate_candidates,
     validate,
 )
@@ -61,8 +60,10 @@ class AnalysisResult:
 
 def used_config(config: Config) -> dict:
     """Every ``[analysis]`` key (A11); for a khai thị episode ``config`` is the effective config (CP8.9 K2)."""
+    default_floor = AnalysisConfig().min_boundary_silence_floor
     return {f"analysis.{k}": v for k, v in asdict(config.analysis).items()
-            if not (k == "soft_label_max_seconds" and v is None)}  # CP8.9 A3.1: khai thị only
+            if not (k == "soft_label_max_seconds" and v is None)  # CP8.9 A3.1: khai thị only
+            and not (k == "min_boundary_silence_floor" and v == default_floor)}  # CP8.23: only when changed (no stale)
 
 
 def _sha(doc: dict) -> str:
@@ -110,12 +111,15 @@ def analyze(episode_id: str, transcript: dict, metadata: dict, changes: list[flo
 
     segments = transcript["segments"]
     window = detect_content_window(segments, silences, duration, cfg)
-    cuts = find_cut_points(segments, silences, window, cfg)
-    units = build_units(segments, silences, cuts, cfg)
+    base_threshold = cfg.min_boundary_silence
+    cuts, units, threshold = choose_boundary(segments, silences, window, cfg)  # CP8.23
+    cfg = replace(cfg, min_boundary_silence=threshold)
     candidates = generate_candidates(units, silences, changes, shots["shots"], cfg)
     validate(candidates, units, window, silences, changes, shots["shots"], cfg)
 
     params = {k: getattr(cfg, k) for k in PARAM_KEYS}
+    if threshold != base_threshold:  # CP8.23: adapted episodes only (others stay byte-identical)
+        params["min_boundary_silence_base"] = base_threshold
     if cfg.soft_label_max_seconds is not None:  # CP8.9 A3.1 (khai thị only; a Short's params are unchanged)
         params["soft_label_max_seconds"] = cfg.soft_label_max_seconds
     cand_doc = {
@@ -215,6 +219,10 @@ def run_analysis(episode_id: str, config: Config, *, force: bool = False,
             _remove_outputs(ws)
             raise
         c, st = cand_doc["content"], cand_doc["stats"]
+        if "min_boundary_silence_base" in cand_doc["params"]:
+            p = cand_doc["params"]
+            log.info("%s: adaptive boundary silence %g -> %g s (floor %g)", STAGE, p["min_boundary_silence_base"],
+                     p["min_boundary_silence"], cfg.min_boundary_silence_floor)
         log.info("%s: content %s-%s (%s; %s)", STAGE, c["start"], c["end"], c["start_reason"], c["end_reason"])
         log.info("%s: shot_changes=%d silences=%d units=%d candidates=%d in_target=%d "
                  "content_seconds=%s content_seconds_trimmed=%s", STAGE, len(shots["changes"]),

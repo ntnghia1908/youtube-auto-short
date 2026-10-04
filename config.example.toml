@@ -44,6 +44,7 @@ scale_width = 320            # frames are downscaled to this width before scene 
 silence_noise_db = -45       # ffmpeg silencedetect noise level (dB)
 silence_min = 0.3            # minimum silence length (s)
 min_boundary_silence = 3.0   # silence >= this, aligned with a caption segment start, is a cut point
+min_boundary_silence_floor = 1.5   # CP8.23: per-episode adaptive threshold goes 3.0 -> 2.5 -> 2.0 -> floor until units are fine enough
 align_tolerance = 0.5        # caption vs audio timestamp tolerance (s)
 hard_break_silence = 10.0    # silence >= this is a hard break (never inside a candidate)
 max_pause = 1.0              # silences longer than this are shortened to this in the Short (CP7)

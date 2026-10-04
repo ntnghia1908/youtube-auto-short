@@ -73,6 +73,9 @@ class AnalysisConfig:
     silence_min: float = 0.3
     # Candidate parameters (A4–A8), written to candidates.json ``params``
     min_boundary_silence: float = 3.0
+    # CP8.23: lowest threshold the per-episode adaptive ladder may reach (3.0 -> ... -> floor, step 0.5 s);
+    # a floor >= min_boundary_silence turns the adaptation off.
+    min_boundary_silence_floor: float = 1.5
     align_tolerance: float = 0.5
     hard_break_silence: float = 10.0
     max_pause: float = 1.0
@@ -403,6 +406,7 @@ def _analysis(data: dict) -> AnalysisConfig:
         silence_noise_db=num("silence_noise_db", -120, 0),
         silence_min=num("silence_min", 0.01),
         min_boundary_silence=num("min_boundary_silence", 0),
+        min_boundary_silence_floor=num("min_boundary_silence_floor", 0),
         align_tolerance=num("align_tolerance", 0),
         hard_break_silence=num("hard_break_silence", 0),
         max_pause=num("max_pause", 0),

@@ -18,7 +18,8 @@ from auto_short.analysis.stage import analyze, shots_document
 from auto_short.config import AnalysisConfig
 from analysis_helpers import REAL, lecture, real_segments, real_silences, seg
 
-CFG = AnalysisConfig()
+CFG = AnalysisConfig(min_boundary_silence_floor=3.0)  # pre-CP8.23 rules; the ladder tests use ADAPT
+ADAPT = AnalysisConfig()
 DUR = REAL["duration"]
 
 
@@ -302,6 +303,58 @@ def test_validation_rejects_a_tampered_candidate():
 
 def test_params_change_results():
     _, _, base = real_run()
-    _, _, strict = real_run(replace(CFG, min_boundary_silence=5.0))
+    _, _, strict = real_run(replace(CFG, min_boundary_silence=5.0, min_boundary_silence_floor=5.0))
     assert strict["stats"]["units"] < base["stats"]["units"]
     assert strict["params"]["min_boundary_silence"] == 5.0
+
+
+# --- CP8.23 adaptive boundary threshold ---------------------------------------------------------
+
+def _lecture_run(cfg=ADAPT, **kw):
+    segments, silences, duration = lecture(20, unit=20.0, inner_pause=0.5, **kw)
+    transcript = {"segments": segments, "transcript_sha256": "t" * 64}
+    metadata = {"duration": duration, "source": {"sha256": "ab" * 32}}
+    return analyze("x", transcript, metadata, [], silences, cfg)[2]
+
+
+def test_ladder_steps_down_to_the_floor():
+    from auto_short.analysis.candidates import boundary_ladder
+    assert boundary_ladder(ADAPT) == [3.0, 2.5, 2.0, 1.5]
+    assert boundary_ladder(replace(ADAPT, min_boundary_silence_floor=2.2)) == [3.0, 2.5, 2.2]
+    assert boundary_ladder(replace(ADAPT, min_boundary_silence_floor=3.0)) == [3.0]
+
+
+def test_adaptive_long_silences_keep_threshold_and_params():
+    doc = _lecture_run(gap=4.0)
+    assert doc["params"]["min_boundary_silence"] == 3.0
+    assert "min_boundary_silence_base" not in doc["params"]
+    assert list(doc["params"])[:2] == ["min_boundary_silence", "align_tolerance"]
+
+
+def test_adaptive_short_silences_lower_the_threshold():
+    doc = _lecture_run(gap=2.2)  # one 400 s block at 3.0 / 2.5, fine at 2.0
+    assert doc["params"]["min_boundary_silence"] == 2.0
+    assert doc["params"]["min_boundary_silence_base"] == 3.0
+    assert doc["stats"]["units"] == 20 and doc["stats"]["candidates"] > 0
+
+
+def test_adaptive_stops_at_the_floor_when_never_fine():
+    doc = _lecture_run(gap=1.0)  # no silence is a cut even at the floor
+    assert doc["params"]["min_boundary_silence"] == 1.5
+    assert doc["params"]["min_boundary_silence_base"] == 3.0
+    assert doc["stats"]["units"] == 1
+    doc = _lecture_run(replace(ADAPT, min_boundary_silence_floor=2.5), gap=2.2)
+    assert doc["params"]["min_boundary_silence"] == 2.5  # the floor is never crossed
+
+
+def test_floor_equal_base_disables_adaptation():
+    doc = _lecture_run(replace(ADAPT, min_boundary_silence_floor=3.0), gap=2.2)
+    assert doc["params"]["min_boundary_silence"] == 3.0 and "min_boundary_silence_base" not in doc["params"]
+
+
+def test_default_floor_is_not_in_used_config_hash():
+    from auto_short.analysis.stage import used_config
+    from auto_short.config import Config
+    assert "analysis.min_boundary_silence_floor" not in used_config(Config())
+    cfg = replace(Config(), analysis=replace(AnalysisConfig(), min_boundary_silence_floor=2.0))
+    assert used_config(cfg)["analysis.min_boundary_silence_floor"] == 2.0
