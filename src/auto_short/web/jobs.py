@@ -169,6 +169,8 @@ class Job:
     t0: float = field(default=0.0, repr=False)  # monotonic start
     pause_requeue: bool = field(default=False, repr=False)  # CP8.22: interrupted by "pause now" -> back to the head
     resume: tuple[str, int] | None = field(default=None, repr=False)  # CP8.22: (lane, step) interrupted by stop()
+    step_t0: float = field(default=0.0, repr=False)  # CP8.28: monotonic start of the running step
+    step_started_at: str | None = field(default=None, repr=False)  # CP8.28: the same, ISO (monitor tab)
     hd_wait: bool = False  # CP13.1b: parked after titling until the HD source is ready ("đợi HD"): in no lane queue
 
     @property
@@ -254,6 +256,7 @@ class JobRunner:
         self._current: dict[str, Job | None] = {lane: None for lane in self._lane_names}
         self._threads: dict[str, threading.Thread] = {}
         self._idents: dict[int, str] = {}  # worker thread ident -> lane
+        self._tids: dict[int, str] = {}  # CP8.28: worker thread native id (/proc task id) -> lane
         self._jobs: dict[str, Job] = {}
         self._latest: dict[str, Job] = {}  # episode_id -> newest job
         self._ids = itertools.count(1)
@@ -631,6 +634,7 @@ class JobRunner:
 
     def _work(self, lane: str) -> None:
         self._idents[threading.get_ident()] = lane
+        self._tids[threading.get_native_id()] = lane
         while True:
             try:
                 self._loop(lane)
@@ -659,6 +663,7 @@ class JobRunner:
                 job.waiting, job.gpu_wait, job.yt_wait = False, False, False
                 job._reachable = self._gpu_reachable if lane == AI else None
                 job._yt_ok = self._youtube_ok if lane == PREPARE else None
+                job.step_t0, job.step_started_at = time.monotonic(), _now()
                 self._current[lane] = job
                 self._lock.notify_all()  # a shorter ai queue may let the prepare lane start (Q2)
             try:
@@ -910,6 +915,56 @@ class JobRunner:
             return {"paused": self._paused is not None, "mode": self._paused,
                     "running": sum(1 for j in self._current.values() if j is not None),
                     "pending": self._pending_locked()}
+
+    # --- CP8.28: monitor tab ---------------------------------------------------------------------
+
+    def lane_tids(self) -> dict[int, str]:
+        """Native thread id (``/proc/<pid>/task/<tid>``) of each lane worker -> lane (monitor: which child process
+        belongs to which lane)."""
+        return dict(self._tids)
+
+    def _monitor_entry(self, job: Job, *, running: bool = False) -> dict:
+        rank = self.priority.rank(job.episode_id)
+        out = {"id": job.id, "episode_id": job.episode_id, "kind": job.kind, "status": job.status, "stage": job.stage,
+               "lane": job.lane, "waiting": job.waiting, "priority": rank is not None,
+               "priority_rank": rank, "requeued": job.requeued, "started_at": job.started_at,
+               "created_at": job.created_at, "step": job.step + 1, "steps": len(job.steps) or 1}
+        if running:
+            out["step_started_at"] = job.step_started_at
+            out["elapsed_seconds"] = round(max(0.0, time.monotonic() - job.step_t0), 1)
+            out["job_elapsed_seconds"] = round(max(0.0, time.monotonic() - job.t0), 1) if job.t0 else None
+        return out
+
+    def monitor_queue(self, limit: int = 20) -> dict:
+        """CP8.28 M1: what every lane runs, what waits (and why) and the order the lanes will start the rest in.
+        ``lanes[lane] = {running, pending (first ``limit``, in start order), pending_total}``; ``waiting`` = jobs that
+        hold no lane: ``hd`` (parked, "đợi HD"), ``gpu`` (ai queue while Ollama is down), ``youtube`` (prepare queue
+        job that needs a download while YouTube blocks them), with the retry time when known."""
+        limit = max(1, int(limit))
+        with self._lock:
+            lanes: dict[str, dict] = {}
+            waiting: list[dict] = []
+            for lane in self._lane_names:
+                cur = self._current.get(lane)
+                ordered = self._ordered(self._queues[lane])
+                pend = []
+                for i, j in enumerate(ordered[:limit], 1):
+                    e = self._monitor_entry(j)
+                    e["position"] = i
+                    pend.append(e)
+                lanes[lane] = {"running": self._monitor_entry(cur, running=True) if cur is not None else None,
+                               "pending": pend, "pending_total": len(ordered)}
+                if lane == AI and self._gpu_down():
+                    waiting += [dict(self._monitor_entry(j), reason="gpu", retry_at=self._gpu["next_check"])
+                                for j in ordered if j.gpu_wait]
+                if lane == PREPARE and self._yt_blocked():
+                    waiting += [dict(self._monitor_entry(j), reason="youtube", retry_at=self._yt["next_check"])
+                                for j in ordered if not self._no_download(j)]
+            waiting += [dict(self._monitor_entry(j), reason="hd", retry_at=None)
+                        for j in sorted(self._parked.values(), key=lambda j: int(j.id))]
+            return {"mode": self.mode, "paused": self._paused is not None, "pause_mode": self._paused,
+                    "lanes": lanes, "waiting": waiting[:limit * 3], "waiting_total": len(waiting),
+                    "gpu": dict(self._gpu), "youtube": dict(self._yt)}
 
     # --- CP8.22: persistence ---------------------------------------------------------------------
 

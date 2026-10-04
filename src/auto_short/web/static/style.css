@@ -277,3 +277,20 @@ body.modal-open { overflow: hidden; }
 /* CP13.1b enhance (E10) */
 .enhance-box { border-left: 3px solid var(--accent-bg); padding: .1rem .6rem; margin: .5rem 0; }
 .enhance-box[hidden], .enhance-box [hidden] { display: none; }
+
+/* CP8.28 monitor tab */
+.queue-bar a.queue-note { text-decoration: none; }
+.mon-lanes { display: grid; gap: .75rem; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+.mon-lane { border: 1px solid var(--border); border-radius: 8px; padding: .5rem .7rem; }
+.mon-lane h3 { margin: 0 0 .3rem; }
+.mon-run { margin-bottom: .3rem; }
+.mon-list { margin: .2rem 0 0; padding-left: 1.2rem; }
+.mon-bar { display: inline-block; width: 120px; max-width: 40vw; height: .6rem; background: #e6e6e0; border-radius: 4px; vertical-align: middle; overflow: hidden; }
+.mon-bar.core { width: 22px; height: 28px; }
+.mon-fill { display: block; height: 100%; background: var(--accent); }
+.mon-cores { display: flex; flex-wrap: wrap; gap: 2px; margin: .4rem 0; }
+.mon-chart { display: flex; align-items: center; gap: .5rem; color: var(--busy); }
+.mon-spark { width: 100%; max-width: 320px; height: 40px; background: #fafaf8; border: 1px solid var(--border); border-radius: 4px; }
+.mon-gpu { margin-bottom: .6rem; }
+.mon-bar.core { display: flex; align-items: flex-end; }
+.mon-bar.core .mon-fill { width: 100%; }

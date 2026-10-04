@@ -44,6 +44,7 @@ from ..post import stage as post_stage
 from ..post import store as post_store
 from ..post import validate as post_validate
 from ..render import run_render
+from ..selection.client import resolve_host
 from ..review import (ArchivedError, EpisodeNotFound, ReviewError, TitlePreview, archive_source, content_disposition,
                       list_tombstones, mark_downloaded, remove_tombstone,
                       delete_episode, is_archived, list_titles, preview_title, reject_archived_clip, reject_clip,
@@ -51,6 +52,7 @@ from ..review import (ArchivedError, EpisodeNotFound, ReviewError, TitlePreview,
 from ..review import shorts as review_shorts
 from ..review.names import hashtags as review_hashtags
 from . import episodes as ep
+from . import monitor as monitor_mod
 from .auth import COOKIE_NAME, SessionSigner, load_or_create_secret
 from .storage import BLOCK_MESSAGE, StorageCache, auto_archive_plan, episode_sizes, video_id
 from .jobs import (KIND_ADD, KIND_ENHANCE, KIND_PIPELINE, KIND_POST, KIND_POST_SEARCH, KIND_RENDER, POST_IMAGES_KEY,
@@ -99,10 +101,12 @@ class ResumeAllIn(BaseModel):
 class EnhanceLeaseIn(BaseModel):
     worker: str | None = Field(default=None, max_length=80)
     gpu: str | None = Field(default=None, max_length=80)
+    gpu_stats: Any = None  # CP8.28: optional ``nvidia-smi`` numbers (an old worker never sends them)
 
 
 class EnhanceBeatIn(BaseModel):
     progress: Any = None
+    gpu_stats: Any = None  # CP8.28
 
 
 class EnhanceReleaseIn(BaseModel):
@@ -296,7 +300,9 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                post_preflight: Callable[[Config], None] | None = post_stage.preflight,
                post_search: Callable | None = None, doc_prepare: Callable | None = None,
                auto_archive_interval: float = AUTO_ARCHIVE_INTERVAL,
-               enhance_tokens: dict[str, str] | None = None, enhance_service: EnhanceService | None = None) -> FastAPI:
+               enhance_tokens: dict[str, str] | None = None, enhance_service: EnhanceService | None = None,
+               proc_dir: str = "/proc", ollama_ps: Callable[[], dict] | None = None,
+               monitor_interval: float = monitor_mod.SAMPLE_SECONDS) -> FastAPI:
     """``preflight`` / ``pipeline`` / ``render`` are injectable for tests (defaults: CP8 ``ollama_preflight`` /
     ``run_pipeline``, CP7/CP8.2 ``run_render``); so are ``disk_usage`` (``shutil.disk_usage``) and ``clock`` (epoch
     seconds, ages of the storage recommendations) for CP8.6; ``playlist_lister`` (yt-dlp flat listing) and
@@ -307,7 +313,8 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     :func:`auto_short.post.doc.prepare`, the "Văn bản gốc" check of ``PUT /api/playlists/{id}/doc``) for CP8.19;
     ``auto_archive_interval`` (seconds between auto clean-up passes, W9 S5; 0 = only at start-up); for CP13.1
     ``enhance_tokens`` (``name -> token`` of the enhance workers, default: env ``AUTO_SHORT_ENHANCE_TOKENS``, E8) and
-    ``enhance_service`` (default: an :class:`EnhanceService` on ``config``)."""
+    ``enhance_service`` (default: an :class:`EnhanceService` on ``config``); for CP8.28 ``proc_dir`` (``/proc``),
+    ``ollama_ps`` (default: ``GET <ollama host>/api/ps``) and ``monitor_interval`` (seconds between CPU samples)."""
     runner = runner or JobRunner(config.web.queue_mode,
                                  youtube_retry_seconds=config.web.youtube_retry_minutes * 60.0,
                                  youtube_retry_max_seconds=config.web.youtube_retry_max_minutes * 60.0)
@@ -327,6 +334,18 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     svc = enhance_service or EnhanceService(config, ai_busy=runner.ai_busy)
     svc.ai_busy = runner.ai_busy
     svc.priority_rank = runner.priority.rank  # CP8.26 P3
+
+    # --- CP8.28: monitor tab ---------------------------------------------------------------------------------
+
+    def _lane_jobs() -> dict[str, dict]:
+        return {lane: {"id": job.id, "episode_id": job.episode_id, "kind": job.kind, "stage": job.stage}
+                for lane, job in runner.running().items()}
+
+    sampler = monitor_mod.Sampler(proc=proc_dir, workdir=config.workspace.dir, interval=monitor_interval,
+                                  clock=clock, disk_usage=disk_usage, lane_tids=runner.lane_tids,
+                                  lane_jobs=_lane_jobs)
+    ollama_view = monitor_mod.OllamaView(
+        ollama_ps or (lambda: monitor_mod.fetch_ollama_ps(resolve_host(config.selection.ollama_host))))
 
     def _enhance_complete(eid: str) -> None:
         """All segments of ``eid`` arrived (or a restart / retry): queue the assembly job (render lane)."""
@@ -464,15 +483,18 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         for eid in svc.resume_assembly():  # CP13.1b: segments all there but never assembled (restart)
             _enhance_complete(eid)
         runner.recheck_parked()  # CP13.1b: "đợi HD" jobs whose HD is ready by now
+        sampler.start()
         sweeper = asyncio.create_task(_auto_archive_loop())
         try:
             yield
         finally:
             sweeper.cancel()
+            await asyncio.to_thread(sampler.stop)
             await asyncio.to_thread(runner.stop)
 
     app = FastAPI(title="auto-short web", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.state.runner = runner
+    app.state.monitor_sampler = sampler
     app.state.storage = storage
     app.state.auto_archive_pass = auto_archive_pass
     app.state.playlists = playlists
@@ -1707,13 +1729,21 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     @app.post("/api/enhance/lease")
     def api_enhance_lease(body: EnhanceLeaseIn, name: str = Depends(_worker)):
         """E3: the next video for the worker ``{episode_id, lease_id, expires_at, source_url, ...}`` or 204."""
-        info = svc.lease(name, body.worker, body.gpu)
+        info = svc.lease(name, body.worker, body.gpu, body.gpu_stats)
         return Response(status_code=204) if info is None else JSONResponse(info)
 
     @app.get("/api/enhance/may-run")
-    def api_enhance_may_run(worker: str | None = None, name: str = Depends(_worker)):
-        """E7: ``{run, reason}`` for the worker (the token name decides; ``worker`` is only a display label)."""
-        svc.ping(name, worker[:80] if worker else None)
+    def api_enhance_may_run(worker: str | None = None, gpu_stats: str | None = None,
+                            name: str = Depends(_worker)):
+        """E7: ``{run, reason}`` for the worker (the token name decides; ``worker`` is only a display label).
+        ``gpu_stats`` (CP8.28, optional): the worker's ``nvidia-smi`` numbers as compact JSON (ignored when unusable)."""
+        stats = None
+        if gpu_stats and len(gpu_stats) <= 1000:
+            try:
+                stats = json.loads(gpu_stats)
+            except ValueError:
+                stats = None
+        svc.ping(name, worker[:80] if worker else None, stats)
         run, reason = svc.may_run(name)
         return {"run": run, "reason": reason}
 
@@ -1772,7 +1802,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         if not _lease_id_ok(lease_id):
             return JSONResponse({"detail": "lease không hợp lệ"}, status_code=409)
         try:
-            return svc.heartbeat(name, lease_id, body.progress)
+            return svc.heartbeat(name, lease_id, body.progress, body.gpu_stats)
         except EnhanceError as exc:
             return _enh_error(exc)
 
@@ -1884,6 +1914,62 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     @app.post("/api/queue/resume")
     def api_queue_resume():
         return runner.resume()
+
+    # --- monitor tab (CP8.28) ----------------------------------------------------------------------
+
+    @app.get("/monitor")
+    async def monitor_page():
+        return FileResponse(STATIC_DIR / "monitor.html", headers={"Cache-Control": "no-cache"})
+
+    @app.get("/api/monitor/queue")
+    def api_monitor_queue(limit: int = 20):
+        """M1: running job per lane (episode, step, elapsed, progress), jobs waiting for HD / GPU / YouTube, and the
+        pending jobs of every lane in the order they will start (first ``limit`` per lane, default 20)."""
+        limit = max(1, min(limit, 500))
+        data = runner.monitor_queue(limit)
+        labels: dict[str, dict] = {}
+
+        def decorate(entry: dict, job=None) -> dict:
+            eid = entry["episode_id"]
+            entry["episode"] = labels.setdefault(eid, monitor_mod.episode_label(config, eid))
+            if job is not None and entry.get("stage") == "render":
+                entry["progress"] = monitor_mod.render_progress(config, job.logs, eid)
+            return entry
+
+        for lane, info in data["lanes"].items():
+            run = info["running"]
+            if run is not None:
+                decorate(run, runner.job(run["id"]))
+            for e in info["pending"]:
+                decorate(e)
+        for e in data["waiting"]:
+            decorate(e)
+        return data
+
+    @app.get("/api/monitor/system")
+    def api_monitor_system():
+        """M2: CPU % (total + per core), load, RAM, disk of ``work/``, top processes (with the job they belong to
+        when known), about one hour of history (``[t, cpu %, ram %, load1]``)."""
+        return sampler.snapshot()
+
+    @app.get("/api/monitor/ollama")
+    def api_monitor_ollama():
+        """M3: models Ollama has loaded (``/api/ps``), connection state, the job of the ``ai`` lane."""
+        out = ollama_view.get()
+        out["gpu"] = runner.gpu_status()
+        ai = runner.running().get("ai")
+        out["job"] = {"id": ai.id, "kind": ai.kind, "stage": ai.stage,
+                      "episode": monitor_mod.episode_label(config, ai.episode_id)} if ai is not None else None
+        return out
+
+    @app.get("/api/monitor/gpu")
+    def api_monitor_gpu():
+        """M4: the enhance workers' GPU numbers (None = "chưa có số liệu GPU") and what each one is enhancing."""
+        st = svc.status()
+        now = svc.clock()  # the same clock the worker registry stamps last_seen with
+        return {"enabled": st["enabled"], "paused": st["paused"], "now": now,
+                "workers": monitor_mod.gpu_workers(st["workers"], sorted(tokens), now,
+                                                   lambda eid: monitor_mod.episode_label(config, eid))}
 
     @app.get("/api/storage")
     def api_storage():

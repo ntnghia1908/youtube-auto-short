@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Theo dõi — Auto Short</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/">&larr; Auto Short</a>
+  <nav class="topnav"><a href="/monitor">Theo dõi</a> <a href="/storage">Bộ nhớ</a>
+  <form method="post" action="/logout"><button class="btn link" type="submit">Đăng xuất</button></form></nav>
+</header>
+<main class="container">
+  <section class="card">
+    <h2>Hàng đợi</h2>
+    <p id="mon-queue-note" class="muted small"></p>
+    <div id="mon-lanes" class="mon-lanes"></div>
+    <div id="mon-waiting"></div>
+  </section>
+  <section class="card">
+    <h2>CPU máy chủ (VM)</h2>
+    <div id="mon-cpu"></div>
+  </section>
+  <section class="card">
+    <h2>Ollama (GPU làm AI)</h2>
+    <div id="mon-ollama"></div>
+  </section>
+  <section class="card">
+    <h2>GPU enhance (máy Windows)</h2>
+    <div id="mon-gpu"></div>
+  </section>
+</main>
+<script src="/static/app.js"></script>
+<script>AutoShort.initMonitor();</script>
+</body>
+</html>
