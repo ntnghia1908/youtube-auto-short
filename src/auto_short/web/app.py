@@ -57,6 +57,7 @@ from .jobs import (KIND_ADD, KIND_ENHANCE, KIND_PIPELINE, KIND_POST, KIND_POST_S
                    JobRunner, add_short_target, enhance_assemble_target, image_search_target, pipeline_target,
                    post_compose_target, render_target)
 from . import playlists as playlists_mod
+from .priority import PRIORITY_FILE
 from .playlists import LIST_TIMEOUT, PlaylistError, PlaylistStore, ytdlp_list
 from .urls import ASK, PLAYLIST, UrlError, canonical_url, classify_url, valid_playlist_id
 
@@ -325,6 +326,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
 
     svc = enhance_service or EnhanceService(config, ai_busy=runner.ai_busy)
     svc.ai_busy = runner.ai_busy
+    svc.priority_rank = runner.priority.rank  # CP8.26 P3
 
     def _enhance_complete(eid: str) -> None:
         """All segments of ``eid`` arrived (or a restart / retry): queue the assembly job (render lane)."""
@@ -453,6 +455,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         return None
 
     runner.configure_persistence(Path(config.workspace.dir) / QUEUE_FILE, _rebuild_job)
+    runner.priority.attach(Path(config.workspace.dir) / PRIORITY_FILE)  # CP8.26 P1
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -582,6 +585,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         for item in items:
             job = runner.latest(item["id"])
             item["job"] = _job_view(job, logs=False)
+            item["priority"] = runner.priority.marked(item["id"])  # CP8.26
             item.setdefault("published", 0)
             item.setdefault("complete", False)
             item["publish_group"] = ep.publish_group(item)
@@ -752,6 +756,9 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         view = playlists.view(doc, _jobs_by_episode())
         view["gpu"] = runner.gpu_status()  # FIX-ollama-wait O7
         view["youtube"] = runner.youtube_status()  # FIX-youtube-botcheck-wait Y3
+        for e in view["entries"]:  # CP8.26
+            e["priority"] = bool(e.get("video_id")) and runner.priority.marked(e["video_id"])
+        view["priority_count"] = sum(1 for e in view["entries"] if e["priority"])
         kc = config.khaithi  # CP8.9 A2.2: defaults of the kind bar ("Khai thị [min]–[max] phút")
         view["khaithi_defaults"] = {"min_minutes": kc.default_min_minutes, "max_minutes": kc.default_max_minutes,
                                     "max_minutes_limit": kc.max_minutes_limit}
@@ -813,6 +820,24 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         log.info("web: playlist %s chạy tiếp cả bộ: %d tập, queued %d, %d lỗi", playlist_id, len(todo), out["queued"],
                  len(out["errors"]))
         return JSONResponse(out, status_code=202 if out["queued"] else 200)
+
+    @app.post("/api/playlists/{playlist_id}/priority")
+    def api_playlist_priority(playlist_id: str, body: PublishedIn):
+        """CP8.26 P1 "Ưu tiên cả bộ" / "Bỏ ưu tiên cả bộ": mark (episode order) / unmark every video of the bộ kinh that
+        still has work to do (not unavailable, deleted or complete); unmark clears all of its videos."""
+        doc = _playlist_or_404(playlist_id)
+        if doc is None:
+            return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
+        view = playlists.view(doc, _jobs_by_episode())
+        entries = [e for e in view["entries"] if e.get("video_id")]
+        if body.value:
+            todo = _by_episode_order([e for e in entries if e["state"] not in (
+                playlists_mod.UNAVAILABLE, playlists_mod.DELETED) and not e.get("complete")])
+            changed = runner.priority.mark([e["video_id"] for e in todo])
+        else:
+            changed = runner.priority.unmark([e["video_id"] for e in entries])
+        log.info("web: playlist %s ưu tiên %s: %d tập đổi", playlist_id, body.value, len(changed))
+        return {"playlist_id": playlist_id, "priority": body.value, "changed": len(changed)}
 
     @app.post("/api/playlists/{playlist_id}/refresh")
     def api_playlist_refresh(playlist_id: str):
@@ -1002,6 +1027,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                     "zip_url": None, "zip_name": None, "zip_all_url": None, "zip_all_name": None,
                     "archived": None}
         view["job"] = _job_view(job)
+        view["priority"] = runner.priority.marked(episode_id)  # CP8.26
         view["gpu"] = runner.gpu_status()  # FIX-ollama-wait O7
         view["youtube"] = runner.youtube_status()  # FIX-youtube-botcheck-wait Y3
         view["post_job"] = _job_view(runner.latest_post(episode_id))  # CP8.16 R3 (job stays the episode's own job)
@@ -1010,6 +1036,17 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             for short in view["shorts"]:
                 short["rendering"] = short["clip_id"] in job.clip_ids
         return view
+
+    @app.post("/api/episodes/{episode_id}/priority")
+    def api_episode_priority(episode_id: str, body: PublishedIn):
+        """CP8.26 P1 "Ưu tiên" / "Bỏ ưu tiên": the mark is per video (the Short and its khai thị episode share it)."""
+        if not ep.valid_episode_id(episode_id):
+            return JSONResponse({"detail": "không có episode này"}, status_code=404)
+        if body.value:
+            runner.priority.mark([episode_id])
+        else:
+            runner.priority.unmark([episode_id])
+        return {"episode_id": episode_id, "priority": runner.priority.marked(episode_id)}
 
     def _check_clip(episode_id: str, clip_id: str) -> JSONResponse | None:
         if not ep.valid_episode_id(episode_id) or not ep.valid_clip_id(clip_id):

@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: FEATURE
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -61,9 +61,9 @@ Không chạm database / security model / public API. Điểm danh trên 8080: b
 
 ## Result
 
-- Main changes:
-- Tests:
-- Review:
-- Important findings / decisions:
-- Known limitations:
-- PR:
+- Main changes: `web/priority.py` (`Priority`: ordered marks per base video id, `.web_priority.json` in the workspace; `<id>.kt`, `#post`, `#hd` share the mark of `<id>`); `JobRunner` takes the best-ranked job of a lane (`_pick` / `_pop`; stable among equal ranks; used by the normal take, the YouTube-wait retry / no-download pick and the GPU-wait add / post pick) and `queue_position` follows it; `EnhanceService._lease_order`: waiting-HD > priority (mark order) > CP13.2 order; API `POST /api/episodes/{id}/priority`, `POST /api/playlists/{id}/priority` (mark = unfinished entries in episode order; unmark = all), `priority` in episode / list / playlist views, `priority_count`; UI: "Ưu tiên" / "Bỏ ưu tiên" on playlist rows, "Tập lẻ" rows and episode page, "Ưu tiên cả bộ" / "Bỏ ưu tiên cả bộ (n)", label "★ ưu tiên".
+- Tests: `tests/test_priority_cp826.py` (10 tests, AC1-5); `python -m pytest -q -n auto` = 1479 passed, 1 skipped (117 s); `node scripts/framework-check.mjs` PASS; 8081 real run (copy under `~/.cache/auto-short-cp826-test/`, enhance off, queue paused, jobs a, b, c): mark c via API -> `queue_position` c=1, a=2, b=3, `.web_priority.json` written; server stopped.
+- Review: pending (ORCHESTRATOR).
+- Important findings / decisions: marks are kept per video until unmarked (no auto-clear when the video completes); a running job is never interrupted, the mark only affects which queued job starts next. "Ưu tiên cả bộ" skips unavailable / deleted / complete entries and does not follow episodes added by a later refresh.
+- Known limitations: no priority levels; no manual test on 8080 yet (checklist above).
+- PR: none (no push).
