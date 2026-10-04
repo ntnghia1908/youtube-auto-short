@@ -8,7 +8,7 @@
 - Owner: HUMAN LEAD
 - Execution profile: dual-agent
 - Implementer: `.claude/agents/implementer` (Sonnet) — mặc định dual-agent của project.
-- Base commit / branch: `0e0581f` (`main`) / `feature/cp8.27-hd-download` (worktree `../youtube-auto-short-hddl`). Bắt đầu sau khi CP8.26 merge (chung `web/app.py`, `static/app.js`): rebase lên `main` mới rồi mới implement.
+- Base commit / branch: `0cb2f0c` (`main`, gồm CP8.26 + CP8.28) / `feature/cp8.27-hd-download` (worktree `../youtube-auto-short-hddl`)
 - Human Lead approval: APPROVED 2026-10-04 ("Thêm nút tải full video đã enhance")
 - Implementation authorized: YES
 
