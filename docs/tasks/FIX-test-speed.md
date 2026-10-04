@@ -76,7 +76,7 @@ Không chạm database / security / public API. Không cần manual test ngoài 
   Top after: render_reuse override 35 s, lanes_identical 25 s, render_cp9 cut 23 s, render_stage resume 23 s, web_titles 21 s, render_parallel 20 s, dissolve 20 s...
   Suite CPU is ~560 s in ~40 real-render tests; wall is bound by CPU shared with 8080, so <= 90 s not reached (best 114 s at load ~25). Dropping more real-render tests would cut core coverage (out of scope).
 - Verification: standard command x5 PASS (1367 passed, 1 skipped) after lanes fix; `pytest -n auto tests/test_web_cp9.py` x5 PASS (14 passed, ~4 s); `-m slow` 15 passed; `node scripts/framework-check.mjs` PASS.
-- Review:
+- Review: ORCHESTRATOR 2026-10-04 — ACCEPTED, không có blocking finding (guard chỉ chặn Ollama 11434/11437 + host ngoài loopback; `-m slow` ghi đè `addopts`; test đổi giữ ý kiểm). Chạy lại lệnh chuẩn khi 8080 rảnh (load 0,02 → 12): **92 s**, 1367 passed, 1 skipped. Rebase lên `main` `6b372c7` (conflict `test_enhance_worker.py`: giữ `test_401_waits_and_rereads_config` mới, đánh dấu `slow` — 11/11 test `needs_torch` là `slow`) rồi chạy lại: **80,5 s**, 1408 passed, 1 skipped (load 4,6 → 20). AC1: đạt khi 8080 rảnh (80–92 s), không đạt khi 8080 bận (114–120 s) — chấp nhận như known limitation.
 - Important findings / decisions: `-n auto` best. Cause of cp9 flake was real Ollama in the auto-compose post job.
 - Known limitations: AC1 time target missed under load (see above).
 - PR:
