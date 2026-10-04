@@ -112,7 +112,7 @@ def test_compose_one_clip_then_get(tcfg, ws):
         p = posts[0]
         assert p["clip_id"] == "k01" and p["origin"] == "ai" and p["stale"] is False
         assert p["image"] is None and p["image_missing"] is False and p["link"] is None and p["posted"] is False
-        assert p["text"].startswith("Tiêu đề k01\n\n")  # P4: title first
+        assert p["text"].startswith("TIÊU ĐỀ K01\n\n")  # P4: title first
         assert "— HT. Tịnh Không, Kinh Test tập 9" in p["text"]  # CP8.16 R5
         assert p["chars"] == len(p["text"])
 

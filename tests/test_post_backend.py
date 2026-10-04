@@ -257,8 +257,16 @@ def test_compose_copy_text_full():
     text = compose_copy_text(title="Tâm và cảnh", paragraphs=["Đoạn một.", "Đoạn hai."],
                              header_fields={"speaker": "HT.Tịnh Không", "series": "Kinh A", "episode": "9"},
                              link="https://youtube.com/shorts/AbCdEfGhIjK", hashtags=["#KinhA", "#TịnhKhông"])
-    assert text == ("Tâm và cảnh\n\nĐoạn một.\n\nĐoạn hai.\n\n— HT. Tịnh Không, Kinh A tập 9\n\n"
+    assert text == ("TÂM VÀ CẢNH\n\nĐoạn một.\n\nĐoạn hai.\n\n— HT. Tịnh Không, Kinh A tập 9\n\n"
                     "▶ Xem video: https://youtube.com/shorts/AbCdEfGhIjK\n\n#KinhA #TịnhKhông")
+
+
+def test_compose_copy_text_title_uppercase_vietnamese():
+    t = "Điều gì là cúng dường chân thật theo kinh Địa Tạng?"
+    text = compose_copy_text(title=t, paragraphs=["Đoạn."], header_fields=None, link=None, hashtags=[])
+    assert text.split("\n\n")[0] == "ĐIỀU GÌ LÀ CÚNG DƯỜNG CHÂN THẬT THEO KINH ĐỊA TẠNG?"
+    assert len(text) == len("ĐIỀU GÌ LÀ CÚNG DƯỜNG CHÂN THẬT THEO KINH ĐỊA TẠNG?") + 2 + len("Đoạn.")
+    assert compose_copy_text(title="ươ", paragraphs=[], header_fields=None, link=None, hashtags=[]) == "ƯƠ"
 
 
 def test_compose_copy_text_minimal_no_header_no_link_no_hashtags():

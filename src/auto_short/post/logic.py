@@ -90,11 +90,11 @@ def header_line(fields: dict | None) -> str | None:
 
 def compose_copy_text(*, title: str | None, paragraphs: list[str], header_fields: dict | None, link: str | None,
                       hashtags: list[str]) -> str:
-    """P4 bố cục bài đăng cộng đồng để sao chép: title đang dùng, các đoạn văn, dòng nguồn (CP6 header), link
+    """P4 bố cục bài đăng cộng đồng để sao chép: title đang dùng (VIẾT HOA), các đoạn văn, dòng nguồn (CP6 header), link
     (nếu có), hashtag (CP8.8) — mỗi phần cách nhau một dòng trống; phần thiếu bị bỏ dòng (không cắt phần khác)."""
     parts: list[str] = []
     if title:
-        parts.append(title)
+        parts.append(title.upper())  # FIX-post-title-upper: tựa đề viết hoa toàn bộ, áp lúc đọc
     parts.extend(p.strip() for p in paragraphs if p and p.strip())
     hline = header_line(header_fields)
     if hline:

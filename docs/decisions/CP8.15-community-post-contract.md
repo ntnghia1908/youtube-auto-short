@@ -58,6 +58,8 @@ Log mỗi lần gọi AI: `work/<id>/post_log.json` (append, không byte-stable 
 
 ## P4. Bố cục text sao chép
 
+**Sửa đổi FIX-post-title-upper (HUMAN LEAD 2026-10-04):** dòng đầu (title Short đang dùng) viết hoa toàn bộ (`str.upper()`, đúng dấu tiếng Việt: `đ`→`Đ`, `ư`→`Ư`, `ơ`→`Ơ`, dấu thanh giữ nguyên) — chỉ trong `post/logic.compose_copy_text` (và tiêu đề thẻ bài ở tab Bài đăng); không đổi title Short, `titles.json`, `posts.json`; áp lúc đọc API nên không đổi `source_sha256` / `stale`.
+
 **Sửa đổi CP8.16 (R5):** trong dòng nguồn, một dấu `.` đứng ngay trước chữ cái được chèn một dấu cách (`HT.Tịnh Không` → `HT. Tịnh Không`; đã có dấu cách thì giữ nguyên) — chỉ trong bài đăng (`post/logic.header_line`), không đổi `titles.json`, `[titling] speaker`, header video hay `render_key`; áp lúc đọc API nên không đổi `source_sha256` / `stale`.
 
 Server tính (`post/logic.compose_copy_text`; API `text`/`chars` của một bài, P7), UI hiện số ký tự (giới hạn ký tự bài đăng cộng đồng chưa kiểm — không cắt, HUMAN LEAD xác nhận khi đăng thử):
