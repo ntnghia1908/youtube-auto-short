@@ -46,7 +46,7 @@ def login(c):
 
 
 def set_titles(cfg, eid, *, series=SERIES, episode="1", lines=("HT. Tịnh Không", "Địa Tạng (tập 1)")):
-    fields = {k: v for k, v in (("series", series), ("episode", episode)) if v is not None}
+    fields = {k: v for k, v in (("speaker", lines[0]), ("series", series), ("episode", episode)) if v is not None}
     (Path(cfg.workspace.dir) / eid / "titles.json").write_text(
         json.dumps({"header": {"fields": fields, "lines": list(lines)}}, ensure_ascii=False), encoding="utf-8")
 
@@ -236,6 +236,7 @@ def test_run_vertical_real_encode_and_reuse(tcfg):
     assert not r2.ran and r2.path == r1.path
     set_titles(tcfg, VID, lines=("HT. Tịnh Không", "Địa Tạng (tập 2)"))  # header changed -> encode again
     assert full.run_vertical(KT, tcfg).ran  # a khai thị id means its video
+    assert full.read_meta(tcfg, VID)["speaker"] == ["HT. Tịnh Không"]
     assert not any(p.name.endswith(".part") for p in r1.path.parent.iterdir())
 
 
@@ -249,3 +250,32 @@ def test_run_vertical_without_hd_or_header(tcfg):
     (d / "titles.json").unlink()
     with pytest.raises(RenderError, match="titles"):
         full.run_vertical(VID, tcfg)
+
+
+def test_split_header_and_dot_space():
+    assert full.split_header(["HT.Tịnh Không", "Kinh X (tập 1)"], "HT.Tịnh Không") == (["Kinh X (tập 1)"], "HT. Tịnh Không")
+    assert full.split_header(["HT. Tịnh Không", "Kinh X", "(tập 1)"], None) == (["Kinh X", "(tập 1)"], "HT. Tịnh Không")
+    assert full.split_header(["Chỉ một dòng"], "Khác")[0] == ["Chỉ một dòng"]
+
+
+def test_full_layout_two_panels_even_margins(tcfg):
+    from auto_short.render import plan
+    geo = plan.geometry(tcfg.render)
+    lay = full.full_layout(geo, 1440, 1080)
+    s = geo.min_frame_margin
+    assert lay.top.y == s and lay.video.y == s + lay.top.h + s
+    assert lay.bottom.y == lay.video.y + lay.video.h + s            # same gap below the video
+    assert lay.bottom.y + lay.bottom.h + s == plan.HEIGHT           # same bottom margin: no black band left
+    assert lay.video.h % 2 == 0 and lay.video.w == plan.WIDTH
+    assert (lay.crop.w * lay.video.h) // lay.crop.h in range(lay.video.w - 2, lay.video.w + 3)  # aspect kept
+
+
+def test_layout_change_changes_reuse_key(tcfg, monkeypatch):
+    make_ep(tcfg)
+    d = Path(tcfg.workspace.dir) / VID
+    _ffmpeg_clip(d / "source_hd.mp4", seconds=1)
+    write_hd(tcfg, VID, (d / "source_hd.mp4").read_bytes())
+    assert full.run_vertical(VID, tcfg).ran
+    assert not full.run_vertical(VID, tcfg).ran
+    monkeypatch.setattr(full, "SPEAKER_SCALE", 1.3)
+    assert full.run_vertical(VID, tcfg).ran

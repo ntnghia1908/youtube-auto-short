@@ -1,7 +1,8 @@
-"""Vertical full-episode version (CP8.27 H4): ``work/<id>/source_hd.mp4`` -> ``<output_dir>/<id>/full/vertical.mp4``.
+"""Vertical full-episode version (CP8.27 H4, Amendment 2): ``work/<id>/source_hd.mp4`` -> ``<output_dir>/<id>/full/vertical.mp4``.
 
-1080x1920 like a Short, with the Short header panel (bộ kinh + tập, CP8.11 / CP8.14 layout V16) on top and the video
-centre-cropped below it; no title panel, no dissolve, no silence trim (every frame and every audio sample of the HD
+1080x1920 like a Short, in the yellow rounded panel style: top panel = bộ kinh + "(tập N)", bottom panel = the speaker
+("HT. Tịnh Không", larger font), and the video between them, centre-cropped and scaled up so only even margins of
+``[render] min_frame_margin`` stay black; no dissolve, no silence trim (every frame and every audio sample of the HD
 source). Reused (no encode) while ``vertical.json`` holds the same key (HD sha256, layout, header, render config).
 """
 
@@ -10,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import tempfile
 import time
 from dataclasses import dataclass
@@ -30,7 +32,9 @@ log = logging.getLogger("auto_short")
 FULL_DIR = "full"
 VIDEO_NAME = "vertical.mp4"
 META_NAME = "vertical.json"
-FULL_PLAN_VERSION = 1  # bump when the filter graph / ffmpeg command below changes
+SPEAKER_SCALE = 1.6  # speaker font size / header font size (Amendment 2: "phóng to lên")
+_SPEAKER_DOT_RE = re.compile(r"\.(?=[^\W\d_])")  # CP8.16 R5: "HT.Tịnh Không" -> "HT. Tịnh Không"
+FULL_PLAN_VERSION = 2  # bump when the filter graph / ffmpeg command below changes
 DURATION_TOLERANCE = 0.1  # s, audio length vs the source
 
 
@@ -86,8 +90,41 @@ def current(config: Config, episode_id: str) -> bool:
     return hd is not None and meta.get("hd_sha256") == hd.sha256
 
 
-def filter_graph(*, fps: Fraction, lay: plan.Layout, font_file: Path, header_lines: list[plan.TextLine],
-                 header_size: int) -> str:
+@dataclass(frozen=True)
+class FullLayout:
+    top: plan.Box
+    video: plan.Box
+    bottom: plan.Box
+    crop: plan.Crop
+
+    def as_dict(self) -> dict:
+        return {"top_panel": self.top.as_dict(), "video": self.video.as_dict(), "bottom_panel": self.bottom.as_dict(),
+                "crop": [self.crop.w, self.crop.h, self.crop.x, self.crop.y]}
+
+
+def full_layout(geo: plan.Geometry, src_w: int, src_h: int) -> FullLayout:
+    """Top panel, video, bottom panel stacked with the same spacing ``s`` (= top margin = gaps = bottom margin); the
+    video takes all the rest of the height (no black band beyond the margins)."""
+    s, ph = geo.min_frame_margin, geo.header_h
+    x = (plan.WIDTH - geo.header_w) // 2
+    top = plan.Box(x, s, geo.header_w, ph, geo.radius)
+    video_h = plan.HEIGHT - 4 * s - 2 * ph
+    video_h -= video_h % 2  # even
+    video = plan.Box(0, s + ph + s, plan.WIDTH, video_h)
+    bottom = plan.Box(x, plan.HEIGHT - s - ph, geo.header_w, ph, geo.radius)
+    return FullLayout(top, video, bottom, plan.center_crop(src_w, src_h, plan.WIDTH, video_h))
+
+
+def split_header(lines: list[str], speaker: str | None) -> tuple[list[str], str]:
+    """(top panel lines, speaker line): the speaker line (titles.json ``fields.speaker``, else the first header line)
+    leaves the header lines; the rest (bộ kinh + "(tập N)") is the top panel. Dot-space after an abbreviation dot."""
+    spk = nfc(speaker) if isinstance(speaker, str) and speaker.strip() else lines[0]
+    rest = [ln for ln in lines if ln != spk] or list(lines)
+    return rest, _SPEAKER_DOT_RE.sub(". ", spk)
+
+
+def filter_graph(*, fps: Fraction, lay: FullLayout, font_file: Path, top_lines: list[plan.TextLine], top_size: int,
+                 bottom_lines: list[plan.TextLine], bottom_size: int) -> str:
     """The Short chain without cuts / title panel: every frame (``fps=`` only normalises the rate), all audio."""
     c, v = lay.crop, lay.video
     per_frame = (f"crop={c.w}:{c.h}:{c.x}:{c.y},scale={v.w}:{v.h}:flags={plan.SCALE_FLAGS},setsar=1,"
@@ -95,8 +132,10 @@ def filter_graph(*, fps: Fraction, lay: plan.Layout, font_file: Path, header_lin
     pad = f"pad={plan.WIDTH}:{plan.HEIGHT}:{v.x}:{v.y}:color={plan._hex(plan.BACKGROUND)}[vid]"
     return ";".join([
         f"[0:v]fps={plan.fps_text(fps)},{per_frame},{pad}",
-        plan._panel_chain(lay.header, header_lines, font_file, header_size, "hp"),
-        f"[vid][hp]overlay={lay.header.x}:{lay.header.y}:format=yuv444,format={plan.PIX_FMT}[vout]",
+        plan._panel_chain(lay.top, top_lines, font_file, top_size, "hp"),
+        plan._panel_chain(lay.bottom, bottom_lines, font_file, bottom_size, "bp"),
+        f"[vid][hp]overlay={lay.top.x}:{lay.top.y}:format=yuv444[v1]",
+        f"[v1][bp]overlay={lay.bottom.x}:{lay.bottom.y}:format=yuv444,format={plan.PIX_FMT}[vout]",
         f"[0:a]aresample={plan.SAMPLE_RATE},aformat=sample_fmts=fltp:channel_layouts=stereo[aout]",
     ])
 
@@ -166,6 +205,7 @@ def run_vertical(episode_id: str, config: Config, *, run=None, force: bool = Fal
     lines = [nfc(x) for x in ((titles.get("header") or {}).get("lines") or []) if isinstance(x, str)]
     if not lines:
         raise RenderError(f"titles.json của {owner!r} không có header")
+    top_text, speaker = split_header(lines, ((titles.get("header") or {}).get("fields") or {}).get("speaker"))
     fpath = font_path(cfg)
     if not fpath.is_file():
         raise RenderError(f"font file not found: {fpath} (config render.font_file)")
@@ -173,23 +213,24 @@ def run_vertical(episode_id: str, config: Config, *, run=None, force: bool = Fal
     font = Font(fpath)
     try:
         geo = plan.geometry(cfg)
-        header = fit_header(font, lines, size0=plan.px(cfg.header_font_size), line_spacing=cfg.line_spacing,
-                            inner_width=geo.header_w - 2 * cfg.panel_padding_x * plan.WIDTH,
-                            panel_height=geo.header_h, padding_y=cfg.panel_padding_y * plan.WIDTH,
-                            min_font_scale=cfg.min_font_scale)
+        fit_kw = dict(line_spacing=cfg.line_spacing, inner_width=geo.header_w - 2 * cfg.panel_padding_x * plan.WIDTH,
+                      panel_height=geo.header_h, padding_y=cfg.panel_padding_y * plan.WIDTH,
+                      min_font_scale=cfg.min_font_scale)
+        header = fit_header(font, top_text, size0=plan.px(cfg.header_font_size), **fit_kw)
+        spk_fit = fit_header(font, [speaker], size0=round(plan.px(cfg.header_font_size) * SPEAKER_SCALE), **fit_kw)
     except (plan.PlanError, TextError) as exc:
         raise RenderError(str(exc)) from exc
     src = probe_media(hd.path, runner)
     if src["video"] is None or src["audio"] is None:
         raise RenderError(f"bản HD cần có cả video và audio: {hd.path}")
     fps = plan.output_fps(_rate(src["video"]))
-    lay = plan.layout(geo, geo.title_h, int(src["video"]["width"]), int(src["video"]["height"]))
+    lay = full_layout(geo, int(src["video"]["width"]), int(src["video"]["height"]))
     key = _sha({"full_plan_version": FULL_PLAN_VERSION, "plan_version": plan.RENDER_PLAN_VERSION,
                 "render_config_hash": hashing.config_hash(used_config(cfg, font_sha)), "font_sha256": font_sha,
                 "hd_sha256": hd.sha256, "fps": plan.fps_text(fps),
-                "layout": {"header_panel": lay.header.as_dict(), "video": lay.video.as_dict(),
-                           "crop": [lay.crop.w, lay.crop.h, lay.crop.x, lay.crop.y]},
-                "header": {"display_lines": header.lines, "font_size": header.font_size}})
+                "layout": lay.as_dict(),
+                "header": {"display_lines": header.lines, "font_size": header.font_size},
+                "speaker": {"display_lines": spk_fit.lines, "font_size": spk_fit.font_size}})
     out_dir = vertical_dir(config, owner)
     out = out_dir / VIDEO_NAME
     meta = read_meta(config, owner)
@@ -205,9 +246,12 @@ def run_vertical(episode_id: str, config: Config, *, run=None, force: bool = Fal
             tmp = Path(tmpname)
             h_lines = _write_lines(tmp, "h", header.lines, baselines(len(header.lines), font=font, size=header.font_size,
                                                                      pitch=header.line_pitch, panel_height=geo.header_h))
+            b_lines = _write_lines(tmp, "b", spk_fit.lines, baselines(len(spk_fit.lines), font=font, size=spk_fit.font_size,
+                                                                      pitch=spk_fit.line_pitch, panel_height=geo.header_h))
             script = tmp / "full.filter"
-            script.write_text(filter_graph(fps=fps, lay=lay, font_file=fpath, header_lines=h_lines,
-                                           header_size=header.font_size), encoding="utf-8")
+            script.write_text(filter_graph(fps=fps, lay=lay, font_file=fpath, top_lines=h_lines,
+                                           top_size=header.font_size, bottom_lines=b_lines,
+                                           bottom_size=spk_fit.font_size), encoding="utf-8")
             log.info("full: %s: encode %s (%.0f s, fps %s, threads %s)", owner, hd.path.name, src["duration"],
                      plan.fps_text(fps), cfg.threads or "auto")
             proc = runner(ffmpeg_command(ffmpeg="ffmpeg", source=hd.path, output=part, graph_script=script, fps=fps,
@@ -224,7 +268,7 @@ def run_vertical(episode_id: str, config: Config, *, run=None, force: bool = Fal
         raise
     size = out.stat().st_size
     atomic_write_json(out_dir / META_NAME, {"schema_version": 1, "key": key, "hd_sha256": hd.sha256, "size": size,
-                                            "fps": plan.fps_text(fps), "header": header.lines,
+                                            "fps": plan.fps_text(fps), "header": header.lines, "speaker": spk_fit.lines, "layout": lay.as_dict(),
                                             "duration": facts["duration"], "frames": facts["frames"],
                                             "seconds": round(time.monotonic() - t0, 1)})
     secs = time.monotonic() - t0
