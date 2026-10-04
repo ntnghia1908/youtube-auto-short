@@ -88,6 +88,13 @@ class SubmitIn(BaseModel):
     max_minutes: Any = None
 
 
+class ResumeAllIn(BaseModel):
+    """CP13.2 H2 "Chạy tiếp cả bộ": khai thị minutes (absent = ``[khaithi]`` defaults); checked in the handler."""
+
+    min_minutes: Any = None
+    max_minutes: Any = None
+
+
 class EnhanceLeaseIn(BaseModel):
     worker: str | None = Field(default=None, max_length=80)
     gpu: str | None = Field(default=None, max_length=80)
@@ -424,7 +431,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             return pipeline_target(url, config, series=series if isinstance(series, str) else None,
                                    episode=episode if isinstance(episode, str) else None, pipeline=pipeline,
                                    preflight=preflight, episode_id=kt, disk_blocked=storage.block_message,
-                                   enhance=svc)
+                                   enhance=svc, prepare_only=bool(spec.get("prepare_only")) and kt is None)
         if not (ws / eid).is_dir():
             return None
         if kind == KIND_RENDER:
@@ -595,32 +602,12 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             return JSONResponse({"detail": "Số phút chỉ dùng khi có video khai thị"}, status_code=422)
         return kinds
 
-    @app.post("/api/episodes")
-    def api_submit(body: SubmitIn):
-        kinds = _kinds(body)
-        if isinstance(kinds, JSONResponse):
-            return kinds
-        try:
-            parsed = classify_url(body.url)
-        except UrlError as exc:
-            return JSONResponse({"detail": str(exc)}, status_code=422)
-        if parsed.kind == ASK and body.mode is None:  # CP8.7 L2: the UI asks "tập lẻ" or "cả bộ kinh"
-            return JSONResponse({"kind": ASK, "video_id": parsed.video_id, "playlist_id": parsed.playlist_id})
-        if parsed.kind == PLAYLIST or (parsed.kind == ASK and body.mode == "playlist"):
-            return _import_playlist(parsed.playlist_id)  # A1.3: kinds / minutes do not apply to a bộ kinh
-        if body.mode == "playlist":
-            return JSONResponse({"detail": "URL không có playlist"}, status_code=422)
-        lo = hi = None
-        if khaithi.KIND in kinds:  # K2 minutes (absent = [khaithi] defaults)
-            kc = config.khaithi
-            try:
-                lo, hi = khaithi.check_minutes(
-                    kc.default_min_minutes if body.min_minutes is None else body.min_minutes,
-                    kc.default_max_minutes if body.max_minutes is None else body.max_minutes, kc.max_minutes_limit)
-            except khaithi.KhaithiError as exc:
-                return JSONResponse({"detail": exc.vi}, status_code=422)
-        video_id, url = parsed.video_id, canonical_url(parsed.video_id)
-        series, episode = _clean(body.series), _clean(body.episode)
+    def _queue_video(video_id: str, kinds: list[str], lo, hi, series: str | None, episode: str | None, *,
+                     prepare_only: bool = False) -> list[dict]:
+        """Queue the pipeline job of each of ``kinds`` for a video (W4 per kind on its own episode: duplicate job,
+        archived, low disk) and return one item per kind: ``{kind, episode_id, created, job}`` or
+        ``{kind, episode_id, error, status}``. ``prepare_only`` (CP13.2 H1, Short only): the "Chuẩn bị + HD" job."""
+        url = canonical_url(video_id)
 
         # W4 per kind on its own episode (A1.1): duplicate job, archived (CP8.6 S3), low disk (CP8.6 S4)
         items: list[dict] = []
@@ -656,10 +643,40 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                     pipeline_target(url, config, series=series, episode=episode, pipeline=pipeline,
                                     preflight=preflight,
                                     episode_id=i["episode_id"] if i["kind"] == khaithi.KIND else None,
-                                    disk_blocked=storage.block_message, enhance=svc))
+                                    disk_blocked=storage.block_message, enhance=svc,
+                                    prepare_only=prepare_only))
                 i.update(created=created, job=job)
         playlists.invalidate(video_id)
         storage.invalidate()
+        return items
+
+    @app.post("/api/episodes")
+    def api_submit(body: SubmitIn):
+        kinds = _kinds(body)
+        if isinstance(kinds, JSONResponse):
+            return kinds
+        try:
+            parsed = classify_url(body.url)
+        except UrlError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=422)
+        if parsed.kind == ASK and body.mode is None:  # CP8.7 L2: the UI asks "tập lẻ" or "cả bộ kinh"
+            return JSONResponse({"kind": ASK, "video_id": parsed.video_id, "playlist_id": parsed.playlist_id})
+        if parsed.kind == PLAYLIST or (parsed.kind == ASK and body.mode == "playlist"):
+            return _import_playlist(parsed.playlist_id)  # A1.3: kinds / minutes do not apply to a bộ kinh
+        if body.mode == "playlist":
+            return JSONResponse({"detail": "URL không có playlist"}, status_code=422)
+        lo = hi = None
+        if khaithi.KIND in kinds:  # K2 minutes (absent = [khaithi] defaults)
+            kc = config.khaithi
+            try:
+                lo, hi = khaithi.check_minutes(
+                    kc.default_min_minutes if body.min_minutes is None else body.min_minutes,
+                    kc.default_max_minutes if body.max_minutes is None else body.max_minutes, kc.max_minutes_limit)
+            except khaithi.KhaithiError as exc:
+                return JSONResponse({"detail": exc.vi}, status_code=422)
+        video_id = parsed.video_id
+        series, episode = _clean(body.series), _clean(body.episode)
+        items = _queue_video(video_id, kinds, lo, hi, series, episode)
         out = [{k: (_job_view(v) if k == "job" else v) for k, v in i.items()} for i in items]
         ok = [i for i in out if "error" not in i]
         if not ok:
@@ -735,6 +752,63 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         view["khaithi_defaults"] = {"min_minutes": kc.default_min_minutes, "max_minutes": kc.default_max_minutes,
                                     "max_minutes_limit": kc.max_minutes_limit}
         return view
+
+    # --- CP13.2: "Chuẩn bị + HD" and "Chạy tiếp cả bộ" -----------------------------------------------------------
+
+    def _by_episode_order(entries: list[dict]) -> list[dict]:
+        """H2: episode number order (the numbered first), then playlist order."""
+        def key(e: dict):
+            n = e.get("episode")
+            return (0, int(n), e["index"]) if isinstance(n, str) and n.isdigit() else (1, 0, e["index"])
+        return sorted(entries, key=key)
+
+    def _bulk_result(playlist_id: str, items: list[dict], episodes: int) -> dict:
+        errors = [{"episode_id": i["episode_id"], "detail": i["error"]} for i in items if "error" in i]
+        return {"playlist_id": playlist_id, "episodes": episodes,
+                "queued": sum(1 for i in items if i.get("created")), "errors": errors}
+
+    @app.post("/api/playlists/{playlist_id}/prepare")
+    def api_playlist_prepare(playlist_id: str):
+        """H2 "Chuẩn bị + HD": a prepare-only job (:class:`PipelineTarget` ``prepare_only``) for every not yet processed
+        entry, in episode order. No khai thị job, no AI / render; the video asks for HD after its download."""
+        doc = _playlist_or_404(playlist_id)
+        if doc is None:
+            return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
+        view = playlists.view(doc, _jobs_by_episode())
+        todo = _by_episode_order([e for e in view["entries"] if e["state"] == playlists_mod.NEW and e.get("video_id")])
+        items: list[dict] = []
+        for e in todo:
+            items += _queue_video(e["video_id"], ["short"], None, None, None, None, prepare_only=True)
+        out = _bulk_result(playlist_id, items, len(todo))
+        log.info("web: playlist %s chuẩn bị + HD: %d tập, queued %d, %d lỗi", playlist_id, len(todo), out["queued"],
+                 len(out["errors"]))
+        return JSONResponse(out, status_code=202 if out["queued"] else 200)
+
+    @app.post("/api/playlists/{playlist_id}/resume-prepared")
+    def api_playlist_resume_prepared(playlist_id: str, body: ResumeAllIn | None = None):
+        """H2 "Chạy tiếp cả bộ": every prepared entry (episode order) runs AI → render for the Short and the khai thị."""
+        doc = _playlist_or_404(playlist_id)
+        if doc is None:
+            return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
+        body = body or ResumeAllIn()
+        kc = config.khaithi
+        try:
+            lo, hi = khaithi.check_minutes(kc.default_min_minutes if body.min_minutes is None else body.min_minutes,
+                                           kc.default_max_minutes if body.max_minutes is None else body.max_minutes,
+                                           kc.max_minutes_limit)
+        except khaithi.KhaithiError as exc:
+            return JSONResponse({"detail": exc.vi}, status_code=422)
+        view = playlists.view(doc, _jobs_by_episode())
+        todo = _by_episode_order([e for e in view["entries"] if e["state"] == playlists_mod.PREPARED])
+        items: list[dict] = []
+        for e in todo:
+            kinds = [k for k in KINDS if k in (e.get("resume_kinds") or ["short"])]
+            items += _queue_video(e["video_id"], kinds, lo if khaithi.KIND in kinds else None,
+                                  hi if khaithi.KIND in kinds else None, None, None)
+        out = _bulk_result(playlist_id, items, len(todo))
+        log.info("web: playlist %s chạy tiếp cả bộ: %d tập, queued %d, %d lỗi", playlist_id, len(todo), out["queued"],
+                 len(out["errors"]))
+        return JSONResponse(out, status_code=202 if out["queued"] else 200)
 
     @app.post("/api/playlists/{playlist_id}/refresh")
     def api_playlist_refresh(playlist_id: str):

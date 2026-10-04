@@ -2299,10 +2299,13 @@ const AutoShort = (() => {
   const PL_STATE = {
     new: "chưa xử lý", queued: "đang chờ", processing: "đang xử lý", failed: "lỗi", rendered: "đã dựng Short",
     incomplete: "dở dang", complete: "Xong", unavailable: "không khả dụng", deleted: "Đã xóa dữ liệu",
+    prepared: "đã chuẩn bị — chờ cắt", // CP13.2: "Chuẩn bị + HD" done, waiting for "Chạy tiếp"
   };
+  const HD_STATE = { queued: "đợi worker", running: "đang enhance", assembling: "đang ghép", done: "đã xong", failed: "lỗi" };
+  const HD_GB_PER_EPISODE = 1.5; // CP13.2 H2: rough disk estimate (source + HD) per episode, for the confirm only
   let playlistId = null;
   let plFilter = "doing"; // CP8.9 A2.1: "Đang làm" by default; the user's choice is remembered
-  const PL_FILTERS = ["all", "todo", "running", "failed", "doing", "done"]; // CP8.13 G2
+  const PL_FILTERS = ["all", "todo", "running", "failed", "prepared", "doing", "done"]; // CP8.13 G2, CP13.2
   let plTimer = null;
   let plDefaultsApplied = false;
 
@@ -2354,6 +2357,8 @@ const AutoShort = (() => {
     }));
     initPlKinds();
     $("#pl-refresh").addEventListener("click", refreshPlaylist);
+    $("#pl-prepare").addEventListener("click", preparePlaylist);
+    $("#pl-resume-all").addEventListener("click", resumePrepared);
     initHashtags();
     initSeries();
     initDoc();
@@ -2379,6 +2384,43 @@ const AutoShort = (() => {
       loadPlaylist();
     } catch (e) { plMessage(e.message, "error"); }
     b.disabled = false;
+  }
+
+  // CP13.2 H2: "Chuẩn bị + HD" (every "Chưa xử lý" entry) and "Chạy tiếp cả bộ" (every prepared entry).
+  function bulkMessage(text, cls) {
+    const m = $("#pl-bulk-msg");
+    m.textContent = text;
+    m.className = "small " + (cls || "");
+    m.hidden = !text;
+  }
+
+  async function bulkPost(path, body, busyText) {
+    const btns = [$("#pl-prepare"), $("#pl-resume-all")];
+    btns.forEach((b) => { b.disabled = true; });
+    bulkMessage(busyText, "muted");
+    try {
+      const r = await api(`/api/playlists/${encodeURIComponent(playlistId)}/${path}`, jsonBody("POST", body || {}));
+      bulkMessage(`Đã xếp ${r.queued} việc cho ${r.episodes} tập` + (r.errors.length ? `; ${r.errors.length} tập lỗi: ${r.errors[0].detail}` : "."),
+        r.errors.length ? "error" : "ok");
+      loadPlaylist();
+    } catch (e) { bulkMessage(e.message, "error"); }
+    btns.forEach((b) => { b.disabled = false; });
+  }
+
+  function preparePlaylist() {
+    const n = Number(($("#pl-filters [data-filter='todo'] .n") || {}).textContent) || 0;
+    if (!n) { bulkMessage("Không có tập nào chưa xử lý.", "muted"); return; }
+    if (!confirm(`Chuẩn bị + HD ${n} tập chưa xử lý?\n\nChỉ tải video, phiên âm, phân tích và xin enhance HD (chưa cắt Short / khai thị, chưa dùng AI). ` +
+      `Ước tính đĩa thô ≈ ${(n * HD_GB_PER_EPISODE).toFixed(0)} GB (≈ ${HD_GB_PER_EPISODE} GB / tập: nguồn + HD). Sau đó bấm "Chạy tiếp" từng tập hoặc "Chạy tiếp cả bộ".`)) return;
+    bulkPost("prepare", null, "Đang xếp hàng đợi…");
+  }
+
+  function resumePrepared() {
+    const n = Number(($("#pl-filters [data-filter='prepared'] .n") || {}).textContent) || 0;
+    if (!n) { bulkMessage("Không có tập nào đã chuẩn bị.", "muted"); return; }
+    if (!confirm(`Chạy tiếp ${n} tập đã chuẩn bị (AI chọn đoạn + tiêu đề rồi render Short và khai thị)? Tập chưa có HD sẽ đợi HD trước khi render.`)) return;
+    const m = ktMinutes("#pl-kt-min", "#pl-kt-max"); // the minutes of the kind bar
+    bulkPost("resume-prepared", { min_minutes: m.min, max_minutes: m.max }, "Đang xếp hàng đợi…");
   }
 
   async function deletePlaylist() {
@@ -2648,6 +2690,7 @@ const AutoShort = (() => {
         ? ` · ${e.khaithi_videos} video khai thị, đã đăng ${e.khaithi_published}/${e.khaithi_videos}`
         : ` · khai thị: ${PL_STATE[e.khaithi_state] || e.khaithi_state}`;
     }
+    if (e.hd) text += ` · HD: ${HD_STATE[e.hd.state] || e.hd.state}` + (e.hd.state === "done" ? "" : ` ${e.hd.segments_done}/${e.hd.segments_total}`);
     if (e.archived) text += " · đã dọn nguồn";
     return text;
   }

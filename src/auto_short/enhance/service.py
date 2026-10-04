@@ -23,6 +23,7 @@ from pathlib import Path
 from ..config import Config
 from ..hashing import sha256_file
 from ..review.archive import is_archived
+from ..titling.logic import match_title
 from ..workspace import Workspace, WorkspaceError, atomic_write_json, validate_episode_id
 from . import state as st
 from .state import EnhanceError
@@ -181,6 +182,39 @@ class EnhanceService:
                 "segment_frames": doc["segment_frames"], "params": doc["params"], "config_hash": doc["config_hash"],
                 "done_segments": sorted(st.stored_segments(d, doc))}
 
+    def _series_episode(self, d: Path) -> tuple[str | None, int | None]:
+        """(series, episode number) of a video from the title in its ``metadata.json`` (the CP6 ``title_patterns``);
+        (None, None) when no pattern recognizes it."""
+        meta = st._read_json(d / "metadata.json") or {}
+        m = match_title(self.config.titling.header.title_patterns, meta.get("title"))
+        if m is None:
+            return None, None
+        groups = m.re.groupindex
+        series = " ".join(m.group("series").split()) if "series" in groups and m.group("series") else None
+        ep = m.group("episode") if "episode" in groups else None
+        return series, int(ep) if ep is not None and ep.isdigit() else None
+
+    def _lease_order(self, cands: list[tuple[str, Path, dict]]) -> list[tuple[str, Path, dict]]:
+        """CP13.2 H3: videos waiting for HD first (as in CP13.1b), then the others grouped by series (the series whose
+        first video asked for HD earliest first) and, inside a series, by episode number; videos whose episode number
+        is unknown follow the numbered ones of their series by ``wanted_at``; a video of no known series is its own
+        group (plain ``wanted_at`` order)."""
+        info = {eid: self._series_episode(d) for eid, d, _doc in cands}
+        first: dict[str, str] = {}
+        for eid, _d, doc in cands:
+            key = info[eid][0] or eid
+            at = doc.get("wanted_at") or ""
+            if key not in first or at < first[key]:
+                first[key] = at
+
+        def sort_key(c):
+            eid, _d, doc = c
+            series, num = info[eid]
+            return (not doc.get("waiting_hd"), first[series or eid], series or eid, num is None, num or 0,
+                    doc.get("wanted_at") or "", eid)
+
+        return sorted(cands, key=sort_key)
+
     def lease(self, name: str, label: str | None = None, gpu: str | None = None) -> dict | None:
         """E3 ``POST lease``: the worker's own valid lease, else the next video (waiting for HD first, then by
         ``wanted_at``); None = 204 (nothing to do, or the worker may not run now)."""
@@ -200,9 +234,9 @@ class EnhanceService:
                     break
                 if not doc.get("wanted") or doc.get("follows") or doc.get("state") != st.PENDING:
                     continue
-                cands.append(((not doc.get("waiting_hd"), doc.get("wanted_at") or "", eid), eid, d, doc))
+                cands.append((eid, d, doc))
             if ours is None:
-                for _key, eid, d, doc in sorted(cands, key=lambda c: c[0]):
+                for eid, d, doc in self._lease_order(cands):
                     doc = self._eligible(eid, d, doc)
                     if doc is None:
                         continue

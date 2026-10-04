@@ -29,8 +29,10 @@ from ..review.names import MAX_COPY_CHARS, copy_text, hashtag, hashtags
 from ..review.publish import PUBLISH_NAME
 from ..titling.logic import match_title
 from ..titling.playlist import PLAYLISTS_DIR, normalize_series, stored_series
+from ..enhance import state as enh_state
 from ..workspace import DONE, Workspace, WorkspaceError, atomic_write_json
 from . import episodes as ep
+from . import prepared
 from .urls import PLAYLIST_ID_RE, playlist_url, valid_playlist_id
 
 log = logging.getLogger("auto_short")
@@ -44,6 +46,9 @@ UNAVAILABLE_TITLES = {"[Private video]", "[Deleted video]", "[Unavailable video]
 # entry states (L4 + UI filter groups)
 NEW, QUEUED, PROCESSING, FAILED, RENDERED, INCOMPLETE, COMPLETE, UNAVAILABLE, DELETED = (
     "new", "queued", "processing", "failed", "rendered", "incomplete", "complete", "unavailable", "deleted")
+# CP13.2 H1: "Chuẩn bị + HD" finished (prepare lane done, AI not run): waits for "Chạy tiếp"; its own filter group,
+# never "Lỗi / dở dang".
+PREPARED = "prepared"
 # CP8.13 G1: Chưa xử lý / Đang xử lý / Lỗi / dở dang / Đang làm (render done, not every Short ticked) / Xong; an
 # unavailable entry is only under "Tất cả". One table for the entry ``group``, ``counts`` and the summary (G3).
 GROUPS = {NEW: "todo", QUEUED: "running", PROCESSING: "running", FAILED: "failed", INCOMPLETE: "failed",
@@ -51,10 +56,12 @@ GROUPS = {NEW: "todo", QUEUED: "running", PROCESSING: "running", FAILED: "failed
 GROUP_NAMES = ("todo", "running", "failed", "doing", "done")
 # button per state: process (Xử lý), resume (Chạy tiếp), reprocess (Xử lý lại, asks first: new download, the AI may
 # choose other clips / titles)
-ACTIONS = {NEW: "process", FAILED: "resume", INCOMPLETE: "resume", DELETED: "reprocess"}
+ACTIONS = {NEW: "process", FAILED: "resume", INCOMPLETE: "resume", DELETED: "reprocess", PREPARED: "resume"}
 
 
 def group_of(state: str, complete: bool) -> str | None:
+    if state == PREPARED:  # CP13.2: not in GROUPS (the CP8.13 table is unchanged); own tab "Chờ cắt"
+        return "prepared"
     if state == DELETED:  # tombstone: Xong when it was Xong at deletion, else back to "Chưa xử lý"
         return "done" if complete else "todo"
     return GROUPS[state]
@@ -424,6 +431,7 @@ class PlaylistStore:
     def view(self, doc: dict, jobs: dict[str, dict]) -> dict:
         """Playlist page: entries (playlist order) with status (disk + live job), counts per filter group. CP8.9
         A1.4: with a khai thi episode ``<video_id>.kt`` the entry state combines both episodes."""
+        # ``counts["prepared"]`` (CP13.2) exists only when some entry is prepared
         entries, counts = [], {"all": 0, **{g: 0 for g in GROUP_NAMES}}
         for e in doc["entries"]:
             vid = e.get("video_id")
@@ -443,7 +451,8 @@ class PlaylistStore:
             st["khaithi_episode_id"] = kid
             counts["all"] += 1
             if st["group"]:
-                counts[st["group"]] += 1
+                counts[st["group"]] = counts.get(st["group"], 0) + 1
+            st["hd"] = hd_progress(self._config, vid) if usable else None  # CP13.2 H1
             entries.append({**e, **st})
         tags, custom = self.effective_hashtags(doc)
         return {"id": doc["playlist_id"], "title": doc.get("title"), "url": doc.get("url"),
@@ -475,7 +484,7 @@ class PlaylistStore:
                 "failed": v["counts"]["failed"], "doing": v["counts"]["doing"], "deleted": deleted}
 
 
-_RANK = {NEW: 0, DELETED: 0, INCOMPLETE: 1, RENDERED: 2, COMPLETE: 3}
+_RANK = {NEW: 0, DELETED: 0, INCOMPLETE: 1, PREPARED: 1, RENDERED: 2, COMPLETE: 3}
 _DONE_STATES = (RENDERED, COMPLETE)
 
 
@@ -517,7 +526,31 @@ def resume_kinds(st: dict) -> list[str]:
     kinds = [] if st.get("short_state") in _DONE_STATES else ["short"]
     if st.get("khaithi_state") is not None and st["khaithi_state"] not in _DONE_STATES:
         kinds.append("khaithi")
+    elif st.get("short_state") == PREPARED and st.get("khaithi_state") is None:
+        kinds.append("khaithi")  # CP13.2 H2: "Chạy tiếp" a prepared episode cuts the Short and the khai thị
     return kinds or ["short"]
+
+
+def hd_progress(config: Config, video_id: str) -> dict | None:
+    """CP13.2 H1: the HD (enhance) progress of a video for its entry, from ``enhance.json``; None when the video has
+    none or does not want HD. ``state``: ``queued`` | ``running`` | ``assembling`` | ``done`` | ``failed``."""
+    doc = enh_state.read(Path(config.workspace.dir) / video_id)
+    if doc is None or not doc.get("wanted"):
+        return None
+    lease = doc.get("lease") or {}
+    exp = enh_state.parse_iso(lease.get("expires_at"))
+    if doc.get("state") == enh_state.DONE:
+        state = "done"
+    elif doc.get("state") == enh_state.FAILED:
+        state = "failed"
+    elif doc.get("state") == enh_state.ASSEMBLING:
+        state = "assembling"
+    elif exp is not None and exp > time.time():
+        state = "running"
+    else:
+        state = "queued"
+    return {"state": state, "segments_done": len(doc.get("segments") or {}),
+            "segments_total": enh_state.total_segments(doc), "worker": lease.get("worker") if state == "running" else None}
 
 
 def disk_status(config: Config, video_id: str) -> dict:
@@ -558,6 +591,9 @@ def disk_status(config: Config, video_id: str) -> dict:
         complete = episode_complete(DONE, doc.get("shorts") or [], pub)
         out["state"] = COMPLETE if complete else RENDERED
         out["complete"] = complete
+    elif prepared.is_prepared(ws.dir) and statuses.get("selection") != DONE \
+            and all(statuses.get(s) == DONE for s in ("ingest", "transcript", "analysis")):
+        out["state"] = PREPARED  # CP13.2 H1: "Đã chuẩn bị — chờ cắt"
     else:
         out["state"] = INCOMPLETE
     return out
