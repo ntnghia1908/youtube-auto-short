@@ -70,7 +70,7 @@ Lister = Callable[[str, Config], dict]  # (playlist url, config) -> yt-dlp flat 
 
 
 MAX_HASHTAGS = 15
-USER_FIELDS = ("hashtags", "series", "doc_url")
+USER_FIELDS = ("hashtags", "series", "doc_url", "doc_videos_per_page")
 SAMPLE_TITLE = "Tiêu đề mẫu dài sáu mươi ký tự để xem trước hashtag trên YouTube"[:60]
 
 
@@ -321,20 +321,25 @@ class PlaylistStore:
 
     # --- "Văn bản gốc" (CP8.19 D1) ------------------------------------------------------------------------------
 
-    def set_doc_url(self, playlist_id: str, value: object) -> dict:
-        """Store the playlist's lecture-document link (``None`` = removed); a link of another form -> PlaylistError
-        (422)."""
+    def set_doc_url(self, playlist_id: str, value: object, videos_per_page: object = None) -> dict:
+        """Store the playlist's lecture-document link (``None`` = removed, with its videos-per-page); a link of
+        another form -> PlaylistError (422). ``videos_per_page`` (CP8.24 P1; ``None`` = keep the stored one, 1 = the
+        default, field removed) is an integer 1..10."""
         try:
             url = post_doc.normalize_url(value) if value is not None else None
+            k = post_doc.normalize_videos_per_page(videos_per_page) if videos_per_page is not None else None
         except post_doc.DocError as exc:
             raise PlaylistError(str(exc)) from exc
         with self._lock:
             doc = self.load(playlist_id)
             if doc is None:
                 raise FileNotFoundError(playlist_id)
-            fields = {k: doc[k] for k in USER_FIELDS if k in doc and k != "doc_url"}
+            fields = {key: doc[key] for key in USER_FIELDS if key in doc and key not in ("doc_url", "doc_videos_per_page")}
             if url is not None:
                 fields["doc_url"] = url
+                keep = doc.get("doc_videos_per_page") if k is None else k
+                if post_doc.stored_videos_per_page(keep) > 1:
+                    fields["doc_videos_per_page"] = post_doc.stored_videos_per_page(keep)
             _with_user_fields(doc, fields)
             atomic_write_json(self.path(playlist_id), doc)
         return doc
@@ -458,6 +463,7 @@ class PlaylistStore:
         return {"id": doc["playlist_id"], "title": doc.get("title"), "url": doc.get("url"),
                 "fetched_at": doc.get("fetched_at"), "count": len(doc["entries"]), "entries": entries,
                 "counts": counts, "hashtags": tags, "hashtags_custom": custom, "doc_url": stored_doc_url(doc),
+                "doc_videos_per_page": post_doc.stored_videos_per_page(doc.get("doc_videos_per_page")),
                 **self.series_view(doc)}
 
     def series_view(self, doc: dict) -> dict:

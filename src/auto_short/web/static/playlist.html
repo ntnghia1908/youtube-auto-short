@@ -43,7 +43,10 @@
       <p class="muted small">Link một tập bất kỳ trên ph.tinhtong.vn (dạng <code>https://ph.tinhtong.vn/Home/KinhVoLuongTho10?d=KinhVoLuongTho10_001.html</code>). Bài đăng của Short lấy đúng đoạn văn bản tương ứng, không cần AI; Short không khớp thì dùng cách cũ. Lưu link mới sẽ soạn lại các bài chưa đăng (không phải bài sửa tay).</p>
       <div class="sr-edit">
         <input id="dc-input" type="url" maxlength="300" autocomplete="off" placeholder="https://ph.tinhtong.vn/Home/…?d=…_001.html" aria-label="Link văn bản gốc">
+        <label class="small" for="dc-vpp">Số video mỗi trang</label>
+        <input id="dc-vpp" type="number" min="1" max="10" step="1" value="1" autocomplete="off" aria-label="Số video mỗi trang văn bản gốc">
       </div>
+      <p class="muted small">Mặc định 1 (mỗi video một trang). Bộ kinh mà mỗi trang ứng 2 video liên tiếp (như Địa Tạng) đặt 2: tập 1, 2 dùng trang 01, tập 3, 4 dùng trang 02, …</p>
       <div class="edit-actions">
         <button id="dc-save" class="btn primary small" type="button">Lưu</button>
         <button id="dc-reset" class="btn small" type="button">Xóa</button>

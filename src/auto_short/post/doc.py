@@ -68,14 +68,34 @@ def normalize_url(value: object) -> str:
     return url
 
 
-def url_for_episode(url: str, episode: object) -> str | None:
+MAX_VIDEOS_PER_PAGE = 10  # CP8.24 P1
+
+
+def normalize_videos_per_page(value: object) -> int:
+    """CP8.24 P1: videos per text page, an integer 1..10 (``bool`` / text / other numbers are refused)."""
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= MAX_VIDEOS_PER_PAGE:
+        raise DocError(f"số video mỗi trang phải là số nguyên từ 1 đến {MAX_VIDEOS_PER_PAGE}")
+    return value
+
+
+def stored_videos_per_page(value: object) -> int:
+    """The stored ``doc_videos_per_page`` of a bộ kinh; absent or invalid -> 1 (one video per page, D1)."""
+    try:
+        return normalize_videos_per_page(value)
+    except DocError:
+        return 1
+
+
+def url_for_episode(url: str, episode: object, videos_per_page: int = 1) -> str | None:
     """The link of episode ``episode`` (digits) keeping the zero padding width of ``url`` (``_001`` -> ``_007``,
-    ``_1`` -> ``_7``, ``_07`` -> ``_12``); None when ``episode`` is not a number."""
+    ``_1`` -> ``_7``, ``_07`` -> ``_12``); with ``videos_per_page`` k > 1 (CP8.24 P2) the page is ``ceil(N / k)``.
+    None when ``episode`` is not a number."""
     text = str(episode).strip() if episode is not None else ""
     m = _NUM_RE.search(url)
     if m is None or not text.isdigit():
         return None
-    return url[:m.start()] + "_" + str(int(text)).zfill(len(m.group(1))) + m.group(2)
+    page = -(-int(text) // max(stored_videos_per_page(videos_per_page), 1))
+    return url[:m.start()] + "_" + str(page).zfill(len(m.group(1))) + m.group(2)
 
 
 def base_episode_id(episode_id: str) -> str:
@@ -102,7 +122,7 @@ def lookup(workspace_dir: str | Path, episode_id: str) -> tuple[str, str] | None
         for entry in doc["entries"]:
             if isinstance(entry, dict) and entry.get("video_id") == vid:
                 number = entry.get("episode")
-                url = url_for_episode(base, number)
+                url = url_for_episode(base, number, stored_videos_per_page(doc.get("doc_videos_per_page")))
                 return (url, str(number).strip()) if url else None
     return None
 

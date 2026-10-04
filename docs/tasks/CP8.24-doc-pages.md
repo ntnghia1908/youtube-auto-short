@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: FEATURE
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -64,9 +64,20 @@ Không chạm database / security model / public API. Điểm danh trên 8080:
 
 ## Result
 
-- Main changes:
-- Tests:
-- Review:
-- Important findings / decisions:
-- Known limitations:
-- PR:
+- Main changes: trường `doc_videos_per_page` (1–10, vắng = 1, k = 1 không lưu) trong `_playlists/<id>.json` (`USER_FIELDS`); `doc.normalize_videos_per_page` / `stored_videos_per_page`; `url_for_episode(url, ep, k)` và `lookup()` dùng trang `ceil(N/k)` giữ độ rộng số 0; `PUT /api/playlists/{id}/doc` nhận thêm `videos_per_page` (vắng = giữ giá trị cũ; xóa link = xóa luôn trường), phản hồi PUT và GET bộ kinh có `doc_videos_per_page`; ô "Số video mỗi trang" trong khối "Văn bản gốc" (`playlist.html`, `app.js`). Cache `doc.json` theo `url` nên đổi k làm cache cũ không dùng. Phản hồi PUT thêm khóa `doc_videos_per_page` nên test chính xác-dict cũ (`test_put_saves_get_returns_null...`) được cập nhật 1 khóa.
+- Tests: `python -m pytest -q -n auto` (PYTHONPATH=worktree/src): 1446 passed, 1 skipped (92 s). Test mới: `tests/test_post_doc.py` (AC1, AC2 gồm `_01`/`_1`/`_001`, 101/102 → 51, AC3 validate, AC4 cache theo url), `tests/test_web_post_doc_cp819.py` (AC3 API + lưu / giữ qua refresh / series, UI hooks). `node scripts/framework-check.mjs`: PASS.
+- Review: chưa.
+- Important findings / decisions: P3 `match_ratio` (tải trang bằng `fetch_paragraphs`, transcript `work/` chính; `MIN_MATCH` = 0,6, không đổi):
+
+  | Bộ | Tập (video) | k | Trang | match |
+  |---|---|---|---|---|
+  | Địa Tạng | 1 (`9NQFsvecC04`) | 1 hoặc 2 | _01 | 0,587 |
+  | Địa Tạng | 2 (`rBvztHKbNe4`) | 1 | _02 | 0,029 |
+  | Địa Tạng | 2 (`rBvztHKbNe4`) | 2 | _01 | 0,608 |
+  | Vô Lượng Thọ 10 | 1–5 | 1 | 001–005 | 0,882 / 0,863 / 0,860 / 0,882 / 0,880 |
+  | Cảm Ứng Thiên | 1–5 | 1 | 001–005 | 0,810 / 0,856 / 0,666 / 0,837 / 0,670 |
+  | Thập Thiện Nghiệp | 1–5 | 1 | 01–05 | 0,908 / 0,891 / 0,890 / 0,909 / 0,901 |
+
+  Chỉ có 2 tập Địa Tạng có transcript trong `work/` (không có tập khác để đo). Bộ 1:1 khớp 0,67–0,91, thấp nhất Cảm Ứng Thiên t3 / t5 (0,67). Địa Tạng t1 = 0,587 dưới ngưỡng 0,6 chỉ 0,013; t2 = 0,608 sát ngưỡng. Nguyên nhân khả dĩ: 1 trang ứng 2 video nên mẫu số (transcript 1 video) chỉ phủ ~một nửa trang cũng không sao, nhưng Whisper trên âm thanh 480p cũ nhiều lỗi. Đề xuất (không tự đổi, HUMAN LEAD quyết): (a) giữ `MIN_MATCH` 0,6 và chạy lại transcript tập 1 bằng nguồn tốt hơn (CP13.2 HD-first) rồi đo lại; hoặc (b) hạ ngưỡng xuống 0,55 riêng cho bộ có `doc_videos_per_page` > 1 (an toàn vì trang sai chỉ 0,03); hoặc (c) hạ ngưỡng chung 0,55 (các bộ 1:1 thấp nhất 0,67 và trang sai ≈ 0,03 nên khoảng cách rất rộng). Hiện tập 1 Địa Tạng dùng cách cũ (AI) cho tới khi chọn.
+- Known limitations: nối trang theo thứ tự tập cố định (k hằng số cho cả bộ); không dò tự động; ngưỡng chưa đổi nên tập 1 Địa Tạng chưa dùng văn bản gốc.
+- PR: chưa (không push).

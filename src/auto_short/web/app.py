@@ -138,6 +138,7 @@ class SeriesIn(BaseModel):
 
 class DocIn(BaseModel):
     url: Any = None  # CP8.19 D1: the lecture-document link, or null to remove it (checked by the store -> 422)
+    videos_per_page: Any = None  # CP8.24 P1: videos per text page (integer 1..10); absent / null keeps the stored one
 
 
 class TitleIn(BaseModel):
@@ -943,7 +944,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         if "url" not in body.model_fields_set:
             return JSONResponse({"detail": "thiếu url (link hoặc null để xóa)"}, status_code=422)
         try:
-            doc = playlists.set_doc_url(playlist_id, body.url)
+            doc = playlists.set_doc_url(playlist_id, body.url, body.videos_per_page)
         except PlaylistError as exc:
             return JSONResponse({"detail": str(exc)}, status_code=422)
         except FileNotFoundError:
@@ -954,7 +955,8 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             check = _doc_check(doc)
             queued = _recompose_for_doc(doc)
         log.info("web: playlist %s văn bản gốc %s (queued %d)", playlist_id, url or "removed", queued)
-        return {"playlist_id": playlist_id, "doc_url": url, "check": check, "queued": queued}
+        return {"playlist_id": playlist_id, "doc_url": url, "check": check, "queued": queued,
+                "doc_videos_per_page": post_doc.stored_videos_per_page(doc.get("doc_videos_per_page"))}
 
     @app.post("/api/playlists/{playlist_id}/hashtags/preview")
     def api_playlist_hashtags_preview(playlist_id: str, body: HashtagsIn):
