@@ -15,6 +15,7 @@ import time
 import zipfile
 from collections.abc import Callable
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -27,7 +28,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, StrictBool
 
 from .. import khaithi
-from ..config import Config
+from ..config import Config, whisper_threads_per_job
 from ..enhance import state as enh_state
 from ..enhance.service import EnhanceService
 from ..enhance.state import EnhanceError
@@ -316,9 +317,15 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     ``enhance_tokens`` (``name -> token`` of the enhance workers, default: env ``AUTO_SHORT_ENHANCE_TOKENS``, E8) and
     ``enhance_service`` (default: an :class:`EnhanceService` on ``config``); for CP8.28 ``proc_dir`` (``/proc``),
     ``ollama_ps`` (default: ``GET <ollama host>/api/ps``) and ``monitor_interval`` (seconds between CPU samples)."""
+    workers = config.web.prepare_workers if config.web.queue_mode == "lanes" else 1
+    wh = config.transcript.whisper
+    threads = whisper_threads_per_job(wh, workers)  # CP8.29 P1: Whisper threads of each prepare job
+    if threads != wh.cpu_threads:
+        config = replace(config, transcript=replace(config.transcript, whisper=replace(wh, cpu_threads=threads)))
     runner = runner or JobRunner(config.web.queue_mode,
                                  youtube_retry_seconds=config.web.youtube_retry_minutes * 60.0,
-                                 youtube_retry_max_seconds=config.web.youtube_retry_max_minutes * 60.0)
+                                 youtube_retry_max_seconds=config.web.youtube_retry_max_minutes * 60.0,
+                                 prepare_workers=workers, worker_nice=config.web.worker_nice)
     tokens = dict(enhance_tokens) if enhance_tokens is not None else tokens_from_env()
     storage = StorageCache(config, disk_usage=disk_usage, clock=clock)
     playlists = PlaylistStore(config, lister=playlist_lister, timeout=playlist_timeout)
@@ -340,7 +347,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
 
     def _lane_jobs() -> dict[str, dict]:
         return {lane: {"id": job.id, "episode_id": job.episode_id, "kind": job.kind, "stage": job.stage}
-                for lane, job in runner.running().items()}
+                for lane, job in runner.running_slots().items()}
 
     sampler = monitor_mod.Sampler(proc=proc_dir, workdir=config.workspace.dir, interval=monitor_interval,
                                   clock=clock, disk_usage=disk_usage, lane_tids=runner.lane_tids,
@@ -2010,8 +2017,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             return entry
 
         for lane, info in data["lanes"].items():
-            run = info["running"]
-            if run is not None:
+            for run in info["running_all"]:  # CP8.29: the prepare lane may run several (``running`` = the first)
                 decorate(run, runner.job(run["id"]))
             for e in info["pending"]:
                 decorate(e)

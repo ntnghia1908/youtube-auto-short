@@ -34,6 +34,8 @@ vad_filter = true
 word_timestamps = true
 # Execution-only (not part of the config hash): CPU threads (0 = all CPUs) and model cache dir.
 cpu_threads = 0
+# CP8.29: threads of each prepare job when [web] prepare_workers > 1 (0 = cpu_threads, or all CPUs, / prepare_workers).
+cpu_threads_per_job = 0
 models_dir = "models"
 
 [analysis]
@@ -169,6 +171,12 @@ show_advanced = false
 # to the maximum; a successful download resets it. Episodes whose source is already downloaded still run.
 youtube_retry_minutes = 15
 youtube_retry_max_minutes = 120
+# CP8.29: jobs the prepare lane (ingest -> transcript -> analysis) runs at the same time (1-8; 1 = one at a time).
+prepare_workers = 1
+# CP8.29: the heavy lanes (prepare, render) run at this nice level (CPU + I/O priority lowered per worker thread; their
+# ffmpeg / yt-dlp children and Whisper threads inherit it) so web pages and downloads stay fast while the CPU is
+# saturated. 0 = leave the priority alone (1-19 = lower; 19 = lowest).
+worker_nice = 10
 
 [khaithi]
 # Khai thị videos: `auto-short run <url> --khai-thi --min-minutes N --max-minutes M` / web "Khai thị"
