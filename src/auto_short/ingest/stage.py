@@ -16,6 +16,7 @@ from ..workspace import (
     Workspace,
     WorkspaceError,
     atomic_write_json,
+    check_up_to_date,
     iter_manifests,
     record_failure,
     run_stage,
@@ -23,7 +24,7 @@ from ..workspace import (
 )
 from . import probe as probe_mod
 from .source import LOCAL, YOUTUBE, SourceError, SourceSpec, classify, local_episode_id, youtube_video_id
-from .youtube import Downloader, youtube_info, ytdlp_download
+from .youtube import Downloader, YoutubeBlocked, youtube_info, ytdlp_download
 
 log = logging.getLogger("auto_short")
 
@@ -35,6 +36,10 @@ _TMP_DIR = ".ingest-tmp"
 
 class IngestError(Exception):
     """Ingest could not run; message is user-facing."""
+
+
+class IngestBlocked(IngestError):
+    """FIX-youtube-botcheck-wait Y1: the download was refused by YouTube (:class:`YoutubeBlocked`); temporary."""
 
 
 @dataclass(frozen=True)
@@ -193,12 +198,45 @@ def run_ingest(
     try:
         ran = run_stage(ws, manifest, STAGE, inputs=inputs, cfg_hash=cfg_hash, force=force, action=action)
     except StageError as exc:
+        if isinstance(exc.__cause__, YoutubeBlocked):
+            raise IngestBlocked(str(exc)) from exc
         raise IngestError(str(exc)) from exc
     if not ran and spec.kind == LOCAL and manifest["source"] != _source_entry(ws, spec, fp):
         # Same content but new mtime/path: refresh the hash cache so the next run skips hashing.
         manifest["source"] = _source_entry(ws, spec, fp)
         ws.save_manifest(manifest)
     return IngestResult(ws.episode_id, ws.dir, ran)
+
+
+def needs_download(target: str, config: Config, episode_id: str | None = None) -> bool:
+    """FIX-youtube-botcheck-wait Y2: would :func:`run_ingest` of ``target`` go to YouTube? False for a local source,
+    when ingest is up to date (it would skip) or when a khai thị episode can reuse its base source. Cheap checks only
+    (no hashing); any doubt answers True. Reads only."""
+    try:
+        spec = classify(target)
+        if spec.kind != YOUTUBE:
+            return False
+        root = config.workspace.dir
+        ws = Workspace(root, validate_episode_id(episode_id or spec.youtube_id))
+        manifest = ws.load_manifest()
+        if manifest is not None:
+            from ..review.archive import is_archived
+            if is_archived(ws.dir):
+                return False  # ingest refuses it without any download
+            cfg_hash = hashing.config_hash(_used_config(spec, config))
+            if check_up_to_date(ws, manifest, STAGE, [], cfg_hash) is None:
+                return False
+        kt = khaithi.read(ws.dir, config.khaithi.max_minutes_limit)
+        if kt is not None:
+            base = Workspace(root, validate_episode_id(kt.base_episode_id))
+            bm = base.load_manifest() or {}
+            entry = (bm.get("stages") or {}).get(STAGE) or {}
+            rel = (bm.get("source") or {}).get("path")
+            if entry.get("status") == "done" and isinstance(rel, str) and (base.dir / rel).is_file():
+                return False
+        return True
+    except Exception:
+        return True
 
 
 def _ingest_local(ws: Workspace, manifest: dict, spec: SourceSpec, fp: hashing.FileFingerprint) -> list[str]:

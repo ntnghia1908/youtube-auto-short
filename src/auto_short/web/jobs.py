@@ -13,7 +13,10 @@ same manifest. The community-post compose job (``post``, CP8.16 R3) is the excep
 server restart no longer forgets it (CP8.22): the queue is saved to a state file (``JobRunner.configure_persistence``)
 and restored at start-up through the same targets; a global pause stops the lanes taking new steps. FIX-ollama-wait: when Ollama is
 unreachable the ``ai`` lane does not fail jobs; it keeps them at the head of its queue and re-checks every
-``GPU_RETRY_SECONDS`` (docs/tasks/FIX-ollama-wait.md O5). Contract: docs/decisions/CP8.3-web-contract.md W5.
+``GPU_RETRY_SECONDS`` (docs/tasks/FIX-ollama-wait.md O5). FIX-youtube-botcheck-wait: when YouTube blocks the download
+(bot check / 429) the job goes back to the head of the ``prepare`` queue, the lane starts no job that needs a download
+until a retry time that doubles at each consecutive block (``[web] youtube_retry_minutes`` ..), kept in the queue file.
+Contract: docs/decisions/CP8.3-web-contract.md W5.
 """
 
 from __future__ import annotations
@@ -33,6 +36,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..config import Config
+from ..ingest import IngestBlocked, needs_download
 from ..pipeline import (PIPELINE_STAGES, OllamaUnavailable, PipelineError, PreflightError, StageRun,
                         ollama_preflight, run_pipeline)
 from ..post import fetch as post_fetch
@@ -80,6 +84,9 @@ LANE_STAGES: dict[str, tuple[str, ...]] = {
 PREFETCH_LIMIT = 2  # Q2: prepare starts no new job while this many prepared jobs wait for the ai lane
 GPU_RETRY_SECONDS = 60.0  # FIX-ollama-wait O5: the ai lane re-checks Ollama this often while it is down
 GPU_OK, GPU_DOWN = "ok", "down"
+YT_RETRY_SECONDS = 15 * 60.0  # FIX-youtube-botcheck-wait Y2: first wait after YouTube blocked the download ..
+YT_RETRY_MAX_SECONDS = 120 * 60.0  # .. doubled at each consecutive block up to this
+_ISO = "%Y-%m-%dT%H:%M:%SZ"
 _SERIAL = "serial"  # internal lane of queue_mode "serial" (reported as lane null)
 
 
@@ -98,6 +105,12 @@ class StageFailed(JobFailed):
 class GpuUnavailable(JobFailed):
     """FIX-ollama-wait O5: raised by a target of the ``ai`` lane when Ollama is unreachable. In lanes mode the runner
     puts the job back at the head of the ``ai`` queue and waits for the GPU; anywhere else it is a plain failure."""
+
+
+class YoutubeWait(JobFailed):
+    """FIX-youtube-botcheck-wait Y1: raised by a pipeline target of the ``prepare`` lane when YouTube blocked the
+    download. In lanes mode the runner puts the job back at the head of the ``prepare`` queue and backs off; anywhere
+    else it is a plain failure."""
 
 
 def run_preflight(job: "Job", preflight: Callable[[Config], None], config: Config) -> None:
@@ -146,6 +159,8 @@ class Job:
     steps: list[Step] = field(default_factory=list, repr=False)
     key: str = ""  # runner key: the episode id, or :func:`post_key` for a ``post`` job (CP8.16 R3)
     gpu_wait: bool = False  # O7: waiting in the ai queue while Ollama is unreachable
+    yt_wait: bool = False  # FIX-youtube-botcheck-wait: waiting in the prepare queue while YouTube blocks the download
+    _yt_ok: Callable[[], None] | None = field(default=None, repr=False)  # set by the runner (prepare lane)
     _reachable: Callable[[], None] | None = field(default=None, repr=False)  # set by the runner (ai lane)
     again: bool = field(default=False, repr=False)  # post job: a new trigger arrived while running (R3)
     requeued: bool = field(default=False, repr=False)  # came back to the ai queue via GpuUnavailable (O5)
@@ -165,13 +180,19 @@ class Job:
         if cb is not None:
             cb()
 
+    def youtube_ok(self) -> None:
+        """A YouTube download of this job just succeeded (the block is over)."""
+        cb = self._yt_ok
+        if cb is not None:
+            cb()
+
     def to_dict(self, *, logs: bool = True) -> dict:
         out = {
             "id": self.id, "episode_id": self.episode_id, "kind": self.kind, "status": self.status,
             "created_at": self.created_at, "started_at": self.started_at, "finished_at": self.finished_at,
             "stage": self.stage, "stages": list(self.stages), "error": self.error, "summary": self.summary,
             "clip_ids": list(self.clip_ids), "lane": self.lane, "waiting": self.waiting,
-            "gpu_wait": self.gpu_wait, "hd_wait": self.hd_wait,
+            "gpu_wait": self.gpu_wait, "hd_wait": self.hd_wait, "yt_wait": self.yt_wait,
         }
         if logs:
             out["logs"] = list(self.logs)
@@ -216,7 +237,9 @@ def _interrupt(thread_ident: int) -> None:
 class JobRunner:
     """``mode`` = ``[web] queue_mode``: ``"lanes"`` (CP8.10) or ``"serial"`` (one worker, whole job)."""
 
-    def __init__(self, mode: str = MODE_LANES, *, gpu_retry_seconds: float = GPU_RETRY_SECONDS) -> None:
+    def __init__(self, mode: str = MODE_LANES, *, gpu_retry_seconds: float = GPU_RETRY_SECONDS,
+                 youtube_retry_seconds: float = YT_RETRY_SECONDS, youtube_retry_max_seconds: float = YT_RETRY_MAX_SECONDS,
+                 monotonic: Callable[[], float] = time.monotonic, wall: Callable[[], float] = time.time) -> None:
         if mode not in (MODE_LANES, MODE_SERIAL):
             raise ValueError(f"unknown queue mode {mode!r}")
         self.mode = mode
@@ -243,6 +266,12 @@ class JobRunner:
         self.gpu_retry_seconds = gpu_retry_seconds
         self._gpu: dict = {"state": GPU_OK, "since": None, "error": None, "next_check": None}
         self._gpu_next = 0.0  # monotonic deadline of the next check while down
+        # FIX-youtube-botcheck-wait Y2: YouTube block state of the prepare lane (under ``_lock``); the clocks are
+        # injectable so tests need no real sleeps
+        self.youtube_retry_seconds, self.youtube_retry_max_seconds = youtube_retry_seconds, youtube_retry_max_seconds
+        self._mono, self._wall = monotonic, wall
+        self._yt: dict = {"blocked": False, "since": None, "error": None, "next_check": None, "failures": 0}
+        self._yt_next = 0.0  # monotonic deadline of the next download attempt while blocked
         # CP8.22: global pause (``None`` | ``"now"`` | ``"after"``), kept on disk with the queue
         self._paused: str | None = None
         self._in_step: dict[str, Job] = {}  # lane -> job whose step may be interrupted by "pause now"
@@ -299,8 +328,9 @@ class JobRunner:
                     if job.status == RUNNING:  # waiting between two lanes (or for the GPU)
                         job.status = INTERRUPTED
                         job.error = "interrupted while waiting for GPU" if job.gpu_wait \
+                            else "interrupted while waiting for YouTube" if job.yt_wait \
                             else f"interrupted while waiting for {job.lane}"
-                        job.finished_at, job.waiting, job.gpu_wait = _now(), False, False
+                        job.finished_at, job.waiting, job.gpu_wait, job.yt_wait = _now(), False, False, False
             self._save_locked()  # jobs cut by the stop come back first; those that finished meanwhile are gone
             self._lock.notify_all()
         log.removeHandler(self._handler)
@@ -451,6 +481,9 @@ class JobRunner:
         down = self._gpu_down()
         for j in self._queues.get(AI, ()):
             j.gpu_wait = down
+        blocked = self._yt["blocked"]
+        for j in self._queues.get(PREPARE, ()):
+            j.yt_wait = blocked
 
     def _set_gpu_down_locked(self, error: str) -> None:
         if not self._gpu_down():
@@ -472,6 +505,51 @@ class JobRunner:
             self._sync_gpu_wait_locked()
             self._lock.notify_all()  # the prepare lane's prefetch limit applies again
 
+    # --- FIX-youtube-botcheck-wait: YouTube block state ------------------------------------------
+
+    def youtube_status(self) -> dict:
+        """Y3: ``{blocked, since, error, next_check, failures}`` of the prepare lane's downloads."""
+        with self._lock:
+            return dict(self._yt)
+
+    def _yt_blocked(self) -> bool:
+        return bool(self._yt["blocked"])
+
+    def _yt_wait_seconds(self, failures: int) -> float:
+        return min(self.youtube_retry_seconds * 2 ** max(0, failures - 1), self.youtube_retry_max_seconds)
+
+    def _set_yt_blocked_locked(self, error: str) -> None:
+        failures = int(self._yt["failures"]) + 1
+        wait = self._yt_wait_seconds(failures)
+        if not self._yt_blocked():
+            self._yt["since"] = datetime.fromtimestamp(self._wall(), timezone.utc).strftime(_ISO)
+        self._yt.update(blocked=True, error=error, failures=failures,
+                        next_check=datetime.fromtimestamp(self._wall() + wait, timezone.utc).strftime(_ISO))
+        self._yt_next = self._mono() + wait
+        log.warning("web: YouTube blocked the download (%s); prepare lane waits %g min (block #%d)", error,
+                    wait / 60, failures)
+        self._sync_gpu_wait_locked()
+
+    def _youtube_ok(self) -> None:
+        with self._lock:
+            if not self._yt_blocked() and not self._yt["failures"]:
+                return
+            self._yt.update(blocked=False, since=None, error=None, next_check=None, failures=0)
+            log.info("web: YouTube downloads work again")
+            self._sync_gpu_wait_locked()
+            self._save_locked()
+            self._lock.notify_all()
+
+    def _no_download(self, job: Job) -> bool:
+        """Y2: may ``job`` run in the prepare lane while YouTube blocks downloads? True when it needs none."""
+        check = getattr(job.target, "needs_download", None)
+        if check is None:
+            return True  # not a pipeline job (image search ..): no YouTube
+        try:
+            return not check()
+        except Exception:
+            return False
+
     # --- workers -------------------------------------------------------------------------------
 
     def _can_start(self, lane: str) -> bool:
@@ -489,6 +567,16 @@ class JobRunner:
             if self._paused is not None:  # CP8.22: nothing new starts while paused
                 self._lock.wait()
                 continue
+            if lane == PREPARE and queue and self._yt_blocked():
+                left = self._yt_next - self._mono()
+                if left > 0:  # Y2: only jobs that need no download may start (and only within the prefetch limit)
+                    free = next((j for j in queue if self._no_download(j)), None) if self._can_start(lane) else None
+                    if free is not None:
+                        queue.remove(free)
+                        return free
+                    self._lock.wait(left)
+                    continue
+                return queue.popleft()  # time to try again
             if lane == AI and queue and self._gpu_down():
                 # an ``add`` job never waits; nor does a ``post`` job that has not run yet (it may need no AI:
                 # FIX-post-doc-no-gpu F3). A job that came back via GpuUnavailable waits for the next check.
@@ -522,6 +610,7 @@ class JobRunner:
         while True:
             ok = False
             requeue: str | None = None
+            blocked: str | None = None
             paused_back = False
             with self._lock:
                 job = self._take_locked(lane)
@@ -533,8 +622,9 @@ class JobRunner:
                 if first:
                     job.status, job.started_at, job.t0 = RUNNING, _now(), time.monotonic()
                 job.lane = None if lane == _SERIAL else lane
-                job.waiting, job.gpu_wait = False, False
+                job.waiting, job.gpu_wait, job.yt_wait = False, False, False
                 job._reachable = self._gpu_reachable if lane == AI else None
+                job._yt_ok = self._youtube_ok if lane == PREPARE else None
                 self._current[lane] = job
                 self._lock.notify_all()  # a shorter ai queue may let the prepare lane start (Q2)
             try:
@@ -553,6 +643,13 @@ class JobRunner:
                     if self._stopping:
                         job.resume = (lane, job.step)
                     log.info("web: job %s interrupted [%s]", job.id, job.episode_id)
+            except YoutubeWait as exc:
+                if lane == PREPARE and not self._stopping:  # Y2: back to the head of the queue, wait for YouTube
+                    blocked = str(exc)
+                    log.info("web: job %s [%s] waits for YouTube: %s", job.id, job.episode_id, exc)
+                else:
+                    job.status, job.error = FAILED, str(exc)
+                    log.error("web: job %s failed [%s]: %s", job.id, job.episode_id, exc)
             except GpuUnavailable as exc:
                 if lane == AI and not self._stopping:  # O5: back to the head of the queue, wait for the GPU
                     requeue = str(exc)
@@ -571,6 +668,8 @@ class JobRunner:
                     try:
                         if paused_back:
                             self._requeue_paused(lane, job)
+                        elif blocked is not None:
+                            self._requeue_blocked(lane, job, blocked)
                         elif requeue is not None:
                             self._requeue(lane, job, requeue)
                         else:
@@ -612,9 +711,26 @@ class JobRunner:
             self._save_locked()
             self._lock.notify_all()
 
+    def _requeue_blocked(self, lane: str, job: Job, error: str) -> None:
+        """Y2: YouTube blocked the download: the job returns, not failed, to the head of the prepare queue (like a job
+        cut by "pause now": its prepare stages rerun later) and the lane backs off."""
+        with self._lock:
+            self._current[lane] = None
+            self._in_step.pop(lane, None)
+            job._yt_ok, job.error = None, None
+            job.stages[:] = [st for st in job.stages if st["stage"] not in LANE_STAGES[PREPARE]]
+            if job.step == 0:
+                job.status, job.started_at, job.lane, job.waiting, job.stage = QUEUED, None, None, False, None
+            else:
+                job.lane, job.waiting, job.stage = lane, True, LANE_STAGES[lane][0]
+            self._queues[lane].appendleft(job)
+            self._set_yt_blocked_locked(error)
+            self._save_locked()
+            self._lock.notify_all()
+
     def _after(self, lane: str, job: Job, ok: bool) -> None:
         last = not ok or job.step + 1 >= len(job.steps)
-        job._reachable = None
+        job._reachable = job._yt_ok = None
         park = False
         if not last and job.kind == KIND_PIPELINE and job.steps[job.step + 1].lane == RENDER \
                 and not self._stopping:
@@ -792,8 +908,11 @@ class JobRunner:
             entries += [self._entry(j, j.step) for j in self._queues[lane]]
             lanes[lane] = entries
         parked = [self._entry(j, j.step) for j in sorted(self._parked.values(), key=lambda j: int(j.id))]
-        return {"version": 1, "mode": self.mode, "paused": self._paused is not None, "lanes": lanes,
-                "parked": parked}
+        out = {"version": 1, "mode": self.mode, "paused": self._paused is not None, "lanes": lanes,
+               "parked": parked}
+        if self._yt_blocked():  # Y3: the block (and its retry time) survives a restart
+            out["youtube"] = {k: self._yt[k] for k in ("since", "error", "next_check", "failures")}
+        return out
 
     def _save_locked(self) -> None:
         if self._state_path is None or self._restoring:
@@ -830,6 +949,7 @@ class JobRunner:
             self._restoring = True
             try:
                 self._paused = "after" if data.get("paused") else None
+                self._restore_youtube_locked(data.get("youtube"))
                 for lane, entry in entries:
                     try:
                         job = self._restore_one_locked(lane, entry, same_mode)
@@ -851,6 +971,19 @@ class JobRunner:
         if restored or self._paused:
             log.info("web: khôi phục hàng đợi: %d việc%s", restored, ", đang tạm ngưng" if self._paused else "")
         return restored
+
+    def _restore_youtube_locked(self, saved) -> None:
+        if not isinstance(saved, dict):
+            return
+        try:
+            due = datetime.strptime(saved["next_check"], _ISO).replace(tzinfo=timezone.utc).timestamp()
+            failures = max(1, int(saved.get("failures") or 1))
+        except (KeyError, TypeError, ValueError):
+            return
+        self._yt.update(blocked=True, since=saved.get("since"), error=saved.get("error"),
+                        next_check=saved["next_check"], failures=failures)
+        self._yt_next = self._mono() + max(0.0, due - self._wall())
+        log.info("web: khôi phục trạng thái YouTube chặn tải, thử lại lúc %s", saved["next_check"])
 
     def _restore_one_locked(self, lane: str, entry: dict, same_mode: bool, parked: bool = False) -> Job | None:
         kind, episode_id = entry["kind"], entry["episode_id"]
@@ -923,6 +1056,8 @@ class PipelineTarget:
 
         def on_stage(run: StageRun) -> None:
             job.stages.append({"stage": run.stage, "ran": run.ran, "seconds": run.seconds})
+            if run.stage == "ingest" and run.ran and getattr(job, "youtube_ok", None) is not None:
+                job.youtube_ok()  # Y2: a download went through, the YouTube block (if any) is over
             if run.stage == "ingest" and self.enhance is not None:  # CP13.1b E1: decide right after the download
                 eid = getattr(run.result, "episode_id", None) or episode_id
                 if eid:
@@ -946,6 +1081,8 @@ class PipelineTarget:
             raise JobFailed(str(exc)) from exc
         if not result.ok:
             job.stage = result.failed_stage
+            if isinstance(result.error, IngestBlocked):  # Y1: temporary, the web queue waits and retries
+                raise YoutubeWait(f"{result.failed_stage}: {result.error}")
             raise StageFailed(f"{result.failed_stage}: {result.error}")
         return result
 
@@ -977,6 +1114,10 @@ class PipelineTarget:
                 raise JobFailed(message)
         result = self._run(job, LANE_STAGES[PREPARE], preflight=False, episode_id=self.episode_id)
         self._resolved = result.episode_id or self._resolved
+
+    def needs_download(self) -> bool:
+        """Y2: would this job's ingest go to YouTube (False: the source is already there / not a YouTube URL)?"""
+        return needs_download(self.url, self.config, self.episode_id)
 
     def prepare_only_step(self, job: Job) -> None:
         """CP13.2 H1 "Chuẩn bị + HD": ingest → transcript → analysis (+ the enhance decision after ingest), then the job

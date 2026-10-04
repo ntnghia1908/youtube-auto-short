@@ -164,6 +164,11 @@ queue_mode = "lanes"
 # CP8.21: false = hide the "Sửa đầu/cuối" button (episode page) and the "Từ điển sửa lỗi" button (Bài đăng tab);
 # true = show them. UI only: the API and the already approved correction rules keep working.
 show_advanced = false
+# FIX-youtube-botcheck-wait: when YouTube blocks the download ("Sign in to confirm you're not a bot" / HTTP 429) the
+# prepare lane keeps the job at its head and retries after this many minutes, doubling at each consecutive block up
+# to the maximum; a successful download resets it. Episodes whose source is already downloaded still run.
+youtube_retry_minutes = 15
+youtube_retry_max_minutes = 120
 
 [khaithi]
 # Khai thị videos: `auto-short run <url> --khai-thi --min-minutes N --max-minutes M` / web "Khai thị"

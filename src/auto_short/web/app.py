@@ -307,7 +307,9 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     ``auto_archive_interval`` (seconds between auto clean-up passes, W9 S5; 0 = only at start-up); for CP13.1
     ``enhance_tokens`` (``name -> token`` of the enhance workers, default: env ``AUTO_SHORT_ENHANCE_TOKENS``, E8) and
     ``enhance_service`` (default: an :class:`EnhanceService` on ``config``)."""
-    runner = runner or JobRunner(config.web.queue_mode)
+    runner = runner or JobRunner(config.web.queue_mode,
+                                 youtube_retry_seconds=config.web.youtube_retry_minutes * 60.0,
+                                 youtube_retry_max_seconds=config.web.youtube_retry_max_minutes * 60.0)
     tokens = dict(enhance_tokens) if enhance_tokens is not None else tokens_from_env()
     storage = StorageCache(config, disk_usage=disk_usage, clock=clock)
     playlists = PlaylistStore(config, lister=playlist_lister, timeout=playlist_timeout)
@@ -585,7 +587,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             item["publish_group"] = ep.publish_group(item)
             # CP8.7: home page "Tập lẻ" = not in a bộ kinh; CP8.9 K8: a khai thị episode follows its base video
             item["in_playlist"] = (item.get("base_episode_id") or item["id"]) in in_playlists
-        return {"episodes": items, "gpu": runner.gpu_status(), "queue": runner.queue_state()}  # O7, CP8.22
+        return {"episodes": items, "gpu": runner.gpu_status(), "youtube": runner.youtube_status(), "queue": runner.queue_state()}  # O7, CP8.22
 
     def _kinds(body: SubmitIn) -> list[str] | JSONResponse:
         """CP8.9 A1.1: ``kinds`` (absent = Short + khai thị), always in the order Short then khai thị."""
@@ -749,6 +751,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
         view = playlists.view(doc, _jobs_by_episode())
         view["gpu"] = runner.gpu_status()  # FIX-ollama-wait O7
+        view["youtube"] = runner.youtube_status()  # FIX-youtube-botcheck-wait Y3
         kc = config.khaithi  # CP8.9 A2.2: defaults of the kind bar ("Khai thị [min]–[max] phút")
         view["khaithi_defaults"] = {"min_minutes": kc.default_min_minutes, "max_minutes": kc.default_max_minutes,
                                     "max_minutes_limit": kc.max_minutes_limit}
@@ -1000,6 +1003,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                     "archived": None}
         view["job"] = _job_view(job)
         view["gpu"] = runner.gpu_status()  # FIX-ollama-wait O7
+        view["youtube"] = runner.youtube_status()  # FIX-youtube-botcheck-wait Y3
         view["post_job"] = _job_view(runner.latest_post(episode_id))  # CP8.16 R3 (job stays the episode's own job)
         view["enhance"] = _enhance_view(episode_id)  # CP13.1 E10
         if job is not None and job.active and job.kind in (KIND_RENDER, KIND_ADD):

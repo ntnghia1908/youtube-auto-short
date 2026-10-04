@@ -212,6 +212,10 @@ class WebConfig:
     queue_mode: str = "lanes"
     # CP8.21 D5: show "Sửa đầu/cuối" (CP9) and "Từ điển sửa lỗi" (CP8.18); hidden by default (UI only, API unchanged)
     show_advanced: bool = False
+    # FIX-youtube-botcheck-wait Y2: when YouTube blocks the download (bot check / 429) the prepare lane waits this many
+    # minutes, doubling at each consecutive block up to the maximum; a successful download resets it
+    youtube_retry_minutes: int = 15
+    youtube_retry_max_minutes: int = 120
 
 
 WEB_QUEUE_MODES = ("lanes", "serial")
@@ -614,6 +618,9 @@ def _web(data: dict) -> WebConfig:
         hashtags=_hashtags(we, d.hashtags),
         queue_mode=_queue_mode(we, d.queue_mode),
         show_advanced=_bool(we, "show_advanced", d.show_advanced, w),
+        youtube_retry_minutes=_int(we, "youtube_retry_minutes", d.youtube_retry_minutes, w, lo=1, hi=1440),
+        youtube_retry_max_minutes=_int(we, "youtube_retry_max_minutes", d.youtube_retry_max_minutes, w, lo=1,
+                                       hi=1440),
     )
 
 

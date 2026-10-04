@@ -98,6 +98,7 @@ const AutoShort = (() => {
     if (job && job.status === "running" && job.hd_wait) return "đợi HD"; // CP13.1b: parked after titling, holds no lane
     if (!job || job.status !== "running" || !job.lane) return null;
     const pos = job.queue_position ? ` (vị trí ${job.queue_position})` : "";
+    if (job.waiting && job.lane === "prepare" && job.yt_wait) return "đợi YouTube (tạm chặn tải)";
     if (job.waiting && job.lane === "ai") return (job.gpu_wait ? "đợi GPU (mất kết nối)" : "đợi GPU") + pos;
     if (job.waiting && job.lane === "render") return "đợi render" + pos;
     if (!job.waiting && job.lane === "prepare") return "đang tải trước";
@@ -142,6 +143,25 @@ const AutoShort = (() => {
     const t = gpu.since ? new Date(gpu.since) : null;
     const hhmm = t && !isNaN(t) ? t.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }) : "?";
     box.textContent = `Mất kết nối GPU (Ollama) từ ${hhmm} — tập vẫn được tải / chuẩn bị, phần AI tự chạy tiếp khi GPU có lại (kiểm lại mỗi 60 s).`;
+    box.hidden = false;
+  }
+
+  // FIX-youtube-botcheck-wait Y3: strip while YouTube blocks the downloads (``youtube`` of the same API views).
+  function showYoutube(yt) {
+    const anchor = $("#disk-banner");
+    if (!anchor) return;
+    let box = $("#yt-banner");
+    if (!yt || !yt.blocked) { if (box) box.hidden = true; return; }
+    if (!box) {
+      box = el("div", { id: "yt-banner", class: "disk-banner gpu-banner" });
+      anchor.after(box);
+    }
+    const hhmm = (iso) => {
+      const t = iso ? new Date(iso) : null;
+      return t && !isNaN(t) ? t.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }) : "?";
+    };
+    box.textContent = `YouTube tạm chặn tải từ ${hhmm(yt.since)} — thử lại lúc ${hhmm(yt.next_check)}; ` +
+      "các tập đã có video nguồn vẫn chạy tiếp, việc tải tự chạy lại khi hết chặn.";
     box.hidden = false;
   }
 
@@ -314,6 +334,7 @@ const AutoShort = (() => {
       return;
     }
     showGpu(data.gpu);
+    showYoutube(data.youtube);
     const single = data.episodes.filter((e) => !e.in_playlist); // CP8.7: episodes of a bộ kinh are on its page
     // CP8.9 A1.5: a khai thị episode whose Short episode is listed is shown under it, not as its own row
     const ids = new Set(single.map((e) => e.id));
@@ -563,6 +584,7 @@ const AutoShort = (() => {
       return;
     }
     showGpu(data.gpu);
+    showYoutube(data.youtube);
     renderEpisode(data);
     const running = jobActive(data.job) || data.stages.some((s) => s.status === "running");
     if (running) pollTimer = setTimeout(refreshEpisode, POLL_MS);
@@ -1441,6 +1463,7 @@ const AutoShort = (() => {
     postsPage.groups = groups;
     postsPage.loaded = true;
     showGpu((groups[0] && groups[0].view || {}).gpu);
+    showYoutube((groups[0] && groups[0].view || {}).youtube);
     renderPostsPage();
     if (!postsPage.autoTried) { // R2b: once per page load, for each episode that lacks / needs posts
       postsPage.autoTried = true;
@@ -2709,6 +2732,7 @@ const AutoShort = (() => {
       return;
     }
     showGpu(d.gpu);
+    showYoutube(d.youtube);
     document.title = `${d.title || d.id} — Auto Short`;
     $("#pl-title").textContent = d.title || d.id;
     if (htTags === null) htLoad(d); // not while the user edits

@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: BUG
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -65,9 +65,9 @@ Không chạm database / security model / public API. Điểm danh trên 8080 kh
 
 ## Result
 
-- Main changes:
-- Tests:
-- Review:
-- Important findings / decisions:
-- Known limitations:
+- Main changes: `ingest/youtube.py` `YoutubeBlocked` + `is_blocked_message` (ANSI / curly apostrophe / 429); `ingest/stage.py` `IngestBlocked`, `needs_download`; `web/jobs.py` `YoutubeWait` → `_requeue_blocked` (head of prepare queue, not failed), backoff `_set_yt_blocked_locked`, `_take_locked` (only no-download jobs start while blocked), state saved in `.web_queue.json` key `youtube`, `youtube_status()`, `Job.yt_wait`; `config.py` `[web] youtube_retry_minutes` (15) / `youtube_retry_max_minutes` (120) + `config.example.toml`; `web/app.py` `youtube` in list / episode / playlist views; `static/app.js` `showYoutube` banner + label.
+- Tests: `tests/test_youtube_wait.py` (18, AC1-AC6 + Y4 pause); `python -m pytest -q -n auto` 1468 passed, 1 skipped; `node scripts/framework-check.mjs` PASS.
+- Review: pending
+- Important findings / decisions: block counter resets when any ingest that ran (`ran=True`) succeeds; a khai thị job that reuses a base source also reports `ran=True` and would reset it (no network involved). The ingest stage is recorded `failed` in the manifest while the job waits (rerun on retry). Serial mode: a block is still a plain failure.
+- Known limitations: no manual "retry now" button; waiting jobs show "đang đợi" + banner (no per-row lane label while QUEUED).
 - PR:
