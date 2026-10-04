@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: READY
+- Status: IN_PROGRESS
 - Type: FEATURE
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -23,6 +23,10 @@ CP13.1b ghép bản HD cả tập vào `work/<id>/source_hd.mp4` (1440×1080, H.
 ## Amendment 1 (HUMAN LEAD 2026-10-04)
 
 "Bản HD nên cho tạo 2 loại: bản ngang và bản dọc (xem trên điện thoại cả tập, có banner cho tựa); bản ngang không cần banner." → thêm **H4 bản dọc**; bản ngang = H1 (file `source_hd.mp4`, không banner).
+
+## Amendment 2 (HUMAN LEAD 2026-10-04, sau khi xem khung bản dọc)
+
+"Khoảng 1/4 dưới của khung là màu đen. Title chia làm 2: ở trên để tên Kinh, ở dưới để HT. Tịnh Không phóng to lên; nếu vẫn còn đen thì phóng to video thêm chút." → bản dọc (H4) dùng hai panel: **panel trên** = tên bộ kinh + "(tập N)"; **panel dưới** (vùng đen cũ) = dòng người giảng "HT. Tịnh Không" (chèn dấu cách sau dấu chấm như CP8.16 R5) cỡ chữ lớn hơn panel trên rõ rệt; cùng kiểu panel vàng bo góc của Short. Sau khi đặt hai panel, nếu vẫn còn dải đen đáng kể (> ~5 % chiều cao) thì phóng video (giữ tỷ lệ, cắt giữa) để lấp, giữ lề đều; ghi bố cục cuối (tọa độ) + ảnh khung vào Result. Khóa dùng lại (layout) đổi → bản dọc cũ (nếu có) tạo lại khi bấm.
 
 ## Goal
 
