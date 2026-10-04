@@ -8,7 +8,7 @@
 - Owner: HUMAN LEAD
 - Execution profile: dual-agent
 - Implementer: `.claude/agents/implementer` (Sonnet) — mặc định dual-agent của project.
-- Base commit / branch: `0e0581f` (`main`) / `feature/cp8.26-priority` (worktree `../youtube-auto-short-prio`). Bắt đầu sau khi FIX-youtube-botcheck-wait merge (chung `web/jobs.py`, `static/app.js`): rebase lên `main` mới rồi mới implement.
+- Base commit / branch: `1967217` (`main`, sau FIX-youtube-botcheck-wait) / `feature/cp8.26-priority` (worktree `../youtube-auto-short-prio`)
 - Human Lead approval: APPROVED 2026-10-04 ("nên có chế độ ưu tiên" + "Đồng ý" phạm vi ORCHESTRATOR đề xuất cùng ngày)
 - Implementation authorized: YES
 
