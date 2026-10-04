@@ -27,6 +27,7 @@ import pytest
 TOOLS = Path(__file__).resolve().parents[1] / "tools" / "enhance_worker"
 sys.path.insert(0, str(TOOLS))
 
+import face as F  # noqa: E402
 import fake_server  # noqa: E402
 import worker as W  # noqa: E402
 
@@ -163,6 +164,98 @@ def test_pure_helpers():
     assert W.Worker.validate_lease(good) == ""
     assert "episode_id" in W.Worker.validate_lease({**good, "episode_id": "../x"})
     assert W.Worker.validate_lease({k: v for k, v in good.items() if k != "params"})
+
+
+# --------------------------------------------------------------------------- CP13.4: buoc mat (ham gia, khong torch)
+
+
+class FakeRestorer:
+    """Thay FaceRestorer: moc mat = (x, 10) voi x = so thu tu khung (ma hoa o pixel [0,0]); 'phuc hoi' = ve o trang tai
+    vi tri moc (de kiem 'dan lai dung cho')."""
+
+    def __init__(self, no_face=()):
+        self.det, self.restored, self.no_face = [], [], set(no_face)
+
+    def landmarks(self, img):
+        n = int(img[0, 0, 0])
+        self.det.append(n)
+        return None if n in self.no_face else __import__("numpy").array([[n, 10.0]] * 5, "float32")
+
+    def restore_frames(self, frames, lms, batch=8):
+        out = []
+        for f, lm in zip(frames, lms):
+            self.restored.append((int(f[0, 0, 0]), None if lm is None else float(lm[0][0])))
+            g = f.copy()
+            if lm is not None:
+                g[int(lm[0][1]), 5, 1] = 255
+            out.append(g)
+        return out
+
+
+def _frames(n):
+    np = pytest.importorskip("numpy")
+    fs = np.zeros((n, 20, 20, 3), "uint8")
+    for i in range(n):
+        fs[i, 0, 0, 0] = i
+    return fs
+
+
+def _run_stream(every, n, **kw):
+    r = FakeRestorer(**kw)
+    sp = F.SparseFace(r, every)
+    out = []
+    for f in _frames(n):
+        out += sp.push(f)
+    out += sp.flush()
+    return r, out
+
+
+def test_sparse_face_detects_every_n_and_interpolates_in_order():
+    r, out = _run_stream(5, 13)
+    assert len(out) == 13 and [int(o[0, 0, 0]) for o in out] == list(range(13))      # all frames, in order
+    assert r.det == [0, 5, 10, 11, 12]                                               # keyframes + tail detected one by one
+    # between keyframes 0 and 5 the landmark moves linearly (x = frame number here), restored in frame order
+    assert [x for _, x in r.restored[:6]] == pytest.approx([0, 1, 2, 3, 4, 5])
+    assert all(o[10, 5, 1] == 255 for o in out)                                      # the restored mark of every frame
+
+
+def test_sparse_face_every_one_is_per_frame_and_missing_faces_fall_back():
+    r, out = _run_stream(1, 6)
+    assert r.det == list(range(6)) and len(out) == 6
+    r, out = _run_stream(5, 11, no_face={5})                                         # no face at a keyframe
+    assert len(out) == 11 and r.det == [0, 5, 1, 2, 3, 4, 10, 6, 7, 8, 9]  # in-between frames detected by themselves
+    assert {n: x for n, x in r.restored}[3] == 3.0 and {n: x for n, x in r.restored}[5] is None
+    r, out = _run_stream(5, 3)                                                       # shorter than N: all flushed
+    assert len(out) == 3 and r.det == [0, 1, 2]
+
+
+def test_face_stream_and_validate_lease_for_face():
+    assert W.face_stream(None, {}) is None
+    assert isinstance(W.face_stream(lambda f: f, {"face": "x"}), W._EachFrame)
+    sp = W.face_stream(FakeRestorer(), {"face": F.FACE_MODEL, "face_detect_every": 4})
+    assert isinstance(sp, F.SparseFace) and sp.every == 4
+    good = {"episode_id": "e1", "lease_id": "L1", "source_url": "/x", "source_sha256": "a", "source_size": 1,
+            "fps": "25/1", "frames": 10, "segment_frames": 5, "config_hash": "c",
+            "params": {**PARAMS, "face": F.FACE_MODEL, "face_weight": 1.0}}
+    assert W.Worker.validate_lease(good) == ""
+    bad = {**good, "params": {**PARAMS, "face": "codeformer"}}
+    assert "cap nhat worker" in W.Worker.validate_lease(bad)
+    assert W.__version__ == "3" and F.CAPABILITY == "face:gfpgan_v1.4"
+
+
+def test_worker_advertises_face_only_when_it_can_do_it(tmp_path, monkeypatch):
+    cfg = W.load_config(None, {"models_dir": str(tmp_path)})
+    w = W.Worker(cfg)
+    monkeypatch.setattr(F, "support_problem", lambda d: "thieu goi")
+    assert w.capabilities() == []
+    monkeypatch.setattr(F, "support_problem", lambda d: "")
+    assert w.capabilities() == ["face:gfpgan_v1.4"]
+    w.cfg["face"] = "off"
+    assert w.capabilities() == []
+    monkeypatch.undo()
+    assert F.support_problem(tmp_path)   # no package / no weights in an empty dir: a reason, never ''
+    (tmp_path / "GFPGANv1.4.pth").write_bytes(b"x")
+    assert "detection_Resnet50_Final.pth" in " ".join(F.missing_weights(tmp_path))
 
 
 @needs_ffmpeg
@@ -401,3 +494,55 @@ def test_self_test_reports_vm_states(server, run):
     s.stop()
     p = self_test()
     assert p.returncode == 0 and "khong noi duoc" in p.stdout
+
+
+@needs_ffmpeg
+@needs_torch
+@pytest.mark.slow
+def test_face_step_runs_on_every_frame_before_encoding(tiny, tmp_path):
+    """CP13.4 AC1: Engine.run_segment applies the face step (fake restorer) to every frame, in order, after SRVGG and before
+    the encoder: the marker it paints at a known place is in every encoded frame; sparse detection (every 3) detects
+    only key frames and the number of frames out equals the number in."""
+    script = tmp_path / "face_run.py"
+    script.write_text("""
+import json, sys, threading
+from fractions import Fraction
+from pathlib import Path
+import numpy as np
+sys.path.insert(0, %r)
+import worker as W
+cfg = W.load_config(None, {"device": "cpu", "models_dir": %r, "cpu_threads": 4, "batch_size": 4, "encoder": "libx264"})
+class Fake:
+    def __init__(self): self.det, self.n = [], 0
+    def landmarks(self, img):
+        self.det.append(self.n); self.n += 1
+        return np.array([[8.0, 8.0]] * 5, "float32")
+    def restore_frames(self, frames, lms, batch=8):
+        out = []
+        for f, lm in zip(frames, lms):
+            g = f.copy(); x, y = int(lm[0][0]), int(lm[0][1])
+            g[y - 6:y + 6, x - 6:x + 6] = 255      # a white square centred on the landmark
+            out.append(g)
+        return out
+eng = W.Engine(cfg)
+fake = Fake()
+eng.face_factory = lambda params: fake
+params = dict(%r, face="gfpgan_v1.4", face_weight=1.0, face_detect_every=int(sys.argv[2]))
+st = eng.run_segment(Path(sys.argv[1]), 0, 20, Fraction(25), (64, 48), params, Path(sys.argv[3]), threading.Event())
+print(json.dumps({"stats": st, "det": fake.det}))
+""" % (str(TOOLS), str(_models_dir()), PARAMS))
+    for every in (1, 3):
+        out = tmp_path / f"seg{every}.mp4"
+        p = subprocess.run([_worker_python(), str(script), str(tiny), str(every), str(out)], capture_output=True, text=True,
+                           timeout=180, env=dict(os.environ, OMP_NUM_THREADS="4"))
+        assert p.returncode == 0, p.stderr[-800:]
+        info = json.loads(p.stdout.strip().splitlines()[-1])
+        assert info["stats"]["frames"] == 20 and info["stats"]["face"] == "gfpgan_v1.4"
+        assert count_frames(out) == (20, 126, 96)
+        assert len(info["det"]) == (20 if every == 1 else 8)               # 7 key frames (0, 3 .. 18) + the tail frame
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(out), "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+                             capture_output=True, check=True).stdout
+        np = pytest.importorskip("numpy")
+        fr = np.frombuffer(raw, np.uint8).reshape(20, 96, 126)
+        assert all(f[4:12, 4:12].mean() > 200 for f in fr)                 # marker in every frame, at the landmark
+        assert fr[:, 40:90, 60:120].mean() < 200                           # and only there

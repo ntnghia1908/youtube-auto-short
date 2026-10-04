@@ -118,6 +118,15 @@ Worker mới (`__version__ = "2"`) gửi thêm số % GPU / VRAM / nhiệt độ
    (`auto-fix-enhance-worker.ps1` **không** đủ: nó chỉ khởi động lại task, không chép `worker.py` mới.)
 3. Kiểm: dòng đầu `%USERPROFILE%\enhance-worker\logs\worker.log` có `worker v2`; trên web mở tab **Theo dõi**, mục "GPU enhance" hiện % GPU / VRAM của máy đó trong vòng một phút.
 
+## Cập nhật lên worker v3: phục hồi mặt GFPGAN (CP13.4)
+
+Chỉ cần khi `[enhance] face = "gfpgan_v1.4"` ở VM. Worker v3 (`__version__ = "3"`) gửi `capabilities` khi lấy việc; VM **không** giao tập có bước mặt cho worker cũ (tab "Theo dõi" ghi "cần cập nhật worker"). Mỗi máy (3090 và 3050):
+
+1. Chép lại cả thư mục `tools/enhance_worker` sang máy (ghi đè `C:\enhance_worker_src`).
+2. Chạy lại `setup-enhance-worker.ps1` với đúng tham số lúc cài. Script cài thêm vào env của worker (không đụng project): `torchvision`, `basicsr`, `facexlib`, `gfpgan` (`--no-deps`; nếu `basicsr` không build được thì thử `basicsr-fixed`) và tải ba trọng số (~540 MB, kiểm sha256): `GFPGANv1.4.pth`, `facexlib\weights\detection_Resnet50_Final.pth`, `facexlib\weights\parsing_parsenet.pth` vào `models\`. Không muốn: thêm `-SkipFace` (worker vẫn làm việc thường, ghi `"face": "off"` trong `config.json`).
+3. Kiểm: cuối `setup` self-test phải có dòng `[ OK ] GFPGAN OK: ...` (thiếu → script cảnh báo; worker không nhận việc có mặt). Dòng đầu `worker.log` có `worker v3`. Card 3050 (6 GB) đủ: VRAM đỉnh ≈ 1 GB.
+4. Trên VM: đặt `[enhance] face = "gfpgan_v1.4"` (và `face_detect_every`) rồi khởi động lại web. Tập đang chờ / đang enhance tự sang cấu hình mới; tập đã xong giữ HD cũ, bấm "Enhance lại" (trang tập hoặc trang bộ kinh).
+
 ## Gỡ
 
 ```

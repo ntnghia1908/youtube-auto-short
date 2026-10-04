@@ -618,16 +618,19 @@ const AutoShort = (() => {
     const base = e.follows ? ` (chung với video ${e.follows})` : "";
     const wait = e.waiting_hd ? " · đợi HD rồi render" : "";
     if (e.state === "off") return (e.override ? "Enhance đang tắt (bạn đã chọn)." : `Không cần enhance (${e.reason || "nguồn đủ nét"}).`) + base;
-    if (e.state === "queued") return "Cần enhance · đợi máy GPU" + wait + base;
+    const redo = e.redo ? " · làm lại với cấu hình mới (vẫn dùng bản HD cũ tới khi xong)" : "";
+    const face = e.face ? ` · phục hồi mặt ${e.face}` : "";
+    if (e.state === "queued") return "Cần enhance · đợi máy GPU" + face + redo + wait + base;
     if (e.state === "running") {
       const who = e.gpu || e.worker || "máy GPU";
-      return `Đang enhance trên ${who}: ${e.segments_done}/${e.segments_total} đoạn` + wait + base;
+      return `Đang enhance trên ${who}: ${e.segments_done}/${e.segments_total} đoạn` + face + redo + wait + base;
     }
     if (e.state === "assembling") return "Đang ghép bản HD…" + wait + base;
     if (e.state === "failed") return `Lỗi ghép bản HD: ${e.error || "?"} (bấm "Bật enhance" để thử lại).` + base;
     if (e.state === "done") {
+      const old = e.hd_old_config ? " HD cấu hình cũ (bấm \"Enhance lại\" để làm với cấu hình mới)." : "";
       const dr = e.rendered_from_hd ? "Short đã dựng từ bản HD." : (e.rendered ? "Short chưa dựng từ bản HD." : "");
-      return `Đã enhance${e.finished_at ? ` (${fmtTime(e.finished_at)})` : ""}. ${dr}`.trim() + base;
+      return `Đã enhance${e.finished_at ? ` (${fmtTime(e.finished_at)})` : ""}.${old} ${dr}`.trim() + base;
     }
     return "";
   }
@@ -659,6 +662,10 @@ const AutoShort = (() => {
     orig.hidden = !(e.exists && e.waiting_hd);
     orig.onclick = () => enhancePost("/enhance/render-original", null, orig,
       "Render ngay bằng bản gốc (không đợi HD) và tắt enhance cho video này?");
+    const redo = $("#enhance-redo"); // CP13.4 G3
+    redo.hidden = !e.can_redo;
+    redo.onclick = () => enhancePost("/enhance/redo", null, redo,
+      "Enhance lại video này với cấu hình hiện hành? Bản HD cũ vẫn được dùng tới khi bản mới xong (mất nhiều giờ GPU); Short / khai thị chỉ render lại khi bản mới xong.");
     const again = $("#enhance-rerender");
     again.hidden = !e.can_rerender;
     again.disabled = busy;
@@ -2266,6 +2273,7 @@ const AutoShort = (() => {
     $("#enhance-workers").replaceChildren(...(d.workers.length ? d.workers.map((w) => el("li", {},
       el("b", { text: w.label || w.name }), el("span", { class: "muted small",
         text: ` · ${w.gpu || "GPU ?"}${w.yield ? " · nhường Ollama" : ""} · liên lạc ${fmtTime(w.last_seen)}` +
+          (w.outdated ? " · cần cập nhật worker (chưa hỗ trợ phục hồi mặt)" : "") +
           (w.episode_id ? ` · đang làm ` : " · rảnh") }),
       w.episode_id ? el("a", { href: "/episodes/" + encodeURIComponent(w.episode_id), text: w.episode_id }) : null,
       w.progress && w.progress.segments_total ? el("span", { class: "muted small",
@@ -2447,6 +2455,7 @@ const AutoShort = (() => {
     $("#pl-prepare").addEventListener("click", preparePlaylist);
     $("#pl-resume-all").addEventListener("click", resumePrepared);
     $("#pl-priority").addEventListener("click", priorityPlaylist);
+    $("#pl-enhance-redo").addEventListener("click", enhanceRedoPlaylist);
     initHashtags();
     initSeries();
     initDoc();
@@ -2483,7 +2492,7 @@ const AutoShort = (() => {
   }
 
   async function bulkPost(path, body, busyText) {
-    const btns = [$("#pl-prepare"), $("#pl-resume-all")];
+    const btns = [$("#pl-prepare"), $("#pl-resume-all"), $("#pl-enhance-redo")];
     btns.forEach((b) => { b.disabled = true; });
     bulkMessage(busyText, "muted");
     try {
@@ -2512,6 +2521,13 @@ const AutoShort = (() => {
     if (!confirm(`Chuẩn bị + HD ${n} tập chưa xử lý?\n\nChỉ tải video, phiên âm, phân tích và xin enhance HD (chưa cắt Short / khai thị, chưa dùng AI). ` +
       `Ước tính đĩa thô ≈ ${(n * HD_GB_PER_EPISODE).toFixed(0)} GB (≈ ${HD_GB_PER_EPISODE} GB / tập: nguồn + HD). Sau đó bấm "Chạy tiếp" từng tập hoặc "Chạy tiếp cả bộ".`)) return;
     bulkPost("prepare", null, "Đang xếp hàng đợi…");
+  }
+
+  let plOldHd = 0;
+  function enhanceRedoPlaylist() { // CP13.4 G3: queue again every HD made with another configuration
+    if (!plOldHd) { bulkMessage("Không có tập nào có HD cấu hình cũ.", "muted"); return; }
+    if (!confirm(`Enhance lại ${plOldHd} tập có HD cấu hình cũ?\n\nMỗi tập mất nhiều giờ GPU (hàng đợi enhance theo số tập). Bản HD cũ vẫn được dùng tới khi bản mới xong; Short / khai thị chỉ render lại khi bản mới xong (Short đã đăng được giữ).`)) return;
+    bulkPost("enhance-redo", null, "Đang xếp hàng đợi…");
   }
 
   function resumePrepared() {
@@ -2795,7 +2811,8 @@ const AutoShort = (() => {
         ? ` · ${e.khaithi_videos} video khai thị, đã đăng ${e.khaithi_published}/${e.khaithi_videos}`
         : ` · khai thị: ${PL_STATE[e.khaithi_state] || e.khaithi_state}`;
     }
-    if (e.hd) text += ` · HD: ${HD_STATE[e.hd.state] || e.hd.state}` + (e.hd.state === "done" ? "" : ` ${e.hd.segments_done}/${e.hd.segments_total}`);
+    if (e.hd) text += ` · HD: ${HD_STATE[e.hd.state] || e.hd.state}` + (e.hd.state === "done" ? "" : ` ${e.hd.segments_done}/${e.hd.segments_total}`)
+      + (e.hd.state === "done" && e.hd.old_config ? " (cấu hình cũ)" : "") + (e.hd.redo ? " (làm lại)" : "");
     if (e.archived) text += " · đã dọn nguồn";
     return text;
   }
@@ -2827,6 +2844,10 @@ const AutoShort = (() => {
     $("#pl-meta").replaceChildren(document.createTextNode(`${d.count} tập · lấy danh sách lúc ${fmtTime(d.fetched_at)} · `),
       el("a", { href: d.url, target: "_blank", rel: "noopener", text: "mở trên YouTube" }));
     document.querySelectorAll("#pl-filters [data-filter]").forEach((b) => { b.querySelector(".n").textContent = d.counts[b.dataset.filter] || 0; });
+    plOldHd = d.entries.filter((e) => e.hd && e.hd.state === "done" && e.hd.old_config).length; // CP13.4 G3
+    const redoBtn = $("#pl-enhance-redo");
+    redoBtn.hidden = !plOldHd;
+    redoBtn.textContent = `Enhance lại (${plOldHd})`;
     plPriorityCount = d.priority_count || 0; // CP8.26
     $("#pl-priority").textContent = plPriorityCount ? `Bỏ ưu tiên cả bộ (${plPriorityCount})` : "Ưu tiên cả bộ";
     let busy = false;

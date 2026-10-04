@@ -556,7 +556,8 @@ def hd_progress(config: Config, video_id: str) -> dict | None:
     else:
         state = "queued"
     return {"state": state, "segments_done": len(doc.get("segments") or {}),
-            "segments_total": enh_state.total_segments(doc), "worker": lease.get("worker") if state == "running" else None}
+            "segments_total": enh_state.total_segments(doc), "worker": lease.get("worker") if state == "running" else None,
+            "old_config": enh_state.hd_is_old_config(config, doc), "redo": bool(doc.get("redo"))}  # CP13.4 G3
 
 
 def disk_status(config: Config, video_id: str) -> dict:

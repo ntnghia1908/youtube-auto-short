@@ -278,6 +278,10 @@ class EnhanceConfig:
     denoise: float = 1.0
     pre_height: int = 360
     out_height: int = 1080
+    # CP13.4: face restoration on every enhanced frame (worker-side); "none" = as before (same ``config_hash``)
+    face: str = "none"  # "none" | "gfpgan_v1.4"
+    face_weight: float = 1.0  # 0..1: blend of the restored face with the enhanced one (CP13.3 ``+gfp`` = 1.0)
+    face_detect_every: int = 5  # G5: detect faces every N frames (landmarks interpolated between); 1 = every frame
     segment_seconds: int = 60
     lease_hours: float = 48.0
     max_segment_mb: int = 200
@@ -659,6 +663,13 @@ def _storage(data: dict) -> StorageConfig:
     )
 
 
+def _face(section: dict, default: str) -> str:
+    value = section.get("face", default)
+    if value not in ("none", "gfpgan_v1.4"):
+        raise ConfigError("enhance.face must be 'none' or 'gfpgan_v1.4'")
+    return value
+
+
 def _enhance(data: dict) -> EnhanceConfig:
     en = _section(data, "enhance")
     d, w = EnhanceConfig(), "enhance"
@@ -672,6 +683,9 @@ def _enhance(data: dict) -> EnhanceConfig:
         denoise=_number(en, "denoise", d.denoise, w, lo=0, hi=1),
         pre_height=_int(en, "pre_height", d.pre_height, w, lo=0, hi=4320),
         out_height=_int(en, "out_height", d.out_height, w, lo=0, hi=8640),
+        face=_face(en, d.face),
+        face_weight=_number(en, "face_weight", d.face_weight, w, lo=0, hi=1),
+        face_detect_every=_int(en, "face_detect_every", d.face_detect_every, w, lo=1, hi=30),
         segment_seconds=_int(en, "segment_seconds", d.segment_seconds, w, lo=1, hi=3600),
         lease_hours=_number(en, "lease_hours", d.lease_hours, w, lo=0.001, hi=720),
         max_segment_mb=_int(en, "max_segment_mb", d.max_segment_mb, w, lo=1, hi=4096),

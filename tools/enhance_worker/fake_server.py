@@ -186,9 +186,13 @@ class FakeServer:
     def _route(self, h, method, path, length):
         query = h.path.partition("?")[2]
         if method == "POST" and path == "/api/enhance/lease":
-            self.lease_bodies.append(_json_or_empty(h.rfile.read(length)))
+            body = _json_or_empty(h.rfile.read(length))
+            self.lease_bodies.append(body)
             self.lease_calls += 1
             if self.complete:
+                return self._send(h, 204)
+            face = self.params.get("face") or "none"   # CP13.4: nhu VM that: viec co mat chi giao cho worker co 'face:<model>'
+            if face != "none" and f"face:{face}" not in (body.get("capabilities") or []):
                 return self._send(h, 204)
             if not self.lease_valid:
                 self._lease_seq += 1
@@ -326,10 +330,14 @@ def main():
     ap.add_argument("--pre-height", type=int, default=360)
     ap.add_argument("--out-height", type=int, default=1080)
     ap.add_argument("--seg-dir", default="")
+    ap.add_argument("--face", default="none", help="CP13.4: gfpgan_v1.4 = viec co buoc phuc hoi mat")
+    ap.add_argument("--face-weight", type=float, default=1.0)
     a = ap.parse_args()
+    params = {"model": "realesr-general-x4v3", "denoise": 1.0, "pre_height": a.pre_height, "out_height": a.out_height}
+    if a.face != "none":
+        params.update(face=a.face, face_weight=a.face_weight)
     s = FakeServer(Path(a.source), token=a.token, port=a.port, segment_frames=a.segment_frames,
-                   params={"model": "realesr-general-x4v3", "denoise": 1.0, "pre_height": a.pre_height,
-                           "out_height": a.out_height}, seg_dir=Path(a.seg_dir) if a.seg_dir else None)
+                   params=params, seg_dir=Path(a.seg_dir) if a.seg_dir else None)
     s.start()
     print(f"fake server {s.url}: {s.frames} khung, {s.nseg} doan, doan luu o {s.seg_dir}", flush=True)
     try:
