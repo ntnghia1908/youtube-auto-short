@@ -22,6 +22,10 @@ S1 vì: mở rộng số worker của một làn trong khuôn CP8.10 (làn vẫn
 - Whisper không tăng tuyến tính theo luồng: CP11 đo 24 luồng nhanh hơn 48 trên máy 48 nhân → chạy 2–3 tập song song với ít luồng hơn mỗi tập thường cho tổng thông lượng cao hơn.
 - `transcript/whisper.py` cache model theo khóa có `effective_cpu_threads`.
 
+## Amendment 1 (HUMAN LEAD 2026-10-04)
+
+"Chừa lại 4 core để chạy web và tải video mượt" → tổng luồng tính toán (Whisper của các job chuẩn bị + ffmpeg render `[render] jobs` × luồng mỗi job) đặt sao cho chừa ≥ 4 nhân: cấu hình đề xuất dùng tối đa 28 luồng cho Whisper khi làn render rảnh, và tổng Whisper + render không vượt 28 khi cả hai chạy (giới hạn luồng ffmpeg render nếu cần — IMPLEMENTER đề xuất cách, ví dụ `[render] threads`); đo P4 dưới ràng buộc này. Có thể giảm ưu tiên CPU (nice) cho tiến trình con nặng (ffmpeg) để web / tải không bị chậm — ghi rõ nếu làm.
+
 ## Goal
 
 Làn `prepare` chạy tối đa N job cùng lúc (khóa config, mặc định 1 = như cũ), mỗi job Whisper dùng số luồng đã chia; đo và đặt N + luồng tối ưu cho 32 nhân để 86 tập Địa Tạng chuẩn bị nhanh hơn ≥ 1,8 lần.
