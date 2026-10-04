@@ -51,7 +51,7 @@ Không chạm database / security model / public API. Điểm danh trên 8080: "
 
 - Main changes: `post/logic.compose_copy_text` viết hoa dòng tựa (`title.upper()`, áp lúc đọc); tiêu đề thẻ bài ở tab Bài đăng (`app.js` postCard) hiện chữ hoa (placeholder "(không có tiêu đề)" giữ nguyên); P4 trong decision CP8.15 thêm dòng sửa đổi 2026-10-04.
 - Tests: test mới tiếng Việt (đ/ư/ơ, `chars`), cập nhật 2 test cũ (`test_post_backend`, `test_web_post_cp815`); `pytest -q -n auto` = 1497 passed, 1 skipped; framework-check xem bên dưới/commit.
-- Review:
+- Review: ORCHESTRATOR 2026-10-04 — ACCEPTED, không có blocking finding (`title.upper()` áp lúc đọc trong `compose_copy_text` + tiêu đề thẻ bài tab Bài đăng; test tiếng Việt; P4 có dòng sửa đổi).
 - Important findings / decisions: `posts.json`, `source_sha256`, `stale`, title Short không đổi (không có code chạm tới).
 - Known limitations: tiêu đề thẻ bài trên tab Bài đăng cũng viết hoa (cùng chữ với dòng đầu bài); UI title Short ở tab khác không đổi.
-- PR:
+- PR: #69
