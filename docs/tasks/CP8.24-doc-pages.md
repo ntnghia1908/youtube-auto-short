@@ -8,9 +8,9 @@
 - Owner: HUMAN LEAD
 - Execution profile: dual-agent
 - Implementer: `.claude/agents/implementer` (Sonnet) — mặc định dual-agent của project.
-- Base commit / branch: `61923a6` (`main`) / `feature/cp8.24-doc-pages` (worktree `../youtube-auto-short-docpg`). **Bắt đầu sau khi CP13.2 merge** (chung `web/playlists.py`, `web/app.py`, giao diện bộ kinh — một writer mỗi file): rebase lên `main` mới rồi mới implement.
+- Base commit / branch: `0e8a2a2` (`main`, sau CP13.2 + CP8.23) / `feature/cp8.24-doc-pages` (worktree `../youtube-auto-short-docpg`)
 - Human Lead approval: APPROVED 2026-10-04 (HUMAN LEAD gửi link biên tập Địa Tạng: "Mỗi tập tương ứng 2 video bài giảng và theo thứ tự"; ORCHESTRATOR đề xuất cách nối cùng ngày, phạm vi ghi dưới đây)
-- Implementation authorized: YES (sau CP13.2 merge)
+- Implementation authorized: YES
 
 Lifecycle: `DRAFT → APPROVED → IN_PROGRESS → READY`. DONE suy ra từ Git sau khi merge.
 
