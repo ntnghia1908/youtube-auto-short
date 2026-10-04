@@ -47,6 +47,23 @@
         <button id="image-search-btn" class="btn small" type="button">Tìm ảnh</button>
       </div>
       <div id="image-quick-links" class="edit-actions" hidden></div>
+      <div class="edit-actions">
+        <input id="image-find-keyword" type="text" placeholder="Tìm ảnh theo từ khóa (vd: Tây Phương Tam Thánh)…" aria-label="Từ khóa tìm ảnh">
+        <button id="image-find-btn" class="btn small primary" type="button">Tìm theo từ khóa</button>
+        <button id="image-redistribute-btn" class="btn small" type="button">Chia lại ảnh cho bài chưa đăng</button>
+      </div>
+      <p id="image-find-sources" class="muted small"></p>
+      <div id="image-candidates" hidden>
+        <div class="edit-actions">
+          <strong id="image-cand-title"></strong>
+          <button id="image-cand-all" class="btn small" type="button">Chọn tất cả</button>
+          <button id="image-cand-none" class="btn small" type="button">Bỏ chọn</button>
+          <button id="image-cand-add" class="btn small primary" type="button">Thêm vào thư viện</button>
+        </div>
+        <p id="image-cand-skipped" class="muted small"></p>
+        <div id="image-cand-grid" class="img-grid"></div>
+        <hr>
+      </div>
       <p id="image-msg" class="small" hidden></p>
       <div id="image-grid" class="img-grid"></div>
     </div>

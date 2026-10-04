@@ -268,6 +268,11 @@ body.modal-open { overflow: hidden; }
   justify-items: center; }
 .img-card img { width: 100%; aspect-ratio: 1 / 1; object-fit: cover; border-radius: 6px; background: #eee; }
 
+.img-card.cand { cursor: pointer; }
+.img-card.cand.picked { outline: 3px solid var(--accent, #2563eb); }
+.img-card .flag { color: #b45309; }
+#image-find-keyword { flex: 1 1 14rem; min-width: 0; }
+
 /* CP8.18: post correction dictionary dialog */
 .corr-row { border-top: 1px solid var(--border, #ddd); padding: .5rem 0; display: flex; flex-direction: column; gap: .35rem; }
 .corr-row .corr-pair { font-weight: 600; word-break: break-word; }

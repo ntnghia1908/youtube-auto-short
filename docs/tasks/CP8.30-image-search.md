@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -65,9 +65,21 @@ Không chạm database / security model web (khóa API mới chỉ qua env). Đi
 
 ## Result
 
-- Main changes:
-- Tests:
-- Review:
+- Main changes: `post/imgsearch.py` (nguồn B trang đã biết + nguồn A Google sau cùng interface `find`, tải + lọc, ứng viên ngoài thư viện, thêm tên tiếp số), `post/dhash.py` (dHash 64 bit qua ffmpeg + cắt viền), `post/redistribute.py` (chia lại ảnh, sao lưu), job `image_search` (`KeywordSearchTarget`, làn `prepare`, khóa `_post_images`), 5 route mới (`/api/post-images/find[/{job}]`, `/files/post-image-candidates/…`, `candidates/add`, `redistribute`), UI trong hộp thoại Thư viện ảnh (ô từ khóa, lưới ứng viên tick chọn, chia lại có xác nhận), 4 khóa `[post]` (`search_max_pages`, `search_max_candidates`, `google_daily_limit`, `candidate_ttl_hours`), decision CP8.15 (P5c, P5d, P11, P13), README, `config.example.toml`.
+- Tests: `tests/test_imgsearch_cp830.py` (21) + `tests/test_web_imgsearch_cp830.py` (8 x lanes/serial); `python -m pytest -q -n auto` = 1575 passed, 1 skipped (1 lần chạy toàn bộ); `node scripts/framework-check.mjs` PASS.
+- Review: (chờ ORCHESTRATOR)
 - Important findings / decisions:
-- Known limitations:
-- PR:
+  - **Google Custom Search JSON API (kiểm 2026-10-04):** trang tổng quan ghi "closed to new customers"; khách hiện hữu có tới 2027-01-01; thay thế được khuyến nghị: Vertex AI Search (tối đa 50 domain) hoặc liên hệ Google cho full web search. Nguồn A cài sau interface, chưa kiểm với khóa thật (HUMAN LEAD chưa cấp khóa) — test dùng API giả. Env: `AUTO_SHORT_GOOGLE_CSE_KEY`, `AUTO_SHORT_GOOGLE_CSE_CX`.
+  - **Ngưỡng dHash:** Hamming ≤ 8 / 64 bit. Đo trên thư viện thật (129 ảnh, 8 256 cặp): gần nhất 0, 0, 1, 3, 4, 5, 5, 5, 5, 6, 6, 7, 8 x5 …; xem tay các cặp 30/31 (3), 76/77 (4), 28/29 (5), 95/97 (5), 32/33 (8): cùng một ảnh khác cỡ / nền đệm → bị bắt. Cặp khác ảnh gần nhất nằm ở 9–10 (36/37, 11/37, 11/36). Cắt viền phẳng giúp ảnh có nền đệm vẫn trùng. Thư viện thật còn chứa vài cặp cùng ảnh khác cỡ (do làm tay) — nguồn của ngưỡng này.
+  - Lọc đặc thù Webflow (niemphatanvui): ảnh `--thumb` / `--cover-thumb` / `--og` là ảnh xem trước của bộ khác (mỗi trang lặp hàng trăm) → bỏ, kèm bỏ ảnh lặp ở ≥ 60 % trang (nav / banner / logo). Không có hai luật này lần chạy thật đầu cho 22 ứng viên toàn ảnh bìa.
+  - Chia lại không đổi `updated_at` (chỉ `image`), nên không ảnh hưởng `stale` / thứ tự hiển thị.
+- Chạy thật 8081 (`~/.cache/auto-short-cp830-test/`, bản sao thư viện 129 ảnh + `posts.json` của 101 tập; 8080 và thư viện thật không đụng; server 8081 đã tắt):
+  - "A Di Đà Phật": 0 ứng viên mới; bỏ 10 trùng thư viện (sha256), 6 nhỏ hơn 600 px, 9 ảnh chung trang, 478 ảnh xem trước / bìa (chưa dedupe theo URL ở lần chạy này) — thư viện đã có sẵn các ảnh này từ lượt làm tay.
+  - "Tây Phương Tam Thánh": 0 mới; 10 trùng sha256, 6 gần giống thư viện (dHash), 2 nhỏ hơn 600 px, 16 ảnh chung trang.
+  - "Tịnh Không": **34 ứng viên mới** (ph.tinhtong.vn 32, hwadzan 1, niemphatanvui 1; 1 nhãn nghi banner); bỏ 36 trùng sha256, 1 gần giống, 9 nhỏ hơn 600 px, 15 ảnh chung trang. Mỗi lượt ≈ 12 trang HTML + vài chục ảnh, 20–60 s.
+  - Lưới ứng viên (contact sheet ffmpeg, không có trình duyệt để chụp UI thật): `~/.cache/auto-short-cp830-test/evidence/candidate-grid-tinh-khong.png`.
+  - Thêm 3 ứng viên → `130.jpg`–`132.jpg`, `sources.tsv` 2 cột; bấm lại → 3 `duplicate`, không thêm. 
+  - Chia lại trên 894 bài (123 đã đăng, 771 chưa): xem trước và ghi cùng `changes = 763` bài / 87 tập; bài đã đăng đổi 0; trường khác `image` đổi 0; video lặp ảnh 0 / 51; mỗi ảnh (132) dùng 6–7 bài; chạy lần hai `changes = 0`; sao lưu `work/_post-backups/20261004-201736/` (87 file).
+  - Google: chưa kiểm (không có khóa).
+- Known limitations: UI chưa chạy trên trình duyệt thật (chỉ route + JS `node --check`; HUMAN LEAD kiểm tay theo checklist); nguồn `series` thăm dò từng URL (2 request mỗi ảnh); danh sách nguồn B mặc định cứng trong code (ghi đè bằng `search-sources.tsv`); mã sự cố HTTP trang con bị im lặng (ghi vào `notes` chỉ tên lỗi); chưa có nhãn nghi chữ ngoài tên file / tỉ lệ khung.
+- PR: (chưa tạo)

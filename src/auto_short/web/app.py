@@ -39,6 +39,8 @@ from ..post import corrections as post_corrections
 from ..post import doc as post_doc
 from ..post import fetch as post_fetch
 from ..post import images as post_images
+from ..post import imgsearch as post_imgsearch
+from ..post import redistribute as post_redistribute
 from ..post import logic as post_logic
 from ..post import source as post_source
 from ..post import stage as post_stage
@@ -57,8 +59,8 @@ from . import episodes as ep
 from . import monitor as monitor_mod
 from .auth import COOKIE_NAME, SessionSigner, load_or_create_secret
 from .storage import BLOCK_MESSAGE, StorageCache, auto_archive_plan, episode_sizes, video_id
-from .jobs import (KIND_ADD, KIND_ENHANCE, KIND_PIPELINE, KIND_POST, KIND_POST_SEARCH, KIND_RENDER, KIND_VERTICAL,
-                   POST_IMAGES_KEY, JobRunner, add_short_target, enhance_assemble_target, image_search_target,
+from .jobs import (KIND_ADD, KIND_ENHANCE, KIND_IMAGE_SEARCH, KIND_PIPELINE, KIND_POST, KIND_POST_SEARCH, KIND_RENDER, KIND_VERTICAL,
+                   POST_IMAGES_KEY, JobRunner, add_short_target, enhance_assemble_target, image_search_target, keyword_search_target,
                    pipeline_target, post_compose_target, render_target, vertical_target)
 from . import playlists as playlists_mod
 from .priority import PRIORITY_FILE
@@ -228,6 +230,19 @@ class PostImageSearchIn(BaseModel):
     url: str = Field(max_length=2000)
 
 
+class PostImageFindIn(BaseModel):
+    keyword: str = Field(max_length=200)
+
+
+class PostImageAddIn(BaseModel):
+    search_id: str = Field(max_length=40)
+    ids: list[str] = Field(max_length=200)
+
+
+class PostImageRedistributeIn(BaseModel):
+    confirm: bool = False
+
+
 def _preview_dict(p: TitlePreview | None) -> dict | None:
     if p is None:
         return None
@@ -301,7 +316,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                playlist_timeout: float = LIST_TIMEOUT, titler: Callable | None = None,
                post_compose: Callable | None = None,
                post_preflight: Callable[[Config], None] | None = post_stage.preflight,
-               post_search: Callable | None = None, doc_prepare: Callable | None = None,
+               post_search: Callable | None = None, keyword_search: Callable | None = None, doc_prepare: Callable | None = None,
                auto_archive_interval: float = AUTO_ARCHIVE_INTERVAL,
                enhance_tokens: dict[str, str] | None = None, enhance_service: EnhanceService | None = None,
                proc_dir: str = "/proc", ollama_ps: Callable[[], dict] | None = None,
@@ -312,7 +327,8 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     ``playlist_timeout`` for CP8.7; ``titler`` (AI title of an added Short, default
     :func:`auto_short.titling.added.title_added`) for CP9; ``post_compose`` / ``post_preflight`` (default
     :func:`auto_short.post.stage.compose_posts` / ``.preflight``) and ``post_search`` (default
-    :func:`auto_short.post.fetch.search_images`) for CP8.15; ``doc_prepare`` (default
+    :func:`auto_short.post.fetch.search_images`) for CP8.15; ``keyword_search`` (default
+    :func:`auto_short.post.imgsearch.search_for_config`) for CP8.30; ``doc_prepare`` (default
     :func:`auto_short.post.doc.prepare`, the "Văn bản gốc" check of ``PUT /api/playlists/{id}/doc``) for CP8.19;
     ``auto_archive_interval`` (seconds between auto clean-up passes, W9 S5; 0 = only at start-up); for CP13.1
     ``enhance_tokens`` (``name -> token`` of the enhance workers, default: env ``AUTO_SHORT_ENHANCE_TOKENS``, E8) and
@@ -451,6 +467,9 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         """CP8.22 Q2: the target of a job saved in the queue file, built like at submit time; None = cannot be
         recreated (bad id / parameters, workspace gone, episode archived) -> the runner skips it with a log line."""
         ws = Path(config.workspace.dir)
+        if kind == KIND_IMAGE_SEARCH:
+            kw = spec.get("keyword")
+            return keyword_search_target(config, kw, search=keyword_search) if isinstance(kw, str) and kw else None
         if kind == KIND_POST_SEARCH:
             url = spec.get("url")
             return image_search_target(config, url, search=post_search) if isinstance(url, str) and url else None
@@ -1645,7 +1664,8 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         sources = _post_image_sources()
         return {"images": [{"name": i.name, "width": i.width, "height": i.height, "bytes": i.bytes,
                             "used": used.get(i.name, 0), "source": sources.get(i.name)} for i in infos],
-                "image_sources": list(config.post.image_sources)}
+                "image_sources": list(config.post.image_sources),
+                "search": post_imgsearch.search_status(config)}
 
     @app.post("/api/post-images")
     async def api_post_images_upload(request: Request, name: str = ""):
@@ -1704,6 +1724,82 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         return {"status": job.status, "found": found, "added": list(result.added) if result else [],
                 "duplicate": list(result.duplicate) if result else [],
                 "skipped": dict(result.skipped) if result else {}}
+
+    @app.post("/api/post-images/find")
+    def api_post_images_find(body: PostImageFindIn):
+        """CP8.30 P5c: tìm ảnh theo từ khóa -> job nền (lane prepare); kết quả là ứng viên, chưa vào thư viện."""
+        if not post_imgsearch.tokens(body.keyword):
+            return JSONResponse({"detail": "nhập từ khóa"}, status_code=422)
+        with submit_lock:
+            current = runner.latest(POST_IMAGES_KEY)
+            if current is not None and current.active:
+                return JSONResponse({"detail": "đang tìm ảnh; đợi xong rồi tìm tiếp", "job": _job_view(current)},
+                                    status_code=409)
+            job, _created = runner.submit(POST_IMAGES_KEY, KIND_IMAGE_SEARCH,
+                                          keyword_search_target(config, body.keyword.strip(), search=keyword_search))
+        log.info("web: post-images: tìm theo từ khóa \"%s\" -> job %s", body.keyword.strip(), job.id)
+        return JSONResponse({"job": _job_view(job)}, status_code=202)
+
+    @app.get("/api/post-images/find/{job_id}")
+    def api_post_images_find_status(job_id: str):
+        job = runner.job(job_id)
+        if job is None or job.episode_id != POST_IMAGES_KEY or job.kind != KIND_IMAGE_SEARCH:
+            return JSONResponse({"detail": "không có job này"}, status_code=404)
+        result = getattr(job.target, "result", None)
+        out = {"status": job.status, "progress": job.stage, "error": job.error if job.status == "failed" else None}
+        if result is not None:
+            out.update({"search_id": result.search_id, "keyword": result.keyword, "skipped": dict(result.skipped),
+                        "notes": list(result.notes), "sources": dict(result.sources),
+                        "candidates": [{k: c.get(k) for k in ("id", "width", "height", "bytes", "origin", "page", "url",
+                                                              "flag", "thumb")} for c in result.candidates]})
+        return out
+
+    @app.get("/files/post-image-candidates/{search_id}/{cand_id}")
+    def post_image_candidate_file(search_id: str, cand_id: str, thumb: str | None = None):
+        path = post_imgsearch.candidate_file(config.post.image_dir, search_id, cand_id, thumb=thumb is not None)
+        if path is None:
+            return JSONResponse({"detail": "không có ảnh này"}, status_code=404)
+        ctype = "image/jpeg" if path.suffix.lower() in (".jpg", ".jpeg") else "image/png"
+        return FileResponse(path, media_type=ctype, headers={"Cache-Control": "private, max-age=3600"})
+
+    @app.post("/api/post-images/candidates/add")
+    def api_post_images_candidates_add(body: PostImageAddIn):
+        """CP8.30 P5c: thêm các ứng viên đã chọn vào thư viện (tên tiếp số, ghi sources.tsv); bấm lại không thêm trùng."""
+        if not post_imgsearch.SEARCH_ID_RE.match(body.search_id):
+            return JSONResponse({"detail": "không có lượt tìm này"}, status_code=404)
+        ids = [i for i in dict.fromkeys(body.ids) if post_imgsearch.CAND_ID_RE.match(i)]
+        if not ids:
+            return JSONResponse({"detail": "chưa chọn ảnh nào"}, status_code=422)
+        try:
+            res = post_imgsearch.add_candidates(config.post.image_dir, body.search_id, ids)
+        except post_images.ImageError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=422)
+        log.info("web: post-images: thêm %d ứng viên (%d đã có, %d không còn)", len(res["added"]),
+                 len(res["duplicate"]), len(res["missing"]))
+        return res
+
+    def _redistribute_view(plan: "post_redistribute.Plan") -> dict:
+        return {"changes": plan.changed, "episodes": len(plan.changes), "unposted": plan.unposted,
+                "posted": plan.posted, "spread": plan.spread(), "skipped_broken": list(plan.skipped_broken)}
+
+    @app.post("/api/post-images/redistribute")
+    def api_post_images_redistribute(body: PostImageRedistributeIn):
+        """CP8.30 P5d: chia lại ảnh cho bài chưa đăng. ``confirm=false`` chỉ xem trước (số bài sẽ đổi);
+        ``confirm=true`` ghi (sao lưu posts.json trước). 409 khi đang có job soạn bài."""
+        library = [i.name for i in post_images.list_images(config.post.image_dir)]
+        if not library:
+            return JSONResponse({"detail": "thư viện chưa có ảnh"}, status_code=422)
+        work = Path(config.workspace.dir)
+        if body.confirm and any(j.kind == KIND_POST and j.active for j in runner.jobs()):
+            return JSONResponse({"detail": "đang soạn bài; đợi xong rồi chia lại ảnh"}, status_code=409)
+        with post_lock:
+            plan = post_redistribute.plan(work, library)
+            if not body.confirm:
+                return {**_redistribute_view(plan), "applied": False}
+            backup = post_redistribute.apply(work, plan, now=datetime.now())
+        log.info("web: post-images: chia lại ảnh: %d bài / %d tập đổi ảnh (sao lưu %s)", plan.changed,
+                 len(plan.changes), backup.name if backup else "-")
+        return {**_redistribute_view(plan), "applied": True, "backup": backup.name if backup else None}
 
     @app.get("/files/post-images/{name}")
     def post_image_file(name: str, download: str | None = None):
