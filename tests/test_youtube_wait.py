@@ -62,6 +62,7 @@ class Net:
 
     def __init__(self, error=None):
         self.error, self.log, self.lock = error, [], threading.Lock()
+        self.reuse: set[str] = set()  # episodes whose ingest "runs" by reusing a base source (ran=True, no network)
         self.skip: set[str] = set()  # episodes whose ingest skips (source already there): no download, no error
 
     def __call__(self, url, config, *, series=None, episode=None, preflight=None, on_stage=None, stages=None,
@@ -70,6 +71,10 @@ class Net:
         for st in stages or ("ingest", "transcript", "analysis", "selection", "titling", "render"):
             with self.lock:
                 self.log.append((st, eid))
+            if st == "ingest" and eid in self.reuse:
+                if on_stage is not None:
+                    on_stage(SimpleNamespace(stage=st, ran=True, seconds=0.0, result=None))
+                continue
             if st == "ingest" and eid in self.skip:
                 if on_stage is not None:
                     on_stage(SimpleNamespace(stage=st, ran=False, seconds=0.0, result=None))
@@ -348,6 +353,14 @@ def test_api_youtube_status_and_banner(tmp_path, monkeypatch):
         wait_for(blocked_n(runner, 1))
         yt = c.get("/api/episodes").json()["youtube"]
         assert yt["blocked"] is True and yt["since"] and yt["next_check"]
+        ws = Workspace(Path(cfg.workspace.dir), A)  # the manifest says ingest failed, yet the job is "waiting"
+        mf = ws.new_manifest({"kind": "youtube", "uri": f"https://youtu.be/{A}", "path": None, "sha256": None,
+                              "size": None, "mtime_ns": None})
+        mf["stages"][STAGE] = {"status": "failed", "artifacts": [], "inputs": [], "config_hash": "x",
+                               "error": "ingest failed: bot"}
+        ws.save_manifest(mf)
+        item = next(e for e in c.get("/api/episodes").json()["episodes"] if e["id"] == A)
+        assert item["job"]["status"] == "queued" and item["job"]["yt_wait"] is True and item["job"]["error"] is None
         ep = c.get(f"/api/episodes/{A}").json()
         assert ep["youtube"]["blocked"] is True and ep["job"]["yt_wait"] is True and ep["job"]["status"] == "queued"
         net.error = None
@@ -361,3 +374,35 @@ def test_api_youtube_status_and_banner(tmp_path, monkeypatch):
 
 def test_config_keys():
     assert WebConfig().youtube_retry_minutes == 15 and WebConfig().youtube_retry_max_minutes == 120
+
+
+def test_reused_source_ingest_does_not_reset_block_real_download_does(mk, tcfg):
+    """F1: a khai thị job reusing its base source runs while blocked (ran=True, no network): block state unchanged."""
+    clock, net = Clock(), Net(blocked_error())
+    runner = mk(clock)
+    root = Path(tcfg.workspace.dir)
+    base = Workspace(root, A)
+    url = f"https://youtu.be/{A}"
+    bm = base.new_manifest({"kind": "youtube", "uri": url, "path": "source.mp4", "sha256": None, "size": None,
+                            "mtime_ns": None})
+    base.dir.mkdir(parents=True, exist_ok=True)
+    (base.dir / "source.mp4").write_bytes(b"x")
+    bm["stages"][STAGE] = {"status": "done", "artifacts": ["source.mp4"], "inputs": [], "config_hash": "x"}
+    base.save_manifest(bm)
+    from auto_short import khaithi
+    kt_dir = root / (A + ".kt")
+    kt_dir.mkdir(parents=True)
+    khaithi.write(kt_dir, khaithi.KhaiThi(A, 4, 10))
+    j1 = submit(runner, tcfg, B, net)  # needs a real download
+    wait_for(blocked_n(runner, 1))
+    before = runner.youtube_status()
+    net.reuse.add(A + ".kt")
+    kt_job = runner.submit(A + ".kt", KIND_PIPELINE, pipeline_target(url, tcfg, pipeline=net, preflight=None,
+                                                                    episode_id=A + ".kt"))[0]
+    net.reuse.add(A + ".kt")  # its ingest "runs" (reuse of the base source) while the block lasts
+    wait_for(lambda: kt_job.status == DONE)
+    assert runner.youtube_status() == before and j1.status == QUEUED
+    net.error = None
+    advance(runner, clock, 15 * MIN)
+    assert runner.wait_idle(10) and j1.status == DONE
+    assert runner.youtube_status()["failures"] == 0

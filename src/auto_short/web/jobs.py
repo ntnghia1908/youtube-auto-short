@@ -1056,8 +1056,8 @@ class PipelineTarget:
 
         def on_stage(run: StageRun) -> None:
             job.stages.append({"stage": run.stage, "ran": run.ran, "seconds": run.seconds})
-            if run.stage == "ingest" and run.ran and getattr(job, "youtube_ok", None) is not None:
-                job.youtube_ok()  # Y2: a download went through, the YouTube block (if any) is over
+            if run.stage == "ingest" and run.ran and downloads and getattr(job, "youtube_ok", None) is not None:
+                job.youtube_ok()  # Y2: a download really went to YouTube and worked: the block (if any) is over
             if run.stage == "ingest" and self.enhance is not None:  # CP13.1b E1: decide right after the download
                 eid = getattr(run.result, "episode_id", None) or episode_id
                 if eid:
@@ -1066,6 +1066,8 @@ class PipelineTarget:
             job.stage = PIPELINE_STAGES[i + 1] if i + 1 < len(PIPELINE_STAGES) else None
 
         job.stage = (stages or PIPELINE_STAGES)[0]
+        # decided before the run: afterwards the source is there. A reused / skipped ingest must not reset the block.
+        downloads = "ingest" in (stages or PIPELINE_STAGES) and self.needs_download()
         kw: dict = {"episode_id": episode_id} if episode_id is not None else {}
         if stages is not None:
             kw["stages"] = stages
