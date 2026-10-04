@@ -2860,6 +2860,11 @@ const AutoShort = (() => {
     const ep = e.episode || {};
     return (ep.label || e.episode_id) + (e.priority ? " ★" : "");
   }
+  // video id next to the readable name (only when the name is not the id itself)
+  function jobCode(e) {
+    const ep = e.episode || {};
+    return ep.label && ep.label !== e.episode_id ? el("span", { class: "muted small", title: e.episode_id, text: ` ${e.episode_id}` }) : null;
+  }
   function jobStep(e) {
     const st = e.stage ? (STAGE_NAMES[e.stage] || e.stage) : "";
     const pr = e.progress ? ` ${e.progress.done}/${e.progress.total} clip` : "";
@@ -2875,19 +2880,19 @@ const AutoShort = (() => {
       const run = info.running;
       const head = el("h3", { class: "small", text: `${LANE_NAMES[lane] || lane} — ${run ? "đang chạy 1" : "rảnh"}, ${info.pending_total} chờ` });
       const now = run
-        ? el("div", { class: "mon-run" }, el("strong", { text: jobName(run) }),
+        ? el("div", { class: "mon-run" }, el("strong", { text: jobName(run) }), jobCode(run),
           el("div", { class: "small", text: jobStep(run) }),
           el("div", { class: "muted small", text: `bước này đã chạy ${fmtDur(run.elapsed_seconds)}` + (run.started_at ? ` · cả việc bắt đầu ${fmtClock(run.started_at)}` : "") + ` · id ${run.id}` }))
         : el("div", { class: "muted small", text: "Không có việc đang chạy." });
       const items = info.pending.map((e) => el("li", { class: "small" },
-        `${e.position}. ${jobName(e)} `, el("span", { class: "muted", text: jobStep(e) + (e.waiting ? " · từ làn trước sang" : "") })));
+        `${e.position}. ${jobName(e)} `, jobCode(e), el("span", { class: "muted", text: jobStep(e) + (e.waiting ? " · từ làn trước sang" : "") })));
       const more = info.pending_total > info.pending.length
         ? el("li", { class: "muted small", text: `… còn ${info.pending_total - info.pending.length} việc nữa` }) : null;
       return el("div", { class: "mon-lane" }, head, now, items.length ? el("ol", { class: "mon-list" }, ...items, more) : null);
     }));
     const w = $("#mon-waiting");
     if (!q.waiting.length) { w.replaceChildren(); return; }
-    const rows = q.waiting.map((e) => el("li", { class: "small" }, `${jobName(e)} `,
+    const rows = q.waiting.map((e) => el("li", { class: "small" }, `${jobName(e)} `, jobCode(e),
       el("span", { class: "muted", text: `${WAIT_NAMES[e.reason] || e.reason}` + (e.retry_at ? ` · thử lại lúc ${fmtClock(e.retry_at)}` : "") })));
     w.replaceChildren(el("h3", { class: "small", text: `Đang đợi, không giữ làn (${q.waiting_total})` }), el("ul", { class: "mon-list" }, ...rows));
   }
