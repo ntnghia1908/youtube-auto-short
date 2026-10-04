@@ -326,6 +326,22 @@ const AutoShort = (() => {
     });
   }
 
+  // CP8.26: "Ưu tiên" mark of a video (the Short and its khai thị share it); ``reload`` refreshes the page after.
+  async function setPriority(id, value, reload) {
+    try {
+      await api(`/api/episodes/${encodeURIComponent(id)}/priority`, jsonBody("POST", { value }));
+    } catch (e) { alert(e.message); return; }
+    reload();
+  }
+
+  function priorityButton(id, marked, reload) {
+    const b = el("button", { class: "btn small", type: "button", "data-action": "priority",
+      title: marked ? "Trả về thứ tự thường trong hàng đợi" : "Các việc đang chờ của tập này lên đầu hàng đợi (không ngắt việc đang chạy)",
+      text: marked ? "Bỏ ưu tiên" : "Ưu tiên" });
+    b.addEventListener("click", () => setPriority(id, !marked, reload));
+    return b;
+  }
+
   async function loadEpisodes() {
     const list = $("#episodes");
     let data;
@@ -360,13 +376,15 @@ const AutoShort = (() => {
       if (e.stages_done === e.stages_total) return (e.complete ? "Xong · " : "") + `${e.shorts} ${unit} · đã đăng ${e.published || 0}/${e.shorts}` + (e.archived ? " · đã dọn video nguồn" : "");
       return `${e.stages_done}/${e.stages_total} bước`;
     };
+    const star = (e) => (e.priority ? "★ ưu tiên · " : "");
     list.replaceChildren(...episodeItems.map((e) => {
       const kt = e.kind !== "khaithi" ? ktOf.get(e.id) : null;
       return el("li", { "data-group": e.publish_group || "none" },
         el("a", { href: "/episodes/" + encodeURIComponent(e.id) },
           el("span", { class: "ep-name", text: e.title || e.id }),
           e.kind === "khaithi" ? el("span", { class: "kind-label", text: ktLabel(e) }) : null,
-          el("span", { class: "ep-state muted", text: `${e.id} · ${stateText(e)}` })),
+          el("span", { class: "ep-state muted", text: `${star(e)}${e.id} · ${stateText(e)}` })),
+        e.kind !== "khaithi" ? priorityButton(e.id, !!e.priority, loadEpisodes) : null,
         kt ? el("a", { class: "sub-episode", href: "/episodes/" + encodeURIComponent(kt.id) },
           el("span", { class: "kind-label", text: ktLabel(kt) }),
           el("span", { class: "muted small", text: ` ${stateText(kt)}` })) : null);
@@ -657,7 +675,11 @@ const AutoShort = (() => {
     if (d.channel) meta.push(d.channel);
     if (d.duration) meta.push(fmtSeconds(d.duration));
     if (d.kind === "khaithi") meta.unshift(ktLabel(d));
+    if (d.priority) meta.unshift("★ Ưu tiên"); // CP8.26
     $("#ep-meta").textContent = meta.join(" · ");
+    const pb = $("#priority");
+    pb.textContent = d.priority ? "Bỏ ưu tiên" : "Ưu tiên";
+    pb.onclick = () => setPriority(episodeId, !d.priority, refreshEpisode);
     renderKindBar(d);
 
     const job = d.job;
@@ -2382,6 +2404,7 @@ const AutoShort = (() => {
     $("#pl-refresh").addEventListener("click", refreshPlaylist);
     $("#pl-prepare").addEventListener("click", preparePlaylist);
     $("#pl-resume-all").addEventListener("click", resumePrepared);
+    $("#pl-priority").addEventListener("click", priorityPlaylist);
     initHashtags();
     initSeries();
     initDoc();
@@ -2428,6 +2451,17 @@ const AutoShort = (() => {
       loadPlaylist();
     } catch (e) { bulkMessage(e.message, "error"); }
     btns.forEach((b) => { b.disabled = false; });
+  }
+
+  let plPriorityCount = 0;
+  async function priorityPlaylist() { // CP8.26: marks every unfinished episode (episode order), or clears the marks
+    const value = !plPriorityCount;
+    if (value && !confirm("Ưu tiên cả bộ: mọi tập chưa xong của bộ kinh này (theo số tập) lên đầu hàng đợi? Việc đang chạy không bị ngắt.")) return;
+    try {
+      const r = await api(`/api/playlists/${encodeURIComponent(playlistId)}/priority`, jsonBody("POST", { value }));
+      bulkMessage(value ? `Đã ưu tiên ${r.changed} tập.` : `Đã bỏ ưu tiên ${r.changed} tập.`, "ok");
+      loadPlaylist();
+    } catch (e) { bulkMessage(e.message, "error"); }
   }
 
   function preparePlaylist() {
@@ -2751,6 +2785,8 @@ const AutoShort = (() => {
     $("#pl-meta").replaceChildren(document.createTextNode(`${d.count} tập · lấy danh sách lúc ${fmtTime(d.fetched_at)} · `),
       el("a", { href: d.url, target: "_blank", rel: "noopener", text: "mở trên YouTube" }));
     document.querySelectorAll("#pl-filters [data-filter]").forEach((b) => { b.querySelector(".n").textContent = d.counts[b.dataset.filter] || 0; });
+    plPriorityCount = d.priority_count || 0; // CP8.26
+    $("#pl-priority").textContent = plPriorityCount ? `Bỏ ưu tiên cả bộ (${plPriorityCount})` : "Ưu tiên cả bộ";
     let busy = false;
     $("#pl-entries").replaceChildren(...d.entries.map((e) => {
       if (RUNNING_STATES.includes(e.state)) busy = true;
@@ -2765,11 +2801,12 @@ const AutoShort = (() => {
         b.addEventListener("click", () => processEntry(e, b));
         actions.append(b);
       }
+      if (e.video_id && !["unavailable", "deleted"].includes(e.state) && !e.complete) actions.append(priorityButton(e.video_id, !!e.priority, loadPlaylist));
       return el("li", { class: "pl-entry " + e.state, "data-group": e.group || "none" },
         el("span", { class: "pl-index muted", text: `${e.index}.` }),
         el("div", { class: "pl-body" }, head,
           el("span", { class: "muted small", text: [e.episode ? `tập ${e.episode}` : null, e.duration ? fmtSeconds(e.duration) : null].filter(Boolean).join(" · ") }),
-          el("span", { class: "pl-state small", text: entryState(e) }),
+          el("span", { class: "pl-state small", text: (e.priority ? "★ ưu tiên · " : "") + entryState(e) }),
           e.state === "failed" && e.error ? el("span", { class: "error small", text: e.error }) : null),
         actions);
     }));

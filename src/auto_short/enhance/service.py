@@ -55,6 +55,8 @@ class EnhanceService:
         self.config = config
         self.root = Path(config.workspace.dir)
         self.ai_busy = ai_busy or (lambda: False)
+        # CP8.26 P3: ``episode_id -> mark order`` (None = not marked), set by the web app
+        self.priority_rank: Callable[[str], int | None] = lambda _eid: None
         self.on_complete = on_complete  # called (after the lock is released) when the last segment arrived
         self.clock = clock
         self.ffmpeg, self.ffprobe = ffmpeg, ffprobe
@@ -195,7 +197,8 @@ class EnhanceService:
         return series, int(ep) if ep is not None and ep.isdigit() else None
 
     def _lease_order(self, cands: list[tuple[str, Path, dict]]) -> list[tuple[str, Path, dict]]:
-        """CP13.2 H3: videos waiting for HD first (as in CP13.1b), then the others grouped by series (the series whose
+        """CP13.2 H3: videos waiting for HD first (as in CP13.1b), then (CP8.26 P3) the videos marked "ưu tiên" in mark
+        order, then the others grouped by series (the series whose
         first video asked for HD earliest first) and, inside a series, by episode number; videos whose episode number
         is unknown follow the numbered ones of their series by ``wanted_at``; a video of no known series is its own
         group (plain ``wanted_at`` order)."""
@@ -210,7 +213,8 @@ class EnhanceService:
         def sort_key(c):
             eid, _d, doc = c
             series, num = info[eid]
-            return (not doc.get("waiting_hd"), first[series or eid], series or eid, num is None, num or 0,
+            rank = self.priority_rank(eid)
+            return (not doc.get("waiting_hd"), rank is None, rank or 0, first[series or eid], series or eid, num is None, num or 0,
                     doc.get("wanted_at") or "", eid)
 
         return sorted(cands, key=sort_key)

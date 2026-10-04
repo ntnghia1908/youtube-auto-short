@@ -44,6 +44,7 @@ from ..post import stage as post_stage
 from ..render import RenderError, run_render
 from ..workspace import atomic_write_json
 from . import prepared
+from .priority import Priority
 from ..selection.client import ChatUnavailable
 
 log = logging.getLogger("auto_short")
@@ -239,10 +240,14 @@ class JobRunner:
 
     def __init__(self, mode: str = MODE_LANES, *, gpu_retry_seconds: float = GPU_RETRY_SECONDS,
                  youtube_retry_seconds: float = YT_RETRY_SECONDS, youtube_retry_max_seconds: float = YT_RETRY_MAX_SECONDS,
-                 monotonic: Callable[[], float] = time.monotonic, wall: Callable[[], float] = time.time) -> None:
+                 monotonic: Callable[[], float] = time.monotonic, wall: Callable[[], float] = time.time,
+                 priority: Priority | None = None) -> None:
         if mode not in (MODE_LANES, MODE_SERIAL):
             raise ValueError(f"unknown queue mode {mode!r}")
         self.mode = mode
+        # CP8.26: per-video priority mark (P1); a lane starts the marked videos' jobs first (P2)
+        self.priority = priority if priority is not None else Priority()
+        self.priority.on_change = self._priority_changed
         self._lane_names = LANES if mode == MODE_LANES else (_SERIAL,)
         self._lock = threading.Condition()
         self._queues: dict[str, deque[Job]] = {lane: deque() for lane in self._lane_names}
@@ -429,10 +434,41 @@ class JobRunner:
         None when it runs or has finished."""
         with self._lock:
             for queue in self._queues.values():
-                for i, j in enumerate(queue, 1):
+                for i, j in enumerate(self._ordered(queue), 1):
                     if j is job:
                         return i
         return None
+
+    # --- CP8.26: priority order of a lane queue ---------------------------------------------------
+
+    def _rank(self, job: Job) -> float:
+        rank = self.priority.rank(job.episode_id)
+        return float("inf") if rank is None else rank
+
+    def _ordered(self, queue: "deque[Job]") -> list[Job]:
+        """The queue in start order: marked videos first (mark order), then the others; stable inside each group."""
+        return sorted(queue, key=self._rank)
+
+    def _pick(self, queue: "deque[Job]", pred: Callable[[Job], bool] | None = None) -> Job | None:
+        """The job of ``queue`` that starts first (optionally among those accepted by ``pred``); not removed."""
+        best, best_rank = None, float("inf")
+        for j in queue:
+            if pred is not None and not pred(j):
+                continue
+            rank = self._rank(j)
+            if best is None or rank < best_rank:
+                best, best_rank = j, rank
+        return best
+
+    def _pop(self, queue: "deque[Job]", pred: Callable[[Job], bool] | None = None) -> Job | None:
+        job = self._pick(queue, pred)
+        if job is not None:
+            queue.remove(job)
+        return job
+
+    def _priority_changed(self) -> None:
+        with self._lock:
+            self._lock.notify_all()
 
     def job_on_thread(self, thread_ident: int | None) -> Job | None:
         """The job the lane worker ``thread_ident`` is running (log handler)."""
@@ -570,28 +606,26 @@ class JobRunner:
             if lane == PREPARE and queue and self._yt_blocked():
                 left = self._yt_next - self._mono()
                 if left > 0:  # Y2: only jobs that need no download may start (and only within the prefetch limit)
-                    free = next((j for j in queue if self._no_download(j)), None) if self._can_start(lane) else None
+                    free = self._pop(queue, self._no_download) if self._can_start(lane) else None
                     if free is not None:
-                        queue.remove(free)
                         return free
                     self._lock.wait(left)
                     continue
-                return queue.popleft()  # time to try again
+                return self._pop(queue)  # time to try again
             if lane == AI and queue and self._gpu_down():
                 # an ``add`` job never waits; nor does a ``post`` job that has not run yet (it may need no AI:
                 # FIX-post-doc-no-gpu F3). A job that came back via GpuUnavailable waits for the next check.
-                free = next((j for j in queue if j.kind == KIND_ADD), None) or \
-                    next((j for j in queue if j.kind == KIND_POST and not j.requeued), None)
+                free = self._pop(queue, lambda j: j.kind == KIND_ADD) or \
+                    self._pop(queue, lambda j: j.kind == KIND_POST and not j.requeued)
                 if free is not None:
-                    queue.remove(free)
                     return free
                 left = self._gpu_next - time.monotonic()
                 if left > 0:
                     self._lock.wait(left)
                     continue
-                return queue.popleft()
+                return self._pop(queue)
             if self._can_start(lane):
-                return queue.popleft()
+                return self._pop(queue)
             self._lock.wait()
         return None
 
