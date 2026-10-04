@@ -8,7 +8,7 @@ arithmetic is done in integer milliseconds so durations and trims are exact.
 from __future__ import annotations
 
 import bisect
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from ..config import AnalysisConfig
 from ..transcript.normalize import NON_SPEECH, SPEECH, speech_tokens
@@ -221,6 +221,43 @@ def build_units(segments: list[dict], silences: list[tuple[float, float]], cuts:
         u.text = " ".join(s["text"] for s in u.segments)
         u.words = len(speech_tokens(u.segments))
     return units
+
+
+# --- CP8.23 adaptive boundary threshold ---------------------------------------------------------
+
+LADDER_STEP = 0.5  # seconds between tried thresholds
+COARSE_FRACTION = 0.10  # "fine enough": at most this share of unit time lies in units longer than max_duration
+
+
+def boundary_ladder(cfg: AnalysisConfig) -> list[float]:
+    """Thresholds to try, in order: ``min_boundary_silence`` then down by ``LADDER_STEP`` to the floor (inclusive)."""
+    base, floor, step = _ms(cfg.min_boundary_silence), _ms(cfg.min_boundary_silence_floor), _ms(LADDER_STEP)
+    out, t = [base], base - step
+    while t > floor:
+        out.append(t)
+        t -= step
+    if floor < base:
+        out.append(floor)
+    return [_s(x) for x in out]
+
+
+def coarse_fraction(units: list[Unit], cfg: AnalysisConfig) -> float:
+    total = sum(u.end - u.start for u in units)
+    big = sum(u.end - u.start for u in units if u.end - u.start > _ms(cfg.max_duration))
+    return big / total if total else 0.0
+
+
+def choose_boundary(segments: list[dict], silences: list[tuple[float, float]], window: ContentWindow,
+                    cfg: AnalysisConfig) -> tuple[list[Cut], list[Unit], float]:
+    """First ladder threshold whose units are fine enough (else the floor): (cuts, units, threshold)."""
+    ladder = boundary_ladder(cfg)
+    for i, t in enumerate(ladder):
+        c = replace(cfg, min_boundary_silence=t)
+        cuts = find_cut_points(segments, silences, window, c)
+        units = build_units(segments, silences, cuts, c)
+        if coarse_fraction(units, cfg) <= COARSE_FRACTION or i == len(ladder) - 1:
+            return cuts, units, t
+    raise AssertionError("unreachable")
 
 
 # --- A8 candidates ----------------------------------------------------------------------------

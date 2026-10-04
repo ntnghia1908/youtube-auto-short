@@ -74,7 +74,7 @@ def real_docs() -> tuple[dict, dict, dict]:
     """Candidates of the real test video (fixture extract of rbjfCfFq3Dk)."""
     metadata = {"duration": REAL["duration"], "source": {"sha256": "ab" * 32}, "title": "Thập Thiện Nghiệp Đạo"}
     _, sil_doc, cand_doc = analyze("rbjfCfFq3Dk", transcript_doc(real_segments()), metadata,
-                                   list(REAL["shot_changes"]), real_silences(), AnalysisConfig())
+                                   list(REAL["shot_changes"]), real_silences(), AnalysisConfig(min_boundary_silence_floor=3.0))  # pre-CP8.23 rules
     return cand_doc, sil_doc, metadata
 
 

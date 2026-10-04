@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from auto_short.config import Config, IngestConfig, RenderConfig, WorkspaceConfig
+from auto_short.config import AnalysisConfig, Config, IngestConfig, RenderConfig, WorkspaceConfig
 
 
 def make_video(path: Path, seconds: int = 2, freq: int = 440) -> Path:
@@ -42,6 +42,7 @@ def video(tmp_path, _video_template) -> Path:
 @pytest.fixture
 def cfg(tmp_path) -> Config:
     return Config(workspace=WorkspaceConfig(dir=tmp_path / "work"), ingest=IngestConfig(),
+                  analysis=AnalysisConfig(min_boundary_silence_floor=3.0),  # pre-CP8.23 rules (CP8.23 has its own tests)
                   render=replace(RenderConfig(), output_dir=tmp_path / "output"))
 
 
