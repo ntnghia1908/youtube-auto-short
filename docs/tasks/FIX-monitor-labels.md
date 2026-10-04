@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: BUG
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -50,9 +50,9 @@ Không chạm database / security model / public API. Điểm danh trên 8080: t
 
 ## Result
 
-- Main changes:
-- Tests:
-- Review:
-- Important findings / decisions:
-- Known limitations:
-- PR:
+- Main changes: `web/monitor.episode_label` tách thành `_compute_label` với thứ tự nguồn titles.json → `metadata.json` title (`title_patterns`) → `_playlists/*.json` (bộ kinh + tập, hoặc title entry) → mã video; `.kt` chưa ingest vẫn "(khai thị)". Cache: nhãn theo (workspace, id) và chỉ mục playlist 20 s (`LABEL_CACHE_SECONDS`). `app.js`: nhãn chính + mã video nhỏ (title tooltip) cạnh tên job (`jobCode`).
+- Tests: 5 test mới trong `tests/test_monitor_cp828.py` (playlist, title entry, metadata, mã video, 100 job đọc playlist 1 lần); `pytest -q -n auto` 1502 passed, 1 skipped; `node scripts/framework-check.mjs` PASS.
+- Review: chưa.
+- Important findings / decisions: kiểm trên dữ liệu thật (đọc): `ND1Eu4aax44` -> "Kinh Địa Tạng Bồ Tát Bổn Nguyện · Tập 3"; nhãn từ title patterns/playlist có thể mang tiền tố "[HD] " nếu pattern `series` bắt cả tiền tố (giống `_series_episode`).
+- Known limitations: nhãn mới đổi tối đa sau 20 s.
+- PR: chưa.

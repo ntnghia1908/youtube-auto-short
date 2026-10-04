@@ -19,7 +19,10 @@ from collections.abc import Callable
 from pathlib import Path
 
 from ..config import Config
+from .. import khaithi
 from ..enhance.state import parse_iso
+from ..titling import playlist as playlist_mod
+from ..titling.logic import match_title
 from . import episodes as ep
 
 log = logging.getLogger("auto_short")
@@ -318,20 +321,108 @@ class OllamaView:
 # --- labels / progress / GPU workers ---------------------------------------------------------------------------
 
 
-def episode_label(config: Config, episode_id: str) -> dict:
-    """Readable name of an episode: ``{episode_id, series, episode, kind, label}`` (series / episode number come from
-    ``titles.json``; a not-yet-ingested job falls back to the id)."""
-    base = episode_id.split("#", 1)[0]
+LABEL_CACHE_SECONDS = 20.0  # labels / stored bộ kinh are re-read at most this often (the tab refreshes every 4 s)
+_label_lock = threading.Lock()
+_label_cache: dict[tuple[str, str], tuple[float, dict]] = {}
+_playlist_cache: dict[str, tuple[float, dict[str, tuple[str | None, str | None, str | None]]]] = {}
+
+
+def _load_playlist_index(workspace_dir: str) -> dict[str, tuple[str | None, str | None, str | None]]:
+    """``video_id -> (series, episode, entry title)`` over every stored ``_playlists/*.json`` (first playlist wins)."""
+    out: dict[str, tuple[str | None, str | None, str | None]] = {}
+    root = Path(workspace_dir) / playlist_mod.PLAYLISTS_DIR
+    try:
+        paths = sorted(root.glob("*.json"))
+    except OSError:
+        return out
+    for path in paths:
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(doc, dict) or not isinstance(doc.get("entries"), list):
+            continue
+        series = playlist_mod.stored_series(doc)
+        for entry in doc["entries"]:
+            vid = entry.get("video_id") if isinstance(entry, dict) else None
+            if not isinstance(vid, str) or vid in out:
+                continue
+            number = entry.get("episode")
+            if not (isinstance(number, str) and number.strip()):
+                idx = entry.get("index")
+                number = str(idx) if isinstance(idx, int) and not isinstance(idx, bool) else None
+            title = entry.get("title")
+            out[vid] = (series, number.strip() if number else None, " ".join(title.split()) if isinstance(title, str) and title.strip() else None)
+    return out
+
+
+def _playlist_info(config: Config, video_id: str) -> tuple[str | None, str | None, str | None]:
+    key, now = str(config.workspace.dir), time.monotonic()
+    with _label_lock:
+        hit = _playlist_cache.get(key)
+        if hit is None or now - hit[0] >= LABEL_CACHE_SECONDS:
+            hit = _playlist_cache[key] = (now, _load_playlist_index(key))
+        return hit[1].get(video_id, (None, None, None))
+
+
+def _metadata_info(config: Config, video_id: str) -> tuple[str | None, str | None]:
+    """(series, episode) from the title in ``<workspace>/<id>/metadata.json`` via ``[titling.header] title_patterns``."""
+    try:
+        meta = json.loads((Path(config.workspace.dir) / video_id / "metadata.json").read_text(encoding="utf-8"))
+        m = match_title(config.titling.header.title_patterns, meta.get("title"))
+    except (OSError, ValueError, AttributeError, re.error):
+        return None, None
+    if m is None:
+        return None, None
+    groups = m.re.groupindex
+    series = " ".join(m.group("series").split()) if "series" in groups and m.group("series") else None
+    number = m.group("episode") if "episode" in groups and m.group("episode") else None
+    return series, number
+
+
+def _compute_label(config: Config, base: str) -> dict:
+    series = number = None
+    kind, plain = "short", base
     try:
         kf = ep.kind_fields(config, base)
+        kind = kf["kind"]
+        plain = kf["base_episode_id"] or base
         series, number = ep._series(config, base), ep._label(config, base, kf)
     except Exception:
-        return {"episode_id": base, "series": None, "episode": None, "kind": "short", "label": base}
-    kind = kf["kind"]
-    parts = [series or None, f"Tập {number}" if number and number != (kf["base_episode_id"] or base) else None]
-    label = " · ".join(p for p in parts if p) or (kf["base_episode_id"] or base)
+        pass
+    if base.endswith(khaithi.SUFFIX):  # a khai thị job that has not been ingested yet has no khaithi.json
+        kind, plain = khaithi.KIND, plain if plain != base else base[: -len(khaithi.SUFFIX)]
+    if number in (base, plain):  # ``_label`` falls back to the episode id: that is "no number"
+        number = None
+    title = None
+    if not series or not number:
+        m_series, m_number = _metadata_info(config, plain)
+        series, number = series or m_series, number or m_number
+    if not series or not number:
+        p_series, p_number, title = _playlist_info(config, plain)
+        series, number = series or p_series, number or p_number
+    parts = [series or None, f"Tập {number}" if number else None]
+    label = " · ".join(p for p in parts if p) or ("" if series or number else title) or plain
     return {"episode_id": base, "series": series, "episode": number, "kind": kind,
-            "label": label + (" (khai thị)" if kind == "khaithi" else "")}
+            "label": label + (" (khai thị)" if kind == khaithi.KIND else "")}
+
+
+def episode_label(config: Config, episode_id: str) -> dict:
+    """Readable name of an episode: ``{episode_id, series, episode, kind, label}``. Sources in order: ``titles.json``
+    (CP8.11), the ``metadata.json`` title through ``title_patterns``, the stored bộ kinh (``_playlists``) and finally
+    the video id. Cached for ``LABEL_CACHE_SECONDS`` so the 4 s refresh does not re-read every file."""
+    base = episode_id.split("#", 1)[0]
+    key, now = (str(config.workspace.dir), base), time.monotonic()
+    with _label_lock:
+        hit = _label_cache.get(key)
+        if hit is not None and now - hit[0] < LABEL_CACHE_SECONDS:
+            return dict(hit[1])
+    value = _compute_label(config, base)
+    with _label_lock:
+        if len(_label_cache) > 2000:
+            _label_cache.clear()
+        _label_cache[key] = (now, value)
+    return dict(value)
 
 
 def render_progress(config: Config, job_logs, episode_id: str) -> dict | None:

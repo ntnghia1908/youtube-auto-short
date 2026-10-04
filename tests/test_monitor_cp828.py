@@ -459,3 +459,73 @@ def test_page_links_and_login_required(tmp_path):
         assert 'href="/monitor"' in (static / name).read_text(encoding="utf-8"), name
     js = (static / "app.js").read_text(encoding="utf-8")
     assert 'href: "/monitor"' in js and "initMonitor" in js  # the queue summary bar opens the tab
+
+
+# --- FIX-monitor-labels ------------------------------------------------------------------------------------------
+
+@pytest.fixture
+def fresh_labels():
+    mon._label_cache.clear()
+    mon._playlist_cache.clear()
+    yield
+    mon._label_cache.clear()
+    mon._playlist_cache.clear()
+
+
+def _label_cfg(tmp_path):
+    return Config(workspace=WorkspaceConfig(dir=tmp_path / "work"), render=RenderConfig(output_dir=tmp_path / "output"))
+
+
+def _write_playlist(cfg, pid, doc):
+    d = Path(cfg.workspace.dir) / "_playlists"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{pid}.json").write_text(json.dumps({"playlist_id": pid, **doc}), encoding="utf-8")
+
+
+def test_label_from_stored_playlist_for_not_downloaded_video(tmp_path, fresh_labels):
+    cfg = _label_cfg(tmp_path)
+    _write_playlist(cfg, "PL1", {"series": "Kinh Địa Tạng", "entries": [
+        {"index": 1, "video_id": "ND1Eu4aax44", "title": "x", "episode": "7"},
+        {"index": 2, "video_id": "Zzzzzzzzzzz", "title": "Tập hai lẻ"}]})
+    lab = mon.episode_label(cfg, "ND1Eu4aax44")
+    assert lab["label"] == "Kinh Địa Tạng · Tập 7" and lab["series"] == "Kinh Địa Tạng" and lab["episode"] == "7"
+    assert mon.episode_label(cfg, "ND1Eu4aax44.kt")["label"] == "Kinh Địa Tạng · Tập 7 (khai thị)"
+    assert mon.episode_label(cfg, "ND1Eu4aax44#post")["label"] == "Kinh Địa Tạng · Tập 7"
+    assert mon.episode_label(cfg, "Zzzzzzzzzzz")["label"] == "Kinh Địa Tạng · Tập 2"  # episode from the entry index
+
+
+def test_label_from_playlist_entry_title_when_no_series(tmp_path, fresh_labels):
+    cfg = _label_cfg(tmp_path)
+    _write_playlist(cfg, "PL1", {"entries": [{"video_id": "abcdefghijk", "title": "Bài giảng đặc biệt"}]})
+    assert mon.episode_label(cfg, "abcdefghijk")["label"] == "Bài giảng đặc biệt"
+
+
+def test_label_from_metadata_title_when_downloaded_not_titled(tmp_path, fresh_labels):
+    cfg = _label_cfg(tmp_path)
+    d = Path(cfg.workspace.dir) / "abcdefghijk"
+    d.mkdir(parents=True)
+    (d / "metadata.json").write_text(json.dumps({"title": "[HD] Kinh Vô Lượng Thọ tập 12 - Pháp Sư Tịnh Không"}))
+    pats = cfg.titling.header.title_patterns
+    from auto_short.titling.logic import match_title
+    m = match_title(pats, "[HD] Kinh Vô Lượng Thọ tập 12 - Pháp Sư Tịnh Không")
+    if m is None:
+        pytest.skip("default title_patterns do not match the sample title")
+    lab = mon.episode_label(cfg, "abcdefghijk")
+    assert lab["episode"] == "12" and lab["label"].endswith("Tập 12") and lab["label"] != "abcdefghijk"
+
+
+def test_label_falls_back_to_video_id(tmp_path, fresh_labels):
+    cfg = _label_cfg(tmp_path)
+    assert mon.episode_label(cfg, "nothingknown")["label"] == "nothingknown"
+
+
+def test_labels_of_100_jobs_read_playlists_once(tmp_path, fresh_labels, monkeypatch):
+    cfg = _label_cfg(tmp_path)
+    _write_playlist(cfg, "PL1", {"series": "Kinh A", "entries": [
+        {"video_id": f"vid{i:03d}", "title": "t", "episode": str(i)} for i in range(100)]})
+    calls = []
+    real = mon._load_playlist_index
+    monkeypatch.setattr(mon, "_load_playlist_index", lambda ws: calls.append(ws) or real(ws))
+    for _ in range(3):  # three refreshes of the tab
+        labels = [mon.episode_label(cfg, f"vid{i:03d}")["label"] for i in range(100)]
+    assert labels[5] == "Kinh A · Tập 5" and len(calls) == 1
