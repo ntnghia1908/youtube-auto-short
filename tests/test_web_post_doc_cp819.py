@@ -123,7 +123,8 @@ def test_put_saves_get_returns_null_clears_and_survives_refresh_and_other_edits(
         stored = json.loads(playlist_file(tcfg).read_text(encoding="utf-8"))
         assert stored["doc_url"] == URL and stored["series"] == "Kinh Thử"
         r = put(c, {"url": None})
-        assert r.status_code == 200 and r.json() == {"playlist_id": PL, "doc_url": None, "check": None, "queued": 0}
+        assert r.status_code == 200 and r.json() == {"playlist_id": PL, "doc_url": None, "check": None, "queued": 0,
+                                                    "doc_videos_per_page": 1}
         assert "doc_url" not in json.loads(playlist_file(tcfg).read_text(encoding="utf-8"))
         assert c.get(f"/api/playlists/{PL}").json()["doc_url"] is None
 
@@ -197,3 +198,38 @@ def test_static_ui_has_doc_field_and_origin_label():  # D1 UI, D8
     js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
     assert 'id="dc-input"' in html and "Văn bản gốc" in html and 'id="dc-save"' in html and 'id="dc-reset"' in html
     assert "/doc`" in js and 'p.origin === "doc"' in js and "Văn bản gốc" in js
+
+
+# --- CP8.24: videos per text page -------------------------------------------------------------------------------------
+
+def test_cp824_videos_per_page_validation_save_and_view(tcfg, pl):  # AC3
+    c, _ = make_client(tcfg)
+    with c:
+        login(c)
+        for bad in (0, -1, 11, "2", "abc", 1.5, True):
+            r = put(c, {"url": URL, "videos_per_page": bad})
+            assert r.status_code == 422 and "số video mỗi trang" in r.json()["detail"], bad
+        assert "doc_url" not in json.loads(playlist_file(tcfg).read_text(encoding="utf-8"))
+        assert c.get(f"/api/playlists/{PL}").json()["doc_videos_per_page"] == 1
+        r = put(c, {"url": URL, "videos_per_page": 2})
+        assert r.status_code == 200 and r.json()["doc_videos_per_page"] == 2
+        assert c.get(f"/api/playlists/{PL}").json()["doc_videos_per_page"] == 2
+        stored = json.loads(playlist_file(tcfg).read_text(encoding="utf-8"))
+        assert stored["doc_videos_per_page"] == 2
+        # absent keeps; refresh / series edit keep; 1 removes the field; null url removes both
+        assert put(c, {"url": URL}).json()["doc_videos_per_page"] == 2
+        assert c.post(f"/api/playlists/{PL}/refresh").status_code == 200
+        assert c.put(f"/api/playlists/{PL}/series", json={"series": "Kinh Thử"}).status_code == 200
+        assert json.loads(playlist_file(tcfg).read_text(encoding="utf-8"))["doc_videos_per_page"] == 2
+        assert put(c, {"url": URL, "videos_per_page": 1}).json()["doc_videos_per_page"] == 1
+        assert "doc_videos_per_page" not in json.loads(playlist_file(tcfg).read_text(encoding="utf-8"))
+        put(c, {"url": URL, "videos_per_page": 3})
+        put(c, {"url": None})
+        assert "doc_videos_per_page" not in json.loads(playlist_file(tcfg).read_text(encoding="utf-8"))
+
+
+def test_cp824_ui_hooks():
+    html = (STATIC_DIR / "playlist.html").read_text(encoding="utf-8")
+    js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    assert 'id="dc-vpp"' in html and "Số video mỗi trang" in html
+    assert "videos_per_page" in js and "doc_videos_per_page" in js

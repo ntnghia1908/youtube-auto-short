@@ -2612,6 +2612,8 @@ const AutoShort = (() => {
       input.dataset.saved = d.doc_url || "";
       dcEditing = false;
     }
+    const vpp = $("#dc-vpp");
+    if (force || !dcEditing) { vpp.value = d.doc_videos_per_page || 1; vpp.dataset.saved = String(vpp.value); }
   }
 
   function dcCheckText(r) {
@@ -2629,11 +2631,15 @@ const AutoShort = (() => {
 
   function initDoc() {
     const input = $("#dc-input");
-    input.addEventListener("input", () => { dcEditing = input.value.trim() !== (input.dataset.saved || ""); });
+    const vpp = $("#dc-vpp");
+    const touched = () => { dcEditing = input.value.trim() !== (input.dataset.saved || "") || vpp.value !== (vpp.dataset.saved || "1"); };
+    input.addEventListener("input", touched);
+    vpp.addEventListener("input", touched);
     const put = async (url, busy) => {
       dcMessage(busy, "muted");
       try {
-        const r = await api(`/api/playlists/${encodeURIComponent(playlistId)}/doc`, jsonBody("PUT", { url }));
+        const body = url === null ? { url } : { url, videos_per_page: Number(vpp.value) };
+        const r = await api(`/api/playlists/${encodeURIComponent(playlistId)}/doc`, jsonBody("PUT", body));
         dcLoad(r, true);
         if (url === null) dcMessage("Đã xóa", "ok");
         else { const [t, cls] = dcCheckText(r); dcMessage(t, cls); }

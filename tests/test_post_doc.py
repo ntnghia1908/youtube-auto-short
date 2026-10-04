@@ -458,3 +458,65 @@ def test_default_loader_reads_playlist_and_transcript_end_to_end(tmp_path, monke
     client = FailClient()
     summary = stage.compose_posts(EID, cfg, ["k01"], client=client, sleep=lambda s: None)
     assert summary.doc == 1 and client.calls == 0 and (work / EID / "doc.json").is_file()
+
+
+# --- CP8.24: several videos per page ---------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("url,n,k,expected", [
+    ("https://ph.tinhtong.vn/Home/A?d=A_01.html", 1, 2, "https://ph.tinhtong.vn/Home/A?d=A_01.html"),
+    ("https://ph.tinhtong.vn/Home/A?d=A_01.html", 2, 2, "https://ph.tinhtong.vn/Home/A?d=A_01.html"),
+    ("https://ph.tinhtong.vn/Home/A?d=A_01.html", 3, 2, "https://ph.tinhtong.vn/Home/A?d=A_02.html"),
+    ("https://ph.tinhtong.vn/Home/A?d=A_01.html", 4, 2, "https://ph.tinhtong.vn/Home/A?d=A_02.html"),
+    ("https://ph.tinhtong.vn/Home/A?d=A_01.html", 101, 2, "https://ph.tinhtong.vn/Home/A?d=A_51.html"),
+    ("https://ph.tinhtong.vn/Home/A?d=A_01.html", 102, 2, "https://ph.tinhtong.vn/Home/A?d=A_51.html"),
+    ("https://ph.tinhtong.vn/Home/A?d=A_1.html", 102, 2, "https://ph.tinhtong.vn/Home/A?d=A_51.html"),
+    ("https://ph.tinhtong.vn/Home/A?d=A_001.html", 102, 2, "https://ph.tinhtong.vn/Home/A?d=A_051.html"),
+    ("https://ph.tinhtong.vn/Home/A?d=A_001.html", 7, 1, "https://ph.tinhtong.vn/Home/A?d=A_007.html"),
+])
+def test_url_for_episode_videos_per_page(url, n, k, expected):  # AC2
+    assert doc.url_for_episode(url, n, k) == expected
+
+
+def test_url_for_episode_default_unchanged():  # AC1
+    url = "https://ph.tinhtong.vn/Home/A?d=A_001.html"
+    assert doc.url_for_episode(url, 12) == doc.url_for_episode(url, 12, 1) == "https://ph.tinhtong.vn/Home/A?d=A_012.html"
+
+
+def test_lookup_uses_videos_per_page(tmp_path):  # AC1, AC2, AC4
+    import json as _json
+    work = tmp_path / "work"
+    path = write_playlist(work, "PLa", [("vidAAAAAAA1", "3"), ("vidAAAAAAA2", "4")],
+                          doc_url="https://ph.tinhtong.vn/Home/A?d=A_01.html")
+    assert doc.lookup(work, "vidAAAAAAA1") == ("https://ph.tinhtong.vn/Home/A?d=A_03.html", "3")
+    data = _json.loads(path.read_text(encoding="utf-8"))
+    data["doc_videos_per_page"] = 2
+    path.write_text(_json.dumps(data), encoding="utf-8")
+    assert doc.lookup(work, "vidAAAAAAA1") == ("https://ph.tinhtong.vn/Home/A?d=A_02.html", "3")
+    assert doc.lookup(work, "vidAAAAAAA2.kt") == ("https://ph.tinhtong.vn/Home/A?d=A_02.html", "4")
+    data["doc_videos_per_page"] = "x"  # invalid stored value -> default 1
+    path.write_text(_json.dumps(data), encoding="utf-8")
+    assert doc.lookup(work, "vidAAAAAAA1") == ("https://ph.tinhtong.vn/Home/A?d=A_03.html", "3")
+
+
+def test_prepare_cache_invalid_when_videos_per_page_changes(tmp_path):  # AC4
+    import json as _json
+    work = tmp_path / "work"
+    base = "https://ph.tinhtong.vn/Home/A?d=A_01.html"
+    path = write_playlist(work, "PLa", [("vidAAAAAAA1", "3")], doc_url=base)
+    cache = work / "vidAAAAAAA1" / "doc.json"
+    cache.parent.mkdir(parents=True)
+    old = base.replace("_01", "_03")
+    cache.write_text(_json.dumps({"schema_version": 1, "url": old, "fetched_at": "x", "paragraphs": ["Một hai."],
+                                  "match": 0.9}), encoding="utf-8")
+    assert doc.read_cache(cache, doc.lookup(work, "vidAAAAAAA1")[0]) is not None
+    data = _json.loads(path.read_text(encoding="utf-8"))
+    data["doc_videos_per_page"] = 2
+    path.write_text(_json.dumps(data), encoding="utf-8")
+    assert doc.read_cache(cache, doc.lookup(work, "vidAAAAAAA1")[0]) is None
+
+
+@pytest.mark.parametrize("bad", [0, -1, 11, "2", "abc", 1.5, True, None])
+def test_normalize_videos_per_page_rejects(bad):  # AC3
+    with pytest.raises(doc.DocError, match="số video mỗi trang"):
+        doc.normalize_videos_per_page(bad)
+    assert doc.normalize_videos_per_page(10) == 10 and doc.normalize_videos_per_page(1) == 1
