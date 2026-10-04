@@ -1710,7 +1710,7 @@ const AutoShort = (() => {
       el("span", { class: "clip-id", text: s.clip_id }),
       s.video_url ? el("a", { class: "btn small", href: s.video_url, target: "_blank", rel: "noopener",
         text: g.view.kind === "khaithi" ? "Xem Khai thị" : "Xem Short" }) : null);
-    card.append(head, el("p", { class: "short-title", text: (s.title && s.title.text) || "(không có tiêu đề)" }));
+    card.append(head, el("p", { class: "short-title", text: (s.title && s.title.text ? s.title.text.toUpperCase() : "(không có tiêu đề)") }));
     const panel = el("div", { class: "post-panel" });
     card.append(panel);
 
