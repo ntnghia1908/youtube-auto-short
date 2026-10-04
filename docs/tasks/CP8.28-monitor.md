@@ -180,7 +180,7 @@ Không chạm database / security model / public API web. Điểm danh trên 808
 }
 ```
 
-- Review:
+- Review: ORCHESTRATOR 2026-10-04 — ACCEPTED, không có blocking finding. Đã kiểm: `gpu_stats` chỉ giữ khóa biết trước, số hữu hạn, tên ≤ 80 ký tự; tương thích hai chiều worker / VM; route monitor sau đăng nhập; chạy lại 76 test liên quan PASS. Non-blocking: danh sách tiến trình hiện cả dòng lệnh (cắt `CMD_MAX`) của mọi tiến trình trên VM cho người đã đăng nhập — chấp nhận vì web chỉ HUMAN LEAD dùng; `test_self_test_reports_vm_states` (slow) có thể quá 120 s khi VM tải cao.
 - Important findings / decisions: (1) Trường `gpu_stats` ở `may-run` là query JSON (GET không có body). (2) Hạn thử lại YouTube / GPU lấy từ `next_check` có sẵn của runner. (3) Tiến độ render là best-effort (đếm dòng `render: clip <id>:` trong 200 dòng log gần nhất / số clip trong `clips.json`); enhance: số đoạn lấy từ `progress` của worker. (4) `expires_at` Ollama bỏ phần thập phân giây cho mọi trình duyệt parse được. (5) Test dừng runner phải `wait_idle` trước `stop()` (stop ngắt luồng làn bằng async exception có thể kẹt khóa nếu còn việc đang chạy).
 - Known limitations: tiến trình nặng thuộc job chỉ suy được khi là con của luồng làn (ffmpeg / yt-dlp); Whisper / phân tích trong tiến trình web hiện là "trong tiến trình web" cùng danh sách job đang chạy, không tách theo làn. Không có cảnh báo / lịch sử dài / điều khiển (ngoài scope). Số GPU chỉ có sau khi cài lại worker trên 2 máy Windows (manual test checklist, chưa chạy).
-- PR: (chưa; ORCHESTRATOR)
+- PR: #68
