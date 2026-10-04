@@ -45,11 +45,24 @@ class WhisperConfig:
     word_timestamps: bool = True
     # Execution-only settings (not part of the config hash):
     cpu_threads: int = 0  # 0 = os.cpu_count()
+    # CP8.29 P1: threads of each job when the prepare lane runs several (``[web] prepare_workers`` > 1);
+    # 0 = ``cpu_threads`` (or the CPU count) divided by the number of workers, rounded down, at least 1
+    cpu_threads_per_job: int = 0
     models_dir: Path = Path("models")
 
     @property
     def effective_cpu_threads(self) -> int:
         return self.cpu_threads or os.cpu_count() or 1
+
+
+def whisper_threads_per_job(whisper: WhisperConfig, workers: int) -> int:
+    """CP8.29 P1: Whisper threads of one prepare job: ``cpu_threads_per_job`` when set, else ``cpu_threads`` (or the
+    CPU count) / ``workers`` rounded down (at least 1); ``workers = 1`` keeps ``cpu_threads`` as it is."""
+    if whisper.cpu_threads_per_job:
+        return whisper.cpu_threads_per_job
+    if workers <= 1:
+        return whisper.cpu_threads
+    return max(1, whisper.effective_cpu_threads // workers)
 
 
 @dataclass(frozen=True)
@@ -216,6 +229,8 @@ class WebConfig:
     # minutes, doubling at each consecutive block up to the maximum; a successful download resets it
     youtube_retry_minutes: int = 15
     youtube_retry_max_minutes: int = 120
+    # CP8.29 P1: jobs the ``prepare`` lane (ingest -> transcript -> analysis) runs at once; 1 = as before
+    prepare_workers: int = 1
 
 
 WEB_QUEUE_MODES = ("lanes", "serial")
@@ -371,6 +386,10 @@ def _transcript(data: dict) -> TranscriptConfig:
     if isinstance(threads, bool) or not isinstance(threads, int) or threads < 0:
         raise ConfigError(f"{ww}.cpu_threads must be an integer >= 0 (0 = number of CPUs)")
 
+    per_job = wh.get("cpu_threads_per_job", dw.cpu_threads_per_job)
+    if isinstance(per_job, bool) or not isinstance(per_job, int) or per_job < 0:
+        raise ConfigError(f"{ww}.cpu_threads_per_job must be an integer >= 0 (0 = cpu_threads / prepare_workers)")
+
     return TranscriptConfig(
         language=_str(tr, "language", d.language, where),
         min_vietnamese_ratio=_number(tr, "min_vietnamese_ratio", d.min_vietnamese_ratio, where, lo=0, hi=1),
@@ -388,6 +407,7 @@ def _transcript(data: dict) -> TranscriptConfig:
             vad_filter=_bool(wh, "vad_filter", dw.vad_filter, ww),
             word_timestamps=_bool(wh, "word_timestamps", dw.word_timestamps, ww),
             cpu_threads=threads,
+            cpu_threads_per_job=per_job,
             models_dir=Path(_str(wh, "models_dir", str(dw.models_dir), ww)),
         ),
     )
@@ -621,6 +641,7 @@ def _web(data: dict) -> WebConfig:
         youtube_retry_minutes=_int(we, "youtube_retry_minutes", d.youtube_retry_minutes, w, lo=1, hi=1440),
         youtube_retry_max_minutes=_int(we, "youtube_retry_max_minutes", d.youtube_retry_max_minutes, w, lo=1,
                                        hi=1440),
+        prepare_workers=_int(we, "prepare_workers", d.prepare_workers, w, lo=1, hi=8),
     )
 
 

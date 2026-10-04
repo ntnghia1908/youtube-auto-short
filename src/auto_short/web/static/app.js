@@ -2923,12 +2923,12 @@ const AutoShort = (() => {
       (q.youtube && q.youtube.blocked ? `YouTube chặn tải, thử lại lúc ${fmtClock(q.youtube.next_check)}. ` : "");
     const box = $("#mon-lanes");
     box.replaceChildren(...Object.entries(q.lanes).map(([lane, info]) => {
-      const run = info.running;
-      const head = el("h3", { class: "small", text: `${LANE_NAMES[lane] || lane} — ${run ? "đang chạy 1" : "rảnh"}, ${info.pending_total} chờ` });
-      const now = run
-        ? el("div", { class: "mon-run" }, el("strong", { text: jobName(run) }), jobCode(run),
+      const runs = info.running_all || (info.running ? [info.running] : []);
+      const head = el("h3", { class: "small", text: `${LANE_NAMES[lane] || lane} — ${runs.length ? `đang chạy ${runs.length}` : "rảnh"}${info.workers > 1 ? `/${info.workers}` : ""}, ${info.pending_total} chờ` });
+      const now = runs.length
+        ? el("div", {}, ...runs.map((run) => el("div", { class: "mon-run" }, el("strong", { text: jobName(run) }), jobCode(run),
           el("div", { class: "small", text: jobStep(run) }),
-          el("div", { class: "muted small", text: `bước này đã chạy ${fmtDur(run.elapsed_seconds)}` + (run.started_at ? ` · cả việc bắt đầu ${fmtClock(run.started_at)}` : "") + ` · id ${run.id}` }))
+          el("div", { class: "muted small", text: `bước này đã chạy ${fmtDur(run.elapsed_seconds)}` + (run.started_at ? ` · cả việc bắt đầu ${fmtClock(run.started_at)}` : "") + ` · id ${run.id}` }))))
         : el("div", { class: "muted small", text: "Không có việc đang chạy." });
       const items = info.pending.map((e) => el("li", { class: "small" },
         `${e.position}. ${jobName(e)} `, jobCode(e), el("span", { class: "muted", text: jobStep(e) + (e.waiting ? " · từ làn trước sang" : "") })));

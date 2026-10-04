@@ -237,7 +237,7 @@ class Sampler:
                            "rss_mb": round(p["rss"] / 2 ** 20, 1), "lane": None, "job": None}
                     lane = lanes.get(pid)
                     if lane is not None:
-                        row["lane"], row["job"] = lane, jobs.get(lane)
+                        row["lane"], row["job"] = lane.split("#")[0], jobs.get(lane)  # CP8.29: slot "prepare#1"
                     elif pid == self.pid:
                         row["comm"] = "auto-short web"
                         row["lane"], row["job"] = "web", {"jobs": list(jobs.values())}

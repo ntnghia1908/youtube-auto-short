@@ -22,9 +22,9 @@ S1 vì: mở rộng số worker của một làn trong khuôn CP8.10 (làn vẫn
 - Whisper không tăng tuyến tính theo luồng: CP11 đo 24 luồng nhanh hơn 48 trên máy 48 nhân → chạy 2–3 tập song song với ít luồng hơn mỗi tập thường cho tổng thông lượng cao hơn.
 - `transcript/whisper.py` cache model theo khóa có `effective_cpu_threads`.
 
-## Amendment 1 (HUMAN LEAD 2026-10-04)
+## Amendment 1 (HUMAN LEAD 2026-10-04, làm rõ)
 
-"Chừa lại 4 core để chạy web và tải video mượt" → tổng luồng tính toán (Whisper của các job chuẩn bị + ffmpeg render `[render] jobs` × luồng mỗi job) đặt sao cho chừa ≥ 4 nhân: cấu hình đề xuất dùng tối đa 28 luồng cho Whisper khi làn render rảnh, và tổng Whisper + render không vượt 28 khi cả hai chạy (giới hạn luồng ffmpeg render nếu cần — IMPLEMENTER đề xuất cách, ví dụ `[render] threads`); đo P4 dưới ràng buộc này. Có thể giảm ưu tiên CPU (nice) cho tiến trình con nặng (ffmpeg) để web / tải không bị chậm — ghi rõ nếu làm.
+"Không phải khóa cứng 4 core, mà phải bảo đảm web mượt cho người dùng và khi tải xuống." → **không** giới hạn cứng số nhân; việc nặng (Whisper của job chuẩn bị, ffmpeg render / tải / ghép, phân tích) được dùng hết CPU nhưng chạy ở **ưu tiên thấp**: tiến trình con nặng chạy với `nice` (ví dụ 10–15) + `ionice` lớp idle / best-effort thấp; luồng Whisper trong tiến trình web hạ ưu tiên theo luồng (Linux `setpriority` trên native thread id) — tiến trình web (uvicorn, request, tải file) giữ ưu tiên thường. Kiểm: khi làn chuẩn bị + render chạy đầy CPU, request trang web và tải file (`Range`) vẫn nhanh (đo thời gian phản hồi trang + tốc độ tải một file lớn trước / sau, ghi Result).
 
 ## Goal
 

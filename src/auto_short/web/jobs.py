@@ -16,7 +16,9 @@ unreachable the ``ai`` lane does not fail jobs; it keeps them at the head of its
 ``GPU_RETRY_SECONDS`` (docs/tasks/FIX-ollama-wait.md O5). FIX-youtube-botcheck-wait: when YouTube blocks the download
 (bot check / 429) the job goes back to the head of the ``prepare`` queue, the lane starts no job that needs a download
 until a retry time that doubles at each consecutive block (``[web] youtube_retry_minutes`` ..), kept in the queue file.
-Contract: docs/decisions/CP8.3-web-contract.md W5.
+CP8.29: the ``prepare`` lane may run several jobs at once (``prepare_workers``, one worker thread each, "slots":
+``prepare``, ``prepare#1``, ..); the other lanes keep one. Jobs of the same video (``<id>`` and ``<id>.kt``) never
+prepare at the same time. Contract: docs/decisions/CP8.3-web-contract.md W5.
 """
 
 from __future__ import annotations
@@ -169,6 +171,7 @@ class Job:
     yt_wait: bool = False  # FIX-youtube-botcheck-wait: waiting in the prepare queue while YouTube blocks the download
     _yt_ok: Callable[[], None] | None = field(default=None, repr=False)  # set by the runner (prepare lane)
     _reachable: Callable[[], None] | None = field(default=None, repr=False)  # set by the runner (ai lane)
+    probe: bool = field(default=False, repr=False)  # CP8.29: started after the YouTube retry time (the one try)
     again: bool = field(default=False, repr=False)  # post job: a new trigger arrived while running (R3)
     requeued: bool = field(default=False, repr=False)  # came back to the ai queue via GpuUnavailable (O5)
     step: int = field(default=0, repr=False)  # index of the running / next step
@@ -249,7 +252,7 @@ class JobRunner:
     def __init__(self, mode: str = MODE_LANES, *, gpu_retry_seconds: float = GPU_RETRY_SECONDS,
                  youtube_retry_seconds: float = YT_RETRY_SECONDS, youtube_retry_max_seconds: float = YT_RETRY_MAX_SECONDS,
                  monotonic: Callable[[], float] = time.monotonic, wall: Callable[[], float] = time.time,
-                 priority: Priority | None = None) -> None:
+                 priority: Priority | None = None, prepare_workers: int = 1) -> None:
         if mode not in (MODE_LANES, MODE_SERIAL):
             raise ValueError(f"unknown queue mode {mode!r}")
         self.mode = mode
@@ -257,12 +260,18 @@ class JobRunner:
         self.priority = priority if priority is not None else Priority()
         self.priority.on_change = self._priority_changed
         self._lane_names = LANES if mode == MODE_LANES else (_SERIAL,)
+        # CP8.29: worker slots; the slot named like the lane is the first (the only one except for ``prepare``)
+        self._slot_lane: dict[str, str] = {lane: lane for lane in self._lane_names}
+        if mode == MODE_LANES:
+            for i in range(1, max(1, int(prepare_workers))):
+                self._slot_lane[f"{PREPARE}#{i}"] = PREPARE
+        self.prepare_workers = sum(1 for lane in self._slot_lane.values() if lane == PREPARE)
         self._lock = threading.Condition()
         self._queues: dict[str, deque[Job]] = {lane: deque() for lane in self._lane_names}
-        self._current: dict[str, Job | None] = {lane: None for lane in self._lane_names}
+        self._current: dict[str, Job | None] = {slot: None for slot in self._slot_lane}  # slot -> running job
         self._threads: dict[str, threading.Thread] = {}
-        self._idents: dict[int, str] = {}  # worker thread ident -> lane
-        self._tids: dict[int, str] = {}  # CP8.28: worker thread native id (/proc task id) -> lane
+        self._idents: dict[int, str] = {}  # worker thread ident -> slot
+        self._tids: dict[int, str] = {}  # CP8.28: worker thread native id (/proc task id) -> slot
         self._jobs: dict[str, Job] = {}
         self._latest: dict[str, Job] = {}  # episode_id -> newest job
         self._ids = itertools.count(1)
@@ -288,7 +297,7 @@ class JobRunner:
         self._yt_next = 0.0  # monotonic deadline of the next download attempt while blocked
         # CP8.22: global pause (``None`` | ``"now"`` | ``"after"``), kept on disk with the queue
         self._paused: str | None = None
-        self._in_step: dict[str, Job] = {}  # lane -> job whose step may be interrupted by "pause now"
+        self._in_step: dict[str, Job] = {}  # slot -> job whose step may be interrupted by "pause now"
         self._state_path: Path | None = None
         self._rebuild: Callable[[str, str, dict, list[str]], Callable[[Job], None] | None] | None = None
         self._restoring = False
@@ -302,10 +311,10 @@ class JobRunner:
             log.setLevel(logging.INFO)
         log.addHandler(self._handler)
         self._stopping = False
-        for lane in self._lane_names:
-            name = "auto-short-jobs" if lane == _SERIAL else f"auto-short-{lane}"
-            thread = threading.Thread(target=self._work, args=(lane,), name=name, daemon=True)
-            self._threads[lane] = thread
+        for slot in self._slot_lane:
+            name = "auto-short-jobs" if slot == _SERIAL else f"auto-short-{slot}"
+            thread = threading.Thread(target=self._work, args=(slot,), name=name, daemon=True)
+            self._threads[slot] = thread
             thread.start()
 
     def stop(self, timeout: float = 30.0) -> None:
@@ -317,13 +326,13 @@ class JobRunner:
         with self._lock:
             self._stopping = True
             self._lock.notify_all()
-            running = [(lane, job) for lane, job in self._current.items() if job is not None]
+            running = [(slot, job) for slot, job in self._current.items() if job is not None]
             self._save_locked()  # Q3: the queue (running jobs at the head of their lane) is on disk before any interrupt
-        for lane, job in running:
-            thread = self._threads.get(lane)
+        for slot, job in running:
+            thread = self._threads.get(slot)
             if thread is not None and thread.ident is not None:
                 log.info("web: stopping, interrupting job %s [%s]%s", job.id, job.episode_id,
-                         "" if lane == _SERIAL else f" (lane {lane})")
+                         "" if slot == _SERIAL else f" (lane {self._slot_lane[slot]})")
                 _interrupt(thread.ident)
         if running:
             for pid in _child_pids():
@@ -487,13 +496,31 @@ class JobRunner:
 
     def job_on_thread(self, thread_ident: int | None) -> Job | None:
         """The job the lane worker ``thread_ident`` is running (log handler)."""
-        lane = self._idents.get(thread_ident) if thread_ident is not None else None
-        return self._current.get(lane) if lane is not None else None
+        slot = self._idents.get(thread_ident) if thread_ident is not None else None
+        return self._current.get(slot) if slot is not None else None
+
+    def _lane_running_locked(self, lane: str) -> list[Job]:
+        return [j for slot, j in self._current.items() if j is not None and self._slot_lane[slot] == lane]
 
     def running(self) -> dict[str, Job]:
-        """Lane -> job it is running (test / diagnostics)."""
+        """Lane -> job it is running (test / diagnostics); the first one for a lane that runs several (CP8.29)."""
         with self._lock:
-            return {lane: job for lane, job in self._current.items() if job is not None}
+            out: dict[str, Job] = {}
+            for slot, job in self._current.items():
+                if job is not None:
+                    out.setdefault(self._slot_lane[slot], job)
+            return out
+
+    def running_slots(self) -> dict[str, Job]:
+        """CP8.29: worker slot (``prepare``, ``prepare#1``, ``ai``, ..) -> job it is running."""
+        with self._lock:
+            return {slot: job for slot, job in self._current.items() if job is not None}
+
+    def _release_locked(self, job: Job) -> None:
+        for slot, cur in self._current.items():
+            if cur is job:
+                self._current[slot] = None
+                self._in_step.pop(slot, None)
 
     def wait_idle(self, timeout: float = 10.0) -> bool:
         """Test helper: wait until no job is queued, running in a lane or waiting between two lanes."""
@@ -610,6 +637,17 @@ class JobRunner:
             return len(self._queues[AI]) < PREFETCH_LIMIT or self._gpu_down()
         return True
 
+    @staticmethod
+    def _video_of(job: Job) -> str:
+        """CP8.29: the video of an episode (a khai thị episode ``<id>.kt`` belongs to ``<id>``)."""
+        return job.episode_id.removesuffix(".kt")
+
+    def _no_clash(self, job: Job) -> bool:
+        """CP8.29: may ``job`` start in the prepare lane next to the jobs it already runs? Not while another job of
+        the same video runs (ingest of the ``.kt`` episode reuses the source of the base episode)."""
+        video = self._video_of(job)
+        return all(self._video_of(j) != video for j in self._lane_running_locked(PREPARE))
+
     def _take_locked(self, lane: str) -> Job | None:
         """Next job for ``lane`` (blocks); None when stopping. While the ai lane is down it waits until the next
         check time (``Condition.wait``, so ``stop()`` never waits it out), but an ``add`` job (CP9) never waits."""
@@ -621,12 +659,20 @@ class JobRunner:
             if lane == PREPARE and queue and self._yt_blocked():
                 left = self._yt_next - self._mono()
                 if left > 0:  # Y2: only jobs that need no download may start (and only within the prefetch limit)
-                    free = self._pop(queue, self._no_download) if self._can_start(lane) else None
+                    free = self._pop(queue, lambda j: self._no_clash(j) and self._no_download(j)) \
+                        if self._can_start(lane) else None
                     if free is not None:
                         return free
                     self._lock.wait(left)
                     continue
-                return self._pop(queue)  # time to try again
+                # time to try again: one job at a time makes the try (CP8.29), the others take no-download jobs only
+                trying = any(j.probe for j in self._lane_running_locked(PREPARE))
+                job = self._pop(queue, lambda j: self._no_clash(j) and (not trying or self._no_download(j)))
+                if job is not None:
+                    job.probe = not self._no_download(job)
+                    return job
+                self._lock.wait()
+                continue
             if lane == AI and queue and self._gpu_down():
                 # an ``add`` job never waits; nor does a ``post`` job that has not run yet (it may need no AI:
                 # FIX-post-doc-no-gpu F3). A job that came back via GpuUnavailable waits for the next check.
@@ -640,23 +686,26 @@ class JobRunner:
                     continue
                 return self._pop(queue)
             if self._can_start(lane):
-                return self._pop(queue)
+                job = self._pop(queue, self._no_clash) if lane == PREPARE else self._pop(queue)
+                if job is not None:
+                    return job
             self._lock.wait()
         return None
 
-    def _work(self, lane: str) -> None:
-        self._idents[threading.get_ident()] = lane
-        self._tids[threading.get_native_id()] = lane
+    def _work(self, slot: str) -> None:
+        self._idents[threading.get_ident()] = slot
+        self._tids[threading.get_native_id()] = slot
         while True:
             try:
-                self._loop(lane)
+                self._loop(slot)
                 return
             except KeyboardInterrupt:  # stop() raced with the end of a job
                 if self._stopping:
                     return
                 # CP8.22: a late "pause now" interrupt landed outside the job; the lane must survive it
 
-    def _loop(self, lane: str) -> None:
+    def _loop(self, slot: str) -> None:
+        lane = self._slot_lane[slot]
         while True:
             ok = False
             requeue: str | None = None
@@ -667,7 +716,7 @@ class JobRunner:
                 if job is None:
                     return
                 job.pause_requeue = False
-                self._in_step[lane] = job
+                self._in_step[slot] = job
                 first = job.status == QUEUED
                 if first:
                     job.status, job.started_at, job.t0 = RUNNING, _now(), time.monotonic()
@@ -676,7 +725,7 @@ class JobRunner:
                 job._reachable = self._gpu_reachable if lane == AI else None
                 job._yt_ok = self._youtube_ok if lane == PREPARE else None
                 job.step_t0, job.step_started_at = time.monotonic(), _now()
-                self._current[lane] = job
+                self._current[slot] = job
                 self._lock.notify_all()  # a shorter ai queue may let the prepare lane start (Q2)
             try:
                 if first:
@@ -733,8 +782,7 @@ class JobRunner:
     def _requeue_paused(self, lane: str, job: Job) -> None:
         """CP8.22: a step cut by "pause now" returns to the head of its lane (not failed); its stages rerun later."""
         with self._lock:
-            self._current[lane] = None
-            self._in_step.pop(lane, None)
+            self._release_locked(job)
             job.pause_requeue, job._reachable, job.error = False, None, None
             lane_stages = LANE_STAGES.get(lane, ())
             job.stages[:] = [st for st in job.stages if lane_stages and st["stage"] not in lane_stages] \
@@ -751,8 +799,7 @@ class JobRunner:
 
     def _requeue(self, lane: str, job: Job, error: str) -> None:
         with self._lock:
-            self._current[lane] = None
-            self._in_step.pop(lane, None)
+            self._release_locked(job)
             job.lane, job.waiting, job._reachable = lane, True, None
             job.requeued = True
             if job.kind == KIND_PIPELINE:
@@ -766,22 +813,24 @@ class JobRunner:
         """Y2: YouTube blocked the download: the job returns, not failed, to the head of the prepare queue (like a job
         cut by "pause now": its prepare stages rerun later) and the lane backs off."""
         with self._lock:
-            self._current[lane] = None
-            self._in_step.pop(lane, None)
+            self._release_locked(job)
             job._yt_ok, job.error = None, None
+            probe, job.probe = job.probe, False
             job.stages[:] = [st for st in job.stages if st["stage"] not in LANE_STAGES[PREPARE]]
             if job.step == 0:
                 job.status, job.started_at, job.lane, job.waiting, job.stage = QUEUED, None, None, False, None
             else:
                 job.lane, job.waiting, job.stage = lane, True, LANE_STAGES[lane][0]
             self._queues[lane].appendleft(job)
-            self._set_yt_blocked_locked(error)
+            if probe or not self._yt_blocked():  # CP8.29: a job that was already running when another got the block
+                self._set_yt_blocked_locked(error)  # only returns to the queue; the one try counts
             self._save_locked()
             self._lock.notify_all()
 
     def _after(self, lane: str, job: Job, ok: bool) -> None:
         last = not ok or job.step + 1 >= len(job.steps)
         job._reachable = job._yt_ok = None
+        job.probe = False
         park = False
         if not last and job.kind == KIND_PIPELINE and job.steps[job.step + 1].lane == RENDER \
                 and not self._stopping:
@@ -803,8 +852,7 @@ class JobRunner:
             except Exception:  # a bug in the hook must not kill the worker
                 log.exception("web: on_finished hook failed for job %s [%s]", job.id, job.episode_id)
         with self._lock:
-            self._current[lane] = None
-            self._in_step.pop(lane, None)
+            self._release_locked(job)
             if last:
                 job.finished_at, job.lane, job.waiting = _now(), None, False
                 if job.again and job.kind == KIND_POST and job.status != INTERRUPTED and not self._stopping:
@@ -892,11 +940,11 @@ class JobRunner:
             log.info("web: queue paused (%s): %d waiting", mode, self._pending_locked())
             self._save_locked()
             if mode == "now":
-                for lane, job in self._in_step.items():
-                    thread = self._threads.get(lane)
-                    if job is self._current.get(lane) and thread is not None and thread.ident is not None:
+                for slot, job in self._in_step.items():
+                    thread = self._threads.get(slot)
+                    if job is self._current.get(slot) and thread is not None and thread.ident is not None:
                         job.pause_requeue = True
-                        cut.append((lane, job))
+                        cut.append((slot, job))
                         _interrupt(thread.ident)
             self._lock.notify_all()
         if cut:
@@ -931,8 +979,8 @@ class JobRunner:
     # --- CP8.28: monitor tab ---------------------------------------------------------------------
 
     def lane_tids(self) -> dict[int, str]:
-        """Native thread id (``/proc/<pid>/task/<tid>``) of each lane worker -> lane (monitor: which child process
-        belongs to which lane)."""
+        """Native thread id (``/proc/<pid>/task/<tid>``) of each worker -> its slot (``prepare``, ``prepare#1``, ..,
+        ``ai``; monitor: which child process belongs to which job)."""
         return dict(self._tids)
 
     def _monitor_entry(self, job: Job, *, running: bool = False) -> dict:
@@ -957,14 +1005,16 @@ class JobRunner:
             lanes: dict[str, dict] = {}
             waiting: list[dict] = []
             for lane in self._lane_names:
-                cur = self._current.get(lane)
+                cur_all = self._lane_running_locked(lane)
                 ordered = self._ordered(self._queues[lane])
                 pend = []
                 for i, j in enumerate(ordered[:limit], 1):
                     e = self._monitor_entry(j)
                     e["position"] = i
                     pend.append(e)
-                lanes[lane] = {"running": self._monitor_entry(cur, running=True) if cur is not None else None,
+                run_all = [self._monitor_entry(j, running=True) for j in cur_all]
+                lanes[lane] = {"running": run_all[0] if run_all else None, "running_all": run_all,
+                               "workers": sum(1 for ln in self._slot_lane.values() if ln == lane),
                                "pending": pend, "pending_total": len(ordered)}
                 if lane == AI and self._gpu_down():
                     waiting += [dict(self._monitor_entry(j), reason="gpu", retry_at=self._gpu["next_check"])
@@ -999,11 +1049,10 @@ class JobRunner:
         lanes: dict[str, list[dict]] = {}
         for lane in self._lane_names:
             heads: list[Job] = []
-            current = self._current.get(lane)
-            if current is not None:
-                heads.append(current)
+            currents = self._lane_running_locked(lane)
+            heads += currents
             heads += sorted((j for j in self._jobs.values() if j.resume is not None and j.resume[0] == lane
-                             and j.status == INTERRUPTED and j is not current), key=lambda j: int(j.id))
+                             and j.status == INTERRUPTED and j not in currents), key=lambda j: int(j.id))
             entries = [self._entry(j, j.resume[1] if j.resume is not None and j.status == INTERRUPTED else j.step)
                        for j in heads]
             entries += [self._entry(j, j.step) for j in self._queues[lane]]
