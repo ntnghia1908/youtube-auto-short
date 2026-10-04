@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: CHANGE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -52,8 +52,8 @@ Không chạm database / security model / public API. Điểm danh trên 8080: b
 
 ## Result
 
-- Main changes:
-- Tests:
+- Main changes: `MIN_MATCH` 0.6 → 0.5 (`post/doc.py`); D3 trong CP8.15 contract ghi ngưỡng 0,5 + lý do + ngày; log `stage.py` in ngưỡng động nên không cần sửa.
+- Tests: thêm biên 0.49 / 0.5 / 0.587 và cache `match = 0.587` dùng được không tải lại (`tests/test_post_doc.py`); `pytest -q -n auto`: 1450 passed, 1 skipped; framework-check PASS.
 - Review:
 - Important findings / decisions:
 - Known limitations:
