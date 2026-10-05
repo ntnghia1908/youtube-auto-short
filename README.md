@@ -174,6 +174,17 @@ accepted, matching images are downloaded straight into the library after the sam
 http(s) hosts are fetched, never a local/private address). Parameters in `[post]` of `config.example.toml`.
 Contract: `docs/decisions/CP8.15-community-post-contract.md`.
 
+Find images by keyword (CP8.30): in the same dialog, type a keyword ("Tây Phương Tam Thánh", "A Di Đà Phật"…) and
+press "Tìm theo từ khóa". The known sites (niemphatanvui.vn collections, hwadzan, ph.tinhtong.vn, amtb-m.org.my,
+sachphat.net; override with `<image_dir>/search-sources.tsv`) are searched and, only when both
+`AUTO_SHORT_GOOGLE_CSE_KEY` and `AUTO_SHORT_GOOGLE_CSE_CX` are in the web server's environment, Google image search too
+(the API is closed to new customers and ends 2027-01-01; at most `[post] google_daily_limit` calls a day). Images that
+are too small or already in the library (same bytes or near-identical picture) are dropped; the rest show as a grid of
+candidates — tick the ones you want and press "Thêm vào thư viện" (new files are numbered on from the library's last
+number). "Chia lại ảnh cho bài chưa đăng" re-deals images to every post not yet ticked "Đã đăng bài" (evenly, never the
+same image twice in one video; `posts.json` is backed up under `<workspace>/_post-backups/` first and you confirm the
+number of posts that change). Contract: P5c / P5d of the same file.
+
 Correction dictionary (CP8.18): editing a post and pressing "Lưu đoạn" records word fixes as proposals; approve them in
 "Từ điển sửa lỗi" on the Bài đăng tab and they are applied to the source words of every later post and to the unposted
 posts already stored. The rules live in `[post] corrections_path` (default

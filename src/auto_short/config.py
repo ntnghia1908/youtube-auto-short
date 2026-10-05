@@ -306,6 +306,11 @@ class PostConfig:
     # P5: outside the repo, not committed.
     image_dir: Path = field(default_factory=lambda: Path("~/.local/share/auto-short/post-images").expanduser())
     image_sources: tuple[str, ...] = ()  # P5b: quick-link buttons ([] = none)
+    # CP8.30 P5c: search by keyword (the Google key / engine id come only from the environment, never from here).
+    search_max_pages: int = 12  # HTML pages fetched per search on the known sites
+    search_max_candidates: int = 60  # candidates kept per search
+    google_daily_limit: int = 100  # Google API calls per local day
+    candidate_ttl_hours: float = 6.0  # un-picked candidates are deleted after this
     # CP8.18 D1: shared correction dictionary (outside the repo; the edit log ``post-edit-log.jsonl`` sits beside it).
     corrections_path: Path = field(default_factory=lambda: _default_corrections_path())
     # Execution-only settings (not part of any hash; posts.json is not a stage artifact); env OLLAMA_HOST overrides.
@@ -766,6 +771,10 @@ def _post(data: dict) -> PostConfig:
         chunk_words=_int(po, "chunk_words", d.chunk_words, w, lo=20, hi=5000),
         image_dir=Path(_str(po, "image_dir", str(d.image_dir), w)).expanduser(),
         image_sources=tuple(sources),
+        search_max_pages=_int(po, "search_max_pages", d.search_max_pages, w, lo=1, hi=50),
+        search_max_candidates=_int(po, "search_max_candidates", d.search_max_candidates, w, lo=1, hi=200),
+        google_daily_limit=_int(po, "google_daily_limit", d.google_daily_limit, w, lo=0, hi=10000),
+        candidate_ttl_hours=_number(po, "candidate_ttl_hours", d.candidate_ttl_hours, w, lo=0.1, hi=720),
         corrections_path=Path(_str(po, "corrections_path", str(d.corrections_path), w)).expanduser(),
         ollama_host=_str(po, "ollama_host", d.ollama_host, w),
         timeout=_number(po, "timeout", d.timeout, w, lo=1),

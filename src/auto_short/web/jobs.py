@@ -42,6 +42,7 @@ from ..ingest import IngestBlocked, needs_download
 from ..pipeline import (PIPELINE_STAGES, OllamaUnavailable, PipelineError, PreflightError, StageRun,
                         ollama_preflight, run_pipeline)
 from ..post import fetch as post_fetch
+from ..post import imgsearch as post_imgsearch
 from ..post import stage as post_stage
 from ..render import RenderError, run_render
 from ..workspace import atomic_write_json
@@ -59,6 +60,7 @@ KIND_RENDER = "render"
 KIND_ADD = "add"  # CP9 C7: AI title of a Short added by hand (lane ai), then render (lane render)
 KIND_POST = "post"  # CP8.15 P1: compose / recompose community post text (lane ai; no render)
 KIND_POST_SEARCH = "post_search"  # CP8.15 P5b: find images from a link (lane prepare; no Ollama)
+KIND_IMAGE_SEARCH = "image_search"  # CP8.30 P5c: find images by keyword -> candidates (lane prepare; no Ollama)
 KIND_ENHANCE = "enhance"  # CP13.1b: assemble ``source_hd.mp4`` from the received segments (lane render; runs under enhance_key)
 KIND_VERTICAL = "vertical"  # CP8.27 H4: vertical full-episode video from ``source_hd.mp4`` (lane render; runs under vertical_key)
 POST_IMAGES_KEY = "_post_images"  # CP8.15 P9: pseudo episode id for the (single, global) image search job
@@ -1560,6 +1562,43 @@ class ImageSearchTarget:
 def image_search_target(config: Config, url: str, *, search: Callable | None = None) -> ImageSearchTarget:
     """See :class:`ImageSearchTarget`."""
     return ImageSearchTarget(config, url, search=search)
+
+
+class KeywordSearchTarget:
+    """Job target finding image candidates by keyword (CP8.30 P5c): lane ``prepare``, runs under
+    :data:`POST_IMAGES_KEY` like :class:`ImageSearchTarget` (so only one search runs at a time). ``search`` =
+    ``(keyword, config, progress) -> SearchOutcome`` (a test seam; the default reads the Google key from the
+    environment). Nothing enters the library: the web route ``add`` does that for the picked candidates."""
+
+    def __init__(self, config: Config, keyword: str, *, search: Callable | None = None):
+        self.config, self.keyword = config, keyword
+        self.search = search or (lambda kw, cfg, progress: post_imgsearch.search_for_config(kw, cfg, progress=progress))
+        self.result: post_imgsearch.SearchOutcome | None = None
+
+    def run(self, job: Job) -> None:
+        def progress(msg: str) -> None:
+            job.stage = msg
+        try:
+            self.result = self.search(self.keyword, self.config, progress)
+        except post_imgsearch.SearchError as exc:
+            raise JobFailed(str(exc)) from exc
+        job.stage = None
+        dropped = sum(self.result.skipped.values())
+        job.summary = f"{len(self.result.candidates)} ứng viên" + (f", bỏ {dropped}" if dropped else "")
+
+    def __call__(self, job: Job) -> None:
+        self.run(job)
+
+    def lane_steps(self) -> list[Step]:
+        return [Step(PREPARE, self.run)]
+
+    def spec(self) -> dict:
+        return {"keyword": self.keyword}
+
+
+def keyword_search_target(config: Config, keyword: str, *, search: Callable | None = None) -> KeywordSearchTarget:
+    """See :class:`KeywordSearchTarget`."""
+    return KeywordSearchTarget(config, keyword, search=search)
 
 
 # --- HD assembly job (CP13.1b E3) ----------------------------------------------------------------------------------

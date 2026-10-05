@@ -238,6 +238,12 @@ chunk_words = 400            # text longer than this (words) is punctuated in se
 # top level, served whole (no resize / crop / text overlay). Outside the repo: not committed, not backed up here.
 image_dir = "~/.local/share/auto-short/post-images"
 image_sources = []            # quick "tìm ảnh" links offered on the image library tab ([] = none)
+# CP8.30 keyword image search (the Google key + engine id are read ONLY from the environment of the web process:
+# AUTO_SHORT_GOOGLE_CSE_KEY, AUTO_SHORT_GOOGLE_CSE_CX; without both only the known sites are searched)
+# search_max_pages = 12         # HTML pages fetched per search on the known sites
+# search_max_candidates = 60    # candidates kept per search
+# google_daily_limit = 100      # Google API calls per local day
+# candidate_ttl_hours = 6       # un-picked candidates are deleted after this
 # Execution-only (not part of any hash). Env OLLAMA_HOST overrides ollama_host.
 ollama_host = "http://127.0.0.1:11437"
 timeout = 600
