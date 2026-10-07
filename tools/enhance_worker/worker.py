@@ -72,7 +72,8 @@ DEFAULTS = {
     "idle_seconds": 60,        # 204: khong co viec
     "not_found_seconds": 300,  # 404: VM chua co API
     "error_seconds": 30,       # loi mang khi xin lease
-    "may_run_seconds": 30,     # E7
+    "may_run_seconds": 30,     # E7: hoi lai khi dang cho
+    "preempt_check_seconds": 10,  # E7 (FIX-enhance-yield): hoi may-run trong luc lam doan; clamp 5-60
     "heartbeat_seconds": 60,
     "http_timeout": 30,
     "upload_backoff_seconds": 5,
@@ -787,6 +788,7 @@ class Worker:
         self.lost = threading.Event()      # lease mat (409)
         self.halt = threading.Event()      # dung luong phu cua lease hien tai
         self._fatal: BaseException | None = None
+        self._preempted = threading.Event()  # VM bao preempt giua doan (E7): dung doan, tra VRAM
         self.stats = {"encoded": 0, "uploaded": 0, "put_ok": 0}
         self._gpu = ""
         self._stats: tuple[float, dict | None] = (-1e9, None)
@@ -798,6 +800,21 @@ class Worker:
         if now - self._stats[0] >= GPU_STATS_TTL:
             self._stats = (now, read_gpu_stats(self.cfg))
         return self._stats[1]
+
+    def preempt_interval(self) -> float:
+        """Chu ky hoi may-run trong luc lam doan (giay), ep vao 5-60."""
+        try:
+            v = float(self.cfg.get("preempt_check_seconds", 10))
+        except (TypeError, ValueError):
+            v = 10.0
+        return min(60.0, max(5.0, v))
+
+    def may_run_query(self) -> str:
+        query = {"worker": self.cfg["worker_name"]}
+        stats = self.gpu_stats()
+        if stats:
+            query["gpu_stats"] = json.dumps(stats, separators=(",", ":"))  # CP8.28: VM cu bo qua
+        return "/api/enhance/may-run?" + urllib.parse.urlencode(query)
 
     def sleep(self, s: float) -> bool:
         """Ngu `s` giay; True neu bi dung."""
@@ -839,8 +856,9 @@ class Worker:
 
     # -- vong lap chinh --
     def run(self) -> int:
-        log.info("worker v%s '%s' -> %s (yield_to_ollama=%s)", __version__,
-                 self.cfg["worker_name"], self.cfg["server_url"], self.cfg["yield_to_ollama"])
+        log.info("worker v%s '%s' -> %s (yield_to_ollama=%s, preempt_check_seconds=%s)", __version__,
+                 self.cfg["worker_name"], self.cfg["server_url"], self.cfg["yield_to_ollama"],
+                 self.preempt_interval())
         while not self.stop.is_set():
             try:
                 return self._loop()
@@ -1058,12 +1076,23 @@ class Worker:
             start, count = seg_range(n, L, frames)
             out = d / seg_name(n)
             abort = threading.Event()
+            self._preempted.clear()
             watcher = threading.Thread(target=self._watch_abort, args=(abort,), daemon=True)
             watcher.start()
+            threading.Thread(target=self._watch_preempt, args=(abort,), daemon=True).start()
             try:
                 st = eng.run_segment(src, start, count, fps, wh, params, out, abort)
             except Aborted:
                 abort.set()
+                if self._preempted.is_set():
+                    # E7: Ollama can GPU -> bo doan do dang lam, tra VRAM, cho may-run; khong tinh la loi
+                    self._preempted.clear()
+                    out.unlink(missing_ok=True)
+                    out.with_name(out.name + ".part").unlink(missing_ok=True)
+                    log.info("doan %d bi dung giua chung (Ollama can GPU) - bo phan da lam, giai phong VRAM, "
+                             "se lam lai tu dau khi duoc chay", n)
+                    eng.release_vram()
+                    continue
                 self._check_stop_ok()
                 return "stopped"
             except (RuntimeError, ValueError, OSError) as e:
@@ -1119,6 +1148,27 @@ class Worker:
                 abort.set()
                 return
 
+    def _watch_preempt(self, abort: threading.Event):
+        """E7: trong luc lam doan, hoi may-run moi `preempt_check_seconds`; `run: false` + `preempt: true` -> dung doan.
+        Loi mang / HTTP = run true; VM cu khong gui `preempt` = false."""
+        interval = self.preempt_interval()
+        while not abort.wait(interval):
+            try:
+                _, data = self.api.call_json("GET", self.may_run_query())
+            except (NetError, HttpError) as e:
+                log.debug("may-run (giua doan) khong hoi duoc (%s) - coi nhu run=true", e)
+                continue
+            except Exception as e:  # AuthError / LeaseLost ... do luong khac xu ly
+                log.debug("may-run (giua doan): %s", e)
+                continue
+            if not isinstance(data, dict) or data.get("run", True) or data.get("preempt") is not True:
+                continue
+            if not abort.is_set():
+                log.info("may-run: false + preempt (%s) - dung doan dang lam", data.get("reason", ""))
+                self._preempted.set()
+                abort.set()
+            return
+
     # -- nguon --
     def ensure_source(self, lease, src: Path) -> bool:
         part = src.with_name("source.part")
@@ -1173,14 +1223,11 @@ class Worker:
     # -- E7 --
     def wait_may_run(self, eng) -> bool:
         paused_logged = False
+        released = False
         while not self.stop.is_set():
             self._check_stop_ok()
             try:
-                query = {"worker": self.cfg["worker_name"]}
-                stats = self.gpu_stats()
-                if stats:
-                    query["gpu_stats"] = json.dumps(stats, separators=(",", ":"))  # CP8.28: VM cu bo qua
-                _, data = self.api.call_json("GET", "/api/enhance/may-run?" + urllib.parse.urlencode(query))
+                _, data = self.api.call_json("GET", self.may_run_query())
             except (NetError, HttpError) as e:  # offline / VM khong tra loi -> cu lam (E4 offline)
                 log.debug("may-run khong hoi duoc (%s) - coi nhu run=true", e)
                 return True
@@ -1191,8 +1238,10 @@ class Worker:
             if not paused_logged:
                 log.info("may-run: false (%s) - tam dung, hoi lai moi %ss", data.get("reason", ""), self.cfg["may_run_seconds"])
                 paused_logged = True
-                if self.cfg["yield_to_ollama"]:
-                    eng.release_vram()
+            # preempt (Ollama can GPU): luon tra VRAM; VM cu (khong co preempt) thi theo yield_to_ollama
+            if not released and (data.get("preempt") is True or self.cfg["yield_to_ollama"]):
+                eng.release_vram()
+                released = True
             self.sleep(self.cfg["may_run_seconds"])
         return False
 

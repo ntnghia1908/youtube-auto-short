@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: BUG
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -91,9 +91,9 @@ Không chạm database. Có chạm giao thức worker ↔ VM (E3, field mới t�
 
 ## Result
 
-- Main changes:
-- Tests:
-- Review:
-- Important findings / decisions:
-- Known limitations:
+- Main changes: `EnhanceService.may_run_info` -> `(run, reason, preempt)` (`may_run` giữ chữ ký cũ); `GET /api/enhance/may-run` trả thêm `preempt`. Worker: khóa `preempt_check_seconds` (mặc định 10, ép 5–60, in ra log khi khởi động); luồng `_watch_preempt` hỏi `may-run` định kỳ trong lúc `run_segment`, nhận `run: false` + `preempt: true` thì abort; `_segments_loop` xóa đoạn dở + `.part`, `release_vram()`, không tính `fails`, không release lease, rồi quay lại `wait_may_run`; `wait_may_run` luôn `release_vram` (một lần) khi `preempt: true`, còn lại theo `yield_to_ollama`. `fake_server.py`: `preempt`, `legacy_may_run`, `may_run_status`. ADR CP13.1 E3 + E7 sửa (dòng Amendment), `config.example.json` + `docs/guides/enhance-worker-windows.md` cập nhật. Worker `__version__` giữ `"3"`.
+- Tests: `tests/test_enhance_api.py` (Y1, AC1) và `tests/test_enhance_worker.py` (AC2–6, engine giả `SlowEngine`, không cần torch, cần ffmpeg). Cập nhật assert `{"run","reason"}` -> thêm `"preempt": False` ở `tests/test_monitor_cp828.py` (field cộng thêm). Chạy: targeted 30 passed (12 slow deselected); `python -m pytest -q -n auto` 1581 passed, 1 skipped; `-m slow` 17 passed (có env `enhance-bench` + trọng số); `node scripts/framework-check.mjs` PASS.
+- Review: chờ ORCHESTRATOR.
+- Important findings / decisions: AC2 đo với chu kỳ thật 5 s (clamp thấp nhất) -> dừng trong <= 10 s. Các test khác patch `preempt_interval` 0.3 s cho nhanh. Chưa chạy trên GPU thật / máy Windows (manual test checklist là gate trước merge).
+- Known limitations: bị dừng thì mất tối đa một đoạn (D1). Poll giữa đoạn chạy luồng riêng; poll treo (HTTP timeout 30 s) có thể trễ việc dừng tương ứng.
 - PR:

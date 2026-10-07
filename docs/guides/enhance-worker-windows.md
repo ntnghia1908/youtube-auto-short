@@ -99,7 +99,7 @@ Khởi động lại máy rồi đăng nhập: hai task tự chạy (kiểm bằ
 
 ## Đổi token / cấu hình
 
-Sửa `%USERPROFILE%\enhance-worker\config.json`; worker tự đọc lại sau tối đa `auth_retry_seconds` khi gặp 401 (muốn áp dụng ngay: `.\auto-fix-enhance-worker.ps1`; hoặc chạy lại `setup-enhance-worker.ps1 -WorkerName ... -Token <token mới>`). Các khóa: `worker_name`, `token`, `yield_to_ollama`, `batch_size`, `max_disk_gb`, `work_dir`, `device`, `ffmpeg`. Mẫu: `config.example.json`. Không gửi token qua chat / commit vào repo.
+Sửa `%USERPROFILE%\enhance-worker\config.json`; worker tự đọc lại sau tối đa `auth_retry_seconds` khi gặp 401 (muốn áp dụng ngay: `.\auto-fix-enhance-worker.ps1`; hoặc chạy lại `setup-enhance-worker.ps1 -WorkerName ... -Token <token mới>`). Các khóa: `worker_name`, `token`, `yield_to_ollama` (chỉ còn tác dụng với VM cũ; VM mới tự báo `preempt`), `preempt_check_seconds` (5–60, mặc định 10: chu kỳ hỏi VM trong lúc làm đoạn để nhường GPU cho Ollama), `batch_size`, `max_disk_gb`, `work_dir`, `device`, `ffmpeg`. Mẫu: `config.example.json`. Không gửi token qua chat / commit vào repo.
 
 ## Cập nhật worker đã cài (ví dụ lên bản gửi số liệu GPU cho tab "Theo dõi", CP8.28)
 

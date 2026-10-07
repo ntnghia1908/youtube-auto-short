@@ -1863,7 +1863,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     @app.get("/api/enhance/may-run")
     def api_enhance_may_run(worker: str | None = None, gpu_stats: str | None = None,
                             name: str = Depends(_worker)):
-        """E7: ``{run, reason}`` for the worker (the token name decides; ``worker`` is only a display label).
+        """E7: ``{run, reason, preempt}`` for the worker (``preempt`` = stop mid-segment, FIX-enhance-yield; the token name decides; ``worker`` is only a display label).
         ``gpu_stats`` (CP8.28, optional): the worker's ``nvidia-smi`` numbers as compact JSON (ignored when unusable)."""
         stats = None
         if gpu_stats and len(gpu_stats) <= 1000:
@@ -1872,8 +1872,8 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             except ValueError:
                 stats = None
         svc.ping(name, worker[:80] if worker else None, stats)
-        run, reason = svc.may_run(name)
-        return {"run": run, "reason": reason}
+        run, reason, preempt = svc.may_run_info(name)
+        return {"run": run, "reason": reason, "preempt": preempt}
 
     @app.get("/api/enhance/status")
     def api_enhance_status():

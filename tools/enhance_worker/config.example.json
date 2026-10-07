@@ -3,6 +3,7 @@
   "worker_name": "rtx3090",
   "token": "<token do VM cap>",
   "yield_to_ollama": true,
+  "preempt_check_seconds": 10,
   "work_dir": "work",
   "models_dir": "models",
   "log_file": "logs/worker.log",

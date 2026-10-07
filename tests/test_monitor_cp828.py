@@ -321,7 +321,7 @@ def test_gpu_stats_via_lease_and_may_run_and_stale(tmp_path):
     # unusable numbers are ignored, the previous ones stay; the call still works
     for bad in ("not json", "[1,2]", json.dumps({"util_pct": "x"})):
         r = c.client.get("/api/enhance/may-run", params={"gpu_stats": bad}, headers=H1)
-        assert r.status_code == 200 and r.json() == {"run": True, "reason": ""}
+        assert r.status_code == 200 and r.json() == {"run": True, "reason": "", "preempt": False}
     assert c.gpu()["w3090"]["gpu_stats"]["util_pct"] == 12.0
 
 

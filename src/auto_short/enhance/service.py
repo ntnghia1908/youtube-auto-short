@@ -111,15 +111,22 @@ class EnhanceService:
         with self.lock:
             self._touch(name, label, gpu_stats=gpu_stats)
 
+    def may_run_info(self, name: str) -> tuple[bool, str, bool]:
+        """E7 + FIX-enhance-yield: ``(run, reason, preempt)``. ``preempt`` is true only when ``run`` is false because
+        Ollama is busy and ``name`` is a yield worker: the worker must then stop mid-segment and free its VRAM.
+        Pause / ``enabled = false`` give ``preempt = False`` (the worker finishes the current segment)."""
+        if not self.enabled:
+            return False, "enhance is off ([enhance] enabled = false)", False
+        if self._paused:
+            return False, "enhance paused", False
+        if name in self.config.enhance.yield_workers and self.ai_busy():
+            return False, "Ollama busy (ai lane)", True
+        return True, "", False
+
     def may_run(self, name: str) -> tuple[bool, str]:
         """E7: may the worker ``name`` (token name) enhance now?"""
-        if not self.enabled:
-            return False, "enhance is off ([enhance] enabled = false)"
-        if self._paused:
-            return False, "enhance paused"
-        if name in self.config.enhance.yield_workers and self.ai_busy():
-            return False, "Ollama busy (ai lane)"
-        return True, ""
+        run, reason, _preempt = self.may_run_info(name)
+        return run, reason
 
     # --- documents ---------------------------------------------------------------------------------------------
 
