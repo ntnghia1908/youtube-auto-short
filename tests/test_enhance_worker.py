@@ -151,6 +151,219 @@ def count_frames(path: Path) -> tuple[int, int, int]:
 # --------------------------------------------------------------------------- khong can torch
 
 
+# --------------------------------------------------------------------------- FIX-enhance-yield: dung giua doan (engine gia)
+
+
+class SlowEngine:
+    """Engine gia (khong torch): doan `block` cho den khi `gate` mo; abort -> de lai file .part, nem Aborted."""
+
+    dev, encoder, gpu = "cpu", "libx264", "fake"
+
+    def __init__(self, wh=(64, 48), block_first=(0,), block_always=()):
+        self.wh = wh
+        self.calls: list[int] = []
+        self.released = 0
+        self.aborted: list[int] = []
+        self.gate = threading.Event()
+        self.in_segment = threading.Event()
+        self.block_first, self.block_always = set(block_first), set(block_always)
+
+    def release_vram(self):
+        self.released += 1
+
+    @staticmethod
+    def make_segment(out: Path, n: int, count: int, size: tuple[int, int]):
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+                        f"testsrc=size={size[0]}x{size[1]}:rate=25:duration=10,setpts=PTS+{n}/25/TB",
+                        "-frames:v", str(count), "-threads", "1", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                        "-f", "mp4", str(out)], check=True)
+
+    def run_segment(self, src, start, count, fps, src_wh, params, out_path, abort):
+        n = start // SEG
+        self.calls.append(n)
+        first = self.calls.count(n) == 1
+        if n in self.block_always or (first and n in self.block_first):
+            self.in_segment.set()
+            while not self.gate.is_set():
+                if abort.is_set():
+                    self.aborted.append(n)
+                    out_path.with_name(out_path.name + ".part").write_bytes(b"partial")
+                    out_path.write_bytes(b"partial")
+                    raise W.Aborted("abort")
+                time.sleep(0.05)
+        _, _, ow, oh = W.out_size(src_wh[0], src_wh[1], int(params["pre_height"]), int(params["out_height"]))
+        self.make_segment(out_path, n, count, (ow, oh))
+        return {"frames": count, "batches": 1, "max_batch": count, "reader_thread": "t", "encoder": "libx264",
+                "seconds": 0.1, "out_size": f"{ow}x{oh}", "face": "none"}
+
+
+class InProc:
+    """Worker trong tien trinh voi engine gia; `preempt_check_seconds` thuc te 5 s (clamp) tru khi `fast`."""
+
+    def __init__(self, tmp: Path, srv, eng, monkeypatch, fast=True, **cfg):
+        c = W.load_config(None, {"server_url": srv.url, "worker_name": "t", "token": TOK, "device": "cpu",
+                                 "work_dir": str(tmp / "iw" / "work"), "log_file": str(tmp / "iw" / "w.log"),
+                                 "may_run_seconds": 1, "error_seconds": 1, "idle_seconds": 1,
+                                 "upload_backoff_seconds": 1, "drain_seconds": 2})
+        c.update(cfg)
+        if fast:
+            monkeypatch.setattr(W.Worker, "preempt_interval", lambda self: 0.3)
+        self.stop = threading.Event()
+        self.srv, self.eng = srv, eng
+        self.worker = W.Worker(c, once=True, stop=self.stop, engine=eng)
+        self.code: list[int] = []
+        self.thread = threading.Thread(target=lambda: self.code.append(self.worker.run()), daemon=True)
+
+    def start(self):
+        self.thread.start()
+        return self
+
+    def close(self):
+        self.stop.set()
+        self.eng.gate.set()
+        self.thread.join(20)
+
+    def seg_file(self, n: int) -> Path:
+        return self.worker.work / "ep" / self.srv.episode_id / W.seg_name(n)
+
+
+@pytest.fixture
+def inproc(tmp_path, monkeypatch):
+    made = []
+
+    def make(srv, eng, **kw):
+        w = InProc(tmp_path, srv, eng, monkeypatch, **kw)
+        made.append(w)
+        return w
+
+    yield make
+    for w in made:
+        w.close()
+
+
+def _reference_sha(tmp_path: Path, srv) -> dict[int, str]:
+    """sha256 cua tung doan do engine gia sinh ra (khong bi dung) - ket qua cuoi phai trung."""
+    _, _, ow, oh = W.out_size(64, 48, PARAMS["pre_height"], PARAMS["out_height"])
+    out = {}
+    for n in range(srv.nseg):
+        f = tmp_path / f"ref{n}.mp4"
+        SlowEngine.make_segment(f, n, W.seg_range(n, SEG, srv.frames)[1], (ow, oh))
+        out[n] = W.sha256_file(f)
+    return out
+
+
+def test_preempt_interval_is_clamped_and_logged(tmp_path, caplog):
+    for raw, want in ((1, 5.0), (10, 10.0), (500, 60.0), ("x", 10.0)):
+        cfg = W.load_config(None, {"work_dir": str(tmp_path / "w"), "preempt_check_seconds": raw})
+        assert W.Worker(cfg).preempt_interval() == want
+    assert W.DEFAULTS["preempt_check_seconds"] == 10
+    caplog.set_level("INFO", logger="enhance_worker")
+    cfg = W.load_config(None, {"work_dir": str(tmp_path / "w"), "token": "x"})
+    w = W.Worker(cfg, once=True)
+    w.stop.set()
+    w.run()
+    assert "preempt_check_seconds=10" in caplog.text
+
+
+@needs_ffmpeg
+def test_preempt_mid_segment_aborts_releases_vram_and_redoes_segment(tmp_path, server, inproc, caplog):
+    """AC 2 + 3: dung <= preempt_check_seconds + 5 s (chu ky that 5 s), bo doan do, tra VRAM du yield_to_ollama = false,
+    khong tinh loi / khong release lease; sau run=true lam lai doan do, ket qua giong lan khong bi dung."""
+    caplog.set_level("INFO", logger="enhance_worker")
+    s = server()
+    eng = SlowEngine()
+    w = inproc(s, eng, fast=False, yield_to_ollama=False, preempt_check_seconds=5).start()
+    assert eng.in_segment.wait(30)
+    wait_for(lambda: not s.lease_valid or s.lease_id, 10)
+    t0 = time.time()
+    s.may_run, s.preempt = False, True
+    wait_for(lambda: eng.released >= 1, 15, "worker tra VRAM")
+    assert time.time() - t0 <= 5 + 5
+    assert eng.aborted == [0] and eng.calls == [0]
+    assert not w.seg_file(0).exists() and not w.seg_file(0).with_name("seg_00000.mp4.part").exists()
+    assert w.worker.state.seg(0) is None and s.releases == [] and s.lease_valid
+    assert s.received == {} and "dung doan dang lam" in caplog.text
+    s.may_run, s.preempt = True, False
+    w.thread.join(60)
+    assert w.code == [0] and s.complete and eng.calls == [0, 0, 1, 2, 3]
+    assert s.releases == [] and sorted(s.received) == [0, 1, 2, 3]
+    assert s.received == _reference_sha(tmp_path, s)
+
+
+@needs_ffmpeg
+def test_preempt_true_releases_vram_between_segments_even_without_yield_to_ollama(server, inproc):
+    """Y3: wait_may_run nhan preempt -> release_vram bat ke yield_to_ollama; chi release mot lan."""
+    s = server()
+    s.may_run, s.preempt = False, True
+    eng = SlowEngine(block_first=())
+    w = inproc(s, eng, yield_to_ollama=False).start()
+    wait_for(lambda: s.may_run_calls >= 3, 30, "worker hoi may-run")
+    assert eng.released == 1 and eng.calls == []
+    s.may_run, s.preempt = True, False
+    w.thread.join(60)
+    assert w.code == [0] and s.complete
+
+
+@needs_ffmpeg
+def test_pause_without_preempt_finishes_the_current_segment(server, inproc):
+    """AC 4 / D4: run=false + preempt=false giua doan -> doan van xong va duoc upload, sau do moi dung."""
+    s = server()
+    eng = SlowEngine()
+    w = inproc(s, eng, yield_to_ollama=False).start()
+    assert eng.in_segment.wait(30)
+    s.may_run, s.preempt = False, False
+    n0 = s.may_run_calls
+    wait_for(lambda: s.may_run_calls >= n0 + 3, 10, "worker hoi may-run giua doan")
+    assert eng.aborted == [] and eng.released == 0
+    eng.gate.set()
+    wait_for(lambda: 0 in s.received, 30, "doan 0 duoc upload")
+    n1 = s.may_run_calls
+    wait_for(lambda: s.may_run_calls >= n1 + 2, 10)
+    assert eng.calls == [0] and eng.released == 0           # dung sau doan hien tai (hanh vi cu)
+    s.may_run = True
+    w.thread.join(60)
+    assert w.code == [0] and s.complete and eng.aborted == []
+
+
+@needs_ffmpeg
+def test_errors_while_polling_mid_segment_do_not_abort(server, inproc):
+    """AC 5: loi HTTP khi hoi may-run giua doan = run true."""
+    s = server()
+    eng = SlowEngine()
+    w = inproc(s, eng).start()
+    assert eng.in_segment.wait(30)
+    s.may_run_status = 500
+    n0 = s.may_run_calls
+    wait_for(lambda: s.may_run_calls >= n0 + 3, 10, "worker hoi may-run giua doan")
+    assert eng.aborted == [] and eng.released == 0
+    s.may_run_status = 200
+    eng.gate.set()
+    w.thread.join(60)
+    assert w.code == [0] and s.complete and eng.calls == [0, 1, 2, 3] and eng.aborted == []
+
+
+@needs_ffmpeg
+def test_old_vm_without_preempt_field_never_stops_mid_segment(server, inproc):
+    """AC 6: VM cu (khong co `preempt`): run=false giua doan khong dung doan; giua hai doan theo yield_to_ollama."""
+    s = server()
+    s.legacy_may_run = True
+    eng = SlowEngine()
+    w = inproc(s, eng, yield_to_ollama=True).start()
+    assert eng.in_segment.wait(30)
+    s.may_run = False
+    n0 = s.may_run_calls
+    wait_for(lambda: s.may_run_calls >= n0 + 3, 10)
+    assert eng.aborted == [] and eng.released == 0
+    eng.gate.set()
+    wait_for(lambda: 0 in s.received, 30)
+    wait_for(lambda: eng.released >= 1, 10, "yield_to_ollama = true -> tra VRAM giua hai doan")
+    assert eng.calls == [0]
+    s.may_run = True
+    w.thread.join(60)
+    assert w.code == [0] and s.complete and eng.aborted == []
+
+
+
 def test_pure_helpers():
     assert W.parse_fps("30000/1001") == Fraction(30000, 1001)
     assert W.parse_fps(29.97) == Fraction(30000, 1001)

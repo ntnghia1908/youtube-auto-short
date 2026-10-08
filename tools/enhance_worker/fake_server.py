@@ -86,6 +86,9 @@ class FakeServer:
         self.status_log: list[tuple[str, str, int]] = []
         # dieu khien
         self.may_run = True            # bool hoac callable(calls:int)->bool
+        self.preempt = False           # bool hoac callable(calls:int)->bool: truong `preempt` cua may-run (E7, FIX-enhance-yield)
+        self.legacy_may_run = False    # True: nhu VM cu, may-run khong co truong `preempt`
+        self.may_run_status = 200      # != 200: may-run tra ma loi nay (loi HTTP / mang giua doan)
         self.no_api = False            # moi route /api/enhance/* -> 404
         self.api_401 = False           # nhu VM truoc CP13.1b: middleware dang nhap tra 401 cho moi /api/*
         self.cut_source_after: int | None = None  # dut ket noi sau N byte (mot lan)
@@ -209,8 +212,14 @@ class FakeServer:
         if method == "GET" and path == "/api/enhance/may-run":
             self.may_run_calls += 1
             self.may_run_queries.append(query)
+            if self.may_run_status != 200:
+                return self._send(h, self.may_run_status, {"error": "may-run down"})
             run = self.may_run(self.may_run_calls) if callable(self.may_run) else bool(self.may_run)
-            return self._send(h, 200, {"run": run, "reason": "" if run else "ollama busy"})
+            body = {"run": run, "reason": "" if run else "ollama busy"}
+            if not self.legacy_may_run:
+                pre = self.preempt(self.may_run_calls) if callable(self.preempt) else bool(self.preempt)
+                body["preempt"] = bool(pre) and not run
+            return self._send(h, 200, body)
         m = _SEG_RE.match(path)
         if method == "PUT" and m:
             return self._put_seg(h, m.group(1), int(m.group(2)), length)

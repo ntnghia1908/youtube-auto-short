@@ -108,7 +108,7 @@ def test_worker_routes_need_the_token_not_the_cookie(ctx):
     assert ctx.client.post(f"/api/episodes/{E1}/enhance", json={"enabled": False}, headers=H1).status_code == 401
     assert ctx.client.post("/api/enhance-pause", json={"paused": True}, headers=H1).status_code == 401
     # a valid token works (200 / 204), also for the second worker
-    assert ctx.client.get("/api/enhance/may-run", headers=H1).json() == {"run": True, "reason": ""}
+    assert ctx.client.get("/api/enhance/may-run", headers=H1).json() == {"run": True, "reason": "", "preempt": False}
     assert ctx.client.get("/api/enhance/may-run", headers=H2).status_code == 200
 
 
@@ -166,6 +166,7 @@ def test_lease_204_when_nothing_to_do_disabled_or_paused(tmp_path):
         make_yt_episode(off.cfg, E1, height=240, with_enhance=False)
         st.decide(off.cfg, E1, force=True)  # a leftover wanted video
         assert off.client.get("/api/enhance/may-run", headers=H2).json()["run"] is False
+        assert off.client.get("/api/enhance/may-run", headers=H1).json()["preempt"] is False  # disabled: no preempt
         assert off.lease(H2).status_code == 204
 
 
@@ -390,12 +391,13 @@ def test_may_run_yields_to_the_ai_lane_only_for_the_ollama_worker(ctx):
     def ask(headers):
         return ctx.client.get("/api/enhance/may-run?worker=x", headers=headers).json()
 
-    assert ask(H1) == {"run": True, "reason": ""} and ask(H2)["run"] is True
+    assert ask(H1) == {"run": True, "reason": "", "preempt": False} and ask(H2)["run"] is True
     ctx.runner.submit("somethingelse", "post", Slow())  # a post-compose job runs in the ai lane
     assert started.wait(5)
     r1, r2 = ask(H1), ask(H2)
     assert r1["run"] is False and "Ollama" in r1["reason"]  # the worker on the Ollama machine gives way
-    assert r2["run"] is True  # the other worker does not
+    assert r1["preempt"] is True  # FIX-enhance-yield Y1: Ollama busy -> stop mid-segment
+    assert r2["run"] is True and r2["preempt"] is False  # the other worker never gets preempt
     release.set()
     assert ctx.runner.wait_idle(10)
     wait_for(lambda: ask(H1)["run"] is True)
@@ -404,6 +406,7 @@ def test_may_run_yields_to_the_ai_lane_only_for_the_ollama_worker(ctx):
     make_yt_episode(ctx.cfg, E1)
     assert ctx.client.post("/api/enhance-pause", json={"paused": True}, cookies=cookie).json()["paused"] is True
     assert ask(H1)["run"] is False and ask(H2)["run"] is False and "pause" in ask(H2)["reason"]
+    assert ask(H1)["preempt"] is False and ask(H2)["preempt"] is False  # pause: finish the current segment (D4)
     assert ctx.lease(H2).status_code == 204
     assert ctx.client.post("/api/enhance-pause", json={"paused": False}, cookies=cookie).json()["paused"] is False
     assert ask(H2)["run"] is True and ctx.lease(H2).status_code == 200
