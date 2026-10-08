@@ -83,11 +83,11 @@ Tất cả required verification phải chạy và PASS trước READY.
 
 Không chạm database. Có chạm giao thức worker ↔ VM (E3, field mới tương thích ngược). Security model (E8) không đổi. Manual test là gate trước merge, vì worker Windows phải được chép tay sang máy 3090.
 
-- [ ] Chép `tools/enhance_worker/` mới sang máy RTX 3090, khởi động lại worker. Log in ra `preempt_check_seconds`.
-- [ ] Lúc 3090 đang enhance giữa đoạn, bấm "Chạy tiếp" một tập đang lỗi selection (ví dụ `ja52PvWoU4o`). Log worker có dòng dừng giữa đoạn + giải phóng VRAM trong khoảng 15 s; `nvidia-smi` trên 3090 cho thấy tiến trình worker không còn giữ VRAM lớn.
-- [ ] Selection của tập đó xong trong khoảng 5–10 phút, không timeout.
-- [ ] Khi làn `ai` trống, worker tự làm lại đoạn bị dừng. Tập enhance hoàn tất và có "HD: đã xong".
-- [ ] "Tạm dừng enhance" lúc đang làm dở một đoạn: đoạn đó vẫn chạy xong rồi worker mới dừng.
+- [x] Chép `tools/enhance_worker/` mới sang máy RTX 3090, khởi động lại worker. Log in ra `preempt_check_seconds`.
+- [x] Lúc 3090 đang enhance giữa đoạn, bấm "Chạy tiếp" một tập đang lỗi selection (ví dụ `ja52PvWoU4o`). Log worker có dòng dừng giữa đoạn + giải phóng VRAM trong khoảng 15 s; `nvidia-smi` trên 3090 cho thấy tiến trình worker không còn giữ VRAM lớn.
+- [x] Selection của tập đó xong trong khoảng 5–10 phút, không timeout.
+- [x] Khi làn `ai` trống, worker tự làm lại đoạn bị dừng. Tập enhance hoàn tất và có "HD: đã xong".
+- [x] "Tạm dừng enhance" lúc đang làm dở một đoạn: đoạn đó vẫn chạy xong rồi worker mới dừng.
 
 ## Result
 
@@ -95,5 +95,6 @@ Không chạm database. Có chạm giao thức worker ↔ VM (E3, field mới t�
 - Tests: `tests/test_enhance_api.py` (Y1, AC1) và `tests/test_enhance_worker.py` (AC2–6, engine giả `SlowEngine`, không cần torch, cần ffmpeg). Cập nhật assert `{"run","reason"}` -> thêm `"preempt": False` ở `tests/test_monitor_cp828.py` (field cộng thêm). Chạy: targeted 30 passed (12 slow deselected); `python -m pytest -q -n auto` 1581 passed, 1 skipped; `-m slow` 17 passed (có env `enhance-bench` + trọng số); `node scripts/framework-check.mjs` PASS.
 - Review: round 1 ACCEPTED (ORCHESTRATOR 2026-10-07): diff khớp Y1–Y4 / D1–D4; preempt giữa đoạn đi qua đường `Aborted` sẵn có (`run_segment` kiểm `ext_abort` mỗi batch), `ensure()` nạp lại model lên GPU sau `release_vram`; chạy lại targeted 52 passed. Không có blocking finding.
 - Important findings / decisions: AC2 đo với chu kỳ thật 5 s (clamp thấp nhất) -> dừng trong <= 10 s. Các test khác patch `preempt_interval` 0.3 s cho nhanh. Chưa chạy trên GPU thật / máy Windows (manual test checklist là gate trước merge).
+- Manual test (HUMAN LEAD 2026-10-07/08, 8080 ghim `46064b5`, worker 3090 cài lại bằng `setup-enhance-worker.ps1`): ĐẠT. Log 3090: `worker v3 … preempt_check_seconds=10.0`; `may-run: false + preempt` → `doan 6 bi dung giua chung` sau 0,3 s (2026-10-07 15:08:25), `may-run: tiep tuc` 15:13:58 khi làn `ai` xong; thêm 2 lần preempt khác (đoạn 5, đoạn 1) đều dừng < 1 s và làm lại. Tập 4 `ja52PvWoU4o` selection 3 window 64 + 62 + 54 s (trước: timeout 3 × 600 s); tập 4, 5 + khai thị chạy xong tới render. Bước "Tạm dừng enhance" giữa đoạn: HUMAN LEAD xác nhận đã thử trước đó, đạt.
 - Known limitations: bị dừng thì mất tối đa một đoạn (D1). Poll giữa đoạn chạy luồng riêng; poll treo (HTTP timeout 30 s) có thể trễ việc dừng tương ứng.
 - PR:
