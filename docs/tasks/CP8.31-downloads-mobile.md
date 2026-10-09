@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: IN_PROGRESS
 - Type: CHANGE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -112,9 +112,13 @@ Không chạm database / security model; route file mới dùng cùng auth như 
   - Test CP8.17 D3 / CP8.7 sửa vì hành vi đổi (zip tick): `tests/test_web_cp817.py::test_shorts_zip_does_not_tick_but_single_download_does` thay bằng 4 test D1 (tick từng loại, all.zip, Short đã xóa / stale, lỗi ghi `publish.json`); `test_static_ui_labels_and_no_refresh_after_zip` bỏ assert "không làm mới sau zip"; `tests/test_playlist_cp87.py::test_download_ticks_published` đoạn zip giờ kỳ vọng tick cả 3 Short.
   - Không có trình duyệt headless (không chromium / playwright trong env): AC5 / AC6 chưa có ảnh chụp 390 px; ORCHESTRATOR kiểm trên server test 8081 hoặc HUMAN LEAD trên điện thoại.
 - Review:
+  - ORCHESTRATOR round 1: 2 blocking — tên docx cả bộ rơi về playlist id khi bộ kinh không lưu series (Địa Tạng); heading tập lặp tên bộ kinh. Sửa ở `40330bf` (fallback series của tập đầu; chỉ nối tên video khi không chứa series). Retest: `pytest -q -n auto` 1596 passed, 1 skipped (ORCHESTRATOR chạy lại). Round 2: ACCEPTED, không còn blocking.
+  - Kiểm dữ liệu thật (app tạm, workspace symlink chỉ đọc, không gọi zip): docx Địa Tạng 7,0 s / 44,4 MB (11 tập, 154 bài, 114 ảnh khác nhau), Vô Lượng Thọ 11,5 s / 44,7 MB (19 tập, 285 bài); API bộ kinh 0,17 s (374 dòng). Tên file `Kinh Địa Tạng Bồ Tát Bổn Nguyện_BaiDang.docx`.
+  - 8080 ghim `40330bf` (theo yêu cầu HUMAN LEAD "test trên 8080"); manual test checklist + ảnh mobile do HUMAN LEAD trên điện thoại.
 - Important findings / decisions:
   - Thứ tự tập trong file cả bộ: số tập (như `_by_episode_order` của CP13.2), tập không nhận số tập xếp sau theo thứ tự danh sách.
   - Cột tiêu đề: bài đã xóa khỏi `render_manifest` (không `rendered`) không xuất; bài stale vẫn xuất.
 - Known limitations:
+  - File cả bộ ~44 MB vì ảnh nhúng nguyên cỡ (non-blocking).
   - Chưa kiểm bằng trình duyệt thật (bố cục 2 cột mobile, mở docx trong Word / Google Docs); chưa đo thời gian "bài đăng cả bộ" với bộ kinh lớn (dựng tuần tự một lần, ảnh nhúng nguyên file).
 - PR:
