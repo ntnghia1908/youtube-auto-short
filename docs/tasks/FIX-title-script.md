@@ -80,4 +80,4 @@ Không chạm database / security model / public API contract (chỉ thêm một
 - Review: ORCHESTRATOR 2026-10-09 — ACCEPTED, không có blocking finding. Luật 4b nằm trong `form_reject_reason` nên AI title (G5/G8), Short thêm tay (C6) và title tay (T2) dùng chung. Sửa message mong đợi của 2 test cũ (`心`) là hệ quả đúng của luật mới (lý do đổi từ glyph sang `non-Latin script`), không che lỗi; nhánh "not in the font" vẫn được phủ bằng `\ue000`. ORCHESTRATOR chạy lại: pytest 1613 passed, 1 skipped; framework-check PASS.
 - Important findings / decisions: hai test hiện có (`test_review.py` invalid title, `test_web_titles.py` preview) dùng `心` để kiểm "not in the font"; do luật 4b chạy trước kiểm glyph nên `心` nay báo `non-Latin script`. Giữ case `心` với message mới và thêm case `\ue000` (không phải chữ cái, thiếu glyph) cho "not in the font"; không nới assertion nào khác.
 - Known limitations: `titles.json` cũ không bị kiểm lại (2 alternative lỗi chỉ bị chặn khi được chọn).
-- PR:
+- PR: #80
