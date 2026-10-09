@@ -166,13 +166,15 @@ summary { cursor: pointer; color: var(--muted); }
   .rec-actions { display: grid; grid-template-columns: 1fr; }
   .rec-actions .btn { width: 100%; }
   .pl-entry { flex-wrap: wrap; }
-  .pl-entry .rec-actions { flex-basis: 100%; }
+  .pl-entry .rec-actions { flex-basis: calc(100% - 2.7rem); }
   .deleted-item .btn { width: 100%; }
   /* CP8.31 D5: button rows are two columns (an odd last button grows to the full row), not one button per row */
   .actions .btn, .head-actions .btn, .enhance-box .edit-actions .btn { flex: 1 1 calc(50% - .5rem); min-width: 0; text-align: center; }
   .actions > span:not([hidden]) { flex: 1 1 100%; }
-  .pl-entry .rec-actions { display: flex; flex-wrap: wrap; gap: .4rem; }
-  .pl-entry .rec-actions .btn { width: auto; }
+  /* CP8.31 round 4: the actions row starts under the episode name (index column 2.2rem + gap .5rem), buttons
+     centred and one height (2.75rem, as .icon-btn) */
+  .pl-entry .rec-actions { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin-left: calc(2.2rem + .5rem); }
+  .pl-entry .rec-actions .btn { width: auto; min-height: 2.75rem; display: inline-flex; align-items: center; justify-content: center; }
   .long { display: none; }
   .filters .btn { flex: 1 1 auto; }
   .container { padding: .5rem; }

@@ -395,3 +395,13 @@ def test_badge_static_has_text_and_colour_classes(tcfg):
         for k in ("full", "part", "none"):
             assert f".badge.prog.{k}" in css
         assert "đã đăng ${e.published}/${e.shorts}" not in js  # the counts moved out of the status line
+
+
+def test_mobile_row_actions_aligned_with_name(tcfg):
+    with client(tcfg) as c:
+        login(c)
+        css = c.get("/static/style.css").text
+        mobile = css[css.index("@media (max-width: 640px)"):]
+        assert "margin-left: calc(2.2rem + .5rem)" in mobile and "flex-basis: calc(100% - 2.7rem)" in mobile
+        assert ".pl-entry .rec-actions .btn { width: auto; min-height: 2.75rem;" in mobile
+        assert ".pl-index { min-width: 2.2rem;" in css  # the index column the margin matches

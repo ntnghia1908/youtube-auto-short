@@ -132,6 +132,7 @@ Yêu cầu trực tiếp của HUMAN LEAD (sửa D2 / D3; thêm D7). Không ch�
   - Kiểm dữ liệu thật (app tạm, workspace symlink chỉ đọc, không gọi zip): docx Địa Tạng 7,0 s / 44,4 MB (11 tập, 154 bài, 114 ảnh khác nhau), Vô Lượng Thọ 11,5 s / 44,7 MB (19 tập, 285 bài); API bộ kinh 0,17 s (374 dòng). Tên file `Kinh Địa Tạng Bồ Tát Bổn Nguyện_BaiDang.docx`.
   - 8080 ghim `40330bf` (theo yêu cầu HUMAN LEAD "test trên 8080"); manual test checklist + ảnh mobile do HUMAN LEAD trên điện thoại.
   - Amendment 1 + 2 (round 3): route bộ kinh `?from&to` / `?other=1` + `images=0|1` (bỏ file cả bộ), `posts_ranges`, `posts_total/posted/count` mỗi entry (một lần đọc `posts.json` mỗi tập), khối "Tải bài đăng (.docx)" + ô "Có hình" (`localStorage`), huy hiệu `Short/Khai thị/Bài x/y`; decision CP8.15 P16, CP8.3 W6/W7, README cập nhật; test mới trong `tests/test_web_cp831.py`. Tên không-hình: `…_BaiDang_KhongHinh.docx`; `other=1`: `Tập chưa rõ`.
+  - Round 4 (HUMAN LEAD, điện thoại): nút dòng tập lệch tên tập — CSS ≤ 640 px: hàng nút lùi `calc(2.2rem + .5rem)` (thẳng cột với tên), `align-items: center`, mọi nút cao 2.75rem; desktop không đổi; test `test_mobile_row_actions_aligned_with_name`.
 - Important findings / decisions:
   - Thứ tự tập trong file cả bộ: số tập (như `_by_episode_order` của CP13.2), tập không nhận số tập xếp sau theo thứ tự danh sách.
   - Cột tiêu đề: bài đã xóa khỏi `render_manifest` (không `rendered`) không xuất; bài stale vẫn xuất.
