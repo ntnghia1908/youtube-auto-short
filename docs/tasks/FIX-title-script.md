@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: BUG
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -77,7 +77,7 @@ Không chạm database / security model / public API contract (chỉ thêm một
 
 - Main changes: `titling/logic.py` thêm `_has_non_latin_letter` và luật 4b trong `form_reject_reason` (sau emoji) trả `non-Latin script`. CP6 G5 thêm luật 4b kèm dòng sửa đổi 2026-10-09; CP8.2 T2 ghi luật hình thức 1–8 gồm 4b.
 - Tests: `python -m pytest -q -n auto` = 1613 passed, 1 skipped; `node scripts/framework-check.mjs` PASS. Test mới: bảng `test_reject_reason_rules` (Hán, kana, Hangul, Cyrillic, Thái), `test_vietnamese_and_punctuation_pass_script_rule`, `test_non_latin_option_rejected_next_valid_chosen` (AC3), `--set "… 众生"` trong `test_cli_title` và `Tâm 心` trong `test_invalid_title_leaves_review_unchanged` / web preview (AC4).
-- Review:
+- Review: ORCHESTRATOR 2026-10-09 — ACCEPTED, không có blocking finding. Luật 4b nằm trong `form_reject_reason` nên AI title (G5/G8), Short thêm tay (C6) và title tay (T2) dùng chung. Sửa message mong đợi của 2 test cũ (`心`) là hệ quả đúng của luật mới (lý do đổi từ glyph sang `non-Latin script`), không che lỗi; nhánh "not in the font" vẫn được phủ bằng `\ue000`. ORCHESTRATOR chạy lại: pytest 1613 passed, 1 skipped; framework-check PASS.
 - Important findings / decisions: hai test hiện có (`test_review.py` invalid title, `test_web_titles.py` preview) dùng `心` để kiểm "not in the font"; do luật 4b chạy trước kiểm glyph nên `心` nay báo `non-Latin script`. Giữ case `心` với message mới và thêm case `\ue000` (không phải chữ cái, thiếu glyph) cho "not in the font"; không nới assertion nào khác.
 - Known limitations: `titles.json` cũ không bị kiểm lại (2 alternative lỗi chỉ bị chặn khi được chọn).
 - PR:
