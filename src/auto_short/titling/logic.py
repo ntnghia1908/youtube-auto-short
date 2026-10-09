@@ -176,8 +176,15 @@ def evidence_in_text(evidence: str, text_norm: str) -> bool:
     return bool(ev) and f" {ev} " in f" {text_norm} "
 
 
+def _has_non_latin_letter(text: str) -> bool:
+    """A letter (Unicode category L*) whose Unicode name does not start with LATIN (Han, kana, Hangul, Cyrillic,
+    Thai, ...). Vietnamese letters are all LATIN ..., so they pass."""
+    return any(unicodedata.category(ch).startswith("L") and not unicodedata.name(ch, "").startswith("LATIN")
+               for ch in text)
+
+
 def form_reject_reason(title: str, *, min_chars: int, max_chars: int) -> str | None:
-    """G5 rules 1-8 (form of the title, no evidence): None when valid, else the first failed rule. ``title`` is
+    """G5 rules 1-8 incl. 4b (form of the title, no evidence): None when valid, else the first failed rule. ``title`` is
     the raw text. Also the form check of manual titles (CP8.2 T2, with ``min_chars`` = 1)."""
     if _LINE_BREAKS.search(title.strip()):
         return "multi-line title"
@@ -190,6 +197,8 @@ def form_reject_reason(title: str, *, min_chars: int, max_chars: int) -> str | N
         return f"too long ({len(t)} > {max_chars} chars)"
     if _EMOJI.search(t):
         return "emoji/pictograph"
+    if _has_non_latin_letter(t):
+        return "non-Latin script"
     for ch, what in _BANNED:
         if ch in t:
             return what

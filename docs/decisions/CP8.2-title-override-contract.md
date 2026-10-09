@@ -36,7 +36,7 @@ Implementation tham chiếu: `src/auto_short/review/` (`logic.py` thuần; `titl
 
 Theo thứ tự, lý do đầu tiên trượt được báo:
 
-1. Luật hình thức CP6 G5 **1–8** (`titling.logic.form_reject_reason`, cùng code với AI title) với `min_chars` = 1 và `max_chars` = `[titling] max_chars` (60): xuống dòng, rỗng, > 60 ký tự, emoji/pictograph, `#` `@` `!`, URL, bao trong ngoặc kép, viết HOA toàn bộ. **Không** áp luật evidence (G5 9–10) vì người viết.
+1. Luật hình thức CP6 G5 **1–8** (`titling.logic.form_reject_reason`, cùng code với AI title) với `min_chars` = 1 và `max_chars` = `[titling] max_chars` (60): xuống dòng, rỗng, > 60 ký tự, emoji/pictograph, chữ không phải Latin (luật 4b, `non-Latin script`; FIX-title-script 2026-10-09), `#` `@` `!`, URL, bao trong ngoặc kép, viết HOA toàn bộ. **Không** áp luật evidence (G5 9–10) vì người viết.
 2. Mọi ký tự có glyph trong font render (CP7 R7) → nếu không: `character(s) not in the font: …`.
 3. Fit theo CP7 R5 (≤ 3 dòng, panel ≤ `title_panel_max_height`, không dưới `min_font_scale`) bằng đúng hàm render dùng (`render.stage.fit_clip_title`) → nếu không: `title does not fit: …`.
 
