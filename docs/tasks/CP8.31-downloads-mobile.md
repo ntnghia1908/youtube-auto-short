@@ -97,6 +97,21 @@ Không chạm database / security model; route file mới dùng cùng auth như 
 - [ ] Tải "bài đăng cả bộ" một bộ kinh lớn: thời gian chờ chấp nhận được.
 - [ ] Tab Theo dõi có khối enhance, nút tạm dừng chạy; tab Bộ nhớ không còn.
 
+## Amendment 1 + 2 (HUMAN LEAD 2026-10-09, trong lúc manual test trên 8080)
+
+Yêu cầu trực tiếp của HUMAN LEAD (sửa D2 / D3; thêm D7). Không chạm decision gate mới (cùng dependency, cùng route family).
+
+- **A1. Bài đăng theo khoảng 10 tập + có / không hình** (thay "cả bộ một file" của D2 / D3 — HUMAN LEAD: cả bộ quá nhiều bài, không thiết thực):
+  - Bỏ tải nguyên cả bộ. Route bộ kinh nhận khoảng: `GET /files/playlists/{pid}/posts.docx?from=<N>&to=<M>` (theo số tập; bắt buộc; `to - from` ≤ 9 → tối đa 10 tập) và `?other=1` cho tập không nhận số tập. Khoảng rỗng → 404; tham số sai → 422.
+  - API bộ kinh trả danh sách khoảng có bài: `posts_ranges: [{from, to, label "Tập 1–10", episodes, posts, url}]` chia cố định theo bội 10 (1–10, 11–20, …; chỉ khoảng có ít nhất một bài), cộng mục "Tập chưa rõ số" nếu có.
+  - Tham số `images=0|1` (mặc định 1) cho mọi route docx (một video + khoảng). `images=0`: không nhúng ảnh. Tên file: `[<series>_]Tập<N>-<M>_BaiDang.docx` (khoảng), `…_BaiDang_KhongHinh.docx` khi không hình (cả một video).
+  - UI trang bộ kinh: thay nút "Tải bài đăng cả bộ" bằng khối "Tải bài đăng (.docx)": danh sách khoảng (nhãn + số bài, mỗi khoảng một nút / link tải) + ô "Có hình" (mặc định bật, nhớ ở trình duyệt, try/catch). Ô "Có hình" áp cho cả icon docx trên từng dòng tập; trang Bài đăng có ô "Có hình" riêng (cùng khóa nhớ).
+- **A2 (D7). Tiến độ đăng dễ nhìn trên dòng tập** (HUMAN LEAD chọn "huy hiệu màu" + có "Bài"):
+  - Mỗi dòng tập hiện huy hiệu riêng: `Short x/y`, `Khai thị x/y`, `Bài x/y` (x = đã đăng; Short / khai thị như số hiện có; Bài: y = số Short `rendered` của `<vid>` + `<vid>.kt`, x = bài có `posted_at`). Màu: xanh lá = x = y > 0, cam = 0 < x < y, xám = x = 0. Huy hiệu có y = 0 thì ẩn. Màu đủ tương phản, có chữ (không chỉ dựa vào màu).
+  - Dòng chữ trạng thái còn lại (xử lý / lỗi / HD / đã dọn nguồn / ưu tiên) giữ ở dòng nhỏ dưới huy hiệu, bỏ phần "N Short, đã đăng x/y" / "N video khai thị, đã đăng x/y" khỏi dòng chữ đó.
+  - API bộ kinh thêm `posts_total`, `posts_posted` mỗi dòng (đọc `posts.json` như D3, không gọi thêm AI / mạng).
+- AC bổ sung: A1 — khoảng đúng theo số tập, tối đa 10 tập, `images=0` không có `word/media`, tên file đúng; A2 — số và màu đúng cho 3 trường hợp (hết / dở / chưa), y = 0 ẩn; test API + static.
+
 ## Result
 
 - Main changes:
