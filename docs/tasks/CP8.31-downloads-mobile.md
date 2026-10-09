@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: CHANGE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -91,11 +91,11 @@ Tất cả required verification phải chạy và PASS trước READY.
 
 Không chạm database / security model; route file mới dùng cùng auth như route có sẵn; public API JSON chỉ thêm field. Manual test sau automated verification là điểm danh.
 
-- [ ] Điện thoại: trang bộ kinh — hàng nút cả bộ gọn; mỗi dòng tập có nút tải zip + bài đăng; bấm zip → "đã đăng" tăng.
-- [ ] Điện thoại: trang tập — hàng tải bản ngang / dọc, chạy tiếp / ưu tiên gọn.
-- [ ] Trang Bài đăng: không còn "Từ điển sửa lỗi"; tải docx mở được trong Word / Google Docs, đúng ảnh + chữ.
-- [ ] Tải "bài đăng cả bộ" một bộ kinh lớn: thời gian chờ chấp nhận được.
-- [ ] Tab Theo dõi có khối enhance, nút tạm dừng chạy; tab Bộ nhớ không còn.
+- [x] Điện thoại: trang bộ kinh — hàng nút cả bộ gọn; mỗi dòng tập có nút tải zip + bài đăng; bấm zip → "đã đăng" tăng.
+- [x] Điện thoại: trang tập — hàng tải bản ngang / dọc, chạy tiếp / ưu tiên gọn.
+- [x] Trang Bài đăng: không còn "Từ điển sửa lỗi"; tải docx mở được trong Word / Google Docs, đúng ảnh + chữ.
+- [x] ~~Tải "bài đăng cả bộ"~~ → thay bằng khoảng 10 tập (A1): Tập 1–10 có hình 6 s / 41 MB, không hình 0,4 s.
+- [x] Tab Theo dõi có khối enhance, nút tạm dừng chạy; tab Bộ nhớ không còn.
 
 ## Amendment 1 + 2 (HUMAN LEAD 2026-10-09, trong lúc manual test trên 8080)
 
@@ -132,6 +132,7 @@ Yêu cầu trực tiếp của HUMAN LEAD (sửa D2 / D3; thêm D7). Không ch�
   - Test CP8.17 D3 / CP8.7 sửa vì hành vi đổi (zip tick): `tests/test_web_cp817.py::test_shorts_zip_does_not_tick_but_single_download_does` thay bằng 4 test D1 (tick từng loại, all.zip, Short đã xóa / stale, lỗi ghi `publish.json`); `test_static_ui_labels_and_no_refresh_after_zip` bỏ assert "không làm mới sau zip"; `tests/test_playlist_cp87.py::test_download_ticks_published` đoạn zip giờ kỳ vọng tick cả 3 Short.
   - Không có trình duyệt headless (không chromium / playwright trong env): AC5 / AC6 chưa có ảnh chụp 390 px; ORCHESTRATOR kiểm trên server test 8081 hoặc HUMAN LEAD trên điện thoại.
 - Review:
+  - Manual test HUMAN LEAD trên 8080 (điện thoại) 2026-10-09: OK (gồm A1–A3, round 4 căn nút, round 6 làm mới sau zip; "số không đổi" ở bộ lọc Đang làm = tập chuyển sang nhóm Xong, đúng CP8.13). Review cuối: ACCEPTED (`2aefc79`, 1605 passed, 1 skipped).
   - Round 2 (ORCHESTRATOR): điện thoại vẫn hiện layout cũ vì `/static/*` chỉ có Last-Modified/ETag, không có Cache-Control (cache heuristic). Sửa: middleware đặt `Cache-Control: no-cache` cho `/static/*` và `/login` khi route chưa tự đặt; test `test_static_and_pages_revalidate`.
   - ORCHESTRATOR round 1: 2 blocking — tên docx cả bộ rơi về playlist id khi bộ kinh không lưu series (Địa Tạng); heading tập lặp tên bộ kinh. Sửa ở `40330bf` (fallback series của tập đầu; chỉ nối tên video khi không chứa series). Retest: `pytest -q -n auto` 1596 passed, 1 skipped (ORCHESTRATOR chạy lại). Round 2: ACCEPTED, không còn blocking.
   - Kiểm dữ liệu thật (app tạm, workspace symlink chỉ đọc, không gọi zip): docx Địa Tạng 7,0 s / 44,4 MB (11 tập, 154 bài, 114 ảnh khác nhau), Vô Lượng Thọ 11,5 s / 44,7 MB (19 tập, 285 bài); API bộ kinh 0,17 s (374 dòng). Tên file `Kinh Địa Tạng Bồ Tát Bổn Nguyện_BaiDang.docx`.
