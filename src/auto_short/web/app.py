@@ -556,6 +556,10 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         response.headers.setdefault("Referrer-Policy", "same-origin")
         if path.startswith("/api/"):
             response.headers.setdefault("Cache-Control", "no-store")
+        elif path.startswith("/static/") or path == "/login":
+            # CP8.31: without it mobile browsers cache style.css / app.js heuristically (Last-Modified only) and keep
+            # an old layout; no-cache = revalidate with the ETag (304, cheap)
+            response.headers.setdefault("Cache-Control", "no-cache")
         return response
 
     # --- auth --------------------------------------------------------------------------------------

@@ -304,3 +304,13 @@ def test_playlist_name_falls_back_to_episode_series_and_heading_no_duplicate(tcf
         r = c.get(f"/files/playlists/{PL}/posts.docx")
         assert "BaiDang.docx" in r.headers["content-disposition"] and PL not in r.headers["content-disposition"]
         assert headings(read(r), 1) == [f"{SERIES} tập 3"]  # video title already holds the series: no repeat
+
+
+def test_static_and_pages_revalidate(tcfg):
+    with client(tcfg) as c:
+        assert c.get("/login").headers["cache-control"] == "no-cache"
+        login(c)
+        assert c.get("/static/style.css").headers["cache-control"] == "no-cache"
+        assert c.get("/static/app.js").headers["cache-control"] == "no-cache"
+        assert c.get("/monitor").headers["cache-control"] == "no-cache"
+        assert c.get("/api/storage/status").headers["cache-control"] == "no-store"  # own value kept
