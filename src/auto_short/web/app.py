@@ -807,6 +807,19 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         jobs = _jobs_by_episode()
         return {"playlists": [playlists.summary(d, jobs) for d in playlists.all()]}
 
+    def _playlist_docx_series(doc: dict) -> str | None:
+        """CP8.31 P16: stored bộ kinh series, else the ``series`` of the first episode (by episode number) whose
+        titles.json has one; None -> the file name falls back to the playlist id."""
+        stored = playlist_series(doc)
+        if stored:
+            return stored
+        for e in _by_episode_order([e for e in doc["entries"] if e.get("video_id") and e.get("available")]):
+            for eid in (e["video_id"], e["video_id"] + khaithi.SUFFIX):
+                series = (_post_header_fields(eid) or {}).get("series")
+                if isinstance(series, str) and series.strip():
+                    return series
+        return None
+
     def _has_posts(episode_id: str) -> bool:
         """Cheap check for the playlist page: a stored post whose Short is still rendered (CP8.31 D3)."""
         if not _posts_path(episode_id).is_file():
@@ -856,7 +869,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         view["priority_count"] = sum(1 for e in view["entries"] if e["priority"])
         view["posts_docx_url"] = f"/files/playlists/{playlist_id}/posts.docx" \
             if any(e.get("posts_docx_url") for e in view["entries"]) else None
-        view["posts_docx_name"] = posts_docx_name(None, series=playlist_series(doc), fallback=playlist_id)
+        view["posts_docx_name"] = posts_docx_name(None, series=_playlist_docx_series(doc), fallback=playlist_id)
         kc = config.khaithi  # CP8.9 A2.2: defaults of the kind bar ("Khai thị [min]–[max] phút")
         view["khaithi_defaults"] = {"min_minutes": kc.default_min_minutes, "max_minutes": kc.default_max_minutes,
                                     "max_minutes_limit": kc.max_minutes_limit}
@@ -2315,8 +2328,8 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         except (OSError, ValueError):
             meta = {}
         vtitle = meta.get("title") if isinstance(meta, dict) else None
-        if isinstance(vtitle, str) and vtitle.strip():
-            heading += f" — {vtitle.strip()}"
+        if isinstance(vtitle, str) and vtitle.strip() and not (series and str(series).casefold() in vtitle.casefold()):
+            heading += f" — {vtitle.strip()}"  # not when the video title already carries the series name
         return post_export.ExportEpisode(heading=heading, groups=groups)
 
     def _docx_name_of(video_id: str) -> str:
@@ -2357,7 +2370,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         if not episodes:
             return JSONResponse({"detail": "chưa có bài đăng nào"}, status_code=404)
         return _docx_response(playlist_series(doc) or doc.get("title") or playlist_id, episodes,
-                              posts_docx_name(None, series=playlist_series(doc), fallback=playlist_id))
+                              posts_docx_name(None, series=_playlist_docx_series(doc), fallback=playlist_id))
 
     @app.get("/files/{episode_id}/{name}")
     def files(episode_id: str, name: str, download: str | None = None):

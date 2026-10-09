@@ -229,7 +229,7 @@ def test_playlist_docx_order_and_name(one):
 
 
 def test_playlist_docx_404_without_posts_and_fallback_name(tcfg):
-    make_episode(tcfg, VID2, "3", clips=("k01",))
+    make_episode(tcfg, VID2, "3", clips=("k01",), series=None)
     make_playlist(tcfg, [(VID2, "3")])
     with client(tcfg) as c:
         login(c)
@@ -290,3 +290,17 @@ def test_static_ui(tcfg):
         assert 'id="enhance-summary"' in monitor and 'id="enhance-pause"' in monitor and 'id="mon-gpu"' in monitor
         assert "enhance-workers" not in monitor and "enhance-workers" not in js
         assert c.get("/api/enhance/status").status_code == 200
+
+
+def test_playlist_name_falls_back_to_episode_series_and_heading_no_duplicate(tcfg):
+    make_episode(tcfg, VID2, "3", clips=("k01",))
+    add_posts(tcfg, VID2, [("k01", ["x"], None, False)])
+    meta = Path(tcfg.workspace.dir) / VID2 / "metadata.json"
+    meta.write_text(json.dumps({"title": f"{SERIES} tập 3 / 102 - Lão Pháp Sư"}, ensure_ascii=False), encoding="utf-8")
+    make_playlist(tcfg, [(VID2, "3")])  # no stored series
+    with client(tcfg) as c:
+        login(c)
+        assert c.get(f"/api/playlists/{PL}").json()["posts_docx_name"] == f"{SERIES}_BaiDang.docx"
+        r = c.get(f"/files/playlists/{PL}/posts.docx")
+        assert "BaiDang.docx" in r.headers["content-disposition"] and PL not in r.headers["content-disposition"]
+        assert headings(read(r), 1) == [f"{SERIES} tập 3"]  # video title already holds the series: no repeat
