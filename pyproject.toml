@@ -27,6 +27,7 @@ dev = [
 web = [
     "fastapi==0.141.1",
     "uvicorn==0.54.0",
+    "python-docx==1.2.0",  # CP8.31: posts .docx export (pulls lxml)
 ]
 
 [project.scripts]

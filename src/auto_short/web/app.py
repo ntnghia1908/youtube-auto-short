@@ -8,8 +8,10 @@ import html
 import io
 import json
 import logging
+import os
 import re
 import shutil
+import tempfile
 import threading
 import time
 import zipfile
@@ -25,6 +27,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response,
                                StreamingResponse)
 from fastapi.staticfiles import StaticFiles
+from starlette.background import BackgroundTask
 from pydantic import BaseModel, Field, StrictBool
 
 from .. import khaithi
@@ -36,6 +39,7 @@ from ..enhance.tokens import authenticate as enhance_authenticate
 from ..enhance.tokens import tokens_from_env
 from ..pipeline import PIPELINE_STAGES, PreflightError, ollama_preflight, run_pipeline
 from ..post import corrections as post_corrections
+from ..post import export as post_export
 from ..post import doc as post_doc
 from ..post import fetch as post_fetch
 from ..post import images as post_images
@@ -55,6 +59,8 @@ from ..review import (ArchivedError, EpisodeNotFound, ReviewError, TitlePreview,
                       reset_title, restore_clip, set_alternative, set_published, set_title, set_watched)
 from ..review import shorts as review_shorts
 from ..review.names import hashtags as review_hashtags
+from ..review.names import posts_docx_name
+from ..titling.playlist import stored_series as playlist_series
 from . import episodes as ep
 from . import monitor as monitor_mod
 from .auth import COOKIE_NAME, SessionSigner, load_or_create_secret
@@ -160,6 +166,7 @@ class TitleIn(BaseModel):
 
 
 SEGMENT_ID = Field(default=None, max_length=32)
+DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 SOURCE_TYPES = {".mp4": "video/mp4", ".m4v": "video/mp4", ".webm": "video/webm", ".mkv": "video/x-matroska",
                 ".mov": "video/quicktime"}
 
@@ -800,6 +807,37 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         jobs = _jobs_by_episode()
         return {"playlists": [playlists.summary(d, jobs) for d in playlists.all()]}
 
+    def _has_posts(episode_id: str) -> bool:
+        """Cheap check for the playlist page: a stored post whose Short is still rendered (CP8.31 D3)."""
+        if not _posts_path(episode_id).is_file():
+            return False
+        with post_lock:
+            try:
+                clips = {e["clip_id"] for e in post_store.read_posts(_posts_path(episode_id), episode_id)["posts"]}
+            except post_store.PostsError:
+                return False
+        return any(cid in clips for cid, _ in post_stage.rendered_clip_ids(config, episode_id))
+
+    def _download_fields(e: dict) -> None:
+        """CP8.31 D3: zip (``all.zip`` with both Shorts and khai thị, else the ``shorts.zip`` of the kind present) and
+        ``.docx`` url + name of one playlist entry; the key is absent / None when there is nothing to download."""
+        vid = e.get("video_id")
+        e["zip_url"] = e["zip_name"] = e["posts_docx_url"] = e["posts_docx_name"] = None
+        if not vid or not e.get("available"):
+            return
+        kid = e.get("khaithi_episode_id")
+        shorts, kts = (e.get("shorts") or 0) > 0, kid is not None and (e.get("khaithi_videos") or 0) > 0
+        found = ep.all_zip(config, vid) if shorts and kts else None
+        if found is not None:
+            e["zip_url"], e["zip_name"] = f"/files/{vid}/all.zip", found[1]
+        elif shorts:
+            e["zip_url"], e["zip_name"] = f"/files/{vid}/shorts.zip", ep.zip_download_name(config, vid)
+        elif kts:
+            e["zip_url"], e["zip_name"] = f"/files/{kid}/shorts.zip", ep.zip_download_name(config, kid)
+        if _has_posts(vid) or (kid is not None and _has_posts(kid)):
+            e["posts_docx_url"] = f"/files/{vid}/posts.docx"
+            e["posts_docx_name"] = _docx_name_of(vid)
+
     @app.get("/api/playlists/{playlist_id}")
     def api_playlist(playlist_id: str):
         doc = _playlist_or_404(playlist_id)
@@ -814,7 +852,11 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             if hd and hd.get("state") == "done" and e.get("video_id") and ep.hd_file(config, e["video_id"]) is not None:
                 e["hd_url"] = f"/api/episodes/{e['video_id']}/source-hd"
                 e["hd_name"] = ep.video_download_name(config, e["video_id"], "HD")
+            _download_fields(e)  # CP8.31 D3
         view["priority_count"] = sum(1 for e in view["entries"] if e["priority"])
+        view["posts_docx_url"] = f"/files/playlists/{playlist_id}/posts.docx" \
+            if any(e.get("posts_docx_url") for e in view["entries"]) else None
+        view["posts_docx_name"] = posts_docx_name(None, series=playlist_series(doc), fallback=playlist_id)
         kc = config.khaithi  # CP8.9 A2.2: defaults of the kind bar ("Khai thị [min]–[max] phút")
         view["khaithi_defaults"] = {"min_minutes": kc.default_min_minutes, "max_minutes": kc.default_max_minutes,
                                     "max_minutes_limit": kc.max_minutes_limit}
@@ -2228,6 +2270,95 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
 
     # --- files -------------------------------------------------------------------------------------
 
+    # --- CP8.31 P16: community posts as Word (.docx) ---------------------------------------------------------
+
+    def _export_group(episode_id: str, name: str) -> post_export.ExportGroup | None:
+        """Posts of one episode that still have a rendered Short, in render-manifest order; None when none."""
+        order = [cid for cid, _ in post_stage.rendered_clip_ids(config, episode_id)]
+        if not order or not (Path(config.workspace.dir) / episode_id).is_dir():
+            return None
+        with post_lock:
+            try:
+                doc = post_store.read_posts(_posts_path(episode_id), episode_id)
+            except post_store.PostsError:
+                return None
+        titles_by_clip: dict[str, str | None] = {}
+        try:
+            titles_by_clip = {c["clip_id"]: c["title"] for c in list_titles(episode_id, config)["clips"]}
+        except ReviewError:  # titling not readable: the title burnt into the rendered file
+            rendered = ep._render_manifest(config, episode_id) or {}
+            titles_by_clip = {sh.get("clip_id"): sh.get("title") for sh in rendered.get("shorts", [])
+                              if isinstance(sh, dict)}
+        fields = _post_header_fields(episode_id)
+        by_clip = {e["clip_id"]: e for e in doc["posts"]}
+        posts = []
+        for cid in order:
+            entry = by_clip.get(cid)
+            if entry is None:
+                continue
+            head, paras, source = post_logic.text_parts(title=titles_by_clip.get(cid), paragraphs=entry["paragraphs"],
+                                                        header_fields=fields)
+            posts.append(post_export.ExportPost(title=head, paragraphs=paras, source=source, image=entry["image"]))
+        return post_export.ExportGroup(name=name, posts=posts) if posts else None
+
+    def _export_episode(video_id: str) -> post_export.ExportEpisode | None:
+        """Heading + groups "Shorts" then "Khai thị" of ``video_id`` (a Short episode); None when it has no post."""
+        groups = [g for g in (_export_group(video_id, "Shorts"),
+                              _export_group(video_id + khaithi.SUFFIX, "Khai thị")) if g is not None]
+        if not groups:
+            return None
+        fields = _post_header_fields(video_id) or _post_header_fields(video_id + khaithi.SUFFIX) or {}
+        series, number = fields.get("series"), fields.get("episode") or video_id
+        heading = f"{series} tập {number}" if series else f"Tập {number}"
+        try:
+            meta = json.loads((Path(config.workspace.dir) / video_id / "metadata.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            meta = {}
+        vtitle = meta.get("title") if isinstance(meta, dict) else None
+        if isinstance(vtitle, str) and vtitle.strip():
+            heading += f" — {vtitle.strip()}"
+        return post_export.ExportEpisode(heading=heading, groups=groups)
+
+    def _docx_name_of(video_id: str) -> str:
+        kf = ep.kind_fields(config, video_id)
+        return posts_docx_name(ep._label(config, video_id, kf), series=ep._zip_series(config, video_id, kf))
+
+    def _docx_response(title: str, episodes: list[post_export.ExportEpisode], name: str) -> FileResponse:
+        fd, tmp = tempfile.mkstemp(prefix="posts-", suffix=".docx")
+        os.close(fd)
+        try:
+            post_export.build_docx(Path(tmp), title, episodes, config.post.image_dir)
+        except BaseException:
+            os.unlink(tmp)
+            raise
+        return FileResponse(tmp, media_type=DOCX_TYPE, background=BackgroundTask(os.unlink, tmp),
+                            headers={"Content-Disposition": content_disposition(name), "Cache-Control": "no-store"})
+
+    # sync handlers: FastAPI runs them in its worker thread pool, so building the file never blocks the event loop
+    @app.get("/files/{episode_id}/posts.docx")
+    def posts_docx(episode_id: str):
+        if not ep.valid_episode_id(episode_id):
+            return JSONResponse({"detail": "không có file này"}, status_code=404)
+        video_id = ep.hd_owner(episode_id)
+        episode = _export_episode(video_id)
+        if episode is None:
+            return JSONResponse({"detail": "chưa có bài đăng nào"}, status_code=404)
+        return _docx_response(episode.heading, [episode], _docx_name_of(video_id))
+
+    @app.get("/files/playlists/{playlist_id}/posts.docx")
+    def playlist_posts_docx(playlist_id: str):
+        doc = _playlist_or_404(playlist_id)
+        if doc is None:
+            return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
+        episodes = []
+        for e in _by_episode_order([e for e in doc["entries"] if e.get("video_id") and e.get("available")]):
+            if (episode := _export_episode(e["video_id"])) is not None:
+                episodes.append(episode)
+        if not episodes:
+            return JSONResponse({"detail": "chưa có bài đăng nào"}, status_code=404)
+        return _docx_response(playlist_series(doc) or doc.get("title") or playlist_id, episodes,
+                              posts_docx_name(None, series=playlist_series(doc), fallback=playlist_id))
+
     @app.get("/files/{episode_id}/{name}")
     def files(episode_id: str, name: str, download: str | None = None):
         if not ep.valid_episode_id(episode_id):
@@ -2236,16 +2367,20 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             items = ep.short_files(config, episode_id)
             if not items:
                 return JSONResponse({"detail": "chưa có Short nào"}, status_code=404)
-            # CP8.17 D3: a zip never ticks "Đã đăng" (only the single "Tải về" of a Short does)
+            # CP8.31 D1 (reverses CP8.17 D3): a zip ticks "Đã đăng" for every Short it contains (current file)
+            _mark_downloaded(episode_id, [cid for cid, _, _ in items])
             return StreamingResponse(
                 _zip_stream(items), media_type="application/zip",
                 headers={"Content-Disposition": content_disposition(ep.zip_download_name(config, episode_id)),
                          "Cache-Control": "no-store"})
-        if name == "all.zip":  # CP8.17 D5: Shorts/ + KhaiThị/ of one video in a single zip (no tick, D3)
+        if name == "all.zip":  # CP8.17 D5: Shorts/ + KhaiThị/ of one video in a single zip (CP8.31 D1: ticks both)
             both = ep.all_zip(config, episode_id)
             if both is None:
                 return JSONResponse({"detail": "cần có cả Short và khai thị đã dựng"}, status_code=404)
             items, zip_file_name = both
+            vid = ep.hd_owner(episode_id)  # the Short episode; its khai thị is ``<vid>.kt``
+            _mark_downloaded(vid, [cid for cid, _, n in items if n.startswith("Shorts/")])
+            _mark_downloaded(vid + khaithi.SUFFIX, [cid for cid, _, n in items if n.startswith("KhaiThị/")])
             return StreamingResponse(
                 _zip_stream(items), media_type="application/zip",
                 headers={"Content-Disposition": content_disposition(zip_file_name), "Cache-Control": "no-store"})

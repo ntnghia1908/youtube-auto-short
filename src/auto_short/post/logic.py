@@ -88,15 +88,20 @@ def header_line(fields: dict | None) -> str | None:
     return "— " + ", ".join(bits) if bits else None
 
 
+def text_parts(*, title: str | None, paragraphs: list[str], header_fields: dict | None) -> tuple[str | None, list[str], str | None]:
+    """P4 text of a post without link / hashtags: ``(TITLE upper-case or None, paragraphs, source line or None)``.
+    Shared by the copied text (:func:`compose_copy_text`) and the P16 ``.docx`` export so the two never differ."""
+    return (title.upper() if title else None,  # FIX-post-title-upper: tựa đề viết hoa toàn bộ, áp lúc đọc
+            [p.strip() for p in paragraphs if p and p.strip()], header_line(header_fields))
+
+
 def compose_copy_text(*, title: str | None, paragraphs: list[str], header_fields: dict | None, link: str | None,
                       hashtags: list[str]) -> str:
     """P4 bố cục bài đăng cộng đồng để sao chép: title đang dùng (VIẾT HOA), các đoạn văn, dòng nguồn (CP6 header), link
     (nếu có), hashtag (CP8.8) — mỗi phần cách nhau một dòng trống; phần thiếu bị bỏ dòng (không cắt phần khác)."""
-    parts: list[str] = []
-    if title:
-        parts.append(title.upper())  # FIX-post-title-upper: tựa đề viết hoa toàn bộ, áp lúc đọc
-    parts.extend(p.strip() for p in paragraphs if p and p.strip())
-    hline = header_line(header_fields)
+    head, paras, hline = text_parts(title=title, paragraphs=paragraphs, header_fields=header_fields)
+    parts: list[str] = [head] if head else []
+    parts.extend(paras)
     if hline:
         parts.append(hline)
     if link:

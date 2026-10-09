@@ -3,13 +3,13 @@
 | Metadata | Value |
 |---|---|
 | Status | ACCEPTED (chờ manual test HUMAN LEAD) |
-| Accepted by | HUMAN LEAD 2026-09-29: APPROVE TASK; Q1 ảnh chọn trong thư viện + upload + tìm ảnh từ link (ảnh tìm được vào thẳng thư viện); Q2–Q4 theo đề xuất (P4 bố cục, soạn theo yêu cầu, model `qwen3:14b`). Sửa đổi HUMAN LEAD 2026-09-29 (ORCHESTRATOR review round 1, sau Q4 BLOCKED ở 72%): P3 đổi sang AI tự do + chiếu (projection) về chữ gốc bằng `difflib` (prompt `v2`), Q4 đổi tiêu chí (≥ 90% bài `ai` có ≥ 4 dấu câu / 100 từ); B1: bản đầu implement sai P2 (giữ nguyên từ nối bị `head_cut`, ghi nhầm là HUMAN LEAD đã chấp nhận) — sửa lại đúng P2 gốc (bỏ `head_cut` như CP6 G3). |
+| Accepted by | HUMAN LEAD 2026-09-29: APPROVE TASK; Q1 ảnh chọn trong thư viện + upload + tìm ảnh từ link (ảnh tìm được vào thẳng thư viện); Q2–Q4 theo đề xuất (P4 bố cục, soạn theo yêu cầu, model `qwen3:14b`). Sửa đổi HUMAN LEAD 2026-09-29 (ORCHESTRATOR review round 1, sau Q4 BLOCKED ở 72%): P3 đổi sang AI tự do + chiếu (projection) về chữ gốc bằng `difflib` (prompt `v2`), Q4 đổi tiêu chí (≥ 90% bài `ai` có ≥ 4 dấu câu / 100 từ); B1: bản đầu implement sai P2 (giữ nguyên từ nối bị `head_cut`, ghi nhầm là HUMAN LEAD đã chấp nhận) — sửa lại đúng P2 gốc (bỏ `head_cut` như CP6 G3). | Sửa đổi HUMAN LEAD 2026-10-09 (CP8.31, APPROVE TASK D1–D6): P9 (nút tải `.docx` ở tab Bài đăng), P16 (xuất bài đăng ra Word) |
 | Checkpoint | CP8.15 (S2) |
 | Roadmap | `AUTO_SHORT_CHECKPOINT_PLAN.md` §4 CP8.15 |
 | Task contract | `docs/tasks/CP8.15-community-post.md`; sửa đổi CP8.17: `docs/tasks/CP8.17-download-rules.md`; sửa đổi CP8.18: `docs/tasks/CP8.18-post-corrections.md`; sửa đổi CP8.19: `docs/tasks/CP8.19-post-doc-source.md` |
 | Builds on | `docs/decisions/CP6-titling-contract.md` (G3 `clip_text`, G5 validate style); `docs/decisions/CP8.2-title-override-contract.md` (CP9: cut points, added Shorts, `review.cuts.lines_in`); `docs/decisions/CP8.3-web-contract.md` W4/W5/W7 (job model, API, auth); `docs/decisions/CP8.9-khai-thi-contract.md` (một Short/khai thị dùng chung route); CP1 §10 (dependency: không thêm) |
 
-File này là **canonical owner** của: text nguồn một bài đăng cộng đồng của một Short (P2), prompt AI tự do + chiếu (projection) deterministic về chữ gốc (`post` `v2`, P3), schema `posts.json` (P7) + `post_log.json`, thư viện ảnh (P5) + upload (P5a) + tìm ảnh từ link (P5b), tìm ảnh theo từ khóa (P5c, CP8.30) + chia lại ảnh cho bài chưa đăng (P5d, CP8.30), link Short (P6), bố cục text sao chép (P4), config `[post]` (P11), route web + job (P9) và security tải ảnh từ link (P13), bài lấy từ văn bản gốc bài giảng (P15, CP8.19). Nơi khác chỉ trỏ tới đây. Không đổi contract stage CP2–CP9: `posts.json` không phải input của stage nào (như `publish.json`, CP8.3 W8). Thay đổi cần decision gate mới với HUMAN LEAD.
+File này là **canonical owner** của: text nguồn một bài đăng cộng đồng của một Short (P2), prompt AI tự do + chiếu (projection) deterministic về chữ gốc (`post` `v2`, P3), schema `posts.json` (P7) + `post_log.json`, thư viện ảnh (P5) + upload (P5a) + tìm ảnh từ link (P5b), tìm ảnh theo từ khóa (P5c, CP8.30) + chia lại ảnh cho bài chưa đăng (P5d, CP8.30), link Short (P6), bố cục text sao chép (P4), config `[post]` (P11), route web + job (P9) và security tải ảnh từ link (P13), bài lấy từ văn bản gốc bài giảng (P15, CP8.19), xuất bài đăng ra Word `.docx` (P16, CP8.31). Nơi khác chỉ trỏ tới đây. Không đổi contract stage CP2–CP9: `posts.json` không phải input của stage nào (như `publish.json`, CP8.3 W8). Thay đổi cần decision gate mới với HUMAN LEAD.
 
 Implementation tham chiếu: `src/auto_short/post/` (`source.py`, `validate.py`, `prompt.py`, `logic.py`, `store.py`, `stage.py`, `images.py`, `fetch.py`, `corrections.py`, `doc.py`), `src/auto_short/config.py` (`PostConfig`), `src/auto_short/web/app.py` (route), `src/auto_short/web/jobs.py` (`PostComposeTarget`, `ImageSearchTarget`), `src/auto_short/web/static/` (khu "Bài đăng cộng đồng", hộp thoại "Thư viện ảnh").
 
@@ -150,6 +150,8 @@ State người dùng, **không** là input stage nào (như `publish.json`, CP8.
 
 **Sửa đổi CP8.16 (R1, R3):** khu "Bài đăng cộng đồng" trên thẻ Short và "Soạn bài cho mọi Short" của trang tập được thay bằng tab "Bài đăng": trang `GET /episodes/{id}/posts` (cùng HTML cho tập Short `<vid>` và khai thị `<vid>.kt`), thanh chuyển [Shorts | Khai thị | Bài đăng] ở cả ba view, hai nhóm Short / Khai thị, editor mở sẵn, hộp thoại "Thư viện ảnh" chuyển sang trang này. `POST /api/episodes/{id}/posts` nhận thêm `clips: "auto"`; `GET /api/episodes/{id}` thêm `post_job` (job `post` mới nhất, hoặc `null`); 409 khi episode có job `pipeline` (không phải mọi job) — thay câu "409 khi episode đang có job — kể cả job khác" ở trên.
 
+**Sửa đổi CP8.31:** nút "Tải bài đăng (.docx)" trên tab Bài đăng (ẩn khi video chưa có bài) → `GET /files/{id}/posts.docx` (P16).
+
 **Sửa đổi CP8.19:** `PUT /api/playlists/{id}/doc` (CP8.3 W7, P15 D1); `GET …/posts` trả `origin: "doc"`; nhãn "Văn bản gốc" trên tab Bài đăng, bài `doc` không có nhãn "ít dấu câu"; sửa tay bài `doc` → `manual` như mọi bài (từ điển P14 vẫn học từ bản sửa).
 
 ## P10. Không CLI mới
@@ -196,6 +198,19 @@ Canonical owner của bài đăng lấy từ văn bản đã biên tập của `
 - **D8** Nhãn "Văn bản gốc" (`doc`) trên tab Bài đăng.
 
 Ngoài phạm vi: dùng văn bản cho title / transcript / phụ đề / chọn clip, site khác, `.docx` / PDF, tập không nhận dạng được số tập, từ điển P14 lên bài `doc`.
+
+## P16. Xuất bài đăng ra Word (CP8.31, HUMAN LEAD 2026-10-09: APPROVE D1–D6)
+
+Mục đích: gom bài đăng để đóng sách; định dạng `.docx` (dependency `python-docx`, CP1 §10). Hàm dựng file `post/export.py` (không phụ thuộc web); web gom bài theo thứ tự rồi gọi (route: CP8.3 W7).
+
+- **Phạm vi:** một video (`GET /files/{id}/posts.docx`, `id` = `<vid>` hoặc `<vid>.kt`, cùng kết quả: bài của `<vid>` rồi `<vid>.kt`) hoặc cả bộ kinh (`GET /files/playlists/{pid}/posts.docx`, theo số tập, rồi thứ tự danh sách; tập chưa có bài bị bỏ qua). Không có bài nào → 404.
+- **Nguồn bài:** `posts.json` — mọi bài của Short còn `rendered` (đã / chưa đăng, bài sửa tay, bài stale xuất text đang lưu), theo thứ tự `render_manifest.json`. Short đã xóa / không `rendered` bị bỏ.
+- **Cấu trúc:** tiêu đề tài liệu (tên bộ kinh, hoặc heading tập khi tải một video); mỗi tập một Heading 1 (`<series> tập <N>` + " — " + tên video); trong tập, Heading 2 "Shorts" rồi "Khai thị" (chỉ mục có bài); mỗi bài một Heading 3 = dòng title viết hoa như P4, ảnh của bài (rộng 5,5 inch), các đoạn, dòng nguồn P4 (nghiêng). **Không** có link video và hashtag. Tiêu đề / đoạn / dòng nguồn lấy từ `post/logic.text_parts` (cùng hàm với `compose_copy_text`, P4) nên không lệch bản sao chép.
+- **Ảnh:** file trong thư viện ảnh (`[post] image_dir`, P5); ảnh thiếu / không đọc được → bỏ ảnh, giữ text. Ảnh dùng cho nhiều bài chỉ nhúng một lần (python-docx dùng chung phần ảnh theo SHA-1).
+- **Tên file:** `[<series>_]Tập<N>_BaiDang.docx` (một video), `<series>_BaiDang.docx` (cả bộ; không có tên bộ kinh → `<pid>_BaiDang.docx`), làm sạch ký tự như CP8.3 W8.
+- **Không ghi gì:** không tick "Đã đăng bài", không đổi `posts.json`. File dựng trong thread (không chặn event loop), lưu tạm rồi xóa sau khi gửi.
+
+Ngoài phạm vi: PDF / Markdown, dàn trang sách (khổ giấy, mục lục, số trang).
 
 ## Acceptance Criteria
 

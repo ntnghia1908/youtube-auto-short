@@ -1,4 +1,4 @@
-"""CP8.17: zip does not tick "Đã đăng" (D3), zip names with the bộ kinh (D4), "Tải cả hai" ``all.zip`` (D5)."""
+"""CP8.17: (D3 reversed by CP8.31 D1: a zip ticks "Đã đăng"), zip names with the bộ kinh (D4), "Tải cả hai" ``all.zip`` (D5)."""
 
 import hashlib
 import io
@@ -85,26 +85,64 @@ def test_zip_name_series_truncated():
     assert len(head.encode("utf-8")) <= MAX_SERIES_BYTES and long.startswith(head) and long[len(head)] == " "
 
 
-# --- D3: a zip never ticks ---------------------------------------------------------------------------------
+# --- CP8.31 D1 (reverses CP8.17 D3): a zip ticks every Short it contains -------------------------------------
 
-def test_shorts_zip_does_not_tick_but_single_download_does(tcfg):
+def ticked(cfg, episode_id):
+    doc = publish(cfg, episode_id)
+    return [e["clip_id"] for e in doc["published"]] if doc else []
+
+
+def test_zip_ticks_published_per_kind(tcfg):
     make_pair(tcfg)
     with client(tcfg) as c:
         login(c)
-        r = c.get(f"/files/{VID}/shorts.zip")
-        assert r.status_code == 200
-        assert publish(tcfg, VID) is None
-        r = c.get(f"/files/{KT}/shorts.zip")
-        assert r.status_code == 200 and publish(tcfg, KT) is None
-        assert c.get(f"/files/{VID}/all.zip").status_code == 200
-        assert publish(tcfg, VID) is None and publish(tcfg, KT) is None
-        # a tick that already exists stays after a zip download
-        assert c.get(f"/files/{VID}/k01.mp4?download=1").status_code == 200
-        before = publish(tcfg, VID)
-        assert [e["clip_id"] for e in before["published"]] == ["k01"]
+        assert c.get(f"/files/{KT}/shorts.zip").status_code == 200
+        assert ticked(tcfg, KT) == ["k01", "k02"] and publish(tcfg, VID) is None  # khai thị zip -> only the khai thị
+        assert c.get(f"/files/{VID}/shorts.zip").status_code == 200
+        assert ticked(tcfg, VID) == ["k01", "k02", "k03"]
+
+
+def test_all_zip_ticks_both_episodes(tcfg):
+    make_pair(tcfg)
+    with client(tcfg) as c:
+        login(c)
+        assert c.get(f"/files/{KT}/all.zip").status_code == 200  # either id gives the same result
+        assert ticked(tcfg, VID) == ["k01", "k02", "k03"] and ticked(tcfg, KT) == ["k01", "k02"]
+        d = c.get(f"/api/episodes/{VID}").json()
+        assert d["published"] == 3 and d["complete"] is True
+
+
+def test_zip_skips_deleted_short_and_stale_becomes_current(tcfg):
+    make_pair(tcfg)
+    rm_path = Path(tcfg.render.output_dir) / VID / "render_manifest.json"
+    rm = json.loads(rm_path.read_text(encoding="utf-8"))
+    rm["shorts"][1].update(status="skipped", skip_reason="rejected")  # the last render skipped the deleted Short
+    rm_path.write_text(json.dumps(rm), encoding="utf-8")
+    with client(tcfg) as c:
+        login(c)
         c.get(f"/files/{VID}/shorts.zip")
-        c.get(f"/files/{VID}/all.zip")
-        assert publish(tcfg, VID) == before
+        assert ticked(tcfg, VID) == ["k01", "k03"]  # the deleted Short is not in the zip, so not ticked
+    # a Short re-rendered after its tick ("đã đăng bản cũ") is ticked for the current file by a zip
+    rm["shorts"][0]["sha256"] = "f" * 64
+    rm_path.write_text(json.dumps(rm), encoding="utf-8")
+    with client(tcfg) as c:
+        login(c)
+        assert c.get(f"/api/episodes/{VID}").json()["shorts"][0]["published_stale"] is True
+        c.get(f"/files/{VID}/shorts.zip")
+        assert c.get(f"/api/episodes/{VID}").json()["shorts"][0]["published_stale"] is False
+
+
+def test_zip_still_served_when_publish_json_unwritable(tcfg, monkeypatch):
+    make_pair(tcfg)
+
+    def boom(*a, **k):
+        raise OSError("disk full")
+    monkeypatch.setattr(app_mod, "mark_downloaded", boom)
+    with client(tcfg) as c:
+        login(c)
+        r = c.get(f"/files/{VID}/shorts.zip")
+        assert r.status_code == 200 and zipfile.ZipFile(io.BytesIO(r.content)).testzip() is None
+        assert c.get(f"/files/{VID}/all.zip").status_code == 200
 
 
 # --- D4: zip names -----------------------------------------------------------------------------------------
@@ -211,7 +249,7 @@ def test_all_zip_requires_login_and_valid_id(tcfg):
         assert c.get("/files/nonexistent1/all.zip").status_code == 404
 
 
-def test_static_ui_labels_and_no_refresh_after_zip(tcfg):
+def test_static_ui_labels_and_refresh_after_zip(tcfg):
     make_pair(tcfg)
     with client(tcfg) as c:
         login(c)
@@ -219,5 +257,4 @@ def test_static_ui_labels_and_no_refresh_after_zip(tcfg):
         html = c.get(f"/episodes/{VID}").text
         assert "Tải tất cả Short (.zip)" in js and "Tải tất cả khai thị (.zip)" in js
         assert 'id="zip-all"' in html and "Tải cả hai (.zip)" in html
-        assert 'zip.addEventListener("click"' not in js  # D3: no page refresh after a zip
         assert "autoShort.postMarks" in js and "markPostStep" in js  # D1

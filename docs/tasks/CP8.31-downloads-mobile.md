@@ -100,8 +100,21 @@ Không chạm database / security model; route file mới dùng cùng auth như 
 ## Result
 
 - Main changes:
+  - D1 `web/app.py` `files()`: `shorts.zip` / `all.zip` gọi `_mark_downloaded` (all.zip: `<vid>` và `<vid>.kt` riêng); JS trang tập + trang bộ kinh làm mới sau khi bấm zip.
+  - D2 `post/export.py` (python-docx) + `post/logic.text_parts` (dùng chung với `compose_copy_text`) + `review/names.posts_docx_name`; route `GET /files/{id}/posts.docx`, `GET /files/playlists/{pid}/posts.docx` (handler sync = chạy thread pool, file tạm xóa bằng `BackgroundTask`). Tiêu đề bài lấy từ `list_titles`, lỗi thì title trong `render_manifest.json`.
+  - D3 API bộ kinh: `zip_url/zip_name`, `posts_docx_url/posts_docx_name` mỗi entry + `posts_docx_url/name` cả bộ; icon `zip` / `doc` (CP8.21 D6) trên từng dòng tập, nút "Tải bài đăng cả bộ (.docx)", nút "Tải bài đăng (.docx)" ở trang Bài đăng.
+  - D4 `[hidden] { display: none !important; }`. D5 CSS ≤ 640 px: `flex: 1 1 calc(50% - .5rem)` cho `.actions`, `.head-actions`, `.enhance-box .edit-actions`; nhãn "Chạy tiếp / chạy lại" rút gọn (phần còn lại `.long` + `title`); hàng nút của dòng tập dùng flex-wrap.
+  - D6 `#enhance-card` bỏ khỏi `storage.html`; `monitor.html` khối "GPU enhance" có `#enhance-summary` + `#enhance-pause`; `loadEnhance()` chuyển sang `initMonitor` (danh sách worker `#enhance-workers` bỏ vì trùng `#mon-gpu`; cảnh báo "worker cần cập nhật" giữ trong dòng tóm tắt).
+  - Dependency `python-docx==1.2.0` (extra `[web]`, đã cài vào env `auto-short`, kéo `lxml`); decision CP8.3 W6/W7/W8 + Accepted-by, CP8.15 P9 + P16 + Accepted-by, CP1 §10, project-profile, README.
 - Tests:
+  - `python -m pytest -q -n auto` (PYTHONPATH=worktree `src`): 1595 passed, 1 skipped. `node scripts/framework-check.mjs`: PASS (0 FAIL). `node --check app.js`: OK.
+  - Test mới `tests/test_web_cp831.py` (docx một video / cả bộ: heading, thứ tự manifest, không link / hashtag, ảnh thiếu, ảnh chung nhúng một lần, `posts.json` không đổi, 404, auth, file tạm được xóa, tên file, API bộ kinh, static D3–D6).
+  - Test CP8.17 D3 / CP8.7 sửa vì hành vi đổi (zip tick): `tests/test_web_cp817.py::test_shorts_zip_does_not_tick_but_single_download_does` thay bằng 4 test D1 (tick từng loại, all.zip, Short đã xóa / stale, lỗi ghi `publish.json`); `test_static_ui_labels_and_no_refresh_after_zip` bỏ assert "không làm mới sau zip"; `tests/test_playlist_cp87.py::test_download_ticks_published` đoạn zip giờ kỳ vọng tick cả 3 Short.
+  - Không có trình duyệt headless (không chromium / playwright trong env): AC5 / AC6 chưa có ảnh chụp 390 px; ORCHESTRATOR kiểm trên server test 8081 hoặc HUMAN LEAD trên điện thoại.
 - Review:
 - Important findings / decisions:
+  - Thứ tự tập trong file cả bộ: số tập (như `_by_episode_order` của CP13.2), tập không nhận số tập xếp sau theo thứ tự danh sách.
+  - Cột tiêu đề: bài đã xóa khỏi `render_manifest` (không `rendered`) không xuất; bài stale vẫn xuất.
 - Known limitations:
+  - Chưa kiểm bằng trình duyệt thật (bố cục 2 cột mobile, mở docx trong Word / Google Docs); chưa đo thời gian "bài đăng cả bộ" với bộ kinh lớn (dựng tuần tự một lần, ảnh nhúng nguyên file).
 - PR:

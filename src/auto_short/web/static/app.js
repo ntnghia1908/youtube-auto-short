@@ -32,6 +32,8 @@ const AutoShort = (() => {
   const ICONS = {
     download: ["M12 3v12", "M7 10l5 5 5-5", "M5 20h14"],
     trash: ["M4 7h16", "M9 7V4h6v3", "M6 7l1 13h10l1-13", "M10 11v6", "M14 11v6"],
+    zip: ["M4 7l8-4 8 4v10l-8 4-8-4z", "M4 7l8 4 8-4", "M12 11v10"],
+    doc: ["M7 3h8l4 4v14H7z", "M15 3v4h4", "M10 12h6", "M10 16h6"],
     loop: ["M4 11V9a3 3 0 0 1 3-3h11", "M15 3l3 3-3 3", "M20 13v2a3 3 0 0 1-3 3H6", "M9 21l-3-3 3-3"],
   };
   function icon(name) {
@@ -714,6 +716,9 @@ const AutoShort = (() => {
     if (job && job.status === "failed") note.textContent = `Lỗi tạo bản dọc: ${job.error || "?"}`;
   }
 
+  // CP8.31 D1: the server ticks "Đã đăng" when the zip request arrives; give it a moment, then refresh the page data.
+  function zipAfterClick() { setTimeout(refreshEpisode, 2500); }
+
   function renderEpisode(d) {
     lastData = d; // noun() / stageLabel() read the kind
     document.title = `${d.title || d.id} — Auto Short`;
@@ -845,10 +850,12 @@ const AutoShort = (() => {
     const zip = $("#zip");
     zip.hidden = !d.zip_url;
     if (d.zip_url) { zip.href = d.zip_url; zip.setAttribute("download", d.zip_name || ""); }
-    // CP8.17 D3/D4: a zip no longer ticks "Đã đăng" (nothing to refresh); the label says what the zip holds
+    // CP8.17 D4: the label says what the zip holds. CP8.31 D1: a zip ticks "Đã đăng" -> refresh the counts after it
+    zip.onclick = zipAfterClick;
     zip.textContent = d.kind === "khaithi" ? "Tải tất cả khai thị (.zip)" : "Tải tất cả Short (.zip)";
     const zipAll = $("#zip-all"); // CP8.17 D5: Shorts/ + KhaiThị/ in one zip (hidden when either kind is missing)
     zipAll.hidden = !d.zip_all_url;
+    zipAll.onclick = zipAfterClick;
     if (d.zip_all_url) { zipAll.href = d.zip_all_url; zipAll.setAttribute("download", d.zip_all_name || ""); }
     $("#header-lines").textContent = d.header ? "Header: " + d.header.join(" / ") : "";
     // CP9 C7: "Thêm Short" once the episode has a render and titles (not on an archived episode)
@@ -1470,6 +1477,9 @@ const AutoShort = (() => {
     const btn = $("#posts-compose-missing");
     btn.hidden = !total;
     btn.disabled = groups.some((g) => jobActive(g.view.post_job));
+    const docx = $("#posts-docx"); // CP8.31 D3: Word file of this video's posts (Shorts, then khai thị)
+    docx.hidden = !groups.some((g) => g.posts.length);
+    docx.href = "/files/" + encodeURIComponent(postsPage.vid) + "/posts.docx";
     const lines = groups.map(postJobLine).filter(Boolean);
     $("#posts-jobs").replaceChildren(...lines.map((l) => el("p", { class: l.cls, text: l.text })));
     const titles = groups.map((g) => g.view.title).filter(Boolean);
@@ -2365,39 +2375,32 @@ const AutoShort = (() => {
   function initStorage() {
     loadStorage();
     checkDisk();
-    loadEnhance();
   }
 
-  // CP13.1b E10: one place for the enhance workers + the global "Tạm dừng enhance" (read from /api/enhance/status).
+  // CP13.1b E10 (moved to the Theo dõi tab by CP8.31 D6): queue summary + global "Tạm dừng enhance" in the "GPU
+  // enhance" card, read from /api/enhance/status. Worker details (GPU, current episode, progress) are #mon-gpu's.
   async function loadEnhance() {
-    const card = $("#enhance-card");
-    if (!card) return;
+    const summary = $("#enhance-summary"), pause = $("#enhance-pause");
+    if (!summary || !pause) return;
     let d;
-    try { d = await api("/api/enhance/status"); } catch (_) { setTimeout(loadEnhance, POLL_MS * 4); return; }
-    card.hidden = !d.enabled && !d.workers.length && !d.items.length;
+    try { d = await api("/api/enhance/status"); } catch (_) { enhTimer = setTimeout(loadEnhance, POLL_MS * 4); return; }
     const c = d.counts;
-    $("#enhance-summary").textContent = (d.enabled ? "" : "Enhance đang tắt ([enhance] enabled = false). ") +
+    const outdated = d.workers.filter((w) => w.outdated).map((w) => w.label || w.name);
+    summary.textContent = (d.enabled ? "" : "Enhance đang tắt ([enhance] enabled = false). ") +
       (d.paused ? "ĐANG TẠM DỪNG. " : "") +
       `Hàng đợi: ${c.queued || 0} đợi máy GPU, ${c.running || 0} đang enhance, ${c.assembling || 0} đang ghép` +
-      (c.failed ? `, ${c.failed} lỗi` : "") + (c.waiting_hd ? `; ${c.waiting_hd} đang đợi HD để render` : "") + ".";
-    const pause = $("#enhance-pause");
+      (c.failed ? `, ${c.failed} lỗi` : "") + (c.waiting_hd ? `; ${c.waiting_hd} đang đợi HD để render` : "") + "." +
+      (outdated.length ? ` Cần cập nhật worker (chưa hỗ trợ phục hồi mặt): ${outdated.join(", ")}.` : "");
+    pause.hidden = !d.enabled && !d.workers.length && !d.items.length;
     pause.textContent = d.paused ? "Chạy tiếp enhance" : "Tạm dừng enhance";
     pause.onclick = async () => {
       pause.disabled = true;
       try { await api("/api/enhance-pause", { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ paused: !d.paused }) }); } catch (e) { alert(e.message); }
       pause.disabled = false;
+      clearTimeout(enhTimer);
       loadEnhance();
     };
-    $("#enhance-workers").replaceChildren(...(d.workers.length ? d.workers.map((w) => el("li", {},
-      el("b", { text: w.label || w.name }), el("span", { class: "muted small",
-        text: ` · ${w.gpu || "GPU ?"}${w.yield ? " · nhường Ollama" : ""} · liên lạc ${fmtTime(w.last_seen)}` +
-          (w.outdated ? " · cần cập nhật worker (chưa hỗ trợ phục hồi mặt)" : "") +
-          (w.episode_id ? ` · đang làm ` : " · rảnh") }),
-      w.episode_id ? el("a", { href: "/episodes/" + encodeURIComponent(w.episode_id), text: w.episode_id }) : null,
-      w.progress && w.progress.segments_total ? el("span", { class: "muted small",
-        text: ` (${w.progress.segments_uploaded || 0}/${w.progress.segments_total} đoạn)` }) : null))
-      : [el("li", { class: "muted", text: "Chưa có worker nào liên lạc (từ lúc khởi động server)." })]));
     clearTimeout(enhTimer);
     enhTimer = setTimeout(loadEnhance, POLL_MS * 2);
   }
@@ -2967,6 +2970,9 @@ const AutoShort = (() => {
     const redoBtn = $("#pl-enhance-redo");
     redoBtn.hidden = !plOldHd;
     redoBtn.textContent = `Enhance lại (${plOldHd})`;
+    const docAll = $("#pl-posts-docx"); // CP8.31 D3: all the posts of the bộ kinh
+    docAll.hidden = !d.posts_docx_url;
+    if (d.posts_docx_url) { docAll.href = d.posts_docx_url; docAll.setAttribute("download", d.posts_docx_name || ""); }
     plPriorityCount = d.priority_count || 0; // CP8.26
     $("#pl-priority").textContent = plPriorityCount ? `Bỏ ưu tiên cả bộ (${plPriorityCount})` : "Ưu tiên cả bộ";
     let busy = false;
@@ -2986,6 +2992,16 @@ const AutoShort = (() => {
       if (e.hd_url) { // CP8.27 H2: the landscape HD video of this episode
         actions.append(el("a", { class: "btn icon-btn", href: e.hd_url, download: e.hd_name || "", title: "Tải video HD (bản ngang)",
           "aria-label": "Tải video HD (bản ngang)" }, icon("download")));
+      }
+      if (e.zip_url) { // CP8.31 D3: Shorts (+ khai thị) of the episode in one zip; a zip ticks "Đã đăng"
+        const label = e.zip_url.endsWith("/all.zip") ? "Tải Short + khai thị (.zip)" : "Tải Short (.zip)";
+        const z = el("a", { class: "btn icon-btn", href: e.zip_url, download: e.zip_name || "", title: label, "aria-label": label }, icon("zip"));
+        z.addEventListener("click", () => setTimeout(loadPlaylist, 2500));
+        actions.append(z);
+      }
+      if (e.posts_docx_url) {
+        actions.append(el("a", { class: "btn icon-btn", href: e.posts_docx_url, download: e.posts_docx_name || "",
+          title: "Tải bài đăng (.docx)", "aria-label": "Tải bài đăng (.docx)" }, icon("doc")));
       }
       if (e.video_id && !["unavailable", "deleted"].includes(e.state) && !e.complete) actions.append(priorityButton(e.video_id, !!e.priority, loadPlaylist));
       return el("li", { class: "pl-entry " + e.state, "data-group": e.group || "none" },
@@ -3138,6 +3154,7 @@ const AutoShort = (() => {
   }
 
   function initMonitor() {
+    loadEnhance(); // CP8.31 D6
     const feeds = [["/api/monitor/queue?limit=20", renderQueue], ["/api/monitor/system", renderCpu],
       ["/api/monitor/ollama", renderOllama], ["/api/monitor/gpu", renderGpu]];
     async function tick() {

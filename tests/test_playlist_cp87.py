@@ -295,12 +295,9 @@ def test_download_ticks_published(tcfg):
         c.post(f"/api/episodes/{eid}/shorts/k01/published", json={"value": False})
         c.get(f"/files/{eid}/k01.mp4")
         assert _publish(tcfg, eid)["published"] == []
-        # CP8.17 D3: the zip does NOT tick; only the single "Tải về" of each Short does
+        # CP8.31 D1 (reverses CP8.17 D3): the zip ticks every Short it contains
         with zipfile.ZipFile(io.BytesIO(c.get(f"/files/{eid}/shorts.zip").content)) as zf:
             assert len(zf.namelist()) == 3
-        assert _publish(tcfg, eid)["published"] == []
-        for clip in ("k01", "k02", "k03"):
-            c.get(f"/files/{eid}/{clip}.mp4?download=1")
         assert [e["clip_id"] for e in _publish(tcfg, eid)["published"]] == ["k01", "k02", "k03"]
         assert c.get(f"/api/episodes/{eid}").json()["complete"] is True
     # re-render k02 -> stale; downloading again re-ticks with the new sha256

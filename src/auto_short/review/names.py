@@ -79,6 +79,16 @@ def zip_name(episode: str, *, khaithi: bool = False, series: str | None = None, 
     return f"{head}_Tập{episode}_{kind}.zip" if head else f"Tập{episode}_{kind}.zip"
 
 
+def posts_docx_name(episode: str | None, *, series: str | None = None, fallback: str = "bai-dang") -> str:
+    """CP8.31 P16: ``[<series>_]Tập<episode>_BaiDang.docx`` (one video); without an episode label
+    ``<series>_BaiDang.docx`` (a whole bộ kinh), else ``<fallback>_BaiDang.docx`` (``fallback`` = playlist id)."""
+    head = truncate_utf8(clean_part(series), MAX_SERIES_BYTES)
+    label = clean_part(episode) if episode else ""
+    if label:
+        return f"{head}_Tập{label}_BaiDang.docx" if head else f"Tập{label}_BaiDang.docx"
+    return f"{head or clean_part(fallback) or 'bai-dang'}_BaiDang.docx"
+
+
 def video_name(episode: str | None, video_id: str, suffix: str, *, series: str | None = None) -> str:
     """CP8.27: ``[<series>_]Tập<episode>_<suffix>.mp4`` (suffix ``HD`` landscape, ``Doc`` vertical); a video with no
     episode number (titles.json ``header.fields.episode``) -> ``<video id>_<suffix>.mp4``."""

@@ -107,6 +107,13 @@ never deleted. The "Đã đăng" checkbox marks Shorts you have uploaded (`work/
 input); a Short re-rendered after ticking shows "đã đăng bản cũ". Filters: Tất cả / Chưa đăng / Đã đăng on the
 episode page, Tất cả / Còn Short chưa đăng / Đã đăng hết on the episode list.
 
+Downloads and exports (CP8.31): any zip ("Tải tất cả Short", "Tải tất cả khai thị", "Tải cả hai") ticks every Short
+it contains as "Đã đăng". Each episode row of a bộ kinh page has icon buttons for the Short + khai thị zip and for
+the posts file; "Tải bài đăng cả bộ (.docx)" at the top downloads the community posts of every episode as one Word
+file (episode order; per episode "Shorts" then "Khai thị"; title in capitals, image, paragraphs, source line; no
+link or hashtags), `<series>_BaiDang.docx`. The Posts tab of an episode downloads that video's posts
+(`Tập<N>_BaiDang.docx`). Exporting never ticks "Đã đăng bài" (needs `python-docx`, extra `[web]`).
+
 Playlists / bộ kinh (CP8.7): paste a playlist link (`youtube.com/playlist?list=…`) to list every episode of the
 series without downloading anything (a `watch?v=…&list=…` link asks: this episode only, or the whole playlist; Mix
 / Watch later / Liked lists are refused). The home page shows the bộ kinh and the single episodes ("Tập lẻ"); a
