@@ -720,8 +720,26 @@ const AutoShort = (() => {
     if (job && job.status === "failed") note.textContent = `Lỗi tạo bản dọc: ${job.error || "?"}`;
   }
 
-  // CP8.31 D1: the server ticks "Đã đăng" when the zip request arrives; give it a moment, then refresh the page data.
-  function zipAfterClick() { setTimeout(refreshEpisode, 2500); }
+  // CP8.31 D1 / round 6: the server ticks "Đã đăng" when the zip request arrives, which on a phone can be late
+  // (download sheet / manager). Refresh several times after a click (the last ones are > 5 s, past the playlist status
+  // cache) and once more when the page is shown / focused again within 60 s. A new click restarts the series.
+  const ZIP_REFRESH_MS = [2000, 5000, 10000, 20000];
+  const ZIP_RETURN_MS = 60000;
+  const zipRefresh = { timers: [], at: 0, fn: null, bound: false };
+  function zipRefreshNow() {
+    if (zipRefresh.fn && Date.now() - zipRefresh.at < ZIP_RETURN_MS && !document.hidden) zipRefresh.fn();
+  }
+  function zipAfterClick(refresh) {
+    zipRefresh.timers.forEach(clearTimeout); // no stacked timers on repeated clicks
+    zipRefresh.fn = refresh;
+    zipRefresh.at = Date.now();
+    zipRefresh.timers = ZIP_REFRESH_MS.map((ms) => setTimeout(() => refresh(), ms));
+    if (!zipRefresh.bound) {
+      zipRefresh.bound = true;
+      document.addEventListener("visibilitychange", zipRefreshNow);
+      window.addEventListener("focus", zipRefreshNow);
+    }
+  }
 
   function renderEpisode(d) {
     lastData = d; // noun() / stageLabel() read the kind
@@ -855,11 +873,11 @@ const AutoShort = (() => {
     zip.hidden = !d.zip_url;
     if (d.zip_url) { zip.href = d.zip_url; zip.setAttribute("download", d.zip_name || ""); }
     // CP8.17 D4: the label says what the zip holds. CP8.31 D1: a zip ticks "Đã đăng" -> refresh the counts after it
-    zip.onclick = zipAfterClick;
+    zip.onclick = () => zipAfterClick(refreshEpisode);
     zip.textContent = d.kind === "khaithi" ? "Tải tất cả khai thị (.zip)" : "Tải tất cả Short (.zip)";
     const zipAll = $("#zip-all"); // CP8.17 D5: Shorts/ + KhaiThị/ in one zip (hidden when either kind is missing)
     zipAll.hidden = !d.zip_all_url;
-    zipAll.onclick = zipAfterClick;
+    zipAll.onclick = () => zipAfterClick(refreshEpisode);
     if (d.zip_all_url) { zipAll.href = d.zip_all_url; zipAll.setAttribute("download", d.zip_all_name || ""); }
     $("#header-lines").textContent = d.header ? "Header: " + d.header.join(" / ") : "";
     // CP9 C7: "Thêm Short" once the episode has a render and titles (not on an archived episode)
@@ -3038,7 +3056,7 @@ const AutoShort = (() => {
       if (e.zip_url) { // CP8.31 D3: Shorts (+ khai thị) of the episode in one zip; a zip ticks "Đã đăng"
         const label = e.zip_url.endsWith("/all.zip") ? "Tải Short + khai thị (.zip)" : "Tải Short (.zip)";
         const z = el("a", { class: "btn icon-btn", href: e.zip_url, download: e.zip_name || "", title: label, "aria-label": label }, icon("zip"));
-        z.addEventListener("click", () => setTimeout(loadPlaylist, 2500));
+        z.addEventListener("click", () => zipAfterClick(loadPlaylist));
         actions.append(z);
       }
       if (e.posts_docx_url) {

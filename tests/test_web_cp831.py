@@ -419,3 +419,17 @@ def test_home_playlist_badges_static(tcfg):
         for k in ("full", "part", "none", "busy", "err"):
             assert f".badge.prog.{k}" in css
         assert " · đã xử lý" not in js  # no joined text line any more
+
+
+def test_zip_click_refreshes_repeatedly_and_on_return(tcfg):
+    with client(tcfg) as c:
+        login(c)
+        js = c.get("/static/app.js").text
+        assert "const ZIP_REFRESH_MS = [2000, 5000, 10000, 20000];" in js  # last ones > 5 s status cache
+        assert "zipRefresh.timers.forEach(clearTimeout)" in js  # no stacked timers
+        assert 'document.addEventListener("visibilitychange", zipRefreshNow)' in js
+        assert 'window.addEventListener("focus", zipRefreshNow)' in js
+        assert "Date.now() - zipRefresh.at < ZIP_RETURN_MS" in js
+        assert "zip.onclick = () => zipAfterClick(refreshEpisode);" in js
+        assert "zipAll.onclick = () => zipAfterClick(refreshEpisode);" in js
+        assert "zipAfterClick(loadPlaylist)" in js and "setTimeout(loadPlaylist, 2500)" not in js
