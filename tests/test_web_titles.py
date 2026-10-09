@@ -93,7 +93,7 @@ def test_preview_valid_and_invalid(tcfg, episode):
         assert " ".join(p["display_lines"]) == NEW and 1 <= len(p["display_lines"]) <= 3
         assert p["font_size"] > 0 and p["panel_height"] > 0
         for text, msg in (("x" * 61, "too long"), ("Tâm 🙏", "emoji"), ("", "empty"), ("TÂM THIỆN", "all caps"),
-                          ("Tâm 心", "not in the font")):
+                          ("Tâm 心", "non-Latin script"), ("Tâm \ue000", "not in the font")):
             r = c.post(f"{BASE}/k01/title/preview", json={"text": text})
             assert r.status_code == 422 and msg in r.json()["detail"], text
         assert c.post(f"{BASE}/k99/title/preview", json={"text": NEW}).status_code == 422

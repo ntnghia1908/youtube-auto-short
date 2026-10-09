@@ -3,6 +3,8 @@
 import json
 from dataclasses import replace
 
+import unicodedata
+
 import pytest
 
 from auto_short import config as config_mod
@@ -21,6 +23,7 @@ from auto_short.titling.logic import (
     validate_options,
     validate_titles,
 )
+from auto_short.titling.logic import form_reject_reason
 from auto_short.titling.prompt import prompt_sha256, render_user_prompt, system_prompt
 from titling_helpers import VIDEO_TITLE
 
@@ -202,6 +205,11 @@ def _reason(title, evidence=EV, min_chars=10, max_chars=60):
     ("Tướng " * 12, EV, "too long (71 > 60 chars)"),
     ("Tướng tùy tâm chuyển 🙏", EV, "emoji/pictograph"),
     ("Tướng tùy tâm chuyển ✨", EV, "emoji/pictograph"),
+    ("Hết phước今生, đời sau khổ không lối thoát?", EV, "non-Latin script"),
+    ("Tướng tùy tâm こんにちは", EV, "non-Latin script"),
+    ("Tướng tùy tâm 한국어", EV, "non-Latin script"),
+    ("Tướng tùy tâm привет", EV, "non-Latin script"),
+    ("Tướng tùy tâm สวัสดี", EV, "non-Latin script"),
     ("Tướng tùy tâm chuyển #phatphap", EV, "hashtag"),
     ("Tướng tùy tâm chuyển @kenh", EV, "@ mention"),
     ("Tướng tùy tâm chuyển!", EV, "exclamation mark"),
@@ -278,3 +286,16 @@ def test_validate_titles_ok_and_violations():
         mutate(doc)
         with pytest.raises(TitlingError):
             _check(doc, clips_doc)
+
+
+def test_vietnamese_and_punctuation_pass_script_rule():
+    vowels = "aăâeêioôơuưy"
+    marks = ["", "\u0300", "\u0301", "\u0309", "\u0303", "\u0323"]
+    letters = "".join(v + m for v in vowels for m in marks)
+    letters = unicodedata.normalize("NFC", letters)
+    for title in (letters, letters.upper(), "đ Đ đường Đạo", "Phật dạy 3 điều: hiểu, buông - nhớ? Tâm… thiện",
+                  "Tại sao 108 hạt chuỗi lại quan trọng?"):
+        assert form_reject_reason(title, min_chars=1, max_chars=200) != "non-Latin script", title
+    assert form_reject_reason("Hết phước đời sau khổ?", min_chars=1, max_chars=60) is None
+    # decomposed input is judged after NFC; combining marks are not letters
+    assert form_reject_reason("Tu\u0301ng tu\u0300y ta\u0302m", min_chars=1, max_chars=60) is None
