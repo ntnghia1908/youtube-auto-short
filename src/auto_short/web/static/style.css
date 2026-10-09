@@ -194,6 +194,9 @@ summary { cursor: pointer; color: var(--muted); }
 .badge.prog { font-weight: 700; padding: .1rem .5rem; border: 1px solid transparent; }
 .badge.prog.full { background: #d6f0dc; color: #14532d; border-color: #86c79a; }
 .badge.prog.part { background: #ffe6bf; color: #7a3d00; border-color: #e0a85a; }
+.badge.prog.busy { background: #dbe9ff; color: #12337a; border-color: #8fb2ee; }
+.badge.prog.err { background: #fdecea; color: #8c1c13; border-color: #e8a39e; }
+.episode-list a .pl-badges, #playlists a .pl-badges { margin-top: .2rem; }
 .badge.prog.none { background: #e8e8e4; color: #3f3f3a; border-color: #bdbdb5; }
 /* CP8.9 khai thị */
 .kind-box { display: flex; flex-wrap: wrap; gap: 1rem; margin: .5rem 0; }

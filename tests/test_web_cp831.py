@@ -405,3 +405,17 @@ def test_mobile_row_actions_aligned_with_name(tcfg):
         assert "margin-left: calc(2.2rem + .5rem)" in mobile and "flex-basis: calc(100% - 2.7rem)" in mobile
         assert ".pl-entry .rec-actions .btn { width: auto; min-height: 2.75rem;" in mobile
         assert ".pl-index { min-width: 2.2rem;" in css  # the index column the margin matches
+
+
+def test_home_playlist_badges_static(tcfg):
+    with client(tcfg) as c:
+        login(c)
+        js, css = c.get("/static/app.js").text, c.get("/static/style.css").text
+        body = js[js.index("function playlistBadges(p)"):js.index("// Episode list filter")]
+        assert "`Đã xử lý ${p.processed}/${p.count}`" in body and "`Xong ${p.complete}`" in body
+        assert '"full" : p.processed > 0 ? "part" : "none"' in body  # grey 0 / amber partial / green all
+        assert body.count(".filter(([, n]) => n)") == 1  # zero badges hidden (only "Đã xử lý" is always shown)
+        assert '"busy"' in body and '"err"' in body and '"part"' in body
+        for k in ("full", "part", "none", "busy", "err"):
+            assert f".badge.prog.{k}" in css
+        assert " · đã xử lý" not in js  # no joined text line any more

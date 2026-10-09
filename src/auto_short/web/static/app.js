@@ -301,14 +301,18 @@ const AutoShort = (() => {
     list.replaceChildren(...data.playlists.map((p) => el("li", {},
       el("a", { href: "/playlists/" + encodeURIComponent(p.id) },
         el("span", { class: "ep-name", text: p.title || p.id }),
-        el("span", { class: "ep-state muted", text: playlistSummary(p) })))));
+        playlistBadges(p)))));
   }
 
-  // CP8.13 G3: "… · đang xử lý a · lỗi / dở dang b · đang làm c" (a part equal to 0 is left out).
-  function playlistSummary(p) {
-    return `${p.count} tập · đã xử lý ${p.processed} · Xong ${p.complete}` +
-      [["đang xử lý", p.running], ["lỗi / dở dang", p.failed], ["đang làm", p.doing]]
-        .filter(([, n]) => n).map(([label, n]) => ` · ${label} ${n}`).join("");
+  // CP8.31 A3 (was CP8.13 G3 text): coloured badges, same style as the A2 row badges (text + colour). Only
+  // "Đã xử lý a/N" is always shown; the other badges with 0 are left out.
+  function playlistBadges(p) {
+    const done = p.processed >= p.count && p.count > 0 ? "full" : p.processed > 0 ? "part" : "none";
+    const badge = (text, cls) => el("span", { class: "badge prog " + cls, text });
+    return el("span", { class: "pl-badges" }, badge(`Đã xử lý ${p.processed}/${p.count}`, done),
+      ...[[`Xong ${p.complete}`, p.complete, "full"], [`Đang xử lý ${p.running}`, p.running, "busy"],
+        [`Lỗi / dở dang ${p.failed}`, p.failed, "err"], [`Đang làm ${p.doing}`, p.doing, "part"]]
+        .filter(([, n]) => n).map(([text, , cls]) => badge(text, cls)));
   }
 
   // Episode list filter (CP8.5 X4): publish_group from the API ("todo" | "done" | null).
