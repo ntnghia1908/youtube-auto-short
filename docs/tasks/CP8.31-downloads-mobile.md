@@ -112,6 +112,11 @@ Yêu cầu trực tiếp của HUMAN LEAD (sửa D2 / D3; thêm D7). Không ch�
   - API bộ kinh thêm `posts_total`, `posts_posted` mỗi dòng (đọc `posts.json` như D3, không gọi thêm AI / mạng).
 - AC bổ sung: A1 — khoảng đúng theo số tập, tối đa 10 tập, `images=0` không có `word/media`, tên file đúng; A2 — số và màu đúng cho 3 trường hợp (hết / dở / chưa), y = 0 ẩn; test API + static.
 
+## Amendment 3 (HUMAN LEAD 2026-10-09, manual test 8080)
+
+- **A3. Huy hiệu ở trang chủ cho từng bộ kinh** (HUMAN LEAD: "huy hiệu dễ nhìn hơn nên áp dụng luôn cho trang chủ"): dòng chữ `playlistSummary` (CP8.13 G3) đổi thành huy hiệu cùng kiểu A2 (`.badge.prog`, chữ + màu): `Đã xử lý a/N` (cam khi 0 < a < N, xanh khi a = N, xám khi 0), `Xong b` (xanh), `Đang xử lý c` (xanh dương / màu busy hiện có), `Lỗi / dở dang d` (đỏ), `Đang làm e` (cam). Huy hiệu số 0 ẩn (trừ `Đã xử lý`). Không đổi API (`/api/playlists` đã có `count`, `processed`, `complete`, `running`, `failed`, `doing`) và không đổi nghĩa các nhóm (CP8.13). Sửa CP8.3 W6 dòng trang chủ.
+- AC bổ sung: A3 — static test (hàm vẽ huy hiệu, ẩn 0); không còn dòng chữ ghép "·".
+
 ## Result
 
 - Main changes:
