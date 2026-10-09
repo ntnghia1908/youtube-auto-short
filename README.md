@@ -109,9 +109,8 @@ episode page, Tất cả / Còn Short chưa đăng / Đã đăng hết on the ep
 
 Downloads and exports (CP8.31): any zip ("Tải tất cả Short", "Tải tất cả khai thị", "Tải cả hai") ticks every Short
 it contains as "Đã đăng". Each episode row of a bộ kinh page has icon buttons for the Short + khai thị zip and for
-the posts file; "Tải bài đăng cả bộ (.docx)" at the top downloads the community posts of every episode as one Word
-file (episode order; per episode "Shorts" then "Khai thị"; title in capitals, image, paragraphs, source line; no
-link or hashtags), `<series>_BaiDang.docx`. The Posts tab of an episode downloads that video's posts
+the posts file, and coloured badges `Short x/y`, `Khai thị x/y`, `Bài x/y` (green all posted, amber partly, grey none). "Tải bài đăng (.docx)" on the bộ kinh page downloads the community posts of up to 10 episodes per Word file (ranges 1–10, 11–20, …; per episode "Shorts" then "Khai thị"; title in capitals, image, paragraphs, source line; no
+link or hashtags), `<series>_Tập1-10_BaiDang.docx`; untick "Có hình" for a file without images (`…_KhongHinh.docx`). The Posts tab of an episode downloads that video's posts
 (`Tập<N>_BaiDang.docx`). Exporting never ticks "Đã đăng bài" (needs `python-docx`, extra `[web]`).
 
 Playlists / bộ kinh (CP8.7): paste a playlist link (`youtube.com/playlist?list=…`) to list every episode of the

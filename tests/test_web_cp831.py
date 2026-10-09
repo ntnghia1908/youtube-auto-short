@@ -208,7 +208,7 @@ def make_playlist(cfg, entries, series=None):
     (root / f"{PL}.json").write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
 
 
-def test_playlist_docx_order_and_name(one):
+def test_playlist_docx_ranges_and_name(one):
     make_episode(one, VID2, "3", clips=("k01",))
     (one.post.image_dir / "b.png").write_bytes(png(200))
     add_posts(one, VID2, [("k01", ["Tập ba."], "b.png", False)])
@@ -216,15 +216,23 @@ def test_playlist_docx_order_and_name(one):
     make_playlist(one, [(VID, "29"), (VID3, "5"), (VID2, "3")], series=SERIES)
     with client(one) as c:
         login(c)
-        r = c.get(f"/files/playlists/{PL}/posts.docx")
+        assert c.get(f"/files/playlists/{PL}/posts.docx").status_code == 422  # no whole-bộ file
+        r = c.get(f"/files/playlists/{PL}/posts.docx?from=1&to=30")
+        assert r.status_code == 422  # more than 10 episodes
+        r = c.get(f"/files/playlists/{PL}/posts.docx?from=21&to=30")
+        assert [h.split(" — ")[0] for h in headings(read(r), 1)] == [f"{SERIES} tập 29"]
+        r = c.get(f"/files/playlists/{PL}/posts.docx?from=1&to=10")
         d = read(r)
         assert [p.text for p in d.paragraphs if p.style.name == "Title"] == [SERIES]
-        assert [h.split(" — ")[0] for h in headings(d, 1)] == [f"{SERIES} tập 3", f"{SERIES} tập 29"]  # tập order
-        assert len(media(r)) == 2  # a.png (2 uses) + b.png: one copy each
-        assert len(d.inline_shapes) == 3
-        assert "BaiDang.docx" in r.headers["content-disposition"]
+        assert [h.split(" — ")[0] for h in headings(d, 1)] == [f"{SERIES} tập 3"]  # tập 5 has no post: skipped
+        assert len(media(r)) == 1 and len(d.inline_shapes) == 1
+        assert "BaiDang.docx" in r.headers["content-disposition"] and "T%E1%BA%ADp1-10_BaiDang" in r.headers["content-disposition"]
         assert "Th%E1%BA%ADp%20Thi%E1%BB%87n" in r.headers["content-disposition"]  # series in the UTF-8 file name
-        assert c.get("/files/playlists/PLunknown000000/posts.docx").status_code == 404
+        assert c.get(f"/files/playlists/{PL}/posts.docx?from=4&to=4").status_code == 404  # empty range
+        assert c.get(f"/files/playlists/{PL}/posts.docx?from=x&to=4").status_code == 422
+        assert c.get(f"/files/playlists/{PL}/posts.docx?from=5&to=2").status_code == 422
+        assert c.get(f"/files/playlists/{PL}/posts.docx?from=1&to=10&images=2").status_code == 422
+        assert c.get("/files/playlists/PLunknown000000/posts.docx?from=1&to=10").status_code == 404
         assert c.get("/files/playlists/..%2Fx/posts.docx").status_code == 404
 
 
@@ -233,10 +241,10 @@ def test_playlist_docx_404_without_posts_and_fallback_name(tcfg):
     make_playlist(tcfg, [(VID2, "3")])
     with client(tcfg) as c:
         login(c)
-        assert c.get(f"/files/playlists/{PL}/posts.docx").status_code == 404
+        assert c.get(f"/files/playlists/{PL}/posts.docx?from=1&to=10").status_code == 404
         add_posts(tcfg, VID2, [("k01", ["x"], None, False)])
-        r = c.get(f"/files/playlists/{PL}/posts.docx")
-        assert f"{PL}_BaiDang.docx" in r.headers["content-disposition"]
+        r = c.get(f"/files/playlists/{PL}/posts.docx?from=1&to=10")
+        assert f"{PL}_T%E1%BA%ADp1-10_BaiDang.docx" in r.headers["content-disposition"]
 
 
 def test_playlist_api_download_fields(one):
@@ -253,12 +261,16 @@ def test_playlist_api_download_fields(one):
         assert by[VID]["posts_docx_name"] == f"{SERIES}_Tập29_BaiDang.docx"
         assert by[VID2]["zip_url"] == f"/files/{VID2}/shorts.zip" and by[VID2]["posts_docx_url"] is None
         assert by[VID3]["posts_docx_url"] == f"/files/{VID3}/posts.docx"
-        assert d["posts_docx_url"] == f"/files/playlists/{PL}/posts.docx"
-        assert d["posts_docx_name"] == f"{SERIES}_BaiDang.docx"
+        assert "posts_docx_url" not in d  # A1: no whole-bộ download
+        assert d["posts_ranges"] == [
+            {"from": 1, "to": 10, "label": "Tập 1–10", "episodes": 1, "posts": 1,
+             "url": f"/files/playlists/{PL}/posts.docx?from=1&to=10"},
+            {"from": 21, "to": 30, "label": "Tập 21–30", "episodes": 1, "posts": 3,
+             "url": f"/files/playlists/{PL}/posts.docx?from=21&to=30"}]
     make_playlist(one, [(VID2, "3")])
     with client(one) as c:
         login(c)
-        assert c.get(f"/api/playlists/{PL}").json()["posts_docx_url"] is None
+        assert c.get(f"/api/playlists/{PL}").json()["posts_ranges"] == []
 
 
 def test_playlist_zip_url_ticks(one):
@@ -281,7 +293,10 @@ def test_static_ui(tcfg):
         assert "[hidden] { display: none !important; }" in css  # D4
         assert ".actions .btn { flex: 1 1 100%; }" not in css  # D5
         assert "calc(50% - .5rem)" in css
-        assert 'id="pl-posts-docx"' in c.get(f"/playlists/{PL}").text
+        pl = c.get(f"/playlists/{PL}").text
+        assert 'id="pl-posts-box"' in pl and 'id="pl-docx-images"' in pl and "Có hình" in pl
+        assert 'id="posts-docx-images"' in c.get(f"/episodes/{VID}/posts").text
+        assert "autoShort.docxImages" in js and "progressBadge" in js and ".badge.prog.full" in css
         assert 'id="posts-docx"' in c.get(f"/episodes/{VID}/posts").text
         assert "posts_docx_url" in js and 'icon("zip")' in js and 'icon("doc")' in js
         # D6: the enhance block moved from the storage tab to the monitor tab
@@ -300,8 +315,7 @@ def test_playlist_name_falls_back_to_episode_series_and_heading_no_duplicate(tcf
     make_playlist(tcfg, [(VID2, "3")])  # no stored series
     with client(tcfg) as c:
         login(c)
-        assert c.get(f"/api/playlists/{PL}").json()["posts_docx_name"] == f"{SERIES}_BaiDang.docx"
-        r = c.get(f"/files/playlists/{PL}/posts.docx")
+        r = c.get(f"/files/playlists/{PL}/posts.docx?from=1&to=10")
         assert "BaiDang.docx" in r.headers["content-disposition"] and PL not in r.headers["content-disposition"]
         assert headings(read(r), 1) == [f"{SERIES} tập 3"]  # video title already holds the series: no repeat
 
@@ -314,3 +328,70 @@ def test_static_and_pages_revalidate(tcfg):
         assert c.get("/static/app.js").headers["cache-control"] == "no-cache"
         assert c.get("/monitor").headers["cache-control"] == "no-cache"
         assert c.get("/api/storage/status").headers["cache-control"] == "no-store"  # own value kept
+
+
+# --- A1: images=0, unnumbered episodes, names ------------------------------------------------------------------
+
+def test_images_flag_video_and_range(one):
+    make_playlist(one, [(VID, "29")], series=SERIES)
+    with client(one) as c:
+        login(c)
+        with_img, without = c.get(f"/files/{VID}/posts.docx"), c.get(f"/files/{VID}/posts.docx?images=0")
+        assert len(media(with_img)) == 1 and media(without) == []
+        assert len(read(without).inline_shapes) == 0 and "Chỉ một đoạn." in [p.text for p in read(without).paragraphs]
+        assert "BaiDang_KhongHinh.docx" in without.headers["content-disposition"]
+        assert "KhongHinh" not in with_img.headers["content-disposition"]
+        r = c.get(f"/files/playlists/{PL}/posts.docx?from=21&to=30&images=0")
+        assert media(r) == [] and "T%E1%BA%ADp21-30_BaiDang_KhongHinh.docx" in r.headers["content-disposition"]
+        assert c.get(f"/files/{VID}/posts.docx?images=x").status_code == 422
+
+
+def test_other_unnumbered_episodes(tcfg):
+    make_episode(tcfg, VID2, "3", clips=("k01",))
+    make_episode(tcfg, VID3, "0", clips=("k01",))
+    add_posts(tcfg, VID2, [("k01", ["x"], None, False)])
+    add_posts(tcfg, VID3, [("k01", ["y"], None, False)])
+    make_playlist(tcfg, [(VID2, "3"), (VID3, None)], series=SERIES)
+    with client(tcfg) as c:
+        login(c)
+        rng = c.get(f"/api/playlists/{PL}").json()["posts_ranges"]
+        assert [(r["label"], r["posts"]) for r in rng] == [("Tập 1–10", 1), ("Tập chưa rõ số", 1)]
+        r = c.get(rng[1]["url"])
+        assert "T%E1%BA%ADp%20ch%C6%B0a%20r%C3%B5_BaiDang.docx" in r.headers["content-disposition"]
+        assert [p.text for p in read(r).paragraphs if p.text == "y"] == ["y"]
+        assert c.get(f"/files/playlists/{PL}/posts.docx?other=1&from=1&to=2").status_code == 422
+
+
+def test_docx_names_range_and_no_images():
+    assert posts_docx_name(None, series=SERIES, span="1-10") == f"{SERIES}_Tập1-10_BaiDang.docx"
+    assert posts_docx_name(None, series=None, fallback="PL1", span="1-10", images=False) == "PL1_Tập1-10_BaiDang_KhongHinh.docx"
+    assert posts_docx_name("29", series=SERIES, images=False) == f"{SERIES}_Tập29_BaiDang_KhongHinh.docx"
+
+
+# --- A2: progress badges (API numbers + static) ---------------------------------------------------------------------
+
+def test_post_progress_numbers(one):
+    make_episode(one, VID2, "3", clips=("k01", "k02"))
+    add_posts(one, VID2, [("k01", ["a"], None, True), ("k02", ["b"], None, True)])  # all posted
+    make_episode(one, VID3, "5", clips=("k01",))  # rendered, no post yet
+    make_playlist(one, [(VID, "29"), (VID2, "3"), (VID3, "5")], series=SERIES)
+    with client(one) as c:
+        login(c)
+        by = {e["video_id"]: e for e in c.get(f"/api/playlists/{PL}").json()["entries"]}
+        # VID: Short k01 + k02 (k02 posted) + khai thị k01 -> 3 rendered, 3 posts, 1 posted
+        assert (by[VID]["posts_total"], by[VID]["posts_posted"]) == (3, 1)
+        assert (by[VID2]["posts_total"], by[VID2]["posts_posted"]) == (2, 2)
+        assert (by[VID3]["posts_total"], by[VID3]["posts_posted"]) == (1, 0)
+        assert by[VID]["shorts"] == 2 and by[VID]["khaithi_videos"] == 1
+
+
+def test_badge_static_has_text_and_colour_classes(tcfg):
+    with client(tcfg) as c:
+        login(c)
+        js, css = c.get("/static/app.js").text, c.get("/static/style.css").text
+        assert "if (!total) return null" in js  # y = 0 hides the badge
+        assert 'done >= total ? "full" : done > 0 ? "part" : "none"' in js
+        assert '`${label} ${done}/${total}`' in js  # text, not colour only
+        for k in ("full", "part", "none"):
+            assert f".badge.prog.{k}" in css
+        assert "đã đăng ${e.published}/${e.shorts}" not in js  # the counts moved out of the status line

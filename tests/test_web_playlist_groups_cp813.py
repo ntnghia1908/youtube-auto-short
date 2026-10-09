@@ -185,9 +185,9 @@ def test_playlist_entry_has_no_khaithi_link(tcfg):
     with client(tcfg) as c:
         js = c.get("/static/app.js").text
     body = js[js.index("async function loadPlaylist()"):js.index("return { initIndex")]
-    assert "khaithi_episode_id" not in body and '"Khai thị"' not in body and "kind-label" not in body
-    # the count line of the khai thị videos stays (CP8.9 A1.4)
-    assert "video khai thị, đã đăng ${e.khaithi_published}/${e.khaithi_videos}" in js
+    # CP8.31 A2: the only "Khai thị" in the row is its coloured progress badge (no link, no kind label)
+    assert "khaithi_episode_id" not in body and body.count('"Khai thị"') == 1 and "kind-label" not in body
+    assert 'progressBadge("Khai thị", e.khaithi_published || 0, e.khaithi_videos || 0)' in body
 
 
 # --- G5 "Lặp lại" (AC5) -----------------------------------------------------------------------------------------

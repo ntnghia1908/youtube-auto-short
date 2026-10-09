@@ -37,9 +37,9 @@ class ExportEpisode:
     groups: list[ExportGroup] = field(default_factory=list)
 
 
-def build_docx(path: Path, title: str, episodes: list[ExportEpisode], image_dir: Path) -> None:
+def build_docx(path: Path, title: str, episodes: list[ExportEpisode], image_dir: Path, *, images: bool = True) -> None:
     """Title, then per episode: heading 1, per group heading 2, per post heading 3 (title line), image, paragraphs,
-    source line. python-docx stores an image used by several posts once (it dedups by SHA-1)."""
+    source line (``images=False``: no picture at all). python-docx stores an image used by several posts once (it dedups by SHA-1)."""
     doc = Document()
     doc.add_heading(title, level=0)
     for episode in episodes:
@@ -49,7 +49,7 @@ def build_docx(path: Path, title: str, episodes: list[ExportEpisode], image_dir:
             for post in group.posts:
                 if post.title:
                     doc.add_heading(post.title, level=3)
-                image = post_images.resolve(image_dir, post.image) if post.image else None
+                image = post_images.resolve(image_dir, post.image) if (images and post.image) else None
                 if image is not None:
                     try:
                         doc.add_picture(str(image), width=IMAGE_WIDTH)

@@ -203,11 +203,11 @@ Ngoài phạm vi: dùng văn bản cho title / transcript / phụ đề / chọn
 
 Mục đích: gom bài đăng để đóng sách; định dạng `.docx` (dependency `python-docx`, CP1 §10). Hàm dựng file `post/export.py` (không phụ thuộc web); web gom bài theo thứ tự rồi gọi (route: CP8.3 W7).
 
-- **Phạm vi:** một video (`GET /files/{id}/posts.docx`, `id` = `<vid>` hoặc `<vid>.kt`, cùng kết quả: bài của `<vid>` rồi `<vid>.kt`) hoặc cả bộ kinh (`GET /files/playlists/{pid}/posts.docx`, theo số tập, rồi thứ tự danh sách; tập chưa có bài bị bỏ qua). Không có bài nào → 404.
+- **Phạm vi (sửa đổi CP8.31 Amendment 1):** một video (`GET /files/{id}/posts.docx`, `id` = `<vid>` hoặc `<vid>.kt`, cùng kết quả: bài của `<vid>` rồi `<vid>.kt`) hoặc **một khoảng tập** của bộ kinh (`GET /files/playlists/{pid}/posts.docx?from=<N>&to=<M>` theo số tập, `to - from` ≤ 9 → tối đa 10 tập; `?other=1` cho tập không nhận số tập; không còn file cả bộ). Tập chưa có bài bị bỏ qua. Khoảng không có bài → 404; tham số sai → 422. Tham số `images=0|1` (mặc định 1) cho mọi route docx: `0` không nhúng ảnh (không có `word/media`). API bộ kinh trả `posts_ranges` (chia cố định 1–10, 11–20, …, chỉ khoảng có bài, cộng "Tập chưa rõ số").
 - **Nguồn bài:** `posts.json` — mọi bài của Short còn `rendered` (đã / chưa đăng, bài sửa tay, bài stale xuất text đang lưu), theo thứ tự `render_manifest.json`. Short đã xóa / không `rendered` bị bỏ.
 - **Cấu trúc:** tiêu đề tài liệu (tên bộ kinh, hoặc heading tập khi tải một video); mỗi tập một Heading 1 (`<series> tập <N>` + " — " + tên video); trong tập, Heading 2 "Shorts" rồi "Khai thị" (chỉ mục có bài); mỗi bài một Heading 3 = dòng title viết hoa như P4, ảnh của bài (rộng 5,5 inch), các đoạn, dòng nguồn P4 (nghiêng). **Không** có link video và hashtag. Tiêu đề / đoạn / dòng nguồn lấy từ `post/logic.text_parts` (cùng hàm với `compose_copy_text`, P4) nên không lệch bản sao chép.
 - **Ảnh:** file trong thư viện ảnh (`[post] image_dir`, P5); ảnh thiếu / không đọc được → bỏ ảnh, giữ text. Ảnh dùng cho nhiều bài chỉ nhúng một lần (python-docx dùng chung phần ảnh theo SHA-1).
-- **Tên file:** `[<series>_]Tập<N>_BaiDang.docx` (một video), `<series>_BaiDang.docx` (cả bộ; không có tên bộ kinh → `<pid>_BaiDang.docx`), làm sạch ký tự như CP8.3 W8.
+- **Tên file:** `[<series>_]Tập<N>_BaiDang.docx` (một video), `[<series>_]Tập<N>-<M>_BaiDang.docx` (khoảng; `Tập chưa rõ` cho `other=1`; không có tên bộ kinh → thay bằng `<pid>_`), thêm `_KhongHinh` trước `.docx` khi `images=0`; làm sạch ký tự như CP8.3 W8.
 - **Không ghi gì:** không tick "Đã đăng bài", không đổi `posts.json`. File dựng trong thread (không chặn event loop), lưu tạm rồi xóa sau khi gửi.
 
 Ngoài phạm vi: PDF / Markdown, dàn trang sách (khổ giấy, mục lục, số trang).

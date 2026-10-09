@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import parse_qs, quote
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response,
                                StreamingResponse)
 from fastapi.staticfiles import StaticFiles
@@ -824,22 +824,26 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                     return series
         return None
 
-    def _has_posts(episode_id: str) -> bool:
-        """Cheap check for the playlist page: a stored post whose Short is still rendered (CP8.31 D3)."""
-        if not _posts_path(episode_id).is_file():
-            return False
+    def _post_stats(episode_id: str) -> tuple[int, int, int]:
+        """Cheap numbers for the playlist page (one ``posts.json`` read): ``(posts, posted, rendered)`` = stored posts
+        whose Short is still rendered, how many of them are ticked "Đã đăng bài", rendered Shorts (CP8.31 A2)."""
+        order = [cid for cid, _ in post_stage.rendered_clip_ids(config, episode_id)]
+        if not order or not _posts_path(episode_id).is_file():
+            return 0, 0, len(order)
         with post_lock:
             try:
-                clips = {e["clip_id"] for e in post_store.read_posts(_posts_path(episode_id), episode_id)["posts"]}
+                entries = post_store.read_posts(_posts_path(episode_id), episode_id)["posts"]
             except post_store.PostsError:
-                return False
-        return any(cid in clips for cid, _ in post_stage.rendered_clip_ids(config, episode_id))
+                return 0, 0, len(order)
+        live = [e for e in entries if e["clip_id"] in set(order)]
+        return len(live), sum(1 for e in live if e["posted_at"] is not None), len(order)
 
     def _download_fields(e: dict) -> None:
         """CP8.31 D3: zip (``all.zip`` with both Shorts and khai thị, else the ``shorts.zip`` of the kind present) and
         ``.docx`` url + name of one playlist entry; the key is absent / None when there is nothing to download."""
         vid = e.get("video_id")
         e["zip_url"] = e["zip_name"] = e["posts_docx_url"] = e["posts_docx_name"] = None
+        e["posts_count"] = e["posts_total"] = e["posts_posted"] = 0  # CP8.31 A2 (Bài x/y)
         if not vid or not e.get("available"):
             return
         kid = e.get("khaithi_episode_id")
@@ -851,9 +855,36 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             e["zip_url"], e["zip_name"] = f"/files/{vid}/shorts.zip", ep.zip_download_name(config, vid)
         elif kts:
             e["zip_url"], e["zip_name"] = f"/files/{kid}/shorts.zip", ep.zip_download_name(config, kid)
-        if _has_posts(vid) or (kid is not None and _has_posts(kid)):
+        stats = [_post_stats(x) for x in (vid, kid) if x is not None]
+        e["posts_count"] = sum(n for n, _, _ in stats)
+        e["posts_posted"] = sum(x for _, x, _ in stats)
+        e["posts_total"] = sum(r for _, _, r in stats)
+        if e["posts_count"]:
             e["posts_docx_url"] = f"/files/{vid}/posts.docx"
             e["posts_docx_name"] = _docx_name_of(vid)
+
+    RANGE_SIZE = 10  # CP8.31 A1: episodes per posts file
+
+    def _posts_ranges(playlist_id: str, entries: list[dict]) -> list[dict]:
+        """CP8.31 A1: fixed ranges of ``RANGE_SIZE`` episode numbers (1-10, 11-20, ...) that hold at least one post,
+        plus "Tập chưa rõ số" for unnumbered episodes."""
+        buckets: dict[int | None, dict] = {}
+        for e in entries:
+            if not e.get("posts_count"):
+                continue
+            n = e.get("episode")
+            key = (int(n) - 1) // RANGE_SIZE if isinstance(n, str) and n.isdigit() and int(n) >= 1 else None
+            b = buckets.setdefault(key, {"episodes": 0, "posts": 0})
+            b["episodes"] += 1
+            b["posts"] += e["posts_count"]
+        out = []
+        base = f"/files/playlists/{playlist_id}/posts.docx"
+        for key in sorted(k for k in buckets if k is not None):
+            lo, hi = key * RANGE_SIZE + 1, (key + 1) * RANGE_SIZE
+            out.append({"from": lo, "to": hi, "label": f"Tập {lo}–{hi}", **buckets[key], "url": f"{base}?from={lo}&to={hi}"})
+        if None in buckets:
+            out.append({"from": None, "to": None, "label": "Tập chưa rõ số", **buckets[None], "url": f"{base}?other=1"})
+        return out
 
     @app.get("/api/playlists/{playlist_id}")
     def api_playlist(playlist_id: str):
@@ -871,9 +902,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                 e["hd_name"] = ep.video_download_name(config, e["video_id"], "HD")
             _download_fields(e)  # CP8.31 D3
         view["priority_count"] = sum(1 for e in view["entries"] if e["priority"])
-        view["posts_docx_url"] = f"/files/playlists/{playlist_id}/posts.docx" \
-            if any(e.get("posts_docx_url") for e in view["entries"]) else None
-        view["posts_docx_name"] = posts_docx_name(None, series=_playlist_docx_series(doc), fallback=playlist_id)
+        view["posts_ranges"] = _posts_ranges(playlist_id, view["entries"])
         kc = config.khaithi  # CP8.9 A2.2: defaults of the kind bar ("Khai thị [min]–[max] phút")
         view["khaithi_defaults"] = {"min_minutes": kc.default_min_minutes, "max_minutes": kc.default_max_minutes,
                                     "max_minutes_limit": kc.max_minutes_limit}
@@ -2336,15 +2365,20 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             heading += f" — {vtitle.strip()}"  # not when the video title already carries the series name
         return post_export.ExportEpisode(heading=heading, groups=groups)
 
-    def _docx_name_of(video_id: str) -> str:
+    def _docx_name_of(video_id: str, images: bool = True) -> str:
         kf = ep.kind_fields(config, video_id)
-        return posts_docx_name(ep._label(config, video_id, kf), series=ep._zip_series(config, video_id, kf))
+        return posts_docx_name(ep._label(config, video_id, kf), series=ep._zip_series(config, video_id, kf),
+                               images=images)
 
-    def _docx_response(title: str, episodes: list[post_export.ExportEpisode], name: str) -> FileResponse:
+    def _images_flag(images: str) -> bool | None:
+        return {"1": True, "0": False}.get(images)
+
+    def _docx_response(title: str, episodes: list[post_export.ExportEpisode], name: str,
+                       images: bool = True) -> FileResponse:
         fd, tmp = tempfile.mkstemp(prefix="posts-", suffix=".docx")
         os.close(fd)
         try:
-            post_export.build_docx(Path(tmp), title, episodes, config.post.image_dir)
+            post_export.build_docx(Path(tmp), title, episodes, config.post.image_dir, images=images)
         except BaseException:
             os.unlink(tmp)
             raise
@@ -2353,28 +2387,45 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
 
     # sync handlers: FastAPI runs them in its worker thread pool, so building the file never blocks the event loop
     @app.get("/files/{episode_id}/posts.docx")
-    def posts_docx(episode_id: str):
+    def posts_docx(episode_id: str, images: str = "1"):
         if not ep.valid_episode_id(episode_id):
             return JSONResponse({"detail": "không có file này"}, status_code=404)
+        if (with_images := _images_flag(images)) is None:
+            return JSONResponse({"detail": "images phải là 0 hoặc 1"}, status_code=422)
         video_id = ep.hd_owner(episode_id)
         episode = _export_episode(video_id)
         if episode is None:
             return JSONResponse({"detail": "chưa có bài đăng nào"}, status_code=404)
-        return _docx_response(episode.heading, [episode], _docx_name_of(video_id))
+        return _docx_response(episode.heading, [episode], _docx_name_of(video_id, with_images), with_images)
 
     @app.get("/files/playlists/{playlist_id}/posts.docx")
-    def playlist_posts_docx(playlist_id: str):
+    def playlist_posts_docx(playlist_id: str, range_from: int | None = Query(None, alias="from", ge=0),
+                            range_to: int | None = Query(None, alias="to", ge=0), other: str | None = None,
+                            images: str = "1"):
+        """CP8.31 A1: posts of at most ``RANGE_SIZE`` episodes by episode number (``from``..``to``), or the
+        unnumbered ones (``other=1``); no whole-bộ file."""
         doc = _playlist_or_404(playlist_id)
         if doc is None:
             return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
-        episodes = []
-        for e in _by_episode_order([e for e in doc["entries"] if e.get("video_id") and e.get("available")]):
-            if (episode := _export_episode(e["video_id"])) is not None:
-                episodes.append(episode)
+        if (with_images := _images_flag(images)) is None:
+            return JSONResponse({"detail": "images phải là 0 hoặc 1"}, status_code=422)
+        entries = _by_episode_order([e for e in doc["entries"] if e.get("video_id") and e.get("available")])
+        numbered = lambda e: isinstance(e.get("episode"), str) and e["episode"].isdigit() and int(e["episode"]) >= 1  # noqa: E731
+        if other is not None:
+            if other != "1" or range_from is not None or range_to is not None:
+                return JSONResponse({"detail": "dùng other=1 một mình hoặc from + to"}, status_code=422)
+            chosen, span = [e for e in entries if not numbered(e)], "chưa rõ"
+        else:
+            if range_from is None or range_to is None or range_to < range_from or range_to - range_from >= RANGE_SIZE:
+                return JSONResponse({"detail": f"cần from, to (to ≥ from, tối đa {RANGE_SIZE} tập)"}, status_code=422)
+            chosen = [e for e in entries if numbered(e) and range_from <= int(e["episode"]) <= range_to]
+            span = f"{range_from}-{range_to}"
+        episodes = [x for e in chosen if (x := _export_episode(e["video_id"])) is not None]
         if not episodes:
             return JSONResponse({"detail": "chưa có bài đăng nào"}, status_code=404)
         return _docx_response(playlist_series(doc) or doc.get("title") or playlist_id, episodes,
-                              posts_docx_name(None, series=_playlist_docx_series(doc), fallback=playlist_id))
+                              posts_docx_name(None, series=_playlist_docx_series(doc), fallback=playlist_id,
+                                              span=span, images=with_images), with_images)
 
     @app.get("/files/{episode_id}/{name}")
     def files(episode_id: str, name: str, download: str | None = None):

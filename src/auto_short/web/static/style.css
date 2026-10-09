@@ -186,6 +186,13 @@ summary { cursor: pointer; color: var(--muted); }
 }
 /* CP8.31 D4: an element with the hidden attribute is hidden whatever its display rule (.btn is inline-block) */
 [hidden] { display: none !important; }
+/* CP8.31 A2: progress badges of a playlist row (text + colour, contrast >= 4.5:1) */
+.pl-badges { display: flex; flex-wrap: wrap; gap: .3rem; }
+.pl-badges:empty { display: none; }
+.badge.prog { font-weight: 700; padding: .1rem .5rem; border: 1px solid transparent; }
+.badge.prog.full { background: #d6f0dc; color: #14532d; border-color: #86c79a; }
+.badge.prog.part { background: #ffe6bf; color: #7a3d00; border-color: #e0a85a; }
+.badge.prog.none { background: #e8e8e4; color: #3f3f3a; border-color: #bdbdb5; }
 /* CP8.9 khai thị */
 .kind-box { display: flex; flex-wrap: wrap; gap: 1rem; margin: .5rem 0; }
 label.inline { display: inline-flex; align-items: center; gap: .35rem; font-weight: 600; margin: 0; }

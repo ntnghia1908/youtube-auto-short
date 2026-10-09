@@ -1478,8 +1478,16 @@ const AutoShort = (() => {
     btn.hidden = !total;
     btn.disabled = groups.some((g) => jobActive(g.view.post_job));
     const docx = $("#posts-docx"); // CP8.31 D3: Word file of this video's posts (Shorts, then khai thị)
-    docx.hidden = !groups.some((g) => g.posts.length);
-    docx.href = "/files/" + encodeURIComponent(postsPage.vid) + "/posts.docx";
+    docx.hidden = $("#posts-docx-wrap").hidden = !groups.some((g) => g.posts.length);
+    docx.dataset.base = "/files/" + encodeURIComponent(postsPage.vid) + "/posts.docx";
+    docx.href = withImages(docx.dataset.base);
+    if (!docx.dataset.bound) {
+      docx.dataset.bound = "1";
+      docx.addEventListener("click", () => { docx.href = withImages(docx.dataset.base); });
+      const cb = $("#posts-docx-images");
+      cb.checked = docxImages();
+      cb.addEventListener("change", () => { setDocxImages(cb.checked); docx.href = withImages(docx.dataset.base); });
+    }
     const lines = groups.map(postJobLine).filter(Boolean);
     $("#posts-jobs").replaceChildren(...lines.map((l) => el("p", { class: l.cls, text: l.text })));
     const titles = groups.map((g) => g.view.title).filter(Boolean);
@@ -2912,10 +2920,34 @@ const AutoShort = (() => {
     }
   }
 
+  // CP8.31 A1: "Có hình" (default on), remembered in this browser (same key on the playlist and Posts pages).
+  const IMAGES_KEY = "autoShort.docxImages";
+  function docxImages() {
+    try { return localStorage.getItem(IMAGES_KEY) !== "0"; } catch (_) { return true; }
+  }
+  function setDocxImages(on) {
+    try { localStorage.setItem(IMAGES_KEY, on ? "1" : "0"); } catch (_) { /* private mode: not remembered */ }
+  }
+  function withImages(url) { return url + (url.includes("?") ? "&" : "?") + "images=" + (docxImages() ? "1" : "0"); }
+  // links built by the server get ``images=`` at click time, so the checkbox applies without a reload
+  function docxLink(attrs, ...children) {
+    const a = el("a", attrs, ...children);
+    a.addEventListener("click", () => { a.href = withImages(a.dataset.base); });
+    a.href = withImages(a.dataset.base);
+    return a;
+  }
+
+  // CP8.31 A2: coloured progress badge (text + colour): all ticked / partly / none
+  function progressBadge(label, done, total) {
+    if (!total) return null;
+    const cls = done >= total ? "full" : done > 0 ? "part" : "none";
+    return el("span", { class: "badge prog " + cls, text: `${label} ${done}/${total}` });
+  }
+
   function entryState(e) {
     if (e.state === "deleted") {
       const base = e.complete ? "✔ Xong (đã xóa dữ liệu)" : "Đã xóa dữ liệu (chưa xong)";
-      return `${base} · ${e.shorts} Short, đã đăng ${e.published}/${e.shorts}`;
+      return base;
     }
     let text = PL_STATE[e.state] || e.state;
     if ((e.state === "processing" || e.state === "failed") && e.stage) text += `: ${STAGE_LABELS[e.stage] || e.stage}`;
@@ -2927,16 +2959,24 @@ const AutoShort = (() => {
         text = job.waiting ? who + laneLabel(job) : `${who}${laneLabel(job)}: ${STAGE_LABELS[job.stage] || job.stage || ""}`;
       }
     }
-    if (e.shorts || e.state === "rendered" || e.state === "complete") text += ` · ${e.shorts} Short, đã đăng ${e.published}/${e.shorts}`;
-    if (e.khaithi_state) { // CP8.9 A1.4: the khai thị videos of the same video, counted separately
-      text += e.khaithi_videos || e.khaithi_state === "rendered" || e.khaithi_state === "complete"
-        ? ` · ${e.khaithi_videos} video khai thị, đã đăng ${e.khaithi_published}/${e.khaithi_videos}`
-        : ` · khai thị: ${PL_STATE[e.khaithi_state] || e.khaithi_state}`;
+    // CP8.31 A2: the Short / khai thị / post counts are the coloured badges of the row, not text
+    if (e.khaithi_state && !(e.khaithi_videos || e.khaithi_state === "rendered" || e.khaithi_state === "complete")) {
+      text += ` · khai thị: ${PL_STATE[e.khaithi_state] || e.khaithi_state}`; // CP8.9 A1.4
     }
     if (e.hd) text += ` · HD: ${HD_STATE[e.hd.state] || e.hd.state}` + (e.hd.state === "done" ? "" : ` ${e.hd.segments_done}/${e.hd.segments_total}`)
       + (e.hd.state === "done" && e.hd.old_config ? " (cấu hình cũ)" : "") + (e.hd.redo ? " (làm lại)" : "");
     if (e.archived) text += " · đã dọn nguồn";
     return text;
+  }
+
+  function renderPostsRanges(ranges) {
+    const box = $("#pl-posts-box");
+    box.hidden = !ranges.length;
+    const cb = $("#pl-docx-images");
+    cb.checked = docxImages();
+    cb.onchange = () => { setDocxImages(cb.checked); };
+    $("#pl-posts-ranges").replaceChildren(...ranges.map((r) => docxLink({ class: "btn small", "data-base": r.url,
+      title: `Tải bài đăng ${r.label} (${r.episodes} tập, ${r.posts} bài)` }, `${r.label} · ${r.posts} bài`)));
   }
 
   async function loadPlaylist() {
@@ -2970,9 +3010,7 @@ const AutoShort = (() => {
     const redoBtn = $("#pl-enhance-redo");
     redoBtn.hidden = !plOldHd;
     redoBtn.textContent = `Enhance lại (${plOldHd})`;
-    const docAll = $("#pl-posts-docx"); // CP8.31 D3: all the posts of the bộ kinh
-    docAll.hidden = !d.posts_docx_url;
-    if (d.posts_docx_url) { docAll.href = d.posts_docx_url; docAll.setAttribute("download", d.posts_docx_name || ""); }
+    renderPostsRanges(d.posts_ranges || []); // CP8.31 A1
     plPriorityCount = d.priority_count || 0; // CP8.26
     $("#pl-priority").textContent = plPriorityCount ? `Bỏ ưu tiên cả bộ (${plPriorityCount})` : "Ưu tiên cả bộ";
     let busy = false;
@@ -3000,14 +3038,17 @@ const AutoShort = (() => {
         actions.append(z);
       }
       if (e.posts_docx_url) {
-        actions.append(el("a", { class: "btn icon-btn", href: e.posts_docx_url, download: e.posts_docx_name || "",
-          title: "Tải bài đăng (.docx)", "aria-label": "Tải bài đăng (.docx)" }, icon("doc")));
+        actions.append(docxLink({ class: "btn icon-btn", "data-base": e.posts_docx_url, title: "Tải bài đăng (.docx)",
+          "aria-label": "Tải bài đăng (.docx)" }, icon("doc")));
       }
       if (e.video_id && !["unavailable", "deleted"].includes(e.state) && !e.complete) actions.append(priorityButton(e.video_id, !!e.priority, loadPlaylist));
       return el("li", { class: "pl-entry " + e.state, "data-group": e.group || "none" },
         el("span", { class: "pl-index muted", text: `${e.index}.` }),
         el("div", { class: "pl-body" }, head,
           el("span", { class: "muted small", text: [e.episode ? `tập ${e.episode}` : null, e.duration ? fmtSeconds(e.duration) : null].filter(Boolean).join(" · ") }),
+          el("span", { class: "pl-badges" }, progressBadge("Short", e.published || 0, e.shorts || 0),
+            progressBadge("Khai thị", e.khaithi_published || 0, e.khaithi_videos || 0),
+            progressBadge("Bài", e.posts_posted || 0, e.posts_total || 0)),
           el("span", { class: "pl-state small", text: (e.priority ? "★ ưu tiên · " : "") + entryState(e) }),
           e.state === "failed" && e.error ? el("span", { class: "error small", text: e.error }) : null),
         actions);
