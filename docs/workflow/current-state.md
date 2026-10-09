@@ -8,6 +8,8 @@ Chỉ ghi operational state không suy ra được từ Git, task contract hoặ
 
 ## Current focus
 
+Auto Short (cập nhật 2026-10-09): `main` = `6c36861`. Đã merge sau 2026-10-04: CP13.3 đo chất lượng enhance (#73), CP8.30 tìm ảnh theo từ khóa (#76), FIX-enhance-yield (#77), CP8.31 zip tick "Đã đăng" + xuất bài đăng `.docx` (python-docx, theo khoảng 10 tập, có / không hình) + nút tải trên trang bộ kinh + bố cục mobile + huy hiệu tiến độ + enhance sang tab Theo dõi (#78; manual test HUMAN LEAD đạt 2026-10-09). VM IP hiện `10.8.102.102` (đổi 2026-10-08).
+
 Auto Short (cập nhật 2026-10-04): `main` = `abd6704`. Phiên 2026-10-04 đã merge: CP13.2 "Chuẩn bị + HD" (#62), CP8.23 ngưỡng im lặng tự chọn (#63), CP8.24 văn bản gốc nhiều video / trang (#64), FIX-doc-match-050 (#65), FIX-youtube-botcheck-wait (#66), CP8.26 ưu tiên (#67), CP8.28 tab Theo dõi (#68), FIX-post-title-upper (#69), FIX-monitor-labels (#70), CP8.27 tải bản ngang HD + bản dọc cả tập (#71), CP8.29 chuẩn bị song song + nice (#72), CP13.4 GFPGAN cả tập (#74). CP8.25 (tự tìm văn bản gốc): HUMAN LEAD bỏ.
 
 Đang chạy trên 8080 (2026-10-04 tối):
@@ -20,7 +22,7 @@ Hạ tầng: VM 32 nhân, 125 GB RAM; IP đổi `10.8.102.101` → **`10.8.102.1
 
 Chinese Learning (CL1, bản đồ: `docs/tasks/CL1-roadmap.md`): CL1.1, CL1.2 MERGED. G6A / G6B: PENDING HUMAN LEAD DECISION. CL1.3, CL1.4 chờ.
 
-Web chạy cho HUMAN LEAD trong tmux `youtube:web` từ worktree `../youtube-auto-short-web` (detached, ghim `abd6704`), `PYTHONPATH=<worktree>/src`, `--config` repo chính; mật khẩu chỉ ở env của pane. Khởi động lại: Ctrl-C trong pane rồi gõ thẳng `PYTHONPATH=/home/ntnghia/youtube-auto-short-web/src auto-short web --config /home/ntnghia/youtube-auto-short/config.toml` (không dùng phím Up — dòng trước có `read -rs` hỏi mật khẩu); chỉ khi làn render rảnh (dòng `render: rendered N/N clips` / `job … done … Shorts (`). Sau reboot VM: tmux mới, `conda activate auto-short`, `source ~/.nvm/nvm.sh`, `set -a; source ~/.local/share/auto-short/enhance-tokens.env; set +a`, HUMAN LEAD gõ mật khẩu.
+Web chạy cho HUMAN LEAD trong tmux `youtube:web` từ worktree `../youtube-auto-short-web` (detached, ghim `6c36861` = `main` sau CP8.31, 2026-10-09), `PYTHONPATH=<worktree>/src`, `--config` repo chính; mật khẩu chỉ ở env của pane. Khởi động lại: Ctrl-C trong pane rồi gõ thẳng `PYTHONPATH=/home/ntnghia/youtube-auto-short-web/src auto-short web --config /home/ntnghia/youtube-auto-short/config.toml` (không dùng phím Up — dòng trước có `read -rs` hỏi mật khẩu); chỉ khi làn render rảnh (dòng `render: rendered N/N clips` / `job … done … Shorts (`). Sau reboot VM: tmux mới, `conda activate auto-short`, `source ~/.nvm/nvm.sh`, `set -a; source ~/.local/share/auto-short/enhance-tokens.env; set +a`, HUMAN LEAD gõ mật khẩu.
 
 ## Next proposed action
 
