@@ -79,6 +79,22 @@ def zip_name(episode: str, *, khaithi: bool = False, series: str | None = None, 
     return f"{head}_Tập{episode}_{kind}.zip" if head else f"Tập{episode}_{kind}.zip"
 
 
+def posts_docx_name(episode: str | None, *, series: str | None = None, fallback: str = "bai-dang",
+                    span: str | None = None, images: bool = True) -> str:
+    """CP8.31 P16: ``[<series>_]Tập<episode>_BaiDang.docx`` (one video); ``span`` (A1: ``"1-10"``, or ``"chưa rõ"``
+    for unnumbered episodes) -> ``[<series>_]Tập<span>_BaiDang.docx``; neither -> ``<series>_BaiDang.docx`` (else
+    ``<fallback>_BaiDang.docx``, ``fallback`` = playlist id). ``images=False`` -> ``…_BaiDang_KhongHinh.docx``."""
+    head = truncate_utf8(clean_part(series), MAX_SERIES_BYTES)
+    label = clean_part(span or episode) if (span or episode) else ""
+    if span and not head:  # a range file of a bộ kinh without a name keeps the playlist id
+        head = clean_part(fallback)
+    tail = "_BaiDang" + ("" if images else "_KhongHinh") + ".docx"
+    if label:
+        word = "Tập" if label[0].isdigit() or not span else "Tập "  # "Tập1-10" but "Tập chưa rõ"
+        return (f"{head}_{word}{label}" if head else f"{word}{label}") + tail
+    return f"{head or clean_part(fallback) or 'bai-dang'}" + tail
+
+
 def video_name(episode: str | None, video_id: str, suffix: str, *, series: str | None = None) -> str:
     """CP8.27: ``[<series>_]Tập<episode>_<suffix>.mp4`` (suffix ``HD`` landscape, ``Doc`` vertical); a video with no
     episode number (titles.json ``header.fields.episode``) -> ``<video id>_<suffix>.mp4``."""

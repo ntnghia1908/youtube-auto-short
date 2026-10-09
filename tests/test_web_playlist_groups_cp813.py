@@ -150,10 +150,10 @@ def test_api_playlists_summary_and_entry_groups(tcfg):
         s = c.get("/api/playlists").json()["playlists"][0]
         assert (s["running"], s["failed"], s["doing"], s["complete"], s["processed"]) == (1, 2, 1, 0, 4)
         js = c.get("/static/app.js").text
-    # home line: "… · đang xử lý a · lỗi / dở dang b · đang làm c", a part equal to 0 left out
-    assert 'text: playlistSummary(p)' in js
-    assert '[["đang xử lý", p.running], ["lỗi / dở dang", p.failed], ["đang làm", p.doing]]' in js
-    assert '.filter(([, n]) => n).map(([label, n]) => ` · ${label} ${n}`).join("")' in js
+    # home line (CP8.31 A3: coloured badges instead of the CP8.13 G3 text; the groups keep their meaning)
+    assert "playlistBadges(p)" in js and "playlistSummary" not in js
+    assert "[`Đang xử lý ${p.running}`, p.running," in js and "[`Lỗi / dở dang ${p.failed}`, p.failed," in js
+    assert "[`Đang làm ${p.doing}`, p.doing," in js and ".filter(([, n]) => n)" in js
 
 
 # --- G2 tabs (AC2), G4 no "Khai thị" link (AC4) ----------------------------------------------------------------
@@ -185,9 +185,9 @@ def test_playlist_entry_has_no_khaithi_link(tcfg):
     with client(tcfg) as c:
         js = c.get("/static/app.js").text
     body = js[js.index("async function loadPlaylist()"):js.index("return { initIndex")]
-    assert "khaithi_episode_id" not in body and '"Khai thị"' not in body and "kind-label" not in body
-    # the count line of the khai thị videos stays (CP8.9 A1.4)
-    assert "video khai thị, đã đăng ${e.khaithi_published}/${e.khaithi_videos}" in js
+    # CP8.31 A2: the only "Khai thị" in the row is its coloured progress badge (no link, no kind label)
+    assert "khaithi_episode_id" not in body and body.count('"Khai thị"') == 1 and "kind-label" not in body
+    assert 'progressBadge("Khai thị", e.khaithi_published || 0, e.khaithi_videos || 0)' in body
 
 
 # --- G5 "Lặp lại" (AC5) -----------------------------------------------------------------------------------------

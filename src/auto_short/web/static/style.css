@@ -166,9 +166,16 @@ summary { cursor: pointer; color: var(--muted); }
   .rec-actions { display: grid; grid-template-columns: 1fr; }
   .rec-actions .btn { width: 100%; }
   .pl-entry { flex-wrap: wrap; }
-  .pl-entry .rec-actions { flex-basis: 100%; }
+  .pl-entry .rec-actions { flex-basis: calc(100% - 2.7rem); }
   .deleted-item .btn { width: 100%; }
-  .actions .btn { flex: 1 1 100%; }
+  /* CP8.31 D5: button rows are two columns (an odd last button grows to the full row), not one button per row */
+  .actions .btn, .head-actions .btn, .enhance-box .edit-actions .btn { flex: 1 1 calc(50% - .5rem); min-width: 0; text-align: center; }
+  .actions > span:not([hidden]) { flex: 1 1 100%; }
+  /* CP8.31 round 4: the actions row starts under the episode name (index column 2.2rem + gap .5rem), buttons
+     centred and one height (2.75rem, as .icon-btn) */
+  .pl-entry .rec-actions { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin-left: calc(2.2rem + .5rem); }
+  .pl-entry .rec-actions .btn { width: auto; min-height: 2.75rem; display: inline-flex; align-items: center; justify-content: center; }
+  .long { display: none; }
   .filters .btn { flex: 1 1 auto; }
   .container { padding: .5rem; }
   .card { padding: .75rem; }
@@ -179,6 +186,18 @@ summary { cursor: pointer; color: var(--muted); }
   .row { grid-template-columns: 1fr; }
   .short-title { font-size: .9rem; }
 }
+/* CP8.31 D4: an element with the hidden attribute is hidden whatever its display rule (.btn is inline-block) */
+[hidden] { display: none !important; }
+/* CP8.31 A2: progress badges of a playlist row (text + colour, contrast >= 4.5:1) */
+.pl-badges { display: flex; flex-wrap: wrap; gap: .3rem; }
+.pl-badges:empty { display: none; }
+.badge.prog { font-weight: 700; padding: .1rem .5rem; border: 1px solid transparent; }
+.badge.prog.full { background: #d6f0dc; color: #14532d; border-color: #86c79a; }
+.badge.prog.part { background: #ffe6bf; color: #7a3d00; border-color: #e0a85a; }
+.badge.prog.busy { background: #dbe9ff; color: #12337a; border-color: #8fb2ee; }
+.badge.prog.err { background: #fdecea; color: #8c1c13; border-color: #e8a39e; }
+.episode-list a .pl-badges, #playlists a .pl-badges { margin-top: .2rem; }
+.badge.prog.none { background: #e8e8e4; color: #3f3f3a; border-color: #bdbdb5; }
 /* CP8.9 khai thị */
 .kind-box { display: flex; flex-wrap: wrap; gap: 1rem; margin: .5rem 0; }
 label.inline { display: inline-flex; align-items: center; gap: .35rem; font-weight: 600; margin: 0; }

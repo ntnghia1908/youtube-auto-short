@@ -32,6 +32,8 @@ const AutoShort = (() => {
   const ICONS = {
     download: ["M12 3v12", "M7 10l5 5 5-5", "M5 20h14"],
     trash: ["M4 7h16", "M9 7V4h6v3", "M6 7l1 13h10l1-13", "M10 11v6", "M14 11v6"],
+    zip: ["M4 7l8-4 8 4v10l-8 4-8-4z", "M4 7l8 4 8-4", "M12 11v10"],
+    doc: ["M7 3h8l4 4v14H7z", "M15 3v4h4", "M10 12h6", "M10 16h6"],
     loop: ["M4 11V9a3 3 0 0 1 3-3h11", "M15 3l3 3-3 3", "M20 13v2a3 3 0 0 1-3 3H6", "M9 21l-3-3 3-3"],
   };
   function icon(name) {
@@ -299,14 +301,18 @@ const AutoShort = (() => {
     list.replaceChildren(...data.playlists.map((p) => el("li", {},
       el("a", { href: "/playlists/" + encodeURIComponent(p.id) },
         el("span", { class: "ep-name", text: p.title || p.id }),
-        el("span", { class: "ep-state muted", text: playlistSummary(p) })))));
+        playlistBadges(p)))));
   }
 
-  // CP8.13 G3: "… · đang xử lý a · lỗi / dở dang b · đang làm c" (a part equal to 0 is left out).
-  function playlistSummary(p) {
-    return `${p.count} tập · đã xử lý ${p.processed} · Xong ${p.complete}` +
-      [["đang xử lý", p.running], ["lỗi / dở dang", p.failed], ["đang làm", p.doing]]
-        .filter(([, n]) => n).map(([label, n]) => ` · ${label} ${n}`).join("");
+  // CP8.31 A3 (was CP8.13 G3 text): coloured badges, same style as the A2 row badges (text + colour). Only
+  // "Đã xử lý a/N" is always shown; the other badges with 0 are left out.
+  function playlistBadges(p) {
+    const done = p.processed >= p.count && p.count > 0 ? "full" : p.processed > 0 ? "part" : "none";
+    const badge = (text, cls) => el("span", { class: "badge prog " + cls, text });
+    return el("span", { class: "pl-badges" }, badge(`Đã xử lý ${p.processed}/${p.count}`, done),
+      ...[[`Xong ${p.complete}`, p.complete, "full"], [`Đang xử lý ${p.running}`, p.running, "busy"],
+        [`Lỗi / dở dang ${p.failed}`, p.failed, "err"], [`Đang làm ${p.doing}`, p.doing, "part"]]
+        .filter(([, n]) => n).map(([text, , cls]) => badge(text, cls)));
   }
 
   // Episode list filter (CP8.5 X4): publish_group from the API ("todo" | "done" | null).
@@ -714,6 +720,27 @@ const AutoShort = (() => {
     if (job && job.status === "failed") note.textContent = `Lỗi tạo bản dọc: ${job.error || "?"}`;
   }
 
+  // CP8.31 D1 / round 6: the server ticks "Đã đăng" when the zip request arrives, which on a phone can be late
+  // (download sheet / manager). Refresh several times after a click (the last ones are > 5 s, past the playlist status
+  // cache) and once more when the page is shown / focused again within 60 s. A new click restarts the series.
+  const ZIP_REFRESH_MS = [2000, 5000, 10000, 20000];
+  const ZIP_RETURN_MS = 60000;
+  const zipRefresh = { timers: [], at: 0, fn: null, bound: false };
+  function zipRefreshNow() {
+    if (zipRefresh.fn && Date.now() - zipRefresh.at < ZIP_RETURN_MS && !document.hidden) zipRefresh.fn();
+  }
+  function zipAfterClick(refresh) {
+    zipRefresh.timers.forEach(clearTimeout); // no stacked timers on repeated clicks
+    zipRefresh.fn = refresh;
+    zipRefresh.at = Date.now();
+    zipRefresh.timers = ZIP_REFRESH_MS.map((ms) => setTimeout(() => refresh(), ms));
+    if (!zipRefresh.bound) {
+      zipRefresh.bound = true;
+      document.addEventListener("visibilitychange", zipRefreshNow);
+      window.addEventListener("focus", zipRefreshNow);
+    }
+  }
+
   function renderEpisode(d) {
     lastData = d; // noun() / stageLabel() read the kind
     document.title = `${d.title || d.id} — Auto Short`;
@@ -845,10 +872,12 @@ const AutoShort = (() => {
     const zip = $("#zip");
     zip.hidden = !d.zip_url;
     if (d.zip_url) { zip.href = d.zip_url; zip.setAttribute("download", d.zip_name || ""); }
-    // CP8.17 D3/D4: a zip no longer ticks "Đã đăng" (nothing to refresh); the label says what the zip holds
+    // CP8.17 D4: the label says what the zip holds. CP8.31 D1: a zip ticks "Đã đăng" -> refresh the counts after it
+    zip.onclick = () => zipAfterClick(refreshEpisode);
     zip.textContent = d.kind === "khaithi" ? "Tải tất cả khai thị (.zip)" : "Tải tất cả Short (.zip)";
     const zipAll = $("#zip-all"); // CP8.17 D5: Shorts/ + KhaiThị/ in one zip (hidden when either kind is missing)
     zipAll.hidden = !d.zip_all_url;
+    zipAll.onclick = () => zipAfterClick(refreshEpisode);
     if (d.zip_all_url) { zipAll.href = d.zip_all_url; zipAll.setAttribute("download", d.zip_all_name || ""); }
     $("#header-lines").textContent = d.header ? "Header: " + d.header.join(" / ") : "";
     // CP9 C7: "Thêm Short" once the episode has a render and titles (not on an archived episode)
@@ -1470,6 +1499,17 @@ const AutoShort = (() => {
     const btn = $("#posts-compose-missing");
     btn.hidden = !total;
     btn.disabled = groups.some((g) => jobActive(g.view.post_job));
+    const docx = $("#posts-docx"); // CP8.31 D3: Word file of this video's posts (Shorts, then khai thị)
+    docx.hidden = $("#posts-docx-wrap").hidden = !groups.some((g) => g.posts.length);
+    docx.dataset.base = "/files/" + encodeURIComponent(postsPage.vid) + "/posts.docx";
+    docx.href = withImages(docx.dataset.base);
+    if (!docx.dataset.bound) {
+      docx.dataset.bound = "1";
+      docx.addEventListener("click", () => { docx.href = withImages(docx.dataset.base); });
+      const cb = $("#posts-docx-images");
+      cb.checked = docxImages();
+      cb.addEventListener("change", () => { setDocxImages(cb.checked); docx.href = withImages(docx.dataset.base); });
+    }
     const lines = groups.map(postJobLine).filter(Boolean);
     $("#posts-jobs").replaceChildren(...lines.map((l) => el("p", { class: l.cls, text: l.text })));
     const titles = groups.map((g) => g.view.title).filter(Boolean);
@@ -2365,39 +2405,32 @@ const AutoShort = (() => {
   function initStorage() {
     loadStorage();
     checkDisk();
-    loadEnhance();
   }
 
-  // CP13.1b E10: one place for the enhance workers + the global "Tạm dừng enhance" (read from /api/enhance/status).
+  // CP13.1b E10 (moved to the Theo dõi tab by CP8.31 D6): queue summary + global "Tạm dừng enhance" in the "GPU
+  // enhance" card, read from /api/enhance/status. Worker details (GPU, current episode, progress) are #mon-gpu's.
   async function loadEnhance() {
-    const card = $("#enhance-card");
-    if (!card) return;
+    const summary = $("#enhance-summary"), pause = $("#enhance-pause");
+    if (!summary || !pause) return;
     let d;
-    try { d = await api("/api/enhance/status"); } catch (_) { setTimeout(loadEnhance, POLL_MS * 4); return; }
-    card.hidden = !d.enabled && !d.workers.length && !d.items.length;
+    try { d = await api("/api/enhance/status"); } catch (_) { enhTimer = setTimeout(loadEnhance, POLL_MS * 4); return; }
     const c = d.counts;
-    $("#enhance-summary").textContent = (d.enabled ? "" : "Enhance đang tắt ([enhance] enabled = false). ") +
+    const outdated = d.workers.filter((w) => w.outdated).map((w) => w.label || w.name);
+    summary.textContent = (d.enabled ? "" : "Enhance đang tắt ([enhance] enabled = false). ") +
       (d.paused ? "ĐANG TẠM DỪNG. " : "") +
       `Hàng đợi: ${c.queued || 0} đợi máy GPU, ${c.running || 0} đang enhance, ${c.assembling || 0} đang ghép` +
-      (c.failed ? `, ${c.failed} lỗi` : "") + (c.waiting_hd ? `; ${c.waiting_hd} đang đợi HD để render` : "") + ".";
-    const pause = $("#enhance-pause");
+      (c.failed ? `, ${c.failed} lỗi` : "") + (c.waiting_hd ? `; ${c.waiting_hd} đang đợi HD để render` : "") + "." +
+      (outdated.length ? ` Cần cập nhật worker (chưa hỗ trợ phục hồi mặt): ${outdated.join(", ")}.` : "");
+    pause.hidden = !d.enabled && !d.workers.length && !d.items.length;
     pause.textContent = d.paused ? "Chạy tiếp enhance" : "Tạm dừng enhance";
     pause.onclick = async () => {
       pause.disabled = true;
       try { await api("/api/enhance-pause", { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ paused: !d.paused }) }); } catch (e) { alert(e.message); }
       pause.disabled = false;
+      clearTimeout(enhTimer);
       loadEnhance();
     };
-    $("#enhance-workers").replaceChildren(...(d.workers.length ? d.workers.map((w) => el("li", {},
-      el("b", { text: w.label || w.name }), el("span", { class: "muted small",
-        text: ` · ${w.gpu || "GPU ?"}${w.yield ? " · nhường Ollama" : ""} · liên lạc ${fmtTime(w.last_seen)}` +
-          (w.outdated ? " · cần cập nhật worker (chưa hỗ trợ phục hồi mặt)" : "") +
-          (w.episode_id ? ` · đang làm ` : " · rảnh") }),
-      w.episode_id ? el("a", { href: "/episodes/" + encodeURIComponent(w.episode_id), text: w.episode_id }) : null,
-      w.progress && w.progress.segments_total ? el("span", { class: "muted small",
-        text: ` (${w.progress.segments_uploaded || 0}/${w.progress.segments_total} đoạn)` }) : null))
-      : [el("li", { class: "muted", text: "Chưa có worker nào liên lạc (từ lúc khởi động server)." })]));
     clearTimeout(enhTimer);
     enhTimer = setTimeout(loadEnhance, POLL_MS * 2);
   }
@@ -2909,10 +2942,34 @@ const AutoShort = (() => {
     }
   }
 
+  // CP8.31 A1: "Có hình" (default on), remembered in this browser (same key on the playlist and Posts pages).
+  const IMAGES_KEY = "autoShort.docxImages";
+  function docxImages() {
+    try { return localStorage.getItem(IMAGES_KEY) !== "0"; } catch (_) { return true; }
+  }
+  function setDocxImages(on) {
+    try { localStorage.setItem(IMAGES_KEY, on ? "1" : "0"); } catch (_) { /* private mode: not remembered */ }
+  }
+  function withImages(url) { return url + (url.includes("?") ? "&" : "?") + "images=" + (docxImages() ? "1" : "0"); }
+  // links built by the server get ``images=`` at click time, so the checkbox applies without a reload
+  function docxLink(attrs, ...children) {
+    const a = el("a", attrs, ...children);
+    a.addEventListener("click", () => { a.href = withImages(a.dataset.base); });
+    a.href = withImages(a.dataset.base);
+    return a;
+  }
+
+  // CP8.31 A2: coloured progress badge (text + colour): all ticked / partly / none
+  function progressBadge(label, done, total) {
+    if (!total) return null;
+    const cls = done >= total ? "full" : done > 0 ? "part" : "none";
+    return el("span", { class: "badge prog " + cls, text: `${label} ${done}/${total}` });
+  }
+
   function entryState(e) {
     if (e.state === "deleted") {
       const base = e.complete ? "✔ Xong (đã xóa dữ liệu)" : "Đã xóa dữ liệu (chưa xong)";
-      return `${base} · ${e.shorts} Short, đã đăng ${e.published}/${e.shorts}`;
+      return base;
     }
     let text = PL_STATE[e.state] || e.state;
     if ((e.state === "processing" || e.state === "failed") && e.stage) text += `: ${STAGE_LABELS[e.stage] || e.stage}`;
@@ -2924,16 +2981,24 @@ const AutoShort = (() => {
         text = job.waiting ? who + laneLabel(job) : `${who}${laneLabel(job)}: ${STAGE_LABELS[job.stage] || job.stage || ""}`;
       }
     }
-    if (e.shorts || e.state === "rendered" || e.state === "complete") text += ` · ${e.shorts} Short, đã đăng ${e.published}/${e.shorts}`;
-    if (e.khaithi_state) { // CP8.9 A1.4: the khai thị videos of the same video, counted separately
-      text += e.khaithi_videos || e.khaithi_state === "rendered" || e.khaithi_state === "complete"
-        ? ` · ${e.khaithi_videos} video khai thị, đã đăng ${e.khaithi_published}/${e.khaithi_videos}`
-        : ` · khai thị: ${PL_STATE[e.khaithi_state] || e.khaithi_state}`;
+    // CP8.31 A2: the Short / khai thị / post counts are the coloured badges of the row, not text
+    if (e.khaithi_state && !(e.khaithi_videos || e.khaithi_state === "rendered" || e.khaithi_state === "complete")) {
+      text += ` · khai thị: ${PL_STATE[e.khaithi_state] || e.khaithi_state}`; // CP8.9 A1.4
     }
     if (e.hd) text += ` · HD: ${HD_STATE[e.hd.state] || e.hd.state}` + (e.hd.state === "done" ? "" : ` ${e.hd.segments_done}/${e.hd.segments_total}`)
       + (e.hd.state === "done" && e.hd.old_config ? " (cấu hình cũ)" : "") + (e.hd.redo ? " (làm lại)" : "");
     if (e.archived) text += " · đã dọn nguồn";
     return text;
+  }
+
+  function renderPostsRanges(ranges) {
+    const box = $("#pl-posts-box");
+    box.hidden = !ranges.length;
+    const cb = $("#pl-docx-images");
+    cb.checked = docxImages();
+    cb.onchange = () => { setDocxImages(cb.checked); };
+    $("#pl-posts-ranges").replaceChildren(...ranges.map((r) => docxLink({ class: "btn small", "data-base": r.url,
+      title: `Tải bài đăng ${r.label} (${r.episodes} tập, ${r.posts} bài)` }, `${r.label} · ${r.posts} bài`)));
   }
 
   async function loadPlaylist() {
@@ -2967,6 +3032,7 @@ const AutoShort = (() => {
     const redoBtn = $("#pl-enhance-redo");
     redoBtn.hidden = !plOldHd;
     redoBtn.textContent = `Enhance lại (${plOldHd})`;
+    renderPostsRanges(d.posts_ranges || []); // CP8.31 A1
     plPriorityCount = d.priority_count || 0; // CP8.26
     $("#pl-priority").textContent = plPriorityCount ? `Bỏ ưu tiên cả bộ (${plPriorityCount})` : "Ưu tiên cả bộ";
     let busy = false;
@@ -2987,11 +3053,24 @@ const AutoShort = (() => {
         actions.append(el("a", { class: "btn icon-btn", href: e.hd_url, download: e.hd_name || "", title: "Tải video HD (bản ngang)",
           "aria-label": "Tải video HD (bản ngang)" }, icon("download")));
       }
+      if (e.zip_url) { // CP8.31 D3: Shorts (+ khai thị) of the episode in one zip; a zip ticks "Đã đăng"
+        const label = e.zip_url.endsWith("/all.zip") ? "Tải Short + khai thị (.zip)" : "Tải Short (.zip)";
+        const z = el("a", { class: "btn icon-btn", href: e.zip_url, download: e.zip_name || "", title: label, "aria-label": label }, icon("zip"));
+        z.addEventListener("click", () => zipAfterClick(loadPlaylist));
+        actions.append(z);
+      }
+      if (e.posts_docx_url) {
+        actions.append(docxLink({ class: "btn icon-btn", "data-base": e.posts_docx_url, title: "Tải bài đăng (.docx)",
+          "aria-label": "Tải bài đăng (.docx)" }, icon("doc")));
+      }
       if (e.video_id && !["unavailable", "deleted"].includes(e.state) && !e.complete) actions.append(priorityButton(e.video_id, !!e.priority, loadPlaylist));
       return el("li", { class: "pl-entry " + e.state, "data-group": e.group || "none" },
         el("span", { class: "pl-index muted", text: `${e.index}.` }),
         el("div", { class: "pl-body" }, head,
           el("span", { class: "muted small", text: [e.episode ? `tập ${e.episode}` : null, e.duration ? fmtSeconds(e.duration) : null].filter(Boolean).join(" · ") }),
+          el("span", { class: "pl-badges" }, progressBadge("Short", e.published || 0, e.shorts || 0),
+            progressBadge("Khai thị", e.khaithi_published || 0, e.khaithi_videos || 0),
+            progressBadge("Bài", e.posts_posted || 0, e.posts_total || 0)),
           el("span", { class: "pl-state small", text: (e.priority ? "★ ưu tiên · " : "") + entryState(e) }),
           e.state === "failed" && e.error ? el("span", { class: "error small", text: e.error }) : null),
         actions);
@@ -3138,6 +3217,7 @@ const AutoShort = (() => {
   }
 
   function initMonitor() {
+    loadEnhance(); // CP8.31 D6
     const feeds = [["/api/monitor/queue?limit=20", renderQueue], ["/api/monitor/system", renderCpu],
       ["/api/monitor/ollama", renderOllama], ["/api/monitor/gpu", renderGpu]];
     async function tick() {
