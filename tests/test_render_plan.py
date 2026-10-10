@@ -299,3 +299,35 @@ def test_render_key_unchanged_for_equal_r_and_avg():
     kw = dict(cfg_hash="c", font_sha="f", source_sha="s", segments=[[0, 1000]], dissolves=[], layout=layout,
               header=hdr, title=ttl)
     assert render_key(fps=plan.output_fps(_rate(stream)), **kw) == render_key(fps=NTSC, **kw)
+
+
+# --- FIX-render-video-tail ---------------------------------------------------------------------------------
+
+def test_tail_missing_counts_planned_frames_after_the_video_end():
+    from auto_short.render.stage import video_end_seconds
+    frames = plan.frame_plan([(1100, 2000), (2500, 4000)], NTSC)  # (33, 27), (75, 45): grid frames 33..119
+    assert plan.tail_missing(frames, NTSC, None) == 0  # unknown end = old behaviour
+    assert plan.tail_missing(frames, NTSC, 4.0) == 0  # 120 frames available
+    assert plan.tail_missing(frames, NTSC, 120 / float(NTSC)) == 0
+    assert plan.tail_missing(frames, NTSC, 118 / float(NTSC)) == 2
+    assert plan.tail_missing(frames, NTSC, 0.0) == 72  # nothing available: all frames
+    assert plan.tail_missing([(5, 0)], NTSC, 0.0) == 0  # empty segment
+    assert plan.tail_clone_limit(NTSC) == 3 and plan.tail_clone_limit(Fraction(60)) == 6
+    # video end from the probe: start_time + duration, else nb_frames / fps, else unknown
+    assert video_end_seconds({"start_time": "0.5", "duration": "3.0"}, NTSC) == 3.5
+    assert video_end_seconds({"nb_frames": "30"}, Fraction(30)) == 1.0
+    assert video_end_seconds({"duration": "N/A"}, NTSC) is None
+    # real file: 99752 frames end at 3328.392 s; a clip to 3328.44 s needs grid frames up to 99753 -> 2 missing
+    assert plan.tail_missing(plan.frame_plan([(2950710, 3328440)], NTSC), NTSC, 3328.392) == 2
+
+
+def test_filter_graph_tail_default_is_unchanged_and_tail_adds_tpad():
+    segs = [(1100, 2000), (2500, 4000)]
+    assert _graph(segs, tail=0) == _graph(segs) and "tpad" not in _graph(segs)
+    g = _graph(segs, tail=2)
+    assert "format=yuv444p,tpad=stop_mode=clone:stop=2,pad=1080:1920:0:211" in g
+    assert g.replace("tpad=stop_mode=clone:stop=2,", "") == _graph(segs)
+    segs = [(1100, 2000), (2500, 4000), (4050, 5000), (5500, 6000)]
+    d = _graph(segs, dissolve=0.15, tail=2)
+    assert "setpts=N/(30000/1001)/TB,tpad=stop_mode=clone:stop=2,pad=1080:1920:0:211" in d
+    assert d.replace("tpad=stop_mode=clone:stop=2,", "") == _graph(segs, dissolve=0.15)

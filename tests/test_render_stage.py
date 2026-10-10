@@ -447,3 +447,50 @@ def test_verify_output_checks_frame_count(tmp_path):
     verify_output(tmp_path / "x.mp4", Fraction(30000, 1001), 30, fake(30))
     with pytest.raises(RenderError, match="video frames 29 != 30"):
         verify_output(tmp_path / "x.mp4", Fraction(30000, 1001), 30, fake(29))
+
+
+# --- FIX-render-video-tail ---------------------------------------------------------------------------------
+
+def _short_video_source(path: Path, video_s: float, audio_s: float = 8.0) -> Path:
+    """lavfi source whose video stream ends before its audio (like a real file with a short video tail)."""
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+                    f"testsrc2=size=1440x1080:rate=30000/1001:duration={video_s}",
+                    "-f", "lavfi", "-i", f"sine=frequency=440:duration={audio_s}:sample_rate=48000",
+                    "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-ac", "2",
+                    str(path)], check=True)
+    return path
+
+
+def _tail_episode(tmp_path, rcfg, video_s: float, dissolve: float):
+    src = _short_video_source(tmp_path / "short.mp4", video_s)
+    ws = make_render_episode(rcfg.workspace.dir, src, candidates=[
+        {"id": "c00002", "source_start": 4.5, "source_end": 8.0, "source_duration": 3.5, "duration": 2.9,
+         "trims": [[5.0, 5.6]]}],
+        clips=[{"id": "k02", "candidate_id": "c00002", "source_start": 4.5, "source_end": 8.0,
+                "source_duration": 3.5, "duration": 2.9, "head_cut": None}], titles={"k02": "Tiêu đề thử"})
+    return ws, replace(rcfg, render=replace(rcfg.render, dissolve=dissolve))
+
+
+@pytest.mark.parametrize("dissolve", [0.15, 0.0])
+def test_clip_past_the_video_end_is_padded_with_the_last_frame(tmp_path, rcfg, dissolve):
+    ws, cfg = _tail_episode(tmp_path, rcfg, 7.9, dissolve)  # video 237 frames (7.908 s), clip planned to 8.0 s
+    run = Recorder()
+    run_render(EID, cfg, run=run)
+    cmd = next(c for c in run.calls if c[0] == "ffmpeg")
+    script = cmd[cmd.index("-filter_complex_script") + 1]
+    short = _out(cfg) / "shorts/k02.mp4"
+    v = _probe(short)["video"]
+    assert int(v["nb_frames"]) == round(2.9 * 30000 / 1001) == 87
+    assert not list((_out(cfg) / "shorts").glob(".*"))
+    assert _rm(cfg)["shorts"][0]["status"] == "rendered"
+    assert script  # the graph file lives in a temp dir; its content is covered by the plan tests
+
+
+def test_clip_far_past_the_video_end_fails_without_encode(tmp_path, rcfg):
+    ws, cfg = _tail_episode(tmp_path, rcfg, 7.5, 0.15)  # about 15 frames missing
+    run = Recorder()
+    with pytest.raises(RenderError, match=r"clip k02: video stream ends at 7\.5\d\d s, before the clip end 8\.000 s"):
+        run_render(EID, cfg, run=run)
+    assert run.ffmpeg_calls == 0
+    assert not list((_out(cfg) / "shorts").glob(".*")) if (_out(cfg) / "shorts").exists() else True
+    assert _stage(ws)["status"] == "failed"
