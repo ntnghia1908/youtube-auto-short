@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: BUG
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -81,7 +81,7 @@ Không chạm database / security model / public API contract. Điểm danh trê
 
 - Main changes: `render/plan.py`: `tail_missing` (hàm thuần tính `m`), `tail_clone_limit`, tham số `tail` của `filter_graph` / `_video_cut` / `_video_dissolve` (`tpad=stop_mode=clone:stop=m` trước `pad`; `tail=0` giữ nguyên graph). `render/stage.py`: `video_end_seconds` (từ probe nguồn đang encode, không thêm ffprobe), tính `m` mỗi Short cần encode, `m` > giới hạn → `RenderError` T2 trước khi tạo `.part`. CP7 R6 / R9 cập nhật (sửa đổi 2026-10-10). `RENDER_PLAN_VERSION` / `render_key` / `verify_output` không đổi.
 - Tests: thêm 2 test plan (m, graph tail 0 / 2 cho cả cut và dissolve; graph `tail=0` giống chuỗi CP7 cũ) và 3 test stage (nguồn video ngắn hơn audio, clip tới cuối file, dissolve 0.15 và 0 → `nb_frames` = 87 = kế hoạch; video thiếu ~15 frame → lỗi T2, 0 lần gọi ffmpeg). Đo thực: m = kế hoạch − số frame ffmpeg ra được (m = 1, 3, 4, 6 trên nguồn lavfi). Đọc-only trên k06 (43 đoạn, 9978 frame kế hoạch): m = 2.
-- Review:
+- Review: ORCHESTRATOR 2026-10-10 — ACCEPTED, không có blocking finding. `tail` mặc định 0 nên graph cũ giữ nguyên từng ký tự (T3), `render_key` / `RENDER_PLAN_VERSION` không đổi; T2 kiểm trước khi tạo `.part` và gọi ffmpeg; `video_end` lấy từ probe của chính file encode. Lỗi T2 làm stage `failed` như các lỗi từng Short khác của render (cùng ngữ nghĩa với lỗi gốc). Test tích hợp có 2 đoạn nên phủ cả nhánh dissolve; `nb_frames` = 87 trên nguồn thiếu hình chứng minh `tpad` chạy. ORCHESTRATOR chạy lại: pytest 1610 passed, 1 skipped; framework-check PASS.
 - Important findings / decisions: `m` đếm theo chỉ số grid (`round(video_end × fps)`), khớp thực nghiệm. Nguồn HD / enhance dùng cùng đường probe nên cùng luật.
 - Known limitations: bản dọc cả tập (CP8.27) và enhance không đổi (không dùng hàm này).
 - PR:
