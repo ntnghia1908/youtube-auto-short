@@ -84,4 +84,4 @@ Không chạm database / security model / public API contract. Điểm danh trê
 - Review: ORCHESTRATOR 2026-10-10 — ACCEPTED, không có blocking finding. `tail` mặc định 0 nên graph cũ giữ nguyên từng ký tự (T3), `render_key` / `RENDER_PLAN_VERSION` không đổi; T2 kiểm trước khi tạo `.part` và gọi ffmpeg; `video_end` lấy từ probe của chính file encode. Lỗi T2 làm stage `failed` như các lỗi từng Short khác của render (cùng ngữ nghĩa với lỗi gốc). Test tích hợp có 2 đoạn nên phủ cả nhánh dissolve; `nb_frames` = 87 trên nguồn thiếu hình chứng minh `tpad` chạy. ORCHESTRATOR chạy lại: pytest 1610 passed, 1 skipped; framework-check PASS.
 - Important findings / decisions: `m` đếm theo chỉ số grid (`round(video_end × fps)`), khớp thực nghiệm. Nguồn HD / enhance dùng cùng đường probe nên cùng luật.
 - Known limitations: bản dọc cả tập (CP8.27) và enhance không đổi (không dùng hàm này).
-- PR:
+- PR: #81
