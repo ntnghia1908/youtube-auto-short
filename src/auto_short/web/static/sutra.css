@@ -15,8 +15,9 @@ body[data-theme="dark"] { --r-bg: #14161a; --r-fg: #d6d3c8; --r-muted: #8d8a80; 
 .rtitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: .9rem; }
 .rbtn { min-height: 44px; padding: .3rem .6rem; border: 1px solid var(--r-border); border-radius: 8px; background: transparent; color: inherit; font: inherit; font-size: .85rem; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; }
 .rbtn.on { background: var(--r-hl); font-weight: 700; }
-.reader { --fs: 18px; --lh: 1.7; max-width: 42rem; margin: 0 auto; padding: 4.2rem 1rem 5rem; font-size: var(--fs); line-height: var(--lh); font-family: "Noto Serif", Georgia, "Times New Roman", serif; }
+.reader { --fs: 18px; --lh: 1.7; --wt: 400; --wt-strong: 700; font-weight: var(--wt); max-width: 42rem; margin: 0 auto; padding: 4.2rem 1rem 5rem; font-size: var(--fs); line-height: var(--lh); font-family: "Noto Serif", Georgia, "Times New Roman", serif; }
 .reader.sans { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+.reader h1, .reader h2.group, .reader h3.sec { font-weight: var(--wt-strong); }
 .reader h1 { font-size: 1.4em; text-align: center; margin: .5em 0; }
 .reader h2.group { font-size: 1.1em; color: var(--r-muted); text-transform: uppercase; letter-spacing: .04em; margin: 2em 0 .3em; border-bottom: 1px solid var(--r-border); }
 .reader h3.sec { font-size: 1.15em; text-align: center; margin: 1.8em 0 .6em; scroll-margin-top: 4rem; }
@@ -24,10 +25,22 @@ body[data-theme="dark"] { --r-bg: #14161a; --r-fg: #d6d3c8; --r-muted: #8d8a80; 
 .reader p.para { margin: 0 0 1em; }
 .reader .line { display: block; overflow-wrap: anywhere; }
 .reader .line.inst { font-style: italic; opacity: .65; }
-.reader .line.strong { font-weight: 700; }
+.reader .line.strong { font-weight: var(--wt-strong); }
 .reader .line.han { font-family: "Noto Serif CJK SC", "Noto Serif SC", "Source Han Serif SC", "Songti SC", SimSun, serif; letter-spacing: .05em; }
 .reader .fn { font: inherit; font-size: .7em; vertical-align: super; line-height: 0; min-width: 1.6em; min-height: 1.6em; padding: 0 .25em; margin: 0 .1em; border: 1px solid var(--r-border); border-radius: 999px; background: var(--r-hl); color: inherit; cursor: pointer; }
 .reader .note { display: block; font-size: .85em; margin: .3em 0 .6em; padding: .4em .6em; border-left: 3px solid var(--r-border); background: var(--r-bar); font-style: normal; }
+/* page mode (SR1.4): the reader is a fixed viewport scrolled sideways by JS; the article is laid out in columns one page wide
+   (JS sets width / column-width / column-gap / height / margins from the viewport) */
+body.paged { overflow: hidden; }
+.reader.paged { position: fixed; inset: 0; max-width: none; margin: 0; padding: 0; overflow: hidden; touch-action: pan-y; }
+.reader.paged #r-msg { display: none; }
+.reader.paged #text { column-fill: auto; }
+.reader.paged h1, .reader.paged h2.group, .reader.paged h3.sec { break-after: avoid; break-inside: avoid; margin-top: .6em; }
+.reader.paged .para.short, .reader.paged .note, .reader.paged .finish { break-inside: avoid; }
+.reader.paged .line { orphans: 2; widows: 2; }
+.reader.paged .finish { margin-top: 1.5rem; padding-bottom: 1rem; }
+.pageno { position: fixed; bottom: .5rem; left: 0; right: 0; z-index: 5; text-align: center; font-size: .8rem; color: var(--r-muted); pointer-events: none; }
+.pageno[hidden] { display: none; }
 .finish { text-align: center; margin-top: 2.5rem; }
 .finish .btn.primary { font-size: 1.1rem; padding: .8rem 1.4rem; }
 .sheet { position: fixed; inset: 0; z-index: 30; background: rgba(0,0,0,.45); display: flex; align-items: flex-end; }

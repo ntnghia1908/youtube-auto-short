@@ -71,6 +71,12 @@ def test_list_get_sorted_and_skips(store):
     assert doc["recitations"] == {"total": 0, "entries": []}
 
 
+def test_list_sorts_without_diacritics(store):
+    for t in ("Kinh Địa Tạng", "Đại Thế Chí", "Bát Nhã", "Ăn chay", "Zen"):
+        store.create(f"= {t}\n# M\nx\n")
+    assert [r["title"] for r in store.list()] == ["Ăn chay", "Bát Nhã", "Đại Thế Chí", "Kinh Địa Tạng", "Zen"]
+
+
 def test_missing_and_bad_slugs(store, tmp_path):
     store.create(TEXT)
     outside = tmp_path / "outside"

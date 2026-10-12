@@ -118,3 +118,14 @@ def test_static_assets_exist_and_served(lc):
         assert lc.get(f"/static/{name}").status_code == 200
     js = (STATIC / "sutra.js").read_text(encoding="utf-8")
     assert "innerHTML" not in js and "ffmpeg" in js and "wakeLock" in js
+
+
+def test_reader_sr14_options_present():
+    js = (STATIC / "sutra.js").read_text(encoding="utf-8")
+    css = (STATIC / "sutra.css").read_text(encoding="utf-8")
+    html = (STATIC / "sutra.html").read_text(encoding="utf-8")
+    for needle in ("Độ đậm chữ", "Đậm vừa", "Kiểu đọc", "Lật trang ngang", "Cuộn dọc", "--wt-strong", "ArrowRight"):
+        assert needle in js
+    assert "innerHTML" not in js
+    assert "column-fill" in css and "break-after: avoid" in css and "--wt-strong" in css
+    assert 'id="pageno"' in html

@@ -54,6 +54,12 @@ def slugify(title: str) -> str:
     return s or "kinh"
 
 
+def _sort_key(title: str) -> str:
+    """Library order: diacritics stripped (``Đại`` sorts under D), case-insensitive."""
+    s = unicodedata.normalize("NFD", title.replace("đ", "d").replace("Đ", "D"))
+    return "".join(c for c in s if not unicodedata.combining(c)).casefold()
+
+
 def _sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -142,7 +148,7 @@ class SutraStore:
             out.append({"slug": d.name, "title": meta.get("title", sutra.title), "sections": sutra.section_count,
                         "recitations": {"total": len(entries), "last_at": entries[-1]["at"] if entries else None},
                         "updated_at": meta.get("updated_at")})
-        out.sort(key=lambda r: r["title"].casefold())
+        out.sort(key=lambda r: (_sort_key(r["title"]), r["title"].casefold()))
         return out
 
     def text(self, slug: str) -> dict:

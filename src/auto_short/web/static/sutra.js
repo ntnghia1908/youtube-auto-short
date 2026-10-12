@@ -8,7 +8,8 @@
   "use strict";
 
   var SETTINGS_KEY = "sutra:settings";
-  var DEFAULTS = { size: 18, line: 1.7, serif: true, theme: "paper", awake: true };
+  var DEFAULTS = { size: 18, line: 1.7, serif: true, theme: "paper", awake: true, weight: 400, mode: "scroll" };
+  var STRONG_OF = { 400: 700, 500: 700, 700: 800 };   // `strong` lines: one step heavier than the body, max 800
 
   // --- helpers -------------------------------------------------------------------------------------
 
@@ -33,6 +34,8 @@
     out.size = Math.min(32, Math.max(14, Math.round(out.size / 2) * 2));
     if (["light", "paper", "dark"].indexOf(out.theme) < 0) out.theme = "paper";
     if ([1.4, 1.7, 2.0].indexOf(out.line) < 0) out.line = 1.7;
+    if ([400, 500, 700].indexOf(out.weight) < 0) out.weight = 400;
+    if (["scroll", "page"].indexOf(out.mode) < 0) out.mode = "scroll";
     return out;
   }
   // body: a plain object (sent as JSON) or a File / Blob (sent raw, S5 upload)
@@ -97,12 +100,24 @@
     var bar = $("rbar"), reader = $("reader");
 
     // settings -------------------------------------------------------------------------------------
+    var paged = false, padLeft = 16, laidW = 0, laidH = 0, lastAnchor = null, lastInnerW = window.innerWidth;
     function saveSettings() { store(SETTINGS_KEY, settings); }
     function applySettings() {
       document.body.setAttribute("data-theme", settings.theme);
       reader.style.setProperty("--fs", settings.size + "px");
       reader.style.setProperty("--lh", String(settings.line));
+      reader.style.setProperty("--wt", String(settings.weight));
+      reader.style.setProperty("--wt-strong", String(STRONG_OF[settings.weight]));
       reader.classList.toggle("sans", !settings.serif);
+      var p = settings.mode === "page";
+      if (p !== paged) setPaged(p);
+    }
+    // a change that re-flows the text: remember the passage at the top of the view, apply, put it back
+    function commit(change) {
+      var a = data ? captureAnchor() : null;
+      change(); saveSettings(); applySettings();
+      if (data) relayout(a);
+      buildSettings();
     }
     function choice(row, label, options, isOn, onPick) {
       var wrap = el("div", "set-row");
@@ -110,7 +125,7 @@
       options.forEach(function (o) {
         var b = el("button", "rbtn" + (isOn(o[0]) ? " on" : ""), o[1]);
         b.type = "button";
-        b.addEventListener("click", function () { onPick(o[0]); saveSettings(); applySettings(); buildSettings(); });
+        b.addEventListener("click", function () { commit(function () { onPick(o[0]); }); });
         wrap.appendChild(b);
       });
       row.appendChild(wrap);
@@ -122,14 +137,18 @@
       size.appendChild(el("span", null, "Cỡ chữ"));
       var minus = el("button", "rbtn", "A−"), plus = el("button", "rbtn", "A+");
       minus.type = plus.type = "button";
-      minus.addEventListener("click", function () { settings.size = Math.max(14, settings.size - 2); saveSettings(); applySettings(); buildSettings(); });
-      plus.addEventListener("click", function () { settings.size = Math.min(32, settings.size + 2); saveSettings(); applySettings(); buildSettings(); });
+      minus.addEventListener("click", function () { commit(function () { settings.size = Math.max(14, settings.size - 2); }); });
+      plus.addEventListener("click", function () { commit(function () { settings.size = Math.min(32, settings.size + 2); }); });
       size.appendChild(minus); size.appendChild(el("span", null, settings.size + " px")); size.appendChild(plus);
       box.appendChild(size);
       choice(box, "Giãn dòng", [[1.4, "Sát"], [1.7, "Vừa"], [2.0, "Rộng"]],
         function (v) { return settings.line === v; }, function (v) { settings.line = v; });
+      choice(box, "Độ đậm chữ", [[400, "Thường"], [500, "Đậm vừa"], [700, "Đậm"]],
+        function (v) { return settings.weight === v; }, function (v) { settings.weight = v; });
       choice(box, "Kiểu chữ", [[true, "Có chân"], [false, "Không chân"]],
         function (v) { return settings.serif === v; }, function (v) { settings.serif = v; });
+      choice(box, "Kiểu đọc", [["scroll", "Cuộn dọc"], ["page", "Lật trang ngang"]],
+        function (v) { return settings.mode === v; }, function (v) { settings.mode = v; });
       choice(box, "Nền", [["light", "Sáng"], ["paper", "Giấy"], ["dark", "Tối"]],
         function (v) { return settings.theme === v; }, function (v) { settings.theme = v; });
       var awakeRow = el("div", "set-row");
@@ -145,8 +164,105 @@
       box.appendChild(awakeRow);
     }
 
+    // paging (SR1.4): CSS columns one page wide inside a fixed, horizontally scrolled viewport -------
+    function leaves() { return $("text").querySelectorAll("h1, h2, h3, .intro, .line"); }
+    function firstRect(e) {
+      var rs = e.getClientRects(), i;
+      for (i = 0; i < rs.length; i++) if (rs[i].width > 0 || rs[i].height > 0) return rs[i];
+      return null;
+    }
+    function pageW() { return Math.max(1, reader.clientWidth); }
+    function pages() { return Math.max(1, Math.ceil((reader.scrollWidth - 1) / pageW())); }
+    function curPage() { return Math.min(pages() - 1, Math.max(0, Math.round(reader.scrollLeft / pageW()))); }
+    function pageOfRect(r) { return Math.floor((r.left + reader.scrollLeft) / pageW()); }
+    function pageOf(e) { var r = firstRect(e); return r ? Math.max(0, pageOfRect(r)) : 0; }
+    function updatePageNo() { $("pageno").textContent = (curPage() + 1) + " / " + pages(); }
+    var posTimer = null;
+    function schedSave() { clearTimeout(posTimer); posTimer = setTimeout(function () { savePos(); lastAnchor = captureAnchor(); }, 300); }
+    function goPage(p) {
+      p = Math.min(pages() - 1, Math.max(0, p));
+      reader.scrollLeft = p * pageW();
+      updatePageNo();
+      lastAnchor = captureAnchor();
+      schedSave();
+    }
+    function layoutPaged() {
+      var pw = pageW(), ph = reader.clientHeight, art = $("text");
+      var textW = Math.min(pw - 32, 672), top = 56, bottom = 36;
+      if (textW < 100) textW = Math.max(50, pw - 8);
+      padLeft = Math.floor((pw - textW) / 2);
+      art.style.width = textW + "px";
+      art.style.columnWidth = textW + "px";
+      art.style.columnGap = (pw - textW) + "px";
+      art.style.height = Math.max(100, ph - top - bottom) + "px";
+      art.style.marginLeft = padLeft + "px";
+      art.style.marginTop = top + "px";
+      laidW = pw; laidH = ph;
+    }
+    function setPaged(p) {
+      paged = p;
+      reader.classList.toggle("paged", p);
+      document.body.classList.toggle("paged", p);
+      $("pageno").hidden = !p;
+      var art = $("text"), fin = document.querySelector(".finish");
+      if (p) { art.appendChild(fin); window.scrollTo(0, 0); }
+      else {
+        reader.appendChild(fin);
+        reader.scrollLeft = 0;
+        ["width", "columnWidth", "columnGap", "height", "marginLeft", "marginTop"].forEach(function (k) { art.style[k] = ""; });
+      }
+    }
+    // the passage at the top of the current view: {el, top}
+    function captureAnchor() {
+      if (!data) return null;
+      var list = leaves(), i, r, k, rs, cur = paged ? curPage() : 0;
+      for (i = 0; i < list.length; i++) {
+        if (paged) {
+          rs = list[i].getClientRects();
+          for (k = 0; k < rs.length; k++) if (rs[k].width > 0 && pageOfRect(rs[k]) >= cur) return { el: list[i], top: null };
+        } else {
+          r = list[i].getBoundingClientRect();
+          if (r.height > 0 && r.bottom > 4) return { el: list[i], top: r.top };
+        }
+      }
+      return null;
+    }
+    function relayout(a) {
+      if (paged) {
+        layoutPaged();
+        goPage(a && a.el ? pageOf(a.el) : curPage());
+      } else if (a && a.el) {
+        var want = a.top == null ? 0 : a.top;
+        window.scrollTo(0, a.el.getBoundingClientRect().top + window.scrollY - want);
+        lastAnchor = captureAnchor();
+      }
+    }
+    // linear coordinate along the text: y in scroll mode, x (columns laid side by side) in page mode
+    function lin(e) {
+      if (paged) { var r = firstRect(e); return r ? r.left + reader.scrollLeft : 0; }
+      return e.getBoundingClientRect().top + window.scrollY;
+    }
+    function viewStart() { return paged ? reader.scrollLeft : window.scrollY; }
+    function docEnd() { return paged ? pages() * pageW() : document.documentElement.scrollHeight; }
+    function slack() { return paged ? padLeft + 8 : 8; }
+    function goLin(v) { if (paged) goPage(Math.floor(v / pageW())); else window.scrollTo(0, v); }
+    function nextPage(d) { if (paged) goPage(curPage() + d); }
+    var rzTimer = null;
+    function onResize() {
+      clearTimeout(rzTimer);
+      rzTimer = setTimeout(function () {
+        if (!data) return;
+        if (paged) { if (reader.clientWidth !== laidW || reader.clientHeight !== laidH) relayout(lastAnchor); }
+        else if (window.innerWidth !== lastInnerW) relayout(lastAnchor);
+        lastInnerW = window.innerWidth;
+      }, 150);
+    }
+    window.addEventListener("resize", onResize);
+    window.addEventListener("orientationchange", onResize);
+
     // sheets ---------------------------------------------------------------------------------------
     function openSheet(id) { $(id).hidden = false; bar.classList.remove("hidden"); }
+    function sheetsOpen() { return ["sheet-toc", "sheet-set", "sheet-count", "sheet-menu"].some(function (i) { return !$(i).hidden; }); }
     function closeSheets() { ["sheet-toc", "sheet-set", "sheet-count", "sheet-menu"].forEach(function (i) { $(i).hidden = true; }); }
     Array.prototype.forEach.call(document.querySelectorAll(".sheet"), function (s) {
       s.addEventListener("click", function (ev) { if (ev.target === s) closeSheets(); });
@@ -186,17 +302,22 @@
         btn.addEventListener("click", function (ev) {
           ev.stopPropagation();
           var next = span.nextSibling;
-          if (next && next.classList && next.classList.contains("note") && next.getAttribute("data-n") === n) { next.remove(); return; }
-          var note = el("span", "note", n + ". " + (notes[n] || ""));
-          note.setAttribute("data-n", n);
-          span.parentNode.insertBefore(note, span.nextSibling);
+          if (next && next.classList && next.classList.contains("note") && next.getAttribute("data-n") === n) {
+            next.remove();
+          } else {
+            var note = el("span", "note", n + ". " + (notes[n] || ""));
+            note.setAttribute("data-n", n);
+            span.parentNode.insertBefore(note, span.nextSibling);
+          }
+          if (paged) goPage(pageOf(btn));   // the text re-flowed: stay on the page of the footnote mark
         });
         span.appendChild(btn);
       });
       parent.appendChild(span);
     }
     function render() {
-      var art = $("text");
+      var art = $("text"), fin = document.querySelector(".finish");
+      if (fin.parentNode === art) reader.appendChild(fin);   // page mode keeps it inside the article: do not lose it
       art.textContent = "";
       art.appendChild(el("h1", null, data.title));
       data.intro.forEach(function (t) { art.appendChild(el("p", "intro", t)); });
@@ -213,14 +334,16 @@
           h.id = s.id;
           art.appendChild(h);
           s.paragraphs.forEach(function (p) {
-            var pe = el("p", "para");
+            var pe = el("p", "para"), chars = 0;
+            p.forEach(function (ln) { chars += ln.text.length; });
+            if (chars < 200) pe.classList.add("short");   // page mode keeps short blocks on one page
             p.forEach(function (ln) { addLine(pe, ln, s.notes); });
             art.appendChild(pe);
           });
           var item = el("button", "toc-item", s.title);
           item.type = "button";
           item.setAttribute("data-id", s.id);
-          item.addEventListener("click", function () { closeSheets(); h.scrollIntoView(); });
+          item.addEventListener("click", function () { closeSheets(); if (paged) goPage(pageOf(h)); else h.scrollIntoView(); });
           toc.appendChild(item);
           sections.push({ id: s.id, title: s.title, el: h });
         });
@@ -230,18 +353,16 @@
     }
 
     // position -------------------------------------------------------------------------------------
+    function sectionEnd(i) { return i + 1 < sections.length ? lin(sections[i + 1].el) : docEnd(); }
     function current() {
-      // last section whose heading is at / above the top of the viewport (+ small slack)
-      var cur = null, i;
+      // last section whose heading is at / above the top of the view (+ small slack)
+      var cur = null, i, vs = viewStart();
       for (i = 0; i < sections.length; i++) {
-        if (sections[i].el.getBoundingClientRect().top <= 8) cur = i; else break;
+        if (lin(sections[i].el) <= vs + slack()) cur = i; else break;
       }
       if (cur === null) return sections.length ? { index: 0, offset: 0 } : null;
-      var top = sections[cur].el.getBoundingClientRect().top + window.scrollY;
-      var end = cur + 1 < sections.length ? sections[cur + 1].el.getBoundingClientRect().top + window.scrollY
-                                           : document.documentElement.scrollHeight;
-      var span = Math.max(1, end - top);
-      return { index: cur, offset: Math.min(1, Math.max(0, (window.scrollY - top) / span)) };
+      var top = lin(sections[cur].el), span = Math.max(1, sectionEnd(cur) - top);
+      return { index: cur, offset: Math.min(1, Math.max(0, (vs - top) / span)) };
     }
     function savePos() {
       if (restoring || !data) return;
@@ -262,32 +383,52 @@
         var sec = null;
         sections.forEach(function (s) { if (s.id === pos.section) sec = s; });
         if (sec) {
-          var top = sec.el.getBoundingClientRect().top + window.scrollY;
-          var idx = sections.indexOf(sec);
-          var end = idx + 1 < sections.length ? sections[idx + 1].el.getBoundingClientRect().top + window.scrollY
-                                               : document.documentElement.scrollHeight;
+          var top = lin(sec.el), end = sectionEnd(sections.indexOf(sec));
           var off = pos.sha256 === data.sha256 && typeof pos.offset === "number" ? pos.offset : 0;
-          window.scrollTo(0, top + off * Math.max(1, end - top));
+          goLin(top + off * Math.max(1, end - top));
         }
       }
       restoring = false;
+      if (paged) updatePageNo();
+      lastAnchor = captureAnchor();
     }
-    var posTimer = null, lastY = 0;
+    var lastY = 0;
     window.addEventListener("scroll", function () {
       var y = window.scrollY;
-      if (y > lastY + 10 && y > 80) { if ($("sheet-toc").hidden && $("sheet-set").hidden && $("sheet-count").hidden && $("sheet-menu").hidden) bar.classList.add("hidden"); }
+      if (y > lastY + 10 && y > 80) { if (!sheetsOpen()) bar.classList.add("hidden"); }
       else if (y < lastY - 10) bar.classList.remove("hidden");
       lastY = y;
       clearTimeout(posTimer);
-      posTimer = setTimeout(savePos, 300);
+      posTimer = setTimeout(function () { savePos(); lastAnchor = captureAnchor(); }, 300);
     }, { passive: true });
     window.addEventListener("pagehide", savePos);
     document.addEventListener("visibilitychange", function () {
       if (document.visibilityState === "hidden") { savePos(); pauseAwake(); } else { resumeAwake(); }
     });
+    var lastSwipe = 0, tx = 0, ty = 0;
     reader.addEventListener("click", function (ev) {
       if (ev.target.closest("button, a")) return;
+      if (paged) {
+        if (Date.now() - lastSwipe < 500) return;
+        var w = reader.clientWidth;
+        if (ev.clientX < w * 0.25) { nextPage(-1); return; }
+        if (ev.clientX > w * 0.75) { nextPage(1); return; }
+      }
       bar.classList.toggle("hidden");
+    });
+    reader.addEventListener("touchstart", function (ev) {
+      if (ev.touches.length === 1) { tx = ev.touches[0].clientX; ty = ev.touches[0].clientY; } else tx = null;
+    }, { passive: true });
+    reader.addEventListener("touchend", function (ev) {
+      if (!paged || tx === null || !ev.changedTouches.length) return;
+      var dx = ev.changedTouches[0].clientX - tx, dy = ev.changedTouches[0].clientY - ty;
+      tx = null;
+      if (Math.abs(dx) > 50 && Math.abs(dx) > 1.5 * Math.abs(dy)) { lastSwipe = Date.now(); nextPage(dx < 0 ? 1 : -1); }
+    }, { passive: true });
+    document.addEventListener("keydown", function (ev) {
+      if (!paged || sheetsOpen() || ev.altKey || ev.ctrlKey || ev.metaKey) return;
+      if (ev.key === "ArrowRight" || ev.key === "PageDown") { ev.preventDefault(); nextPage(1); }
+      else if (ev.key === "ArrowLeft" || ev.key === "PageUp") { ev.preventDefault(); nextPage(-1); }
     });
 
     // recitations ----------------------------------------------------------------------------------
@@ -383,6 +524,7 @@
       data = d; entries = d.recitations.entries; total = d.recitations.total;
       $("r-msg").hidden = true;
       render();
+      if (paged) layoutPaged();
       refreshCounter();
       $("btn-done").hidden = false;
       restore();
