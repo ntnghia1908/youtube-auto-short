@@ -1,0 +1,43 @@
+/* Đọc Kinh (SR1 S7): library + reader. Reuses style.css (topbar, .btn, .card); only adds rules. */
+.lib-list { list-style: none; margin: 0; padding: 0; display: grid; gap: .6rem; }
+.lib-item { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem; background: #fafaf8; display: grid; gap: .35rem; }
+.lib-title { font-weight: 700; font-size: 1.1rem; }
+.lib-actions { display: flex; flex-wrap: wrap; gap: .4rem; }
+
+body[data-page="reader"] { --r-bg: #f7f1e1; --r-fg: #2b2418; --r-muted: #7a6f58; --r-bar: #ece3cc; --r-border: #d9cdb0; --r-hl: #fff0b3;
+  background: var(--r-bg); color: var(--r-fg); }
+body[data-theme="light"] { --r-bg: #fff; --r-fg: #1d1d1b; --r-muted: #6b6b66; --r-bar: #f0f0ee; --r-border: #deded8; --r-hl: #fff3b0; }
+body[data-theme="paper"] { --r-bg: #f7f1e1; --r-fg: #2b2418; --r-muted: #7a6f58; --r-bar: #ece3cc; --r-border: #d9cdb0; --r-hl: #fff0b3; }
+body[data-theme="dark"] { --r-bg: #14161a; --r-fg: #d6d3c8; --r-muted: #8d8a80; --r-bar: #1f2227; --r-border: #33363c; --r-hl: #3b3516; }
+.rbar { position: fixed; top: 0; left: 0; right: 0; z-index: 20; display: flex; align-items: center; gap: .35rem; padding: .35rem .5rem;
+  background: var(--r-bar); color: var(--r-fg); border-bottom: 1px solid var(--r-border); transition: transform .2s; }
+.rbar.hidden { transform: translateY(-110%); }
+.rtitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: .9rem; }
+.rbtn { min-height: 44px; padding: .3rem .6rem; border: 1px solid var(--r-border); border-radius: 8px; background: transparent; color: inherit; font: inherit; font-size: .85rem; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; }
+.rbtn.on { background: var(--r-hl); font-weight: 700; }
+.reader { --fs: 18px; --lh: 1.7; max-width: 42rem; margin: 0 auto; padding: 4.2rem 1rem 5rem; font-size: var(--fs); line-height: var(--lh); font-family: "Noto Serif", Georgia, "Times New Roman", serif; }
+.reader.sans { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+.reader h1 { font-size: 1.4em; text-align: center; margin: .5em 0; }
+.reader h2.group { font-size: 1.1em; color: var(--r-muted); text-transform: uppercase; letter-spacing: .04em; margin: 2em 0 .3em; border-bottom: 1px solid var(--r-border); }
+.reader h3.sec { font-size: 1.15em; text-align: center; margin: 1.8em 0 .6em; scroll-margin-top: 4rem; }
+.reader .intro { color: var(--r-muted); font-size: .9em; text-align: center; margin: 0 0 1em; }
+.reader p.para { margin: 0 0 1em; }
+.reader .line { display: block; overflow-wrap: anywhere; }
+.reader .line.inst { font-style: italic; opacity: .65; }
+.reader .line.strong { font-weight: 700; }
+.reader .line.han { font-family: "Noto Serif CJK SC", "Noto Serif SC", "Source Han Serif SC", "Songti SC", SimSun, serif; letter-spacing: .05em; }
+.reader .fn { font: inherit; font-size: .7em; vertical-align: super; line-height: 0; min-width: 1.6em; min-height: 1.6em; padding: 0 .25em; margin: 0 .1em; border: 1px solid var(--r-border); border-radius: 999px; background: var(--r-hl); color: inherit; cursor: pointer; }
+.reader .note { display: block; font-size: .85em; margin: .3em 0 .6em; padding: .4em .6em; border-left: 3px solid var(--r-border); background: var(--r-bar); font-style: normal; }
+.finish { text-align: center; margin-top: 2.5rem; }
+.finish .btn.primary { font-size: 1.1rem; padding: .8rem 1.4rem; }
+.sheet { position: fixed; inset: 0; z-index: 30; background: rgba(0,0,0,.45); display: flex; align-items: flex-end; }
+.sheet[hidden] { display: none; }
+.sheet-body { width: 100%; max-width: 42rem; margin: 0 auto; max-height: 80vh; overflow: auto; background: var(--r-bg); color: var(--r-fg); border-radius: 14px 14px 0 0; padding: .8rem 1rem 1.2rem; }
+.sheet-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: .5rem; }
+.toc-group { margin: .8rem 0 .2rem; font-size: .8rem; text-transform: uppercase; color: var(--r-muted); letter-spacing: .04em; }
+.toc-item { display: block; width: 100%; text-align: left; min-height: 44px; padding: .5rem .6rem; border: none; border-radius: 8px; background: none; color: inherit; font: inherit; cursor: pointer; }
+.toc-item.current { background: var(--r-hl); font-weight: 700; }
+.set-row { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin: .6rem 0; }
+.set-row > span:first-child { flex: 0 0 6.5rem; font-weight: 600; }
+.hist-row { display: flex; justify-content: space-between; padding: .35rem 0; border-bottom: 1px solid var(--r-border); }
+#awake { position: fixed; right: 0; bottom: 0; width: 2px; height: 2px; opacity: .01; pointer-events: none; }

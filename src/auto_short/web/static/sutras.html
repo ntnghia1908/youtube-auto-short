@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Đọc Kinh — Auto Short</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/sutra.css">
+</head>
+<body data-page="library">
+<header class="topbar">
+  <a class="brand" href="/">&larr; Auto Short</a>
+  <nav class="topnav"><a href="/monitor">Theo dõi</a> <a href="/storage">Bộ nhớ</a> <a href="/sutras">Đọc Kinh</a>
+  <form method="post" action="/logout"><button class="btn link" type="submit">Đăng xuất</button></form></nav>
+</header>
+<main class="container">
+  <section class="card">
+    <h2>Đọc Kinh</h2>
+    <p id="lib-msg" class="muted small">Đang tải…</p>
+    <ul id="lib-list" class="lib-list"></ul>
+  </section>
+</main>
+<script src="/static/sutra.js"></script>
+</body>
+</html>

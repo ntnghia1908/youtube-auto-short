@@ -73,8 +73,8 @@ Thêm route / API mới sau auth hiện có (không đổi security model, khôn
 
 ## Result
 
-- Main changes:
-- Tests:
+- Main changes: `src/auto_short/sutra/` (`markup.py` parse S2 -> S3, mọi lỗi kèm số dòng; `store.py` S4 gồm create / update (sha256) / delete / đếm biến + hoàn tác; `web.py` router trang + API đọc / đếm); `web/app.py` chỉ `include_router`; mục "Đọc Kinh" ở topnav 6 trang tĩnh; static `sutras.html`, `sutra.html`, `sutra.js`, `sutra.css`, `sutra-awake.mp4`; `.gitignore` thêm ngoại lệ `!…/sutra-awake.mp4` (vì `*.mp4` bị ignore).
+- Tests: `tests/test_sutra_markup.py`, `tests/test_sutra_store.py`, `tests/test_web_sutra_sr11.py` (full suite 1648 passed, 1 skipped).
 - Review:
 - Important findings / decisions:
 - Known limitations:

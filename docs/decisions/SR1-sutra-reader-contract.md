@@ -34,7 +34,7 @@ UTF-8, chuẩn hóa NFC khi lưu, xuống dòng `\n`. Mỗi dòng xét theo th�
 | còn lại | Dòng nội dung. |
 
 - Mỗi dòng nội dung là **một dòng hiển thị** (dài thì tự xuống dòng): kệ giữ ngắt dòng, văn xuôi viết một dòng / đoạn. Không reflow.
-- Dòng nội dung bọc trọn trong `( … )` → chỉ dẫn nghi lễ (`inst`, chữ nghiêng, mờ). Dòng có ≥ 50 % ký tự chữ là chữ Hán (CJK Unified Ideographs) → `han` (font Hán).
+- Dòng nội dung bắt đầu `* ` → dòng nhấn mạnh (`strong`, chữ đậm; bỏ tiền tố), vd câu Hán Việt in đậm trước bản kệ dịch (sửa đổi ORCHESTRATOR 2026-10-12 trong lúc SR1.1, theo bản in Thái Thượng). - Dòng nội dung bọc trọn trong `( … )` → chỉ dẫn nghi lễ (`inst`, chữ nghiêng, mờ). Dòng có ≥ 50 % ký tự chữ là chữ Hán (CJK Unified Ideographs) → `han` (font Hán).
 - `[^n]` trong dòng nội dung = tham chiếu chú thích; phải có định nghĩa cùng mục, định nghĩa không được dùng → lỗi.
 - Lỗi parse (thiếu `=`, nội dung ngoài mục, mục rỗng, chú thích thiếu / thừa / trùng, dòng > 5 000 ký tự, > 2 000 mục) trả **mọi** lỗi kèm số dòng; không lưu văn bản lỗi.
 - Giới hạn: văn bản ≤ 2 MB UTF-8.
@@ -45,7 +45,7 @@ UTF-8, chuẩn hóa NFC khi lưu, xuống dòng `\n`. Mỗi dòng xét theo th�
 {"schema_version": 1, "title": "…", "intro": ["…"],
  "groups": [{"title": "Chính kinh" | null,
              "sections": [{"id": "s1", "title": "…",
-                           "paragraphs": [[{"text": "…", "kind": "text" | "inst" | "han"}]],
+                           "paragraphs": [[{"text": "…", "kind": "text" | "inst" | "han" | "strong"}]],
                            "notes": {"1": "…"}}]}]}
 ```
 
@@ -71,11 +71,13 @@ PDF chỉ có lớp chữ mới import được (PDF scan → 422 "PDF không c�
 
 - **An toàn:** parse trong **process con** (`python -I -m auto_short.sutra.pdf <file>`, stdin / file tạm trong `work/_sutras/.tmp/`), timeout 120 s (quá → 504, kill process), ≤ 1 000 trang; process con chỉ trả JSON văn bản S2 + cảnh báo. Lý do: pypdf từng có lỗi vòng lặp / bộ nhớ với file hỏng; không để chặn process web.
 - **Trích dòng:** lấy từng đoạn chữ kèm vị trí (x, y) và cỡ chữ qua text visitor của pypdf; chuẩn hóa NFC (bản Google Docs tách rời dấu từng ký tự); gộp đoạn cùng `y` (± 2.5 pt) thành dòng; trang ngang có chữ ở hai nửa → **2 cột** (sách in 2 trang / tờ), đọc cột trái rồi cột phải; trong một dòng, khoảng trống lớn (> 40 pt) giữa chữ Việt và chữ Hán → hai ô riêng (cột chữ Hán song song).
-- **Bỏ header / footer:** chuỗi (bỏ số) lặp ở 20 % trên / dưới trang trên ≥ 15 % số trang (≥ 3 trang) → xóa, kể cả khi dính vào dòng khác; dòng chỉ có số ở vùng đó (số trang) → xóa.
+- **Bỏ header / footer:** chuỗi (bỏ số) lặp trên ≥ 15 % số trang (≥ 3 trang) → xóa, kể cả khi dính vào đầu / cuối dòng khác. Xét ở 20 % trên / dưới trang; dòng có chứa số (số trang) xét **ở mọi vị trí** (bản Google Docs đặt footer ngay sau chữ cuối trang, y thay đổi). Không xóa câu lặp không có số ở giữa trang (vd "Xá Lợi Phất! …" lặp trong A Di Đà). Dòng chỉ có số ở vùng trên / dưới (số trang) → xóa, **sau** bước chú thích (số chú thích cỡ nhỏ ở cuối trang không phải số trang).
 - **Tiêu đề mục (`#`):** dòng toàn chữ in hoa (≥ 3 chữ cái, ≤ 80 ký tự, không chữ Hán) thụt / căn giữa so với lề, hoặc cỡ chữ lớn hơn thân bài; các dòng tiêu đề liền nhau gộp một.
 - **Ghép dòng logic:** lề trái = x phổ biến nhất của thân bài theo (cột, trang chẵn / lẻ) trên **cả tài liệu**; dòng thụt (> 8 pt) mở dòng mới; dòng sát lề là dòng nối nếu mục có dòng thụt, hoặc dòng trước dài gần hết cột (≥ 80 % độ dài P90 của cột); dòng bắt đầu chữ thường luôn là dòng nối. Khoảng cách dọc > 1.5 × bước dòng → dòng trống (tách khổ / đoạn). Mục văn xuôi (dòng logic trung bình > 70 ký tự) → mỗi đoạn cách nhau một dòng trống.
-- **Sửa chữ:** "h ữu" → "hữu" (mảnh chỉ có phụ âm + mảnh bắt đầu bằng nguyên âm, do Word giãn chữ).
-- **Chú thích:** số nhỏ (cỡ < 85 % thân bài) ngay sau một chữ → `[^n]`; dòng cỡ nhỏ ở 20 % cuối trang bắt đầu bằng số → định nghĩa `[^n]:` đặt cuối mục chứa tham chiếu; không ghép được → cảnh báo.
+- **Sửa chữ:** "h ữu" → "hữu": Word tách dấu thành đoạn chữ riêng bắt đầu bằng dấu cách (`' ữ'`) đặt chồng lên chữ trước → quyết định dấu cách theo khoảng cách x giữa các đoạn, không theo dấu cách trong đoạn; dự phòng: ghép X + Y khi Y (bắt đầu bằng nguyên âm) không phải âm tiết tiếng Việt đứng riêng còn X + Y là âm tiết hợp lệ.
+- **Chữ đậm:** cả dòng logic dùng font đậm (tên font chứa `Bold`), không phải tiêu đề → tiền tố `* `.
+- **Danh sách đánh số:** dòng bắt đầu `\d+\. ` luôn mở dòng logic mới.
+- **Chú thích:** cỡ chữ so với trung vị **của trang** (có trang in cỡ nhỏ hơn toàn sách — A Di Đà trang phụ lục — không được coi cả trang là chú thích); số nhỏ (cỡ < 85 % thân bài) ngay sau một chữ → `[^n]`; dòng cỡ nhỏ ở 20 % cuối trang bắt đầu bằng số → định nghĩa `[^n]:` đặt cuối mục chứa tham chiếu; không ghép được → cảnh báo.
 - **Cảnh báo** trả về (`warnings`): trang không có chữ, chú thích không ghép được, mục quá dài / quá ngắn bất thường.
 - Thuật toán thử trên 3 PDF đầu (ORCHESTRATOR, 2026-10-12, prototype ngoài repo): chính văn A Di Đà, Thái Thượng tách đúng mục và đoạn; còn lỗi nhỏ ở vài mục kệ / chú; Vô Lượng Thọ còn header "KINH VÔ LƯỢNG THỌ - ÂM HÁN VIỆT n" lẫn vào tiêu đề phẩm — số đo chính thức do SR1.3 ghi.
 

@@ -38,6 +38,8 @@ from ..enhance.state import EnhanceError
 from ..enhance.tokens import authenticate as enhance_authenticate
 from ..enhance.tokens import tokens_from_env
 from ..pipeline import PIPELINE_STAGES, PreflightError, ollama_preflight, run_pipeline
+from ..sutra import web as sutra_web
+from ..sutra.store import SutraStore
 from ..post import corrections as post_corrections
 from ..post import export as post_export
 from ..post import doc as post_doc
@@ -2196,6 +2198,10 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                             status_code=202 if created else 200)
 
     # --- storage (CP8.6) ---------------------------------------------------------------------------
+
+    # --- Đọc Kinh (SR1): router of the sutra application, protected by the auth middleware above ---
+
+    app.include_router(sutra_web.router(SutraStore(Path(config.workspace.dir) / "_sutras"), STATIC_DIR))
 
     @app.get("/storage")
     async def storage_page():

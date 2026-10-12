@@ -13,6 +13,7 @@ work/
 temp/
 models/
 *.mp4
+!src/auto_short/web/static/sutra-awake.mp4
 *.mkv
 *.webm
 *.wav
