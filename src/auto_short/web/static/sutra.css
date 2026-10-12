@@ -36,7 +36,7 @@ body.paged { overflow: hidden; }
 .reader.paged #r-msg { display: none; }
 .reader.paged #text { column-fill: auto; }
 .reader.paged h1, .reader.paged h2.group, .reader.paged h3.sec { break-after: avoid; break-inside: avoid; margin-top: .6em; }
-.reader.paged .para.short, .reader.paged .note, .reader.paged .finish { break-inside: avoid; }
+.reader.paged .para.para-keep, .reader.paged .note, .reader.paged .finish { break-inside: avoid; }
 .reader.paged .line { orphans: 2; widows: 2; }
 .reader.paged .finish { margin-top: 1.5rem; padding-bottom: 1rem; }
 .pageno { position: fixed; bottom: .5rem; left: 0; right: 0; z-index: 5; text-align: center; font-size: .8rem; color: var(--r-muted); pointer-events: none; }

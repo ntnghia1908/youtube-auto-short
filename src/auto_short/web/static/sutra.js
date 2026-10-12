@@ -336,7 +336,7 @@
           s.paragraphs.forEach(function (p) {
             var pe = el("p", "para"), chars = 0;
             p.forEach(function (ln) { chars += ln.text.length; });
-            if (chars < 200) pe.classList.add("short");   // page mode keeps short blocks on one page
+            if (chars < 200) pe.classList.add("para-keep");   // page mode keeps short blocks on one page
             p.forEach(function (ln) { addLine(pe, ln, s.notes); });
             art.appendChild(pe);
           });
