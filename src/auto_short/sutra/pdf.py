@@ -19,6 +19,7 @@ import unicodedata
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
+from . import vni
 from .importer import _escape
 
 MAX_PAGES = 1000
@@ -28,6 +29,11 @@ SIZE_JUMP = 1.4  # a footer glued to a heading on one line differs this much in 
 SMALL = 0.85  # footnote / superscript: size below this share of the body size
 MAX_LINE = 4000  # S2 allows 5 000 chars per content line; longer logical lines are split
 DEFAULT_TITLE = "Bộ kinh mới"
+# SR1.5: ritual-book symbols (bell / wooden fish marks) and the fonts that carry only such symbols
+SYMBOL_CHARS = frozenset("O●•▬ᵹーႣ◎°Þþᖰ_○◯")
+SYMBOL_FONTS = ("vni-helve", "segoeuisymbol", "ms-mincho", "euphemiacas", "arial-blackitalic", "vinhan")
+MUSIC_MIN_TOKENS = 30  # a section needs this many tokens before the "sheet music" warning can apply
+MUSIC_SHORT_SHARE = 0.3  # ... and this share of tokens with a single letter (mantras are full of 2-letter syllables)
 
 _CJK = re.compile(r"[㐀-鿿豈-﫿]")
 _LETTER = re.compile(r"[^\W\d_]")
@@ -61,6 +67,7 @@ class Run:
     text: str
     size: float
     bold: bool = False
+    font: str = ""  # /BaseFont name as the PDF gives it ("" when unknown)
 
 
 @dataclass
@@ -78,6 +85,24 @@ class Page:
     lines: list[Line]
     height: float = 800.0
     width: float = 600.0
+
+
+def font_kind(font: str) -> str:
+    """``"symbol"`` (carries only ritual symbols), ``"vni"`` (VNI-Windows encoded text), ``"tcvn"`` (TCVN3 / VISCII:
+    not converted, warning only) or ``""``. Subset prefix (``ABCDEF+``) and case are ignored."""
+    name = font.rsplit("+", 1)[-1].lstrip("/").lower().replace(" ", "")
+    if any(f in name for f in SYMBOL_FONTS):
+        return "symbol"
+    if "vni-" in name:
+        return "vni"
+    if name.startswith(".vn") or "tcvn" in name or "viscii" in name:
+        return "tcvn"
+    return ""
+
+
+def is_symbol_text(s: str) -> bool:
+    """Non-blank text made only of ritual symbols and spaces."""
+    return bool(s.strip()) and all(ch in SYMBOL_CHARS or ch.isspace() for ch in s)
 
 
 # --- text helpers ---------------------------------------------------------------------------------------
@@ -130,7 +155,7 @@ def _fix_diacritic_spaces(rs: list[Run]) -> list[Run]:
             width = out[i + 1].x - r.x
             # some producers do not advance x inside one text object: no usable width, keep the space
             if width > 0.1 * r.size and abs(width - _est_width(body, r.size)) < abs(width - _est_width(r.text, r.size)):
-                out[i] = Run(r.x, r.y, r.text.lstrip(), r.size, r.bold)
+                out[i] = Run(r.x, r.y, r.text.lstrip(), r.size, r.bold, r.font)
     return out
 
 
@@ -153,6 +178,50 @@ def attach_superscripts(runs: list[Run], col_of=lambda r: 0) -> list[Run]:
     return out
 
 
+def _drop_symbols(rs: list[Run]) -> list[Run]:
+    """Symbol-only runs out of an x-sorted line. A run of only ``O`` stays when it touches the neighbouring text
+    (a real letter / word), because the bell mark ``O`` stands apart from words."""
+    keep: list[Run] = []
+    for i, r in enumerate(rs):
+        if is_symbol_text(r.text):
+            if r.text.strip() == "•" and not any(p.text.strip() for p in rs[:i]) and font_kind(r.font) == "":
+                keep.append(r)  # list bullet opening a line of ordinary text
+                continue
+            if set(r.text.strip()) != {"O"}:
+                keep.append(Run(r.x, r.y, " ", r.size, r.bold))
+                continue
+            prev = next((p for p in reversed(rs[:i]) if p.text.strip()), None)
+            nxt = next((q for q in rs[i + 1:] if q.text.strip()), None)
+            near = 0.6 * r.size
+            glued = ((prev is not None and not is_symbol_text(prev.text)
+                      and abs(r.x - (prev.x + _est_width(prev.text, prev.size))) < near)
+                     or (nxt is not None and not is_symbol_text(nxt.text)
+                         and abs(nxt.x - (r.x + _est_width(r.text, r.size))) < near))
+            if not glued:
+                keep.append(Run(r.x, r.y, " ", r.size, r.bold))
+                continue
+        keep.append(r)
+    return keep
+
+
+def _cell_text(cell: list[Run]) -> str:
+    """Join the runs of a cell; consecutive VNI-font runs are joined first and converted together (one letter can
+    be split over two runs)."""
+    parts: list[str] = []
+    buf: list[str] = []
+    for c in cell:
+        if font_kind(c.font) == "vni":
+            buf.append(c.text)
+            continue
+        if buf:
+            parts.append(vni.convert("".join(buf)))
+            buf = []
+        parts.append(c.text)
+    if buf:
+        parts.append(vni.convert("".join(buf)))
+    return " ".join(nfc("".join(parts)).split())
+
+
 def group_runs(runs: list[Run], width: float, height: float) -> Page:
     """Runs -> lines: landscape pages are two columns (left, then right half), runs within ``Y_TOL`` of the same
     y form a line, a big horizontal gap between Vietnamese and Chinese text starts a separate cell."""
@@ -161,7 +230,9 @@ def group_runs(runs: list[Run], width: float, height: float) -> Page:
     def col_of(r: Run) -> int:
         return 1 if two_up and r.x >= width / 2 else 0
 
-    runs = attach_superscripts([r for r in runs if r.text], col_of)
+    # symbol-font runs become a blank (a mark between two words must not glue them)
+    runs = attach_superscripts([Run(r.x, r.y, " ", r.size, r.bold) if font_kind(r.font) == "symbol" else r
+                                for r in runs if r.text], col_of)
     lines: list[Line] = []
     for col in sorted({col_of(r) for r in runs}):
         groups: list[tuple[float, list[Run]]] = []
@@ -171,7 +242,9 @@ def group_runs(runs: list[Run], width: float, height: float) -> Page:
             else:
                 groups.append((r.y, [r]))
         for y, rs in groups:
-            rs = _fix_diacritic_spaces(sorted(rs, key=lambda r: r.x))
+            rs = _drop_symbols(_fix_diacritic_spaces(sorted(rs, key=lambda r: r.x)))
+            if not rs:
+                continue
             cells: list[list[Run]] = [[rs[0]]]
             for r in rs[1:]:
                 prev = cells[-1][-1]
@@ -185,9 +258,9 @@ def group_runs(runs: list[Run], width: float, height: float) -> Page:
                 else:
                     cells[-1].append(r)
             for cell in cells:
-                text = " ".join(nfc("".join(c.text for c in cell)).split())
+                text = _cell_text(cell)
                 real = [c for c in cell if c.text.strip()]
-                if not text or not real:
+                if not text or not real or is_symbol_text(text):
                     continue
                 lines.append(Line(text, real[0].x, y, statistics.median(c.size for c in real),
                                   all(c.bold for c in real), col))
@@ -211,7 +284,7 @@ def page_runs(page) -> tuple[list[Run], float, float]:
         y = tm[5] * cm[3] + cm[5] - bottom
         size = abs(font_size * (tm[3] or 1) * (cm[3] or 1))
         bold = "bold" in str((font_dict or {}).get("/BaseFont", "")).lower()
-        runs.append(Run(x, y, text.replace("\n", " "), size, bold))
+        runs.append(Run(x, y, text.replace("\n", " "), size, bold, str((font_dict or {}).get("/BaseFont", ""))))
 
     page.extract_text(visitor_text=visit)
     return runs, width, height
@@ -239,6 +312,7 @@ def extract(path: str) -> tuple[str, list[str]]:
         raise PdfError(f"PDF quá {MAX_PAGES} trang ({n} trang)")
     pages: list[Page] = []
     warnings: list[str] = []
+    legacy_fonts: set[str] = set()
     for i in range(n):
         try:
             runs, w, h = page_runs(reader.pages[i])
@@ -246,7 +320,11 @@ def extract(path: str) -> tuple[str, list[str]]:
             warnings.append(f"trang {i + 1}: không đọc được chữ")
             pages.append(Page([]))
             continue
+        legacy_fonts |= {r.font.rsplit("+", 1)[-1].lstrip("/") for r in runs if font_kind(r.font) == "tcvn"}
         pages.append(group_runs(runs, w, h))
+    if legacy_fonts:
+        warnings.append("PDF dùng font bảng mã cũ TCVN3 / VISCII (" + ", ".join(sorted(legacy_fonts)[:3])
+                        + "), chưa đổi sang Unicode nên chữ có thể sai dấu")
     return layout(pages, warnings)
 
 
@@ -553,6 +631,8 @@ def layout(pages: list[Page], warnings: list[str] | None = None) -> tuple[str, l
                 warnings.append(f"mục “{sec.title}” không có nội dung, đã bỏ")
             continue
         title = sec.title or "Mở đầu"
+        if _looks_like_score([t for t, _ in logical]):
+            warnings.append(f"mục “{title}”: đoạn dạng bản nhạc (chữ rải theo nốt), chữ có thể rời rạc, hãy gõ lại")
         body: list[str] = []
         prose = bool(logical) and statistics.mean(len(t) for t, _ in logical) > 70
         for k, (t, gap) in enumerate(logical):
@@ -602,6 +682,16 @@ def layout(pages: list[Page], warnings: list[str] | None = None) -> tuple[str, l
         out.pop()
     text = "\n".join(out) + "\n"
     return text, warnings
+
+
+def _looks_like_score(texts: list[str]) -> bool:
+    """Hymn printed as sheet music: syllables scattered over notes come out as many single-letter tokens."""
+    toks = [t for x in texts for t in x.lstrip("\x01").split() if not _CJK.search(t)]
+    toks = [t for t in toks if any(c.isalpha() for c in t)]
+    if len(toks) < MUSIC_MIN_TOKENS:
+        return False
+    short = sum(1 for t in toks if sum(c.isalpha() for c in t) <= 1)
+    return short / len(toks) >= MUSIC_SHORT_SHARE
 
 
 def _size_warnings(counts: list[tuple[str, int]], warnings: list[str]) -> None:

@@ -204,3 +204,32 @@ def test_docx_garbage_document_xml_is_422():
     with pytest.raises(ImportFileError) as e:
         import_file("k.docx", buf.getvalue())
     assert e.value.status == 422
+
+
+# --- SR1.5: text without any section heading ---------------------------------------------------------------
+
+
+def test_docx_without_headings_gets_one_section_named_after_the_title():
+    text, warnings = import_file("k.docx", build_docx(lambda d: [d.add_paragraph(t) for t in ("Tên Kinh", "dòng một", "dòng hai")]))
+    assert text == "= Tên Kinh\n\n# Tên Kinh\n\ndòng một\ndòng hai\n"
+    assert any("tiêu đề mục" in w for w in warnings)
+    s = markup.parse(text)
+    assert [x.title for x in s.groups[0].sections] == ["Tên Kinh"]
+
+
+def test_txt_without_headings_and_s2_text_with_title_only():
+    text, warnings = import_file("k.txt", "Bát Đại\nmột\n\nhai\n".encode())
+    assert [x.title for x in markup.parse(text).groups[0].sections] == ["Bát Đại"]
+    assert len(warnings) == 1
+    text, _ = import_file("k.txt", "= Tên\n~ giới thiệu\nnội dung\n".encode())
+    assert text == "= Tên\n~ giới thiệu\n\n# Tên\n\nnội dung\n"
+    markup.parse(text)
+
+
+def test_text_with_a_heading_or_without_content_is_unchanged():
+    text, warnings = import_file("k.txt", "= Tên\n# Mục\nnội dung\n".encode())
+    assert text == "= Tên\n# Mục\nnội dung\n" and warnings == []
+    text, warnings = import_file("k.txt", "= Tên\n".encode())
+    assert text == "= Tên\n" and warnings == []
+    text, warnings = import_file("k.txt", "= Tên\n@ Nhóm\n# Mục\nnội dung\n".encode())
+    assert "# Tên" not in text

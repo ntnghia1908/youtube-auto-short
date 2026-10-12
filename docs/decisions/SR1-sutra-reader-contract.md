@@ -100,6 +100,20 @@ Làm rõ khi triển khai (không đổi hướng S5a): (1) cụm lặp **không
 
 Giới hạn còn lại: khổ kệ có dòng gần bằng dòng văn xuôi bị nối thành một dòng (A Di Đà 2 trang / tờ: nhiều khổ); chữ Hán song song chỉ tách khi cách chữ Việt > 40 pt; trang bìa / mục lục cho tiêu đề rời rạc; PDF xoay `/Rotate` chưa xử lý; PDF scan → 422 (OCR ngoài scope).
 
+**Số đo SR1.5** (2026-10-12; cùng script và cách đo như SR1.3; 5 PDF thật, không commit nội dung):
+
+| PDF | Mục | `markup.parse` | Header sót | Dòng ngắt dở | Cảnh báo | So với SR1.3 |
+|---|---|---|---|---|---|---|
+| A Di Đà (2 trang / tờ) | 24 | OK | 0 / 0 | 6 | 4 | văn bản giống hệt từng dòng |
+| Thái Thượng Cảm Ứng Thiên | 12 | OK | 0 / 0 | 0 | 2 | giống hệt |
+| Vô Lượng Thọ Google Docs | 39 | OK | 0 / 0 | 42 | 2 | giống hệt |
+| Vô Lượng Thọ đầy đủ (182 trang) | 67; 48 / 48 phẩm; nhãn nguyện 48 / 48 | OK | 0 / 0 | 16 | 3 | giống hệt |
+| A Di Đà Hán Việt (font VNI, sách nghi thức; mới) | 25 (trước: 61, nhiều tiêu đề giả từ ký hiệu / chữ lỗi mã) | OK | 0 / 0 | 52 | 39 (4 là "đoạn dạng bản nhạc") | trước SR1.5: `PHAÄT`, `Ñ`, `ö` khắp nơi; sau: 0 chuỗi mã VNI sót |
+
+Mục "PHẬT THUYẾT A DI ĐÀ KINH" ra chữ Unicode đúng. Còn lại: các bài tán / hồi hướng in dạng bản nhạc (mục "Mở đầu", "TÁN PHẬT KỆ", "PHẦN PHỤ LỤC:", "NGUYỆN") vẫn rời rạc, kèm vài tiêu đề giả (`Y Y Y`, `TIẾP` / `DẪN` / `NGUYỆN`) do nốt nhạc; người dùng tự gõ lại.
+
+Làm rõ khi triển khai (SR1.5): (1) bộ đổi VNI nằm ở `sutra/vni.py` (bảng ghép nguyên âm + dấu, chữ hoa / thường, bộ ký tự `ô ö ñ æ ó ò î`); (2) đoạn thuộc font ký hiệu / chỉ có ký hiệu được thay bằng một dấu cách (không dính hai chữ hai bên); đoạn chỉ gồm `O` được giữ khi nằm sát chữ liền kề (< 0.6 × cỡ chữ), dấu `•` đầu dòng ở font thường được giữ (gạch đầu dòng của văn bản thường, có trong Vô Lượng Thọ); (3) cảnh báo "bản nhạc": mục ≥ 30 từ có ≥ 30 % từ chỉ một chữ cái (ngưỡng "1–2 chữ cái" làm chú Đại Bi báo nhầm vì âm tiết hai chữ); (4) font TCVN3 / VISCII (`.Vn…`, `TCVN`, `VISCII`) chỉ cảnh báo, không đổi; (5) văn bản `.txt` / `.docx` không có dòng `#` / `@` nhưng có nội dung → chèn `# <tên bộ>` sau dòng `=` (và các dòng `~`) kèm cảnh báo.
+
 ## S6. Route / API
 
 Trang (HTML tĩnh, `Cache-Control: no-cache`): `GET /sutras` (thư viện), `GET /sutras/new`, `GET /sutras/{slug}` (đọc), `GET /sutras/{slug}/edit`. Slug không hợp lệ / không có → 404.

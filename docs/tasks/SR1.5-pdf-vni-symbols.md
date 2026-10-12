@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: FEATURE
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -55,9 +55,9 @@ Không chạm database / security model / public API; điểm danh sau automated
 
 ## Result
 
-- Main changes:
-- Tests:
-- Review:
-- Important findings / decisions:
-- Known limitations:
+- Main changes: `sutra/vni.py` (mới; bảng VNI-Windows → Unicode NFC); `sutra/pdf.py` (`Run.font` từ `/BaseFont`, `font_kind` symbol / vni / tcvn, gộp đoạn VNI liền nhau rồi mới đổi, thay đoạn ký hiệu bằng dấu cách, giữ `O` sát chữ và `•` đầu dòng thường, cảnh báo mục dạng bản nhạc, cảnh báo font TCVN3 / VISCII); `sutra/importer.py` (`_ensure_section`: văn bản không có `#` / `@` mà có nội dung → chèn `# <tên bộ>` + cảnh báo); decision record S5a "Số đo SR1.5" + làm rõ; dòng `sutra/` của `docs/ai/project-profile.md`.
+- Tests: `tests/test_sutra_vni.py` (5: bảng đầy đủ nguyên âm × dấu × hoa / thường, NFC), `tests/test_sutra_pdf.py` (+9: font_kind, VNI vs font Unicode, chữ VNI tách hai đoạn, ký hiệu, `O`, gạch đầu dòng, không tiêu đề giả từ ký hiệu, cảnh báo bản nhạc, `page_runs` mang tên font), `tests/test_sutra_importer.py` (+3: docx / txt không tiêu đề, văn bản giữ nguyên). Full suite `python -m pytest -q -n auto`: 1737 passed, 1 skipped; `node scripts/framework-check.mjs`: PASS. Số đo 5 PDF: decision record S5a "Số đo SR1.5" (4 PDF cũ: văn bản giống hệt SR1.3; A Di Đà Hán Việt: 25 mục, không còn chuỗi mã VNI; 2 `.docx` không tiêu đề: parse OK, một mục mang tên bộ).
+- Review: chưa.
+- Important findings / decisions: (1) cảnh báo "bản nhạc" dùng ngưỡng ≥ 30 % từ một chữ cái (không phải 1–2 chữ cái): ngưỡng 1–2 chữ cái báo nhầm chú Đại Bi (âm tiết hai chữ); (2) `•` đầu dòng ở font thường được giữ vì Vô Lượng Thọ dùng làm gạch đầu dòng (bỏ hẳn làm 4 PDF cũ kém đi); (3) `O` đơn lẻ chỉ bị bỏ khi không sát chữ liền kề; (4) đoạn ký hiệu thay bằng dấu cách thay vì xóa hẳn để hai chữ hai bên không dính nhau.
+- Known limitations: bài in dạng bản nhạc vẫn rời rạc và còn tiêu đề giả (`Y Y Y`, `TIẾP` / `DẪN` / `NGUYỆN`) — chỉ cảnh báo 4 mục; TCVN3 / VISCII chỉ cảnh báo; mục bản nhạc có nốt rải ít chữ một chữ cái có thể không bị cảnh báo; `•` đầu dòng trong bản nhạc vẫn còn.
 - PR:

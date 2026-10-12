@@ -367,3 +367,94 @@ def test_child_process_entry_prints_json(tmp_path):
     done = subprocess.run([sys.executable, "-I", "-m", "auto_short.sutra.pdf", str(f)], capture_output=True, timeout=60)
     if done.returncode == 0 and done.stdout:
         assert "error" in json.loads(done.stdout.decode("utf-8"))
+
+
+# --- SR1.5: VNI fonts, ritual symbols, sheet music ---------------------------------------------------------
+
+
+def R(text, x, y=700.0, font="", size=12.0):
+    return Run(x, y, text, size, False, font)
+
+
+def lines_of(runs, width=600.0, height=800.0):
+    return [l.text for l in pdf.group_runs(runs, width, height).lines]
+
+
+def test_font_kind():
+    assert pdf.font_kind("/ABCDEF+VNI-Times") == "vni"
+    assert pdf.font_kind("/VNI-Times-Bold") == "vni"
+    assert pdf.font_kind("/ABCDEF+VNI-Helve") == "symbol"
+    for f in ("/SegoeUISymbol", "/ABCDEF+MS-Mincho", "/EuphemiaCAS", "/Arial-BlackItalic", "/Vinhan"):
+        assert pdf.font_kind(f) == "symbol", f
+    assert pdf.font_kind("/TimesNewRoman") == ""
+    assert pdf.font_kind("") == ""
+    assert pdf.font_kind("/ABCDEF+.VnTime") == "tcvn"
+
+
+def test_vni_runs_converted_and_unicode_font_left_alone():
+    assert lines_of([R("Nhö vaäy", 72, font="/AAAAAA+VNI-Times")]) == ["Như vậy"]
+    # the same characters in an ordinary font are text, not VNI codes
+    assert lines_of([R("aù", 72, font="/AAAAAA+TimesNewRoman")]) == [unicodedata.normalize("NFC", "aù")]
+    assert lines_of([R("aù", 72)]) == [unicodedata.normalize("NFC", "aù")]
+
+
+def test_vni_letter_split_over_two_runs():
+    assert lines_of([R("Ha", 72, font="/VNI-Times"), R("ï", 84, font="/VNI-Times")]) == ["Hạ"]
+    mixed = [R("Pha", 72, font="/VNI-Times"), R("ät", 90, font="/VNI-Times"), R(" va", 110, font="/Arial")]
+    assert lines_of(mixed) == ["Phật va"]
+
+
+def test_symbol_font_and_symbol_only_runs_dropped():
+    runs = [R("abc", 72, font="/VNI-Times"), R("xyz", 200, font="/VNI-Helve"), R("●", 260), R("▬ ◎", 300),
+            R("def", 340, font="/VNI-Times")]
+    assert lines_of(runs) == ["abc def"]
+    assert lines_of([R("O", 72), R("●", 100)]) == []  # nothing but marks: no line
+    assert lines_of([R("°", 72, font="/Arial"), R("_", 120, font="/Arial")]) == []
+
+
+def test_lone_o_is_a_mark_but_o_next_to_text_is_kept():
+    # bell mark: stands apart from the words
+    assert lines_of([R("O", 72), R("Nam mo", 140)]) == ["Nam mo"]
+    # an O right after a word (width 3 chars x 0.5 x 12 = 18 pt) is part of the text
+    assert lines_of([R("Nam", 72), R("O", 90)]) == ["NamO"]
+    assert lines_of([R("Hello OK", 72)]) == ["Hello OK"]  # "O" inside a run with letters is text
+
+
+def test_list_bullet_before_ordinary_text_is_kept():
+    assert lines_of([R("•", 72), R(" mot hai", 84)]) == ["• mot hai"]
+    assert lines_of([R("•", 72, font="/VNI-Helve"), R(" mot hai", 84)]) == ["mot hai"]
+
+
+def test_symbol_only_line_makes_no_heading_or_section():
+    head = L("ABC DEF", 700, x=120)  # a real heading, for contrast
+    marks = [R("O", 150, 640, size=20), R("●", 200, 640, size=20), R("OOO", 240, 640, size=20)]
+    page = pdf.group_runs([R("Mot dong chu thuong dai dai", 72, 600)] + marks, 600.0, 800.0)
+    page.lines.append(head)
+    text, _ = convert([page])
+    assert text.count("\n# ") == 1 and "OOO" not in text and "\u25cf" not in text
+
+
+def test_sheet_music_section_warns_but_mantra_and_prose_do_not():
+    def body(words):
+        return [L(" ".join(words[i:i + 10]), y, x=72) for i, y in zip(range(0, len(words), 10), ys(len(words) // 10))]
+
+    music = ["a", "o", "a", "b", "c", "e", "a", "o", "i", "u"] * 5
+    pages = [P(L("KE MOT", 760, x=130, size=14), *body(music))]
+    text, warnings = convert(pages)
+    assert any("bản nhạc" in w and "KE MOT" in w for w in warnings)
+    mantra = ["na", "mo", "ha", "ra", "da", "no", "da", "ra", "da", "ya"] * 5
+    pages = [P(L("CHU MOT", 760, x=130, size=14), *body(mantra))]
+    assert not any("bản nhạc" in w for w in convert(pages)[1])
+    prose = ["Dong chu bat ky", "co du chu", "de doc duoc", "va khong phai nhac"] * 10
+    pages = [P(L("VAN XUOI", 760, x=130, size=14), *body(" ".join(prose).split()))]
+    assert not any("bản nhạc" in w for w in convert(pages)[1])
+
+
+@needs_pypdf
+def test_page_runs_carry_the_font_name(tmp_path):
+    from pypdf import PdfReader
+
+    f = tmp_path / "s.pdf"
+    f.write_bytes(sample_pdf())
+    runs, _, _ = pdf.page_runs(PdfReader(str(f)).pages[0])
+    assert runs and all(r.font.endswith("Helvetica") for r in runs)

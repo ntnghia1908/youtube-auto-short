@@ -24,6 +24,7 @@ MAX_BYTES = 5 * 1024 * 1024  # .txt / .docx upload
 MAX_UNZIPPED = 50 * 1024 * 1024
 MAX_MEMBERS = 2000
 MAX_HEADING_CHARS = 80
+DEFAULT_SECTION = "Chính văn"
 EXTENSIONS = (".txt", ".docx", ".pdf")
 MAX_PDF_BYTES = 30 * 1024 * 1024
 PDF_TIMEOUT_S = 120
@@ -363,7 +364,29 @@ def _to_s2(paras: list[_Para], footnotes: dict[str, str], warnings: list[str], *
             else:
                 out.append(_Para(_escape(text) if docx else text))
 
+    _ensure_section(out, warnings)
     return _finish(out, footnotes, warnings)
+
+
+def _ensure_section(out: list[_Para], warnings: list[str]) -> None:
+    """SR1.5: text with content but no ``# <section>`` line (and no ``@`` group) gets one section named after the
+    title, right after the ``=`` line and its ``~`` intro lines, so that ``markup.parse`` accepts it."""
+    texts = [p.text for p in out]
+    if any(re.match(r"^[#@]([ \t]|$)", t) for t in texts):
+        return
+    eq = next((i for i, t in enumerate(texts) if re.match(r"^=([ \t]|$)", t)), None)
+    if eq is None:
+        return
+    pos = eq + 1
+    while pos < len(texts) and (not texts[pos].strip() or re.match(r"^~([ \t]|$)", texts[pos])):
+        pos += 1
+    if pos >= len(texts):  # nothing but the title / intro
+        return
+    title = texts[eq][1:].strip()
+    out[pos:pos] = [_Para("# " + title), _Para("")] if title else [_Para("# " + DEFAULT_SECTION), _Para("")]
+    if pos > 0 and out[pos - 1].text:
+        out.insert(pos, _Para(""))
+    warnings.append("văn bản chưa có tiêu đề mục nào; đã gom cả văn bản vào một mục mang tên bộ kinh, hãy chia mục lại")
 
 
 def _finish(lines: list[_Para], footnotes: dict[str, str], warnings: list[str]) -> str:
