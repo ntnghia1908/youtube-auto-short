@@ -79,6 +79,7 @@ PDF chỉ có lớp chữ mới import được (PDF scan → 422 "PDF không c�
 - **Giãn dòng:** khoảng cách tới dòng trước > 1.15 × bước dòng trung vị cả tài liệu → dòng logic mới (kệ in giãn dòng hơn văn xuôi, không thụt lề); dòng đầu trang dùng bước dòng của trang.
 - **Header theo chương:** dòng ở 12 % trên / dưới trang gồm chữ in hoa + số trang (vd "PHÁP TẠNG NHÂN ĐỊA ĐỆ TỨ 35") → bỏ, dù không lặp đủ 15 % số trang.
 - **Chữ nhỏ đánh số kiểu danh sách** (`1. Quốc vô ác đạo nguyện.` cuối trang) là thân bài, không phải chú thích.
+- **Font VNI cũ (SR1.5, sửa đổi 2026-10-12):** đoạn chữ dùng font tên chứa `VNI-` (trừ font ký hiệu) → đổi bảng mã VNI-Windows sang Unicode trước khi ghép dòng (gộp các đoạn VNI liền nhau rồi mới đổi, vì một chữ có thể bị tách hai đoạn). **Ký hiệu pháp khí / nhịp** (sách nghi thức: chuông, mõ, khánh) → bỏ: đoạn chữ thuộc font ký hiệu (`VNI-Helve`, `SegoeUISymbol`, …) hoặc chỉ gồm ký tự ký hiệu (`O ● • ▬ ◎ ° Þ þ Ⴃ ー …`); dòng chỉ còn ký hiệu → bỏ. Bài in dạng bản nhạc (chữ rải theo nốt) không dựng lại được → cảnh báo, người dùng tự gõ.
 - **Danh sách đánh số:** dòng bắt đầu `\d+\. ` luôn mở dòng logic mới.
 - **Chú thích:** cỡ chữ so với trung vị **của trang** (có trang in cỡ nhỏ hơn toàn sách — A Di Đà trang phụ lục — không được coi cả trang là chú thích); số nhỏ (cỡ < 85 % thân bài) ngay sau một chữ → `[^n]`; dòng cỡ nhỏ ở 20 % cuối trang bắt đầu bằng số → định nghĩa `[^n]:` đặt cuối mục chứa tham chiếu; không ghép được → cảnh báo.
 - **Cảnh báo** trả về (`warnings`): trang không có chữ, chú thích không ghép được, mục quá dài / quá ngắn bất thường.
@@ -120,6 +121,7 @@ JSON body ≤ 3 MB (413). Lỗi trả `{"detail": "<tiếng Việt>"}` như CP8.
 ## S7. Phía client
 
 - Mobile-first, vanilla JS. Trang đọc: thanh công cụ ẩn khi cuộn xuống, hiện khi cuộn lên / chạm giữa màn hình; mục lục dạng sheet theo nhóm `@`, đánh dấu mục đang đọc; cài đặt: cỡ chữ 14–32 px (bước 2), giãn dòng 1.4 / 1.7 / 2.0, chữ có chân / không chân, nền Sáng / Giấy / Tối.
+- **Sửa đổi HUMAN LEAD 2026-10-12 (SR1.4):** cài đặt thêm **Độ đậm chữ** Thường / Đậm vừa / Đậm (áp cho toàn bộ chữ; dòng `strong` luôn đậm hơn chữ thường một bậc) và **Kiểu đọc**: Cuộn dọc (mặc định, như trên) / Lật trang ngang như sách (mỗi trang vừa một màn hình, vuốt trái / phải hoặc chạm mép trái / phải để sang trang, có số trang `x / y` của bộ kinh; đổi cỡ chữ / kiểu đọc giữ đúng chỗ đang đọc). Vị trí đọc vẫn lưu theo `{section, offset}` cho cả hai kiểu.
 - Lưu trong `localStorage` (mọi truy cập bọc `try/catch`, trang chạy được khi không có): cài đặt chung `sutra:settings`; vị trí đọc `sutra:pos:<slug>` = `{section, offset (0–1 trong mục), sha256, at}` — lưu khi cuộn (debounce) và khi rời trang; mở lại → về đúng vị trí; thư viện có "Đọc tiếp". `sha256` đổi → về đầu mục cùng `id` nếu còn.
 - Cuối kinh: nút "Tụng xong (+1 biến)"; đầu trang: "Đã tụng N biến · hôm nay M", mở lịch sử theo ngày (30 ngày gần nhất) + "Hoàn tác biến vừa ghi".
 - Thư viện: danh sách bộ, số biến, lần tụng cuối, "Đọc tiếp" / "Đọc từ đầu", "Thêm bộ kinh"; sửa / xóa trong trang đọc (menu).
