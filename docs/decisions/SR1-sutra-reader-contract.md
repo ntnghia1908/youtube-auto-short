@@ -69,7 +69,7 @@ UTF-8, chuẩn hóa NFC khi lưu, xuống dòng `\n`. Mỗi dòng xét theo th�
 
 PDF chỉ có lớp chữ mới import được (PDF scan → 422 "PDF không có lớp chữ"). Chữ trích ra luôn cần người soát: thuật toán là gợi ý, ô soạn S5 là nơi sửa.
 
-- **An toàn:** parse trong **process con** (`python -I -m auto_short.sutra.pdf <file>`, stdin / file tạm trong `work/_sutras/.tmp/`), timeout 120 s (quá → 504, kill process), ≤ 1 000 trang; process con chỉ trả JSON văn bản S2 + cảnh báo. Lý do: pypdf từng có lỗi vòng lặp / bộ nhớ với file hỏng; không để chặn process web.
+- **An toàn:** parse trong **process con** (`python -I -m auto_short.sutra.pdf <file>`; route web chạy `python -I -c` nạp đúng thư mục `src/` chứa package đang phục vụ request, vì `-I` bỏ `PYTHONPATH`; file tạm trong `work/_sutras/.tmp/`, giới hạn bộ nhớ `RLIMIT_AS` 3 GiB trong process con), timeout 120 s (quá → 504, kill process), ≤ 1 000 trang; process con chỉ trả JSON văn bản S2 + cảnh báo. Lý do: pypdf từng có lỗi vòng lặp / bộ nhớ với file hỏng; không để chặn process web.
 - **Trích dòng:** lấy từng đoạn chữ kèm vị trí (x, y) và cỡ chữ qua text visitor của pypdf; chuẩn hóa NFC (bản Google Docs tách rời dấu từng ký tự); gộp đoạn cùng `y` (± 2.5 pt) thành dòng; trang ngang có chữ ở hai nửa → **2 cột** (sách in 2 trang / tờ), đọc cột trái rồi cột phải; trong một dòng, khoảng trống lớn (> 40 pt) giữa chữ Việt và chữ Hán → hai ô riêng (cột chữ Hán song song).
 - **Bỏ header / footer:** chuỗi (bỏ số) lặp trên ≥ 15 % số trang (≥ 3 trang) → xóa, kể cả khi dính vào đầu / cuối dòng khác. Xét ở 20 % trên / dưới trang; dòng có chứa số (số trang) xét **ở mọi vị trí** (bản Google Docs đặt footer ngay sau chữ cuối trang, y thay đổi). Không xóa câu lặp không có số ở giữa trang (vd "Xá Lợi Phất! …" lặp trong A Di Đà). Dòng chỉ có số ở vùng trên / dưới (số trang) → xóa, **sau** bước chú thích (số chú thích cỡ nhỏ ở cuối trang không phải số trang).
 - **Tiêu đề mục (`#`):** dòng toàn chữ in hoa (≥ 3 chữ cái, ≤ 80 ký tự, không chữ Hán) thụt / căn giữa so với lề, hoặc cỡ chữ lớn hơn thân bài; các dòng tiêu đề liền nhau gộp một.
@@ -83,6 +83,21 @@ PDF chỉ có lớp chữ mới import được (PDF scan → 422 "PDF không c�
 - **Chú thích:** cỡ chữ so với trung vị **của trang** (có trang in cỡ nhỏ hơn toàn sách — A Di Đà trang phụ lục — không được coi cả trang là chú thích); số nhỏ (cỡ < 85 % thân bài) ngay sau một chữ → `[^n]`; dòng cỡ nhỏ ở 20 % cuối trang bắt đầu bằng số → định nghĩa `[^n]:` đặt cuối mục chứa tham chiếu; không ghép được → cảnh báo.
 - **Cảnh báo** trả về (`warnings`): trang không có chữ, chú thích không ghép được, mục quá dài / quá ngắn bất thường.
 - Thuật toán thử trên 3 PDF đầu (ORCHESTRATOR, 2026-10-12, prototype ngoài repo): chính văn A Di Đà, Thái Thượng tách đúng mục và đoạn; còn lỗi nhỏ ở vài mục kệ / chú; Vô Lượng Thọ còn header "KINH VÔ LƯỢNG THỌ - ÂM HÁN VIỆT n" lẫn vào tiêu đề phẩm (đã sửa bằng quy tắc header có số trang). Bản Vô Lượng Thọ đầy đủ HUMAN LEAD gửi sau (AMTBVN, 182 trang, sách chữ lớn): nhận đủ 48 phẩm + 48 nhãn nguyện sau các quy tắc giãn dòng / header theo chương / chữ nhỏ đánh số. Số đo chính thức do SR1.3 ghi.
+
+**Số đo SR1.3** (2026-10-12; `scripts/sutra_pdf_measure.py`, qua đúng đường `importer.import_pdf` + `markup.parse`; 4 PDF thật, không commit nội dung):
+
+| PDF | Trang | Mục nhận / mục thật | `markup.parse` | Header còn sót (dòng / dính trong dòng) | Dòng ngắt dở (< 45 ký tự, không dấu câu cuối, trong mục văn xuôi) | Cảnh báo | Thời gian |
+|---|---|---|---|---|---|---|---|
+| A Di Đà (2 trang / tờ) | 25 | 24 / 24 (danh sách tiêu đề trùng bản hand-clean) | OK | 0 / 0 | 6 | 4 | 1.3 s |
+| Thái Thượng Cảm Ứng Thiên | 34 | 12 / 11 (thừa 1 tiêu đề ở trang bìa) | OK | 0 / 0 | 0 | 2 | 1.4 s |
+| Vô Lượng Thọ Google Docs (cắt ở phẩm 31) | 78 | 39 / 39 (31 phẩm + 7 mục nghi thức + "Mở đầu") | OK | 0 / 0 | 42 | 2 | 4.1 s |
+| Vô Lượng Thọ đầy đủ (AMTBVN) | 182 | 67; **48 / 48 phẩm "… ĐỆ …"**, **nhãn nguyện 1–48: 48 / 48** | OK | 0 / 0 | 16 | 3 | 5.0 s |
+
+So với bản ORCHESTRATOR hand-clean (cùng nguồn): A Di Đà lệch 121 / 432 dòng, Thái Thượng lệch 75 / 968 dòng (chủ yếu dòng `@` nhóm và `~` giới thiệu không có trong PDF, khổ kệ bị nối do dòng đủ dài, đánh số lại `[^n]` theo mục). Chữ sai dấu còn sót: 0 trong Thái Thượng (tách dấu Word), 0 "ĐỆTỨ"-kiểu dính chữ trong bản đầy đủ.
+
+Làm rõ khi triển khai (không đổi hướng S5a): (1) cụm lặp **không có số** chỉ bị xóa khi cả dòng khớp và lặp ở cùng độ cao (±4 pt) — giữ lại câu điệp trong bài tụng; dính đầu / cuối dòng chỉ xét với dòng có số; (2) một dòng có đoạn cỡ chữ lệch > 1.4 lần (footer cỡ nhỏ dính tiêu đề cỡ lớn cùng y trong bản Google Docs) tách thành hai ô; (3) header theo chương nhận số ở đầu, cuối hoặc **giữa** hai tên chương; cũng áp cho dòng cỡ ≤ 60 % thân bài ở bất kỳ vị trí; "PHẨM 12" cuối dòng vẫn là tiêu đề; (4) số trang trơn ở 8 % trên / dưới xóa bất kể cỡ chữ; (5) tiêu đề: dòng toàn hoa thụt > 6 pt hoặc cỡ > 1.03 × thân bài; (6) dấu chú thích `[^n]` gắn ngay lúc trích dòng (số nhỏ ngay sau chữ cùng dòng), định nghĩa tra theo (trang, số), đánh số lại theo mục; (7) dấu cách đầu đoạn chữ "` ữ`" chỉ bỏ khi chữ có dấu (không phải ASCII) và x tới đoạn kế cho độ rộng hợp lý; (8) mục không có nội dung bị bỏ (cảnh báo); dòng logic > 4 000 ký tự được chia ở dấu câu (giới hạn 5 000 của S2); tên bộ lấy tạm từ tên file (cảnh báo).
+
+Giới hạn còn lại: khổ kệ có dòng gần bằng dòng văn xuôi bị nối thành một dòng (A Di Đà 2 trang / tờ: nhiều khổ); chữ Hán song song chỉ tách khi cách chữ Việt > 40 pt; trang bìa / mục lục cho tiêu đề rời rạc; PDF xoay `/Rotate` chưa xử lý; PDF scan → 422 (OCR ngoài scope).
 
 ## S6. Route / API
 

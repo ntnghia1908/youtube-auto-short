@@ -156,7 +156,7 @@ def test_import_txt_and_docx(lc):
 
 def test_import_errors(lc):
     assert lc.post("/api/sutras/import", content=b"x").status_code == 422
-    assert lc.post("/api/sutras/import?name=a.pdf", content=b"x").status_code == 415
+    assert lc.post("/api/sutras/import?name=a.pdf", content=b"x").status_code == 422  # .pdf is SR1.3: not a PDF
     assert lc.post("/api/sutras/import?name=a.doc", content=b"x").status_code == 415
     assert lc.post("/api/sutras/import?name=a.docx", content=b"junk").status_code == 422
     assert lc.post("/api/sutras/import?name=a.txt", content=b"\xff\xfe\x00").status_code == 422
@@ -165,7 +165,7 @@ def test_import_errors(lc):
 
 def test_editor_assets():
     html = (STATIC / "sutra-edit.html").read_text(encoding="utf-8")
-    assert 'accept=".txt,.docx"' in html and "sutra.js" in html and "ed-text" in html
+    assert 'accept=".txt,.docx,.pdf"' in html and "sutra.js" in html and "ed-text" in html
     assert "Thêm bộ kinh" in (STATIC / "sutras.html").read_text(encoding="utf-8")
     reader = (STATIC / "sutra.html").read_text(encoding="utf-8")
     assert "menu-edit" in reader and "menu-delete" in reader

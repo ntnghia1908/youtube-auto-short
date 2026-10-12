@@ -493,10 +493,12 @@
       var f = this.files && this.files[0], input = this;
       if (!f) return;
       if (area.value.trim() && !window.confirm("Thay văn bản đang soạn bằng nội dung file này?")) { input.value = ""; return; }
-      $("ed-file-msg").textContent = "Đang đọc " + f.name + "…";
+      var isPdf = /\.pdf$/i.test(f.name);
+      $("ed-file-msg").textContent = "Đang đọc " + f.name + (isPdf ? " (PDF có thể mất vài chục giây)…" : "…");
       api("POST", "/api/sutras/import?name=" + encodeURIComponent(f.name), f).then(function (r) {
         area.value = r.text; dirty = true;
-        $("ed-file-msg").textContent = f.name + " — đã chuyển sang văn bản kinh, hãy soát lại trước khi lưu.";
+        $("ed-file-msg").textContent = f.name + (isPdf ? " — chữ trích từ PDF cần soát lại (mục, ngắt dòng, chú thích) trước khi lưu."
+                                                       : " — đã chuyển sang văn bản kinh, hãy soát lại trước khi lưu.");
         var ul = $("ed-warn");
         ul.textContent = "";
         r.warnings.forEach(function (w) { ul.appendChild(el("li", null, w)); });

@@ -1,15 +1,22 @@
-"""Sutra import S5: ``.txt`` / ``.docx`` bytes -> sutra text S2 (+ warnings). No Auto Short imports.
+"""Sutra import S5: ``.txt`` / ``.docx`` / ``.pdf`` bytes -> sutra text S2 (+ warnings). No Auto Short imports.
 
 The result is only a *suggestion*: the user edits it in the editor before saving. Contract:
-docs/decisions/SR1-sutra-reader-contract.md S5 (PDF is S5a / SR1.3, not here).
+docs/decisions/SR1-sutra-reader-contract.md S5 and S5a (PDF layout logic lives in ``pdf.py``; here only the
+safe child-process wrapper).
 """
 
 from __future__ import annotations
 
 import io
+import json
 import re
+import subprocess
+import sys
+import tempfile
+import time
 import zipfile
 from dataclasses import dataclass
+from pathlib import Path
 
 from . import markup
 
@@ -17,7 +24,16 @@ MAX_BYTES = 5 * 1024 * 1024  # .txt / .docx upload
 MAX_UNZIPPED = 50 * 1024 * 1024
 MAX_MEMBERS = 2000
 MAX_HEADING_CHARS = 80
-EXTENSIONS = (".txt", ".docx")
+EXTENSIONS = (".txt", ".docx", ".pdf")
+MAX_PDF_BYTES = 30 * 1024 * 1024
+PDF_TIMEOUT_S = 120
+MAX_CHILD_OUTPUT = 20 * 1024 * 1024
+TMP_DIR_NAME = ".tmp"  # under the store root; SutraStore ignores names starting with "."
+_SRC_DIR = Path(__file__).resolve().parents[2]  # directory that contains the ``auto_short`` package
+# ``-I`` ignores PYTHONPATH / cwd, so ``-m auto_short.sutra.pdf`` would import whatever copy of the package is
+# installed (not necessarily the one serving the request). Insert this package's own parent explicitly instead.
+_CHILD_BOOT = "import sys; sys.path.insert(0, sys.argv[1]); from auto_short.sutra.pdf import main; sys.exit(main(sys.argv[2]))"
+_TITLE_PLACEHOLDER = "= Bộ kinh mới\n"
 
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 _FN_MARK = "\x00FN{}\x00"
@@ -44,14 +60,28 @@ class _Para:
 # --- entry point --------------------------------------------------------------------------------------
 
 
-def import_file(name: str, data: bytes) -> tuple[str, list[str]]:
-    """Convert an uploaded file to S2 text. Returns ``(text, warnings)``; raises :class:`ImportFileError`."""
+def extension_of(name: str) -> str | None:
     lower = (name or "").strip().lower()
-    ext = next((e for e in EXTENSIONS if lower.endswith(e)), None)
+    return next((e for e in EXTENSIONS if lower.endswith(e)), None)
+
+
+def max_bytes(ext: str) -> int:
+    return MAX_PDF_BYTES if ext == ".pdf" else MAX_BYTES
+
+
+def import_file(name: str, data: bytes, tmp_dir: Path | None = None) -> tuple[str, list[str]]:
+    """Convert an uploaded file to S2 text. Returns ``(text, warnings)``; raises :class:`ImportFileError`.
+
+    ``tmp_dir`` (a writable directory, created if missing) is required for ``.pdf`` only."""
+    ext = extension_of(name)
     if ext is None:
-        raise ImportFileError("chỉ nhận file .txt hoặc .docx", 415)
-    if len(data) > MAX_BYTES:
-        raise ImportFileError(f"file lớn hơn {MAX_BYTES // (1024 * 1024)} MB", 413)
+        raise ImportFileError("chỉ nhận file .txt, .docx hoặc .pdf", 415)
+    if len(data) > max_bytes(ext):
+        raise ImportFileError(f"file lớn hơn {max_bytes(ext) // (1024 * 1024)} MB", 413)
+    if ext == ".pdf":
+        if tmp_dir is None:
+            raise ImportFileError("máy chủ chưa cấu hình thư mục tạm cho PDF", 500)
+        return import_pdf(name, data, tmp_dir)
     warnings: list[str] = []
     if ext == ".txt":
         paras = _read_txt(data)
@@ -62,6 +92,84 @@ def import_file(name: str, data: bytes) -> tuple[str, list[str]]:
     if not text.strip():
         raise ImportFileError("file không có chữ", 422)
     return text, warnings
+
+
+# --- PDF (S5a): parsed in a child process ---------------------------------------------------------------------
+
+
+def _child_cmd(path: Path) -> list[str]:
+    return [sys.executable, "-I", "-c", _CHILD_BOOT, str(_SRC_DIR), str(path)]
+
+
+def _title_from_name(name: str) -> str:
+    stem = re.sub(r"\.pdf$", "", (name or "").strip().replace("\\", "/").rsplit("/", 1)[-1], flags=re.I)
+    stem = " ".join(re.sub(r"[_\x00-\x1f]+", " ", stem).split())
+    return stem[:100]
+
+
+def _sweep_tmp(tmp_dir: Path, max_age: float = 3600.0) -> None:
+    """Remove leftovers of crashed imports (the normal path always deletes its own file)."""
+    now = time.time()
+    for p in tmp_dir.glob("*.pdf"):
+        try:
+            if now - p.stat().st_mtime > max_age:
+                p.unlink()
+        except OSError:
+            pass
+
+
+def import_pdf(name: str, data: bytes, tmp_dir: Path) -> tuple[str, list[str]]:
+    """PDF bytes -> S2 text via ``python -I`` child process (timeout ``PDF_TIMEOUT_S`` -> 504, child killed)."""
+    if b"%PDF-" not in data[:1024]:
+        raise ImportFileError("file không phải PDF (thiếu dấu hiệu %PDF)")
+    tmp_dir = Path(tmp_dir)
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    _sweep_tmp(tmp_dir)
+    fd = tempfile.NamedTemporaryFile(dir=tmp_dir, suffix=".pdf", delete=False)
+    path = Path(fd.name)
+    try:
+        with fd:
+            fd.write(data)
+        try:
+            done = subprocess.run(_child_cmd(path), capture_output=True, timeout=PDF_TIMEOUT_S, cwd=tmp_dir,
+                                  stdin=subprocess.DEVNULL)
+        except subprocess.TimeoutExpired as e:  # run() has already killed the child
+            raise ImportFileError(f"đọc PDF quá {PDF_TIMEOUT_S} giây nên đã dừng (file quá phức tạp hoặc hỏng)",
+                                  504) from e
+        except OSError as e:
+            raise ImportFileError("không chạy được tiến trình đọc PDF", 500) from e
+    finally:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+    if len(done.stdout) > MAX_CHILD_OUTPUT:
+        raise ImportFileError("PDF cho ra văn bản quá lớn")
+    try:
+        doc = json.loads(done.stdout.decode("utf-8"))
+        if not isinstance(doc, dict):
+            raise ValueError("not an object")
+    except (ValueError, UnicodeDecodeError) as e:
+        raise ImportFileError("PDF hỏng hoặc quá phức tạp (tiến trình đọc PDF thất bại)") from e
+    if "error" in doc:
+        status = doc.get("status")
+        raise ImportFileError(str(doc["error"]), status if isinstance(status, int) and 400 <= status < 600 else 422)
+    text, warnings = doc.get("text"), doc.get("warnings")
+    if not isinstance(text, str) or not isinstance(warnings, list):
+        raise ImportFileError("PDF hỏng (kết quả đọc không hợp lệ)")
+    if not text.strip():
+        raise ImportFileError("PDF không có chữ", 422)
+    text = markup.normalize(text)
+    out_warnings = ["Chữ trích từ PDF cần soát lại (tiêu đề mục, ngắt dòng / đoạn, chú thích, chữ sai dấu)."]
+    if text.startswith(_TITLE_PLACEHOLDER):
+        title = _title_from_name(name)
+        if title:
+            text = "= " + title + "\n" + text[len(_TITLE_PLACEHOLDER):]
+            out_warnings.append("tên bộ kinh lấy tạm từ tên file, hãy sửa dòng '= …' đầu văn bản")
+        else:
+            out_warnings.append("chưa có tên bộ kinh, hãy sửa dòng '= …' đầu văn bản")
+    out_warnings += [str(w) for w in warnings]
+    return text, out_warnings
 
 
 # --- readers ------------------------------------------------------------------------------------------

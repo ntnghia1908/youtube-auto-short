@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -69,9 +69,9 @@ Chạm dependency + upload file (security): manual test là gate trước integr
 
 ## Result
 
-- Main changes:
-- Tests:
-- Review:
-- Important findings / decisions:
-- Known limitations:
-- PR:
+- Main changes: `pyproject.toml` extra `[web]` `pypdf==6.20.0` (+ CP1 §10 dòng dependency và dòng "Sửa đổi HUMAN LEAD 2026-10-12"); `sutra/pdf.py` (hàm thuần trên `Run` / `Line` / `Page`: nhóm đoạn chữ thành dòng + 2 cột + ô chữ Hán, sửa dấu tách Word theo khoảng cách x, gắn `[^n]` lúc trích dòng, bỏ header / footer / số trang / header theo chương, định nghĩa chú thích, tiêu đề, ghép dòng logic, chữ đậm, giãn dòng; `extract()` bằng pypdf; entry `main()` in JSON, `RLIMIT_AS` 3 GiB); `sutra/importer.py` (`import_pdf`: file tạm `<store root>/.tmp/`, `subprocess.run([python, -I, -c, boot, <src dir>, <file>], timeout=120)` rồi xóa file tạm mọi trường hợp, quét file tạm cũ > 1 h; 413 / 422 / 504; tên bộ lấy từ tên file); `sutra/web.py` (giới hạn theo đuôi file: pdf 30 MB, txt / docx 5 MB); trang soạn nhận `.pdf` + thông báo "chữ trích từ PDF cần soát lại"; `scripts/sutra_pdf_measure.py`; số đo + làm rõ thuật toán ở cuối S5a của decision record; dòng `sutra/` của `docs/ai/project-profile.md`.
+- Tests: `tests/test_sutra_pdf.py` (31: hàm thuần với Line / Run dựng tay + đường pypdf và process con trên PDF Helvetica tự viết), `tests/test_sutra_pdf_route.py` (12: route 200 / 413 / 415 / 422 / 504, kill process con, dọn file tạm), `tests/sutra_pdf_helpers.py`; sửa 2 test SR1.2 đã lỗi thời trong `tests/test_web_sutra_sr12.py` (`.pdf` giờ được nhận, `accept` thêm `.pdf`) và `tests/test_sutra_importer.py` (dùng `.exe` cho ca 415). Full suite `python -m pytest -q -n auto`: 1718 passed, 1 skipped; `node scripts/framework-check.mjs` PASS; `node --check sutra.js` OK. Số đo 4 PDF thật: decision record S5a "Số đo SR1.3" (AC 4: `markup.parse` OK cả 4; 48 / 48 phẩm và 48 / 48 nhãn nguyện bản đầy đủ).
+- Review: chờ ORCHESTRATOR.
+- Important findings / decisions: route chạy process con bằng `-I -c` + `sys.path.insert(<src dir>)` thay vì `-I -m` (vì `-I` bỏ `PYTHONPATH`, web 8080 chạy từ worktree ghim bằng `PYTHONPATH`); entry `python -I -m auto_short.sutra.pdf <file>` vẫn dùng được khi package đã cài. Quy tắc header của S5a làm rõ thêm (cụm lặp không số chỉ xóa khi cả dòng khớp và cùng độ cao; ô tách theo cỡ chữ; header theo chương có số ở giữa) — liệt kê ở cuối S5a.
+- Known limitations: khổ kệ có dòng gần bằng dòng văn xuôi bị nối (cần soát tay, nhất là A Di Đà 2 trang / tờ); PDF xoay `/Rotate` chưa xử lý; trang bìa / mục lục cho tiêu đề rời rạc; manual test trên điện thoại (HUMAN LEAD) chưa chạy.
+- PR: (chưa; một PR cho SR1.1–SR1.3)

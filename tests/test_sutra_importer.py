@@ -89,7 +89,7 @@ def test_txt_first_line_is_marker_adds_temp_title():
 
 def test_extension_and_size_limits():
     with pytest.raises(ImportFileError) as e:
-        import_file("a.pdf", b"x")
+        import_file("a.exe", b"x")
     assert e.value.status == 415
     with pytest.raises(ImportFileError) as e:
         import_file("noext", b"x")

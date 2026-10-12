@@ -97,15 +97,16 @@ def router(store: SutraStore, static_dir: Path) -> APIRouter:
 
     @r.post("/api/sutras/import")
     async def api_import(request: Request, name: str = ""):
-        """S5: raw body (``.txt`` / ``.docx``), original name in ``?name=``; returns the S2 text to edit."""
+        """S5: raw body (``.txt`` / ``.docx`` / ``.pdf``), original name in ``?name=``; returns the S2 text to edit."""
         if not name.strip():
             raise HTTPException(422, "cần tên file gốc (?name=...)")
-        lower = name.strip().lower()
-        if not lower.endswith(importer.EXTENSIONS):
-            raise HTTPException(415, "chỉ nhận file .txt hoặc .docx")
-        body = await read_body(request, importer.MAX_BYTES, "file")
+        ext = importer.extension_of(name)
+        if ext is None:
+            raise HTTPException(415, "chỉ nhận file .txt, .docx hoặc .pdf")
+        body = await read_body(request, importer.max_bytes(ext), "file")
+        tmp_dir = store.root / importer.TMP_DIR_NAME  # PDFs are parsed from a temp file in a child process
         try:
-            text, warnings = await run_in_threadpool(importer.import_file, name, body)
+            text, warnings = await run_in_threadpool(importer.import_file, name, body, tmp_dir)
         except importer.ImportFileError as e:
             raise HTTPException(e.status, str(e)) from e
         return {"text": text, "warnings": warnings}
