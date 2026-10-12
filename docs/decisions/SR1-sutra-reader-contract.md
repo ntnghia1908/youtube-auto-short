@@ -54,7 +54,7 @@ UTF-8, chuẩn hóa NFC khi lưu, xuống dòng `\n`. Mỗi dòng xét theo th�
 ## S4. Lưu trữ và đếm biến
 
 - `work/_sutras/<slug>/`: `sutra.txt` (S2), `meta.json` (`schema_version` 1, `slug`, `title`, `sha256` của `sutra.txt`, `created_at`, `updated_at`), `recitations.json` (`schema_version` 1, `entries`: `[{"at": "<UTC ISO-8601>"}]`, tăng dần). Ghi bằng `workspace.atomic_write_*`; mỗi slug một khóa (`threading.Lock`) cho read-modify-write.
-- `slug`: từ tên bộ khi tạo — bỏ dấu (NFD + bỏ dấu, `đ` → `d`), chữ thường, `[a-z0-9]` nối bằng `-`, ≤ 60 ký tự; trùng → `-2`, `-3`…; regex hợp lệ `^[a-z0-9][a-z0-9-]{0,59}$`. Đổi tên bộ không đổi slug.
+- `slug`: từ tên bộ khi tạo — bỏ dấu (NFD + bỏ dấu, `đ` → `d`), chữ thường, `[a-z0-9]` nối bằng `-`, ≤ 60 ký tự; trùng → `-2`, `-3`…; slug dành riêng `new` (trùng route trang `/sutras/new`) → bắt đầu từ `new-2` (SR1.2); regex hợp lệ `^[a-z0-9][a-z0-9-]{0,59}$`. Đổi tên bộ không đổi slug.
 - Xóa bộ: xóa `work/_sutras/<slug>/` (phải là con trực tiếp của `work/_sutras/`, không symlink) — mất cả lịch sử đếm biến; UI hỏi xác nhận.
 - Đếm biến: `+1` thêm `{"at": now}`; hoàn tác xóa entry cuối. Ngày hiển thị theo giờ trình duyệt.
 - `work/_sutras/` có tiền tố `_` → danh sách tập, tab Bộ nhớ, `iter_manifests` tự bỏ qua (CL1 C0).
@@ -75,11 +75,14 @@ PDF chỉ có lớp chữ mới import được (PDF scan → 422 "PDF không c�
 - **Tiêu đề mục (`#`):** dòng toàn chữ in hoa (≥ 3 chữ cái, ≤ 80 ký tự, không chữ Hán) thụt / căn giữa so với lề, hoặc cỡ chữ lớn hơn thân bài; các dòng tiêu đề liền nhau gộp một.
 - **Ghép dòng logic:** lề trái = x phổ biến nhất của thân bài theo (cột, trang chẵn / lẻ) trên **cả tài liệu**; dòng thụt (> 8 pt) mở dòng mới; dòng sát lề là dòng nối nếu mục có dòng thụt, hoặc dòng trước dài gần hết cột (≥ 80 % độ dài P90 của cột); dòng bắt đầu chữ thường luôn là dòng nối. Khoảng cách dọc > 1.5 × bước dòng → dòng trống (tách khổ / đoạn). Mục văn xuôi (dòng logic trung bình > 70 ký tự) → mỗi đoạn cách nhau một dòng trống.
 - **Sửa chữ:** "h ữu" → "hữu": Word tách dấu thành đoạn chữ riêng bắt đầu bằng dấu cách (`' ữ'`) đặt chồng lên chữ trước → quyết định dấu cách theo khoảng cách x giữa các đoạn, không theo dấu cách trong đoạn; dự phòng: ghép X + Y khi Y (bắt đầu bằng nguyên âm) không phải âm tiết tiếng Việt đứng riêng còn X + Y là âm tiết hợp lệ.
-- **Chữ đậm:** cả dòng logic dùng font đậm (tên font chứa `Bold`), không phải tiêu đề → tiền tố `* `.
+- **Chữ đậm:** cả dòng logic dùng font đậm (tên font chứa `Bold`), không phải tiêu đề → tiền tố `* `; bỏ qua khi phần lớn (≥ 50 %) dòng thân bài là chữ đậm (sách in toàn chữ đậm).
+- **Giãn dòng:** khoảng cách tới dòng trước > 1.15 × bước dòng trung vị cả tài liệu → dòng logic mới (kệ in giãn dòng hơn văn xuôi, không thụt lề); dòng đầu trang dùng bước dòng của trang.
+- **Header theo chương:** dòng ở 12 % trên / dưới trang gồm chữ in hoa + số trang (vd "PHÁP TẠNG NHÂN ĐỊA ĐỆ TỨ 35") → bỏ, dù không lặp đủ 15 % số trang.
+- **Chữ nhỏ đánh số kiểu danh sách** (`1. Quốc vô ác đạo nguyện.` cuối trang) là thân bài, không phải chú thích.
 - **Danh sách đánh số:** dòng bắt đầu `\d+\. ` luôn mở dòng logic mới.
 - **Chú thích:** cỡ chữ so với trung vị **của trang** (có trang in cỡ nhỏ hơn toàn sách — A Di Đà trang phụ lục — không được coi cả trang là chú thích); số nhỏ (cỡ < 85 % thân bài) ngay sau một chữ → `[^n]`; dòng cỡ nhỏ ở 20 % cuối trang bắt đầu bằng số → định nghĩa `[^n]:` đặt cuối mục chứa tham chiếu; không ghép được → cảnh báo.
 - **Cảnh báo** trả về (`warnings`): trang không có chữ, chú thích không ghép được, mục quá dài / quá ngắn bất thường.
-- Thuật toán thử trên 3 PDF đầu (ORCHESTRATOR, 2026-10-12, prototype ngoài repo): chính văn A Di Đà, Thái Thượng tách đúng mục và đoạn; còn lỗi nhỏ ở vài mục kệ / chú; Vô Lượng Thọ còn header "KINH VÔ LƯỢNG THỌ - ÂM HÁN VIỆT n" lẫn vào tiêu đề phẩm — số đo chính thức do SR1.3 ghi.
+- Thuật toán thử trên 3 PDF đầu (ORCHESTRATOR, 2026-10-12, prototype ngoài repo): chính văn A Di Đà, Thái Thượng tách đúng mục và đoạn; còn lỗi nhỏ ở vài mục kệ / chú; Vô Lượng Thọ còn header "KINH VÔ LƯỢNG THỌ - ÂM HÁN VIỆT n" lẫn vào tiêu đề phẩm (đã sửa bằng quy tắc header có số trang). Bản Vô Lượng Thọ đầy đủ HUMAN LEAD gửi sau (AMTBVN, 182 trang, sách chữ lớn): nhận đủ 48 phẩm + 48 nhãn nguyện sau các quy tắc giãn dòng / header theo chương / chữ nhỏ đánh số. Số đo chính thức do SR1.3 ghi.
 
 ## S6. Route / API
 

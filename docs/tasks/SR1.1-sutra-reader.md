@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: READY (manual test HUMAN LEAD gộp sau SR1.3)
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -10,7 +10,7 @@
 - Implementer: `.claude/agents/implementer` (Sonnet) — mặc định dual-agent của project.
 - Human Lead: HUMAN LEAD
 - Base commit / branch: `6c36861` / `feature/sr1-sutra-reader`
-- Human Lead approval: accepted 2026-10-12 (SR1.1–SR1.3, làm lần lượt, một PR)
+- Human Lead approval: accepted 2026-10-12 (SR1.1–SR1.3, làm lần lượt, một PR); manual test HUMAN LEAD gộp sau SR1.3
 - Implementation authorized: YES
 
 Lifecycle: `DRAFT → APPROVED → IN_PROGRESS → READY`. DONE suy ra từ Git sau khi merge.
