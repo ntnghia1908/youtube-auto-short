@@ -64,14 +64,16 @@ Tất cả required verification phải chạy và PASS trước READY.
 
 Thêm route / API mới sau auth hiện có (không đổi security model, không public API ngoài web). Manual test sau automated verification, trên 8080 ghim commit của branch, bằng điện thoại.
 
-- [ ] Topbar "Đọc Kinh" → thư viện có 3 bộ.
-- [ ] Đọc A Di Đà: đổi cỡ chữ, nền Tối / Giấy, kiểu chữ, giãn dòng; mục lục nhảy "Chính kinh".
-- [ ] Thoát trình duyệt, mở lại → đúng chỗ; thư viện "Đọc tiếp".
-- [ ] Để yên quá thời gian tự tắt màn hình → màn hình vẫn sáng (ghi trình duyệt / hệ điều hành).
-- [ ] Thái Thượng: dòng chữ Hán hiển thị đúng font, chạm chú thích hiện nội dung.
-- [ ] "Tụng xong" → số biến tăng, hoàn tác được, lịch sử đúng ngày.
+- [x] Topbar "Đọc Kinh" → thư viện có 3 bộ.
+- [x] Đọc A Di Đà: đổi cỡ chữ, nền Tối / Giấy, kiểu chữ, giãn dòng; mục lục nhảy "Chính kinh".
+- [x] Thoát trình duyệt, mở lại → đúng chỗ; thư viện "Đọc tiếp".
+- [x] Để yên quá thời gian tự tắt màn hình → màn hình vẫn sáng (ghi trình duyệt / hệ điều hành).
+- [x] Thái Thượng: dòng chữ Hán hiển thị đúng font, chạm chú thích hiện nội dung.
+- [x] "Tụng xong" → số biến tăng, hoàn tác được, lịch sử đúng ngày.
 
 ## Result
+
+- Manual test: HUMAN LEAD 2026-10-12 trên điện thoại (8080) — OK (SR1.4: lỗi khung trắng ở chế độ lật trang đã sửa `a8f8c07` rồi thử lại OK).
 
 - Main changes: `src/auto_short/sutra/` (`markup.py` parse S2 -> S3, mọi lỗi kèm số dòng; `store.py` S4 gồm create / update (sha256) / delete / đếm biến + hoàn tác; `web.py` router trang + API đọc / đếm); `web/app.py` chỉ `include_router`; mục "Đọc Kinh" ở topnav 6 trang tĩnh; static `sutras.html`, `sutra.html`, `sutra.js`, `sutra.css`, `sutra-awake.mp4`; `.gitignore` thêm ngoại lệ `!…/sutra-awake.mp4` (vì `*.mp4` bị ignore).
 - Tests: `tests/test_sutra_markup.py`, `tests/test_sutra_store.py`, `tests/test_web_sutra_sr11.py` (full suite 1648 passed, 1 skipped).

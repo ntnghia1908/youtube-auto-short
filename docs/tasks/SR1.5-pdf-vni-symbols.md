@@ -51,9 +51,11 @@ Tất cả required verification phải chạy và PASS trước READY.
 
 Không chạm database / security model / public API; điểm danh sau automated verification.
 
-- [ ] Thêm lại A Di Đà Hán Việt từ PDF trên web (bộ thử, rồi xóa): chữ đúng dấu, không còn ký hiệu.
+- [x] Thêm lại A Di Đà Hán Việt từ PDF trên web (bộ thử, rồi xóa): chữ đúng dấu, không còn ký hiệu.
 
 ## Result
+
+- Manual test: HUMAN LEAD 2026-10-12 trên điện thoại (8080) — OK (SR1.4: lỗi khung trắng ở chế độ lật trang đã sửa `a8f8c07` rồi thử lại OK).
 
 - Main changes: `sutra/vni.py` (mới; bảng VNI-Windows → Unicode NFC); `sutra/pdf.py` (`Run.font` từ `/BaseFont`, `font_kind` symbol / vni / tcvn, gộp đoạn VNI liền nhau rồi mới đổi, thay đoạn ký hiệu bằng dấu cách, giữ `O` sát chữ và `•` đầu dòng thường, cảnh báo mục dạng bản nhạc, cảnh báo font TCVN3 / VISCII); `sutra/importer.py` (`_ensure_section`: văn bản không có `#` / `@` mà có nội dung → chèn `# <tên bộ>` + cảnh báo); decision record S5a "Số đo SR1.5" + làm rõ; dòng `sutra/` của `docs/ai/project-profile.md`.
 - Tests: `tests/test_sutra_vni.py` (5: bảng đầy đủ nguyên âm × dấu × hoa / thường, NFC), `tests/test_sutra_pdf.py` (+9: font_kind, VNI vs font Unicode, chữ VNI tách hai đoạn, ký hiệu, `O`, gạch đầu dòng, không tiêu đề giả từ ký hiệu, cảnh báo bản nhạc, `page_runs` mang tên font), `tests/test_sutra_importer.py` (+3: docx / txt không tiêu đề, văn bản giữ nguyên). Full suite `python -m pytest -q -n auto`: 1737 passed, 1 skipped; `node scripts/framework-check.mjs`: PASS. Số đo 5 PDF: decision record S5a "Số đo SR1.5" (4 PDF cũ: văn bản giống hệt SR1.3; A Di Đà Hán Việt: 25 mục, không còn chuỗi mã VNI; 2 `.docx` không tiêu đề: parse OK, một mục mang tên bộ).

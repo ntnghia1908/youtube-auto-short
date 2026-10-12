@@ -60,11 +60,13 @@ Tất cả required verification phải chạy và PASS trước READY.
 
 Chạm security (upload file) trong web đã có auth: manual test là gate trước integration.
 
-- [ ] Thêm một bộ từ `.docx` thật trên điện thoại; sửa tiêu đề mục trong ô soạn; Lưu; đọc được.
-- [ ] Thêm từ `.txt`; cố ý để lỗi (nội dung ngoài mục) → báo đúng dòng.
-- [ ] Sửa một bộ có sẵn; xóa một bộ thử (có hỏi xác nhận).
+- [x] Thêm một bộ từ `.docx` thật trên điện thoại; sửa tiêu đề mục trong ô soạn; Lưu; đọc được.
+- [x] Thêm từ `.txt`; cố ý để lỗi (nội dung ngoài mục) → báo đúng dòng.
+- [x] Sửa một bộ có sẵn; xóa một bộ thử (có hỏi xác nhận).
 
 ## Result
+
+- Manual test: HUMAN LEAD 2026-10-12 trên điện thoại (8080) — OK (SR1.4: lỗi khung trắng ở chế độ lật trang đã sửa `a8f8c07` rồi thử lại OK).
 
 - Main changes: `sutra/importer.py` (`.txt` / `.docx` -> S2; zip kiểm trước python-docx: <= 2 000 member, <= 50 MB giải nén, phải có `word/document.xml`; heading style / dòng hoa / CHƯƠNG, PHẨM -> `#`; ngắt mềm -> dòng; bảng -> chữ từng ô; chú thích Word đọc từ `word/footnotes.xml` + `w:footnoteReference` -> `[^n]` đánh số lại theo mục, định nghĩa cuối mục; python-docx 1.2.0 không có API chú thích). `sutra/web.py`: `POST /api/sutras/import`, `POST /api/sutras` (+ `?dry_run=1`), `PUT`, `DELETE`, trang `/sutras/new` và `/sutras/{slug}/edit` (đăng ký trước `/sutras/{slug}`), JSON > 3 MB -> 413. Static `sutra-edit.html` + `initEdit` trong `sutra.js` (xem trước debounce, lỗi bấm nhảy tới dòng), nút "Thêm bộ kinh", menu Sửa / Xóa ở trang đọc. Sửa từ review SR1.1: `SutraStore._entries(strict=True)` cho đường ghi — `recitations.json` hỏng -> `SutraError` (422), không ghi đè; đọc hiển thị vẫn chịu lỗi.
 - Tests: `tests/test_sutra_importer.py`, `tests/test_web_sutra_sr12.py`, thêm 2 test vào `tests/test_sutra_store.py`; bỏ `test_sr12_routes_not_present` (SR1.1). Full suite `python -m pytest -q -n auto`: 1675 passed, 1 skipped; `node scripts/framework-check.mjs`; `node --check sutra.js`. Manual test (AC 4) chưa chạy — HUMAN LEAD, sau SR1.3.

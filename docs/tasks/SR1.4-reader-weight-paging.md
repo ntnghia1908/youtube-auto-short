@@ -58,11 +58,13 @@ Tất cả required verification phải chạy và PASS trước READY.
 
 Không chạm database, security model hay public API; manual test là điểm danh sau automated verification.
 
-- [ ] Điện thoại: đổi 3 bậc độ đậm trên A Di Đà và Thái Thượng.
-- [ ] Bật lật trang ngang: vuốt qua 10 trang, chạm mép, nhảy mục lục; xoay máy.
-- [ ] Thoát ra, mở lại: đúng trang; đổi về cuộn dọc: đúng đoạn.
+- [x] Điện thoại: đổi 3 bậc độ đậm trên A Di Đà và Thái Thượng.
+- [x] Bật lật trang ngang: vuốt qua 10 trang, chạm mép, nhảy mục lục; xoay máy.
+- [x] Thoát ra, mở lại: đúng trang; đổi về cuộn dọc: đúng đoạn.
 
 ## Result
+
+- Manual test: HUMAN LEAD 2026-10-12 trên điện thoại (8080) — OK (SR1.4: lỗi khung trắng ở chế độ lật trang đã sửa `a8f8c07` rồi thử lại OK).
 
 - Main changes: `sutra.js` / `sutra.css` / `sutra.html` — cài đặt Độ đậm chữ (400 / 500 / 700, `strong` = 700 / 700 / 800) và Kiểu đọc (Cuộn dọc / Lật trang ngang) lưu trong `sutra:settings`; chế độ lật trang = `#reader` cố định, `#text` CSS multi-column rộng đúng một trang, `scrollLeft` do JS điều khiển (vuốt, chạm 25 % mép, phím ← → / PageUp / PageDown), số trang `x / y`, chạm giữa ẩn / hiện thanh công cụ, mục lục nhảy tới trang, "Tụng xong" nằm cuối bài viết ở trang cuối; giữ chỗ (phần tử đầu khung nhìn) khi đổi cỡ / giãn dòng / độ đậm / kiểu đọc / xoay máy (resize debounce 150 ms); vị trí lưu `{section, offset}` dùng toạ độ tuyến tính (y hoặc x) nên chạy ở cả hai kiểu. `store.list` sắp tên bỏ dấu.
 - Tests: `test_list_sorts_without_diacritics`, `test_reader_sr14_options_present`; toàn bộ `python -m pytest -q -n auto`: 1719 passed, 1 skipped (chạy trước khi thêm test tĩnh; hai file test liên quan sau đó 30 passed); `node --check` OK; `framework-check` PASS.
