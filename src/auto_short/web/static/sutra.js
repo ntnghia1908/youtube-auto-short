@@ -64,8 +64,56 @@
 
   // --- library -------------------------------------------------------------------------------------
 
+  var TAB_KEY = "sutra:tab";
+
+  // SR2 K3: tab "Khai thị": bộ kinh -> ranges of 10 episodes (read posts, "Đọc tiếp" when a position is saved)
+  function ktPosKey(pid, from, to, other) { return "sutra:pos:kt:" + pid + ":" + (other ? "other" : from + "-" + to); }
+  function initKhaithiTab() {
+    var list = $("kt-list"), msg = $("kt-msg");
+    api("GET", "/api/reading/khaithi").then(function (books) {
+      msg.textContent = books.length ? "" : "Chưa có bài đăng nào để đọc.";
+      books.forEach(function (b) {
+        var li = el("li", "lib-item");
+        li.appendChild(el("span", "lib-title", b.title));
+        var base = "/sutras/khaithi/" + encodeURIComponent(b.playlist_id);
+        var groups = b.ranges.map(function (r) {
+          return { label: r.label, posts: r.posts, href: base + "?from=" + r.from + "&to=" + r.to, key: ktPosKey(b.playlist_id, r.from, r.to, false) };
+        });
+        if (b.other) groups.push({ label: "Tập chưa rõ số", posts: b.other.posts, href: base + "?other=1", key: ktPosKey(b.playlist_id, 0, 0, true) });
+        groups.forEach(function (g) {
+          var row = el("div", "lib-actions");
+          var main = el("a", "btn small", g.label + " · " + g.posts + " bài");
+          main.href = g.href;
+          var pos = store(g.key);
+          if (pos && pos.section) {
+            main.className = "btn primary small";
+            main.textContent = g.label + " · " + g.posts + " bài — Đọc tiếp";
+            var fresh = el("a", "btn small", "Từ đầu"); fresh.href = g.href + "&start=1";
+            row.appendChild(main); row.appendChild(fresh);
+          } else row.appendChild(main);
+          li.appendChild(row);
+        });
+        list.appendChild(li);
+      });
+    }).catch(function (e) { if (e.message !== "401") msg.textContent = "Không tải được danh sách khai thị: " + e.message; });
+  }
+
   function initLibrary() {
     var list = $("lib-list"), msg = $("lib-msg");
+    var tabs = { sutras: { btn: $("tab-sutras"), panel: $("panel-sutras") }, kt: { btn: $("tab-kt"), panel: $("panel-kt") } };
+    var ktLoaded = false;
+    function showTab(name) {
+      Object.keys(tabs).forEach(function (k) {
+        tabs[k].panel.hidden = k !== name;
+        tabs[k].btn.classList.toggle("on", k === name);
+        tabs[k].btn.setAttribute("aria-selected", k === name ? "true" : "false");
+      });
+      if (name === "kt" && !ktLoaded) { ktLoaded = true; initKhaithiTab(); }
+    }
+    Object.keys(tabs).forEach(function (k) {
+      tabs[k].btn.addEventListener("click", function () { store(TAB_KEY, k); showTab(k); });
+    });
+    showTab(store(TAB_KEY) === "kt" ? "kt" : "sutras");
     api("GET", "/api/sutras").then(function (items) {
       msg.textContent = items.length ? "" : "Chưa có bộ kinh nào.";
       items.forEach(function (it) {
@@ -92,7 +140,18 @@
   // --- reader --------------------------------------------------------------------------------------
 
   function initReader() {
-    var slug = decodeURIComponent(location.pathname.replace(/^\/sutras\//, "").replace(/\/$/, ""));
+    var ktMatch = /^\/sutras\/khaithi\/([^/]+)\/?$/.exec(location.pathname);   // SR2 K3: posts of a bộ kinh, not a sutra
+    var kt = ktMatch ? decodeURIComponent(ktMatch[1]) : null;
+    var qs = new URLSearchParams(location.search);
+    var posKey, slug;
+    if (kt) {
+      var ktOther = qs.get("other") === "1";
+      posKey = ktPosKey(kt, qs.get("from"), qs.get("to"), ktOther);
+      slug = kt;
+    } else {
+      slug = decodeURIComponent(location.pathname.replace(/^\/sutras\//, "").replace(/\/$/, ""));
+      posKey = "sutra:pos:" + slug;
+    }
     var settings = loadSettings();
     var data = null, entries = [], total = 0;
     var sections = [];           // [{id, title, el}]
@@ -283,7 +342,7 @@
       var b = $("menu-delete");
       b.disabled = true;
       api("DELETE", "/api/sutras/" + encodeURIComponent(slug)).then(function () {
-        try { window.localStorage.removeItem("sutra:pos:" + slug); } catch (e) { /* ignore */ }
+        try { window.localStorage.removeItem(posKey); } catch (e) { /* ignore */ }
         restoring = true;  // do not re-save the reading position while leaving
         location.href = "/sutras";
       }).catch(function (e) { $("menu-msg").textContent = "Không xóa được: " + e.message; b.disabled = false; });
@@ -315,6 +374,64 @@
       });
       parent.appendChild(span);
     }
+    // SR2 K3: Copy button under a post title (copy `copy_text`, then tick "Đã đăng bài" through the P8 route)
+    function legacyCopy(text) {
+      var ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.contentEditable = "true";    // iOS Safari only selects editable content
+      ta.style.position = "fixed"; ta.style.top = "0"; ta.style.left = "-9999px"; ta.style.fontSize = "16px";
+      document.body.appendChild(ta);
+      var ok = false;
+      try { ta.focus(); ta.select(); ta.setSelectionRange(0, text.length); ok = document.execCommand("copy"); } catch (e) { ok = false; }
+      document.body.removeChild(ta);
+      return ok;
+    }
+    // plain HTTP on the LAN has no navigator.clipboard on most phones: fall back to a selected textarea + execCommand
+    function copyText(text) {
+      if (window.isSecureContext && navigator.clipboard && navigator.clipboard.writeText) {
+        return navigator.clipboard.writeText(text).then(function () { return true; }, function () { return legacyCopy(text); });
+      }
+      return Promise.resolve(legacyCopy(text));
+    }
+    function postTools(s) {
+      var box = el("div", "post-tools");
+      var btn = el("button", "rbtn post-copy" + (s.posted ? " done" : ""), s.posted ? "Đã đăng ✓" : "Copy");
+      btn.type = "button";
+      var note = el("span", "post-note small");
+      box.appendChild(btn);
+      if (s.stale) box.appendChild(el("span", "post-stale small", "Short đã đổi"));
+      box.appendChild(note);
+      btn.addEventListener("click", function () {
+        btn.disabled = true;
+        note.textContent = "";
+        var fb = box.querySelector(".post-fallback");
+        if (fb) fb.remove();
+        copyText(s.copy_text).then(function (ok) {
+          if (!ok) {
+            note.textContent = "Không copy được — giữ vào ô dưới để chọn rồi copy.";
+            var ta = el("textarea", "post-fallback");
+            ta.value = s.copy_text; ta.readOnly = true; ta.rows = 6;
+            box.appendChild(ta);
+            ta.focus(); ta.select();
+            return null;
+          }
+          note.textContent = "Đã copy";
+          if (s.posted) return null;
+          return api("POST", "/api/episodes/" + encodeURIComponent(s.episode_id) + "/posts/" + encodeURIComponent(s.clip_id) + "/posted",
+            { value: true }).then(function () {
+              s.posted = true;
+              btn.textContent = "Đã đăng ✓"; btn.classList.add("done");
+              note.textContent = "Đã copy · đã đánh dấu Đã đăng bài";
+            }, function (e) {
+              if (e.message === "401") throw e;
+              note.textContent = "Đã copy nhưng chưa đánh dấu Đã đăng bài: " + e.message;
+            });
+        }).catch(function (e) { if (e.message !== "401") note.textContent = "Không copy được: " + e.message; })
+          .then(function () { btn.disabled = false; if (paged) goPage(pageOf(btn)); });
+      });
+      return box;
+    }
     function render() {
       var art = $("text"), fin = document.querySelector(".finish");
       if (fin.parentNode === art) reader.appendChild(fin);   // page mode keeps it inside the article: do not lose it
@@ -333,6 +450,7 @@
           var h = el("h3", "sec", s.title);
           h.id = s.id;
           art.appendChild(h);
+          if (kt) art.appendChild(postTools(s));
           s.paragraphs.forEach(function (p) {
             var pe = el("p", "para"), chars = 0;
             p.forEach(function (ln) { chars += ln.text.length; });
@@ -345,7 +463,7 @@
           item.setAttribute("data-id", s.id);
           item.addEventListener("click", function () { closeSheets(); if (paged) goPage(pageOf(h)); else h.scrollIntoView(); });
           toc.appendChild(item);
-          sections.push({ id: s.id, title: s.title, el: h });
+          sections.push({ id: s.id, title: s.title, el: h, clip: kt ? s.episode_id + "/" + s.clip_id : null });
         });
       });
       $("rtitle").textContent = data.title;
@@ -368,7 +486,7 @@
       if (restoring || !data) return;
       var c = current();
       if (!c) return;
-      store("sutra:pos:" + slug, { section: sections[c.index].id, offset: c.offset, sha256: data.sha256, at: Date.now() });
+      store(posKey, { section: sections[c.index].id, clip: sections[c.index].clip, offset: c.offset, sha256: data.sha256, at: Date.now() });
     }
     function updateCurrent() {
       var c = current(), id = c ? sections[c.index].id : null;
@@ -377,11 +495,11 @@
       });
     }
     function restore() {
-      var params = new URLSearchParams(location.search);
-      var pos = params.get("start") === "1" ? null : store("sutra:pos:" + slug);
+      var pos = qs.get("start") === "1" ? null : store(posKey);
       if (pos && pos.section) {
         var sec = null;
-        sections.forEach(function (s) { if (s.id === pos.section) sec = s; });
+        // khai thị: the book changes when posts are added, so find the post by its clip, not by `s<n>`
+        sections.forEach(function (s) { if (kt && pos.clip ? s.clip === pos.clip : s.id === pos.section) sec = s; });
         if (sec) {
           var top = lin(sec.el), end = sectionEnd(sections.indexOf(sec));
           var off = pos.sha256 === data.sha256 && typeof pos.offset === "number" ? pos.offset : 0;
@@ -520,13 +638,19 @@
 
     // boot -----------------------------------------------------------------------------------------
     applySettings();
-    api("GET", "/api/sutras/" + encodeURIComponent(slug)).then(function (d) {
-      data = d; entries = d.recitations.entries; total = d.recitations.total;
+    var bootUrl = "/api/sutras/" + encodeURIComponent(slug);
+    if (kt) {
+      bootUrl = "/api/reading/khaithi/" + encodeURIComponent(kt) + "?" + (ktOther ? "other=1" : "from=" + encodeURIComponent(qs.get("from") || "") + "&to=" + encodeURIComponent(qs.get("to") || ""));
+      $("btn-count").style.display = "none"; $("btn-menu").style.display = "none";      // no recitation counter, no edit / delete
+      document.querySelector(".finish").style.display = "none";
+    }
+    api("GET", bootUrl).then(function (d) {
+      data = d;
+      if (!kt) { entries = d.recitations.entries; total = d.recitations.total; }
       $("r-msg").hidden = true;
       render();
       if (paged) layoutPaged();
-      refreshCounter();
-      $("btn-done").hidden = false;
+      if (!kt) { refreshCounter(); $("btn-done").hidden = false; }
       restore();
       updateCurrent();
     }).catch(function (e) { if (e.message !== "401") $("r-msg").textContent = "Không tải được kinh: " + e.message; });

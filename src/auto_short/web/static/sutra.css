@@ -2,6 +2,8 @@
 .lib-list { list-style: none; margin: 0; padding: 0; display: grid; gap: .6rem; }
 .lib-item { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem; background: #fafaf8; display: grid; gap: .35rem; }
 .lib-title { font-weight: 700; font-size: 1.1rem; }
+.lib-tabs { display: flex; gap: .4rem; margin-bottom: .8rem; }
+.lib-tabs .btn.on { background: var(--accent-bg); border-color: var(--accent); font-weight: 700; }
 .lib-actions { display: flex; flex-wrap: wrap; gap: .4rem; }
 
 body[data-page="reader"] { --r-bg: #f7f1e1; --r-fg: #2b2418; --r-muted: #7a6f58; --r-bar: #ece3cc; --r-border: #d9cdb0; --r-hl: #fff0b3;
@@ -71,3 +73,11 @@ body.paged { overflow: hidden; }
 .menu-list { display: grid; gap: .5rem; margin-top: .5rem; }
 .menu-list .btn { text-align: center; text-decoration: none; }
 .btn.danger { color: #a11; border-color: #d9a0a0; }
+
+/* Khai thị reader (SR2 K3): Copy button under a post title */
+.reader .post-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: .5rem; margin: 0 0 .8em; font-size: .85rem; font-weight: 400; }
+.reader .post-copy.done { background: var(--r-hl); font-weight: 700; }
+.reader .post-stale { color: #8a5a00; border: 1px solid #d9b46b; border-radius: 999px; padding: 0 .5rem; }
+.reader .post-note { color: var(--r-muted); }
+.reader .post-fallback { width: 100%; font: inherit; font-size: 16px; }
+.reader.paged .post-tools { break-inside: avoid; break-after: avoid; }
