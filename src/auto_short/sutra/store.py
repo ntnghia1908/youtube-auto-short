@@ -22,6 +22,7 @@ from . import markup
 SCHEMA_VERSION = 1
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,59}$")
 MAX_ENTRIES_IN_DETAIL = 400
+RESERVED_SLUGS = frozenset({"new"})
 TEXT_FILE, META_FILE, REC_FILE = "sutra.txt", "meta.json", "recitations.json"
 
 
@@ -97,13 +98,23 @@ class SutraStore:
     def _meta(self, d: Path) -> dict:
         return json.loads(self._read_bytes(d / META_FILE).decode("utf-8"))
 
-    def _entries(self, d: Path) -> list[dict]:
+    def _entries(self, d: Path, *, strict: bool = False) -> list[dict]:
+        """Recitation entries. Display (``strict=False``) tolerates a corrupt file (shows none); anything that is
+        about to *write* the file passes ``strict=True`` and gets :class:`SutraError` instead, so a corrupt
+        history is never silently overwritten."""
         p = d / REC_FILE
-        if not p.is_file():
+        if not p.exists() and not p.is_symlink():
             return []
         try:
-            return list(json.loads(self._read_bytes(p).decode("utf-8")).get("entries", []))
-        except (ValueError, OSError):
+            doc = json.loads(self._read_bytes(p).decode("utf-8"))
+            entries = doc["entries"]
+            if not isinstance(entries, list) or not all(isinstance(e, dict) and isinstance(e.get("at"), str)
+                                                        for e in entries):
+                raise ValueError("entries")
+            return list(entries)
+        except (ValueError, KeyError, TypeError, OSError, SutraError) as e:
+            if strict:
+                raise SutraError("lịch sử tụng (recitations.json) bị hỏng; không ghi đè, hãy kiểm tra file") from e
             return []
 
     def _write_entries(self, d: Path, entries: list[dict]) -> None:
@@ -157,7 +168,7 @@ class SutraStore:
     def _claim_slug(self, title: str) -> tuple[str, Path]:
         base = slugify(title)
         self.root.mkdir(parents=True, exist_ok=True)
-        n = 1
+        n = 2 if base in RESERVED_SLUGS else 1  # "new" would shadow the page /sutras/new
         while True:
             suffix = "" if n == 1 else f"-{n}"
             slug = base[:60 - len(suffix)].rstrip("-") + suffix
@@ -211,7 +222,7 @@ class SutraStore:
     def add_recitation(self, slug: str) -> dict:
         with self._lock(slug):
             d = self._dir(slug)
-            entries = self._entries(d)
+            entries = self._entries(d, strict=True)
             entry = {"at": self._stamp()}
             entries.append(entry)
             self._write_entries(d, entries)
@@ -220,7 +231,7 @@ class SutraStore:
     def undo_recitation(self, slug: str) -> dict:
         with self._lock(slug):
             d = self._dir(slug)
-            entries = self._entries(d)
+            entries = self._entries(d, strict=True)
             if not entries:
                 raise SutraConflict("chưa có biến nào để hoàn tác")
             entries.pop()

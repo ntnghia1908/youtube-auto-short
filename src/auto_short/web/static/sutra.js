@@ -35,11 +35,17 @@
     if ([1.4, 1.7, 2.0].indexOf(out.line) < 0) out.line = 1.7;
     return out;
   }
-  function api(method, url) {
-    return fetch(url, { method: method, credentials: "same-origin" }).then(function (r) {
+  // body: a plain object (sent as JSON) or a File / Blob (sent raw, S5 upload)
+  function api(method, url, body) {
+    var opts = { method: method, credentials: "same-origin" };
+    if (body !== undefined) {
+      if (typeof Blob !== "undefined" && body instanceof Blob) opts.body = body;
+      else { opts.body = JSON.stringify(body); opts.headers = { "Content-Type": "application/json" }; }
+    }
+    return fetch(url, opts).then(function (r) {
       if (r.status === 401) { location.href = "/login?next=" + encodeURIComponent(location.pathname); throw new Error("401"); }
       return r.json().catch(function () { return {}; }).then(function (body) {
-        if (!r.ok) { var err = new Error(body.detail || ("Lỗi " + r.status)); err.status = r.status; throw err; }
+        if (!r.ok) { var err = new Error(body.detail || ("Lỗi " + r.status)); err.status = r.status; err.body = body; throw err; }
         return body;
       });
     });
@@ -141,7 +147,7 @@
 
     // sheets ---------------------------------------------------------------------------------------
     function openSheet(id) { $(id).hidden = false; bar.classList.remove("hidden"); }
-    function closeSheets() { ["sheet-toc", "sheet-set", "sheet-count"].forEach(function (i) { $(i).hidden = true; }); }
+    function closeSheets() { ["sheet-toc", "sheet-set", "sheet-count", "sheet-menu"].forEach(function (i) { $(i).hidden = true; }); }
     Array.prototype.forEach.call(document.querySelectorAll(".sheet"), function (s) {
       s.addEventListener("click", function (ev) { if (ev.target === s) closeSheets(); });
     });
@@ -149,6 +155,23 @@
     $("btn-set").addEventListener("click", function () { buildSettings(); openSheet("sheet-set"); });
     $("btn-toc").addEventListener("click", function () { updateCurrent(); openSheet("sheet-toc"); });
     $("btn-count").addEventListener("click", function () { buildHistory(); openSheet("sheet-count"); });
+    $("btn-menu").addEventListener("click", function () {
+      $("menu-edit").href = "/sutras/" + encodeURIComponent(slug) + "/edit";
+      $("menu-msg").textContent = "";
+      openSheet("sheet-menu");
+    });
+    $("menu-delete").addEventListener("click", function () {
+      var title = data ? data.title : slug;
+      var msg = "Xóa bộ kinh “" + title + "”?\n\nLịch sử tụng (" + total + " biến) cũng sẽ mất. Không hoàn tác được.";
+      if (!window.confirm(msg)) return;
+      var b = $("menu-delete");
+      b.disabled = true;
+      api("DELETE", "/api/sutras/" + encodeURIComponent(slug)).then(function () {
+        try { window.localStorage.removeItem("sutra:pos:" + slug); } catch (e) { /* ignore */ }
+        restoring = true;  // do not re-save the reading position while leaving
+        location.href = "/sutras";
+      }).catch(function (e) { $("menu-msg").textContent = "Không xóa được: " + e.message; b.disabled = false; });
+    });
 
     // render ---------------------------------------------------------------------------------------
     function addLine(parent, ln, notes) {
@@ -252,7 +275,7 @@
     var posTimer = null, lastY = 0;
     window.addEventListener("scroll", function () {
       var y = window.scrollY;
-      if (y > lastY + 10 && y > 80) { if ($("sheet-toc").hidden && $("sheet-set").hidden && $("sheet-count").hidden) bar.classList.add("hidden"); }
+      if (y > lastY + 10 && y > 80) { if ($("sheet-toc").hidden && $("sheet-set").hidden && $("sheet-count").hidden && $("sheet-menu").hidden) bar.classList.add("hidden"); }
       else if (y < lastY - 10) bar.classList.remove("hidden");
       lastY = y;
       clearTimeout(posTimer);
@@ -367,6 +390,152 @@
     }).catch(function (e) { if (e.message !== "401") $("r-msg").textContent = "Không tải được kinh: " + e.message; });
   }
 
+  // --- editor (SR1.2) ------------------------------------------------------------------------------
+
+  function initEdit() {
+    var m = /^\/sutras\/([^/]+)\/edit\/?$/.exec(location.pathname);
+    var slug = m ? decodeURIComponent(m[1]) : null;       // null = new sutra
+    var area = $("ed-text"), saveBtn = $("ed-save"), msg = $("ed-msg");
+    var baseSha = null, dirty = false, seq = 0, timer = null, valid = false, saving = false;
+
+    function setMsg(text) { msg.textContent = text || ""; }
+    function updateButtons() { saveBtn.disabled = saving || !area.value.trim() || (slug !== null && baseSha === null); }
+
+    // jump to a line: select it, and scroll the textarea so it is visible (a hidden mirror measures wrapped lines)
+    function gotoLine(n) {
+      var lines = area.value.split("\n"), start = 0, i;
+      if (n < 1) n = 1;
+      if (n > lines.length) n = lines.length;
+      for (i = 0; i < n - 1; i++) start += lines[i].length + 1;
+      var end = start + lines[n - 1].length;
+      var cs = window.getComputedStyle(area), mirror = el("div", "ed-mirror");
+      ["fontFamily", "fontSize", "lineHeight", "letterSpacing", "paddingLeft", "paddingRight", "borderLeftWidth", "borderRightWidth"]
+        .forEach(function (k) { mirror.style[k] = cs[k]; });
+      mirror.style.width = area.clientWidth + "px";
+      mirror.style.boxSizing = "border-box";
+      mirror.textContent = area.value.slice(0, start) + "​";
+      document.body.appendChild(mirror);
+      var y = mirror.scrollHeight;
+      document.body.removeChild(mirror);
+      area.focus();
+      area.setSelectionRange(start, end);
+      area.scrollTop = Math.max(0, y - area.clientHeight / 3);
+    }
+
+    function showErrors(list) {
+      var ul = $("ed-errors");
+      ul.textContent = "";
+      list.forEach(function (er) {
+        var li = el("li"), b = el("button", null, (er.line ? "Dòng " + er.line + ": " : "") + er.message);
+        b.type = "button";
+        if (er.line) b.addEventListener("click", function () { gotoLine(er.line); });
+        li.appendChild(b);
+        ul.appendChild(li);
+      });
+    }
+
+    function renderPreview(doc) {
+      var box = $("ed-preview"), shown = 0;
+      box.textContent = "";
+      box.appendChild(el("h4", null, doc.title));
+      doc.intro.forEach(function (t) { box.appendChild(el("p", "muted small", t)); });
+      var count = 0;
+      doc.groups.forEach(function (g) { count += g.sections.length; });
+      box.appendChild(el("p", "small muted", "Mục lục — " + count + " mục"));
+      doc.groups.forEach(function (g) {
+        if (g.title) box.appendChild(el("div", "ed-group", g.title));
+        var ol = el("ol");
+        g.sections.forEach(function (s) { ol.appendChild(el("li", null, s.title)); });
+        box.appendChild(ol);
+      });
+      var sample = el("div", "ed-sample");
+      doc.groups.forEach(function (g) {
+        g.sections.forEach(function (s) {
+          s.paragraphs.forEach(function (p) {
+            if (shown >= 3) return;
+            shown++;
+            var pe = el("p");
+            p.forEach(function (ln, i) { if (i) pe.appendChild(document.createElement("br")); pe.appendChild(document.createTextNode(ln.text)); });
+            sample.appendChild(pe);
+          });
+        });
+      });
+      if (shown) { box.appendChild(el("p", "small muted", "Vài đoạn đầu")); box.appendChild(sample); }
+    }
+
+    function preview() {
+      var mine = ++seq, text = area.value;
+      if (!text.trim()) {
+        valid = false; showErrors([]); setMsg("");
+        $("ed-preview").textContent = ""; $("ed-preview").appendChild(el("p", "muted small", "Chưa có văn bản."));
+        updateButtons();
+        return Promise.resolve();
+      }
+      return api("POST", "/api/sutras?dry_run=1", { text: text }).then(function (doc) {
+        if (mine !== seq) return;
+        valid = true; showErrors([]); renderPreview(doc); setMsg("Văn bản hợp lệ."); updateButtons();
+      }).catch(function (e) {
+        if (mine !== seq || e.message === "401") return;
+        valid = false;
+        if (e.status === 400 && e.body && e.body.errors) { showErrors(e.body.errors); setMsg(e.body.errors.length + " lỗi — bấm vào lỗi để tới dòng đó."); }
+        else { showErrors([]); setMsg(e.message); }
+        updateButtons();
+      });
+    }
+
+    area.addEventListener("input", function () {
+      dirty = true; updateButtons();
+      clearTimeout(timer);
+      timer = setTimeout(preview, 600);
+    });
+
+    $("ed-file").addEventListener("change", function () {
+      var f = this.files && this.files[0], input = this;
+      if (!f) return;
+      if (area.value.trim() && !window.confirm("Thay văn bản đang soạn bằng nội dung file này?")) { input.value = ""; return; }
+      $("ed-file-msg").textContent = "Đang đọc " + f.name + "…";
+      api("POST", "/api/sutras/import?name=" + encodeURIComponent(f.name), f).then(function (r) {
+        area.value = r.text; dirty = true;
+        $("ed-file-msg").textContent = f.name + " — đã chuyển sang văn bản kinh, hãy soát lại trước khi lưu.";
+        var ul = $("ed-warn");
+        ul.textContent = "";
+        r.warnings.forEach(function (w) { ul.appendChild(el("li", null, w)); });
+        updateButtons();
+        return preview();
+      }).catch(function (e) { if (e.message !== "401") $("ed-file-msg").textContent = "Không đọc được file: " + e.message; })
+        .then(function () { input.value = ""; });
+    });
+
+    saveBtn.addEventListener("click", function () {
+      clearTimeout(timer);
+      saving = true; updateButtons(); setMsg("Đang lưu…");
+      var req = slug === null ? api("POST", "/api/sutras", { text: area.value })
+                              : api("PUT", "/api/sutras/" + encodeURIComponent(slug), { text: area.value, sha256: baseSha });
+      req.then(function (r) {
+        dirty = false;
+        location.href = "/sutras/" + encodeURIComponent(r.slug || slug);
+      }).catch(function (e) {
+        saving = false; updateButtons();
+        if (e.message === "401") return;
+        if (e.status === 400 && e.body && e.body.errors) { valid = false; showErrors(e.body.errors); setMsg("Chưa lưu: " + e.body.errors.length + " lỗi."); }
+        else setMsg(e.status === 409 ? "Bộ kinh đã được sửa ở nơi khác — mở lại trang để tải bản mới (chữ đang soạn sẽ mất, hãy sao chép trước)." : "Không lưu được: " + e.message);
+      });
+    });
+
+    window.addEventListener("beforeunload", function (ev) { if (dirty && !saving) { ev.preventDefault(); ev.returnValue = ""; } });
+
+    if (slug === null) { updateButtons(); return; }
+    $("ed-heading").textContent = "Sửa bộ kinh";
+    $("ed-load").hidden = false; $("ed-load").textContent = "Đang tải…";
+    $("ed-form").hidden = true;
+    api("GET", "/api/sutras/" + encodeURIComponent(slug) + "/text").then(function (t) {
+      area.value = t.text; baseSha = t.sha256;
+      $("ed-load").hidden = true; $("ed-form").hidden = false;
+      updateButtons();
+      return preview();
+    }).catch(function (e) { if (e.message !== "401") $("ed-load").textContent = "Không tải được văn bản: " + e.message; });
+  }
+
   var page = document.body.getAttribute("data-page");
-  if (page === "library") initLibrary(); else if (page === "reader") initReader();
+  if (page === "library") initLibrary(); else if (page === "reader") initReader(); else if (page === "edit") initEdit();
 })();

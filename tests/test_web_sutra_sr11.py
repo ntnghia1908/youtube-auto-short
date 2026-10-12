@@ -100,11 +100,6 @@ def test_recitations_flow(lc, store):
     assert lc.delete("/api/sutras/nope/recitations/last").status_code == 404
 
 
-def test_sr12_routes_not_present(lc):
-    assert lc.post("/api/sutras", json={"text": TEXT}).status_code in (404, 405)
-    assert lc.put("/api/sutras/x", json={}).status_code in (404, 405)
-
-
 @pytest.mark.parametrize("page", ["index", "episode", "playlist", "posts", "monitor", "storage"])
 def test_topnav_has_doc_kinh_link(page):
     html = (STATIC / f"{page}.html").read_text(encoding="utf-8")

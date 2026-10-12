@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -66,9 +66,9 @@ Chạm security (upload file) trong web đã có auth: manual test là gate trư
 
 ## Result
 
-- Main changes:
-- Tests:
-- Review:
-- Important findings / decisions:
-- Known limitations:
-- PR:
+- Main changes: `sutra/importer.py` (`.txt` / `.docx` -> S2; zip kiểm trước python-docx: <= 2 000 member, <= 50 MB giải nén, phải có `word/document.xml`; heading style / dòng hoa / CHƯƠNG, PHẨM -> `#`; ngắt mềm -> dòng; bảng -> chữ từng ô; chú thích Word đọc từ `word/footnotes.xml` + `w:footnoteReference` -> `[^n]` đánh số lại theo mục, định nghĩa cuối mục; python-docx 1.2.0 không có API chú thích). `sutra/web.py`: `POST /api/sutras/import`, `POST /api/sutras` (+ `?dry_run=1`), `PUT`, `DELETE`, trang `/sutras/new` và `/sutras/{slug}/edit` (đăng ký trước `/sutras/{slug}`), JSON > 3 MB -> 413. Static `sutra-edit.html` + `initEdit` trong `sutra.js` (xem trước debounce, lỗi bấm nhảy tới dòng), nút "Thêm bộ kinh", menu Sửa / Xóa ở trang đọc. Sửa từ review SR1.1: `SutraStore._entries(strict=True)` cho đường ghi — `recitations.json` hỏng -> `SutraError` (422), không ghi đè; đọc hiển thị vẫn chịu lỗi.
+- Tests: `tests/test_sutra_importer.py`, `tests/test_web_sutra_sr12.py`, thêm 2 test vào `tests/test_sutra_store.py`; bỏ `test_sr12_routes_not_present` (SR1.1). Full suite `python -m pytest -q -n auto`: 1675 passed, 1 skipped; `node scripts/framework-check.mjs`; `node --check sutra.js`. Manual test (AC 4) chưa chạy — HUMAN LEAD, sau SR1.3.
+- Review: chờ ORCHESTRATOR.
+- Important findings / decisions: slug `new` bị giữ chỗ (tên "New" -> `new-2`) để không che trang `/sutras/new`. `.txt` có dòng bắt đầu `#` / `@` / `~` được coi là markup S2 (không escape); `.docx` thì escape dòng bắt đầu bằng ký tự đặc biệt. Văn bản đã có dòng `=` đầu: giữ nguyên (docx: bỏ qua heading style).
+- Known limitations: chú thích Word chỉ xử lý khi có `word/footnotes.xml`; endnote, text box, hộp văn bản bị bỏ; bảng lồng nhau bị bỏ; thiếu manual test trên điện thoại.
+- PR: (chưa; một PR cho SR1.1–SR1.3)

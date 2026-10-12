@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Soạn bộ kinh — Đọc Kinh</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/sutra.css">
+</head>
+<body data-page="edit">
+<header class="topbar">
+  <a class="brand" href="/sutras">&larr; Thư viện</a>
+  <nav class="topnav"><a href="/monitor">Theo dõi</a> <a href="/storage">Bộ nhớ</a> <a href="/sutras">Đọc Kinh</a>
+  <form method="post" action="/logout"><button class="btn link" type="submit">Đăng xuất</button></form></nav>
+</header>
+<main class="container">
+  <section class="card">
+    <h2 id="ed-heading">Thêm bộ kinh</h2>
+    <p id="ed-load" class="muted small" hidden></p>
+    <div id="ed-form">
+      <div class="ed-row">
+        <label class="btn" for="ed-file">Chọn file .docx / .txt</label>
+        <input id="ed-file" type="file" accept=".txt,.docx" hidden>
+        <span id="ed-file-msg" class="muted small">hoặc dán chữ vào ô bên dưới</span>
+      </div>
+      <ul id="ed-warn" class="ed-warn small"></ul>
+      <textarea id="ed-text" class="ed-text" rows="16" spellcheck="false" aria-label="Văn bản kinh"
+        placeholder="= Tên bộ kinh&#10;@ Nhóm (tùy chọn)&#10;# Tên mục&#10;Dòng nội dung"></textarea>
+      <p class="muted small">Dòng <code>= tên</code> là tên bộ; <code>@ nhóm</code> nhóm mục lục; <code># mục</code> mục;
+        <code>~ dòng giới thiệu</code>; <code>[^1]: chú thích</code>; <code>* </code> đầu dòng = chữ đậm; dòng trống tách đoạn.</p>
+      <div class="ed-row">
+        <button id="ed-save" class="btn primary" type="button" disabled>Lưu</button>
+        <span id="ed-msg" class="small muted"></span>
+      </div>
+      <ul id="ed-errors" class="ed-errors"></ul>
+    </div>
+  </section>
+  <section class="card" id="ed-preview-card">
+    <h3>Xem trước</h3>
+    <div id="ed-preview" class="ed-preview"><p class="muted small">Chưa có văn bản.</p></div>
+  </section>
+</main>
+<script src="/static/sutra.js"></script>
+</body>
+</html>

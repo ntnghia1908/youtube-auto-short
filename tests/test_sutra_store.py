@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from auto_short.sutra.markup import MarkupError
-from auto_short.sutra.store import SLUG_RE, SutraConflict, SutraNotFound, SutraStore, slugify
+from auto_short.sutra.store import SLUG_RE, SutraConflict, SutraError, SutraNotFound, SutraStore, slugify
 
 TEXT = "= Kinh Đại Thử\n@ Chính kinh\n# Phẩm một\nDòng a\nDòng b\n\n# Phẩm hai\nDòng c\n"
 
@@ -169,3 +169,22 @@ def test_default_clock_and_umask(tmp_path):
     slug = s.create(TEXT)
     assert s.add_recitation(slug)["entry"]["at"].endswith("Z")
     assert os.access(s.root / slug / "sutra.txt", os.R_OK)
+
+
+def test_corrupt_recitations_never_overwritten(store):
+    slug = store.create(TEXT)
+    store.add_recitation(slug)
+    rec = store.root / slug / "recitations.json"
+    for junk in ("{not json", '{"entries": 5}', '{"entries": [1]}', '[]'):
+        rec.write_text(junk, encoding="utf-8")
+        with pytest.raises(SutraError):
+            store.add_recitation(slug)
+        with pytest.raises(SutraError):
+            store.undo_recitation(slug)
+        assert rec.read_text(encoding="utf-8") == junk  # untouched
+        assert store.get(slug)["recitations"]["total"] == 0  # display stays tolerant
+        assert store.list()[0]["recitations"]["total"] == 0
+
+
+def test_new_slug_is_reserved(store):
+    assert store.create("= New\n# a\nx\n") == "new-2"
