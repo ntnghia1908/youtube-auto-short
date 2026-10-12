@@ -3,7 +3,7 @@
 | Metadata | Value |
 |---|---|
 | Status | ACCEPTED |
-| Accepted by | HUMAN LEAD 2026-10-12: APPROVE SR1 (R1–R6, gồm `pypdf==6.20.0`), SR1.1–SR1.3 làm lần lượt, một PR. Hướng đã duyệt: chỉ HUMAN LEAD dùng sau đăng nhập; thêm kinh bằng `.docx` / `.txt` và (đổi ý cùng ngày) **PDF**; v1 = cỡ chữ, mục lục, nhớ chỗ đọc, giao diện đọc, màn hình luôn sáng, đếm biến tụng; nghi thức giữ trong từng bộ; mục "Đọc Kinh" ở thanh trên cùng, không ở thanh tab của trang video) |
+| Accepted by | HUMAN LEAD 2026-10-12: APPROVE SR1 (R1–R6, gồm `pypdf==6.20.0`), SR1.1–SR1.3 làm lần lượt, một PR. Hướng đã duyệt: chỉ HUMAN LEAD dùng sau đăng nhập; thêm kinh bằng `.docx` / `.txt` và (đổi ý cùng ngày) **PDF**; v1 = cỡ chữ, mục lục, nhớ chỗ đọc, giao diện đọc, màn hình luôn sáng, đếm biến tụng; nghi thức giữ trong từng bộ; mục "Đọc Kinh" ở thanh trên cùng, không ở thanh tab của trang video |
 | Checkpoint | SR1 (S2) |
 | Task contract | `docs/tasks/SR1.1-sutra-reader.md`, `docs/tasks/SR1.2-sutra-import.md`, `docs/tasks/SR1.3-sutra-pdf-import.md` |
 | Builds on | `docs/decisions/CL1-chinese-learning-contract.md` C1 (quy ước host / application, G11); `docs/decisions/CP8.3-web-contract.md` W2 (auth), W4 (API); CP1 §10 (dependency: thêm `pypdf`, gate R5) |
