@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY (manual test HUMAN LEAD gộp sau SR1.3)
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
