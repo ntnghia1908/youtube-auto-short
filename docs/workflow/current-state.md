@@ -22,7 +22,9 @@ Hạ tầng: VM 32 nhân, 125 GB RAM; IP đổi `10.8.102.101` → **`10.8.102.1
 
 Chinese Learning (CL1, bản đồ: `docs/tasks/CL1-roadmap.md`): CL1.1, CL1.2 MERGED. G6A / G6B: PENDING HUMAN LEAD DECISION. CL1.3, CL1.4 chờ.
 
-Web chạy cho HUMAN LEAD trong tmux `youtube:web` từ worktree `../youtube-auto-short-web` (detached, ghim `6c36861` = `main` sau CP8.31, 2026-10-09), `PYTHONPATH=<worktree>/src`, `--config` repo chính; mật khẩu chỉ ở env của pane. Khởi động lại: Ctrl-C trong pane rồi gõ thẳng `PYTHONPATH=/home/ntnghia/youtube-auto-short-web/src auto-short web --config /home/ntnghia/youtube-auto-short/config.toml` (không dùng phím Up — dòng trước có `read -rs` hỏi mật khẩu); chỉ khi làn render rảnh (dòng `render: rendered N/N clips` / `job … done … Shorts (`). Sau reboot VM: tmux mới, `conda activate auto-short`, `source ~/.nvm/nvm.sh`, `set -a; source ~/.local/share/auto-short/enhance-tokens.env; set +a`, HUMAN LEAD gõ mật khẩu.
+Đọc Kinh (SR1 + SR2, `docs/decisions/SR1-sutra-reader-contract.md`, `docs/decisions/SR2-khaithi-library-contract.md`): MERGED #82 (2026-10-13), manual test HUMAN LEAD OK. Trang `/sutras` (tab Đọc Kinh \| Khai thị). Dữ liệu kinh ở `work/_sutras/` (8 bộ, không trong git — bản quyền); dependency mới `pypdf==6.20.0` (env `auto-short` đã cài).
+
+Web chạy cho HUMAN LEAD trong tmux `youtube:web` từ worktree `../youtube-auto-short-web` (detached, ghim `f3f5e02` = `main` sau #80, #81, #82, 2026-10-13), `PYTHONPATH=<worktree>/src`, `--config` repo chính; mật khẩu chỉ ở env của pane. Khởi động lại: Ctrl-C trong pane rồi gõ thẳng `PYTHONPATH=/home/ntnghia/youtube-auto-short-web/src auto-short web --config /home/ntnghia/youtube-auto-short/config.toml` (không dùng phím Up — dòng trước có `read -rs` hỏi mật khẩu); chỉ khi làn render rảnh (dòng `render: rendered N/N clips` / `job … done … Shorts (`). Sau reboot VM: tmux mới, `conda activate auto-short`, `source ~/.nvm/nvm.sh`, `set -a; source ~/.local/share/auto-short/enhance-tokens.env; set +a`, HUMAN LEAD gõ mật khẩu.
 
 ## Next proposed action
 
