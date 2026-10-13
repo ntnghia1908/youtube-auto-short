@@ -124,7 +124,7 @@ def test_reader_sr14_options_present():
     js = (STATIC / "sutra.js").read_text(encoding="utf-8")
     css = (STATIC / "sutra.css").read_text(encoding="utf-8")
     html = (STATIC / "sutra.html").read_text(encoding="utf-8")
-    for needle in ("Độ đậm chữ", "Đậm vừa", "Kiểu đọc", "Lật trang ngang", "Cuộn dọc", "--wt-strong", "ArrowRight"):
+    for needle in ("Độ đậm chữ", "Kiểu đọc", "Lật trang ngang", "Cuộn dọc", "--wt-strong", "ArrowRight"):
         assert needle in js
     assert "innerHTML" not in js
     assert "column-fill" in css and "break-after: avoid" in css and "--wt-strong" in css

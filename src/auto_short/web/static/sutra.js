@@ -9,7 +9,7 @@
 
   var SETTINGS_KEY = "sutra:settings";
   var DEFAULTS = { size: 18, line: 1.7, serif: true, theme: "paper", awake: true, weight: 400, mode: "scroll" };
-  var STRONG_OF = { 400: 700, 500: 700, 700: 800 };   // `strong` lines: one step heavier than the body, max 800
+  var STRONG_OF = { 400: 700, 700: 800 };   // `strong` lines: one step heavier than the body, max 800
 
   // --- helpers -------------------------------------------------------------------------------------
 
@@ -34,7 +34,7 @@
     out.size = Math.min(32, Math.max(14, Math.round(out.size / 2) * 2));
     if (["light", "paper", "dark"].indexOf(out.theme) < 0) out.theme = "paper";
     if ([1.4, 1.7, 2.0].indexOf(out.line) < 0) out.line = 1.7;
-    if ([400, 500, 700].indexOf(out.weight) < 0) out.weight = 400;
+    if ([400, 700].indexOf(out.weight) < 0) out.weight = 400;   // 500 dropped: system fonts have no medium face, it looked like 400
     if (["scroll", "page"].indexOf(out.mode) < 0) out.mode = "scroll";
     return out;
   }
@@ -202,7 +202,7 @@
       box.appendChild(size);
       choice(box, "Giãn dòng", [[1.4, "Sát"], [1.7, "Vừa"], [2.0, "Rộng"]],
         function (v) { return settings.line === v; }, function (v) { settings.line = v; });
-      choice(box, "Độ đậm chữ", [[400, "Thường"], [500, "Đậm vừa"], [700, "Đậm"]],
+      choice(box, "Độ đậm chữ", [[400, "Thường"], [700, "Đậm"]],
         function (v) { return settings.weight === v; }, function (v) { settings.weight = v; });
       choice(box, "Kiểu chữ", [[true, "Có chân"], [false, "Không chân"]],
         function (v) { return settings.serif === v; }, function (v) { settings.serif = v; });
