@@ -131,6 +131,8 @@ State người dùng, **không** là input stage nào (như `publish.json`, CP8.
 
 **Sửa đổi CP8.17 (D1, D2 — tự tick, chỉ ở trình duyệt, route `posted` và `posts.json` không đổi):** trang Bài đăng ghi nhớ trong `localStorage` (`autoShort.postMarks`, dự phòng bộ nhớ trang khi không dùng được) cho từng bài `<episode_id>/<clip_id>`: dấu *đã sao chép* (kèm text đã sao chép; chỉ đặt khi sao chép thành công, không tính ô dự phòng "Giữ vào ô để copy") và dấu *đã tải ảnh* (kèm tên ảnh; đặt khi bấm "Tải ảnh"). Cả hai còn hiệu lực (text / ảnh hiện tại của bài trùng lúc ghi) và bài chưa tick → trang gọi `POST …/posted {value: true}`, thứ tự hai thao tác tùy ý; xong thì xóa dấu (bỏ tick tay không tự tick lại cho tới khi làm lại cả hai). Bài không có ảnh tải được (`image` rỗng / `image_missing`) → chỉ cần sao chép thành công. Bài đã tick: không ghi gì. Dấu theo từng thiết bị / trình duyệt.
 
+**Nơi gọi thứ hai (SR2 K3):** trang đọc khai thị của thư viện Đọc Kinh gọi cùng route `posted` sau khi copy; route và `posts.json` không đổi (canonical: `docs/decisions/SR2-khaithi-library-contract.md`).
+
 ## P9. Web
 
 - Thẻ mỗi Short `rendered` (tập Short + khai thị): khu thu gọn "Bài đăng cộng đồng" — chưa có bài: "Soạn bài"; có bài: nhãn `raw` / `stale` / `image_missing`, textarea các đoạn (đoạn cách nhau dòng trống) + "Lưu đoạn" (→ `manual`), ảnh thu nhỏ + "Đổi ảnh" (mở thư viện), ô link + "Lưu link", số ký tự (P4), "Sao chép bài" (dùng fallback clipboard hiện có, CP8.3 W6), "Soạn lại", tick "Đã đăng bài" (tự tick khi đã sao chép + tải ảnh, **sửa đổi CP8.17** P8).

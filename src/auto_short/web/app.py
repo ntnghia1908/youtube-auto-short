@@ -38,6 +38,8 @@ from ..enhance.state import EnhanceError
 from ..enhance.tokens import authenticate as enhance_authenticate
 from ..enhance.tokens import tokens_from_env
 from ..pipeline import PIPELINE_STAGES, PreflightError, ollama_preflight, run_pipeline
+from ..sutra import web as sutra_web
+from ..sutra.store import SutraStore
 from ..post import corrections as post_corrections
 from ..post import export as post_export
 from ..post import doc as post_doc
@@ -61,7 +63,9 @@ from ..review import shorts as review_shorts
 from ..review.names import hashtags as review_hashtags
 from ..review.names import posts_docx_name
 from ..titling.playlist import stored_series as playlist_series
+from ..workspace import iter_manifests
 from . import episodes as ep
+from . import reading
 from . import monitor as monitor_mod
 from .auth import COOKIE_NAME, SessionSigner, load_or_create_secret
 from .storage import BLOCK_MESSAGE, StorageCache, auto_archive_plan, episode_sizes, video_id
@@ -2197,6 +2201,18 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
 
     # --- storage (CP8.6) ---------------------------------------------------------------------------
 
+    # --- SR2 K3: page of the Khai thị reading library (before the sutra router: `/sutras/{slug}/edit` would match) ---
+
+    @app.get("/sutras/khaithi/{playlist_id}")
+    async def khaithi_reader_page(playlist_id: str):
+        if playlist_id != reading.SINGLE_ID and (not valid_playlist_id(playlist_id) or _playlist_or_404(playlist_id) is None):
+            return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
+        return FileResponse(STATIC_DIR / "sutra.html", headers={"Cache-Control": "no-cache"})
+
+    # --- Đọc Kinh (SR1): router of the sutra application, protected by the auth middleware above ---
+
+    app.include_router(sutra_web.router(SutraStore(Path(config.workspace.dir) / "_sutras"), STATIC_DIR))
+
     @app.get("/storage")
     async def storage_page():
         return FileResponse(STATIC_DIR / "storage.html", headers={"Cache-Control": "no-cache"})
@@ -2318,39 +2334,59 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
 
     # --- CP8.31 P16: community posts as Word (.docx) ---------------------------------------------------------
 
-    def _export_group(episode_id: str, name: str) -> post_export.ExportGroup | None:
-        """Posts of one episode that still have a rendered Short, in render-manifest order; None when none."""
+    def _export_items(episode_id: str, views: bool = False) -> list[dict]:
+        """Posts of one episode that still have a rendered Short, in render-manifest order; [] when none. Each item:
+        ``clip_id, head (title upper-case), paras, source, image`` and, with ``views`` (SR2 K2), ``episode_id, code,
+        copy_text, posted, stale`` (the fields of the Posts tab). ``name`` is only for the caller's group label."""
         order = [cid for cid, _ in post_stage.rendered_clip_ids(config, episode_id)]
         if not order or not (Path(config.workspace.dir) / episode_id).is_dir():
-            return None
+            return []
         with post_lock:
             try:
                 doc = post_store.read_posts(_posts_path(episode_id), episode_id)
             except post_store.PostsError:
-                return None
+                return []
         titles_by_clip: dict[str, str | None] = {}
+        tab_titles = True  # the Posts tab (api_posts) only knows the titling titles, not the rendered-file fallback
         try:
             titles_by_clip = {c["clip_id"]: c["title"] for c in list_titles(episode_id, config)["clips"]}
         except ReviewError:  # titling not readable: the title burnt into the rendered file
+            tab_titles = False
             rendered = ep._render_manifest(config, episode_id) or {}
             titles_by_clip = {sh.get("clip_id"): sh.get("title") for sh in rendered.get("shorts", [])
                               if isinstance(sh, dict)}
         fields = _post_header_fields(episode_id)
         by_clip = {e["clip_id"]: e for e in doc["posts"]}
-        posts = []
+        if views:
+            try:
+                ep_src = post_source.load(episode_id, config)
+            except post_source.PostSourceError:
+                ep_src = None
+            series, tags = _post_series_and_tags(episode_id)
+            hashtags_list = review_hashtags(series, tags)
+            prefixes = ep._copy_prefixes(config, episode_id, ep._render_manifest(config, episode_id) or {})
+        items = []
         for cid in order:
             entry = by_clip.get(cid)
             if entry is None:
                 continue
             head, paras, source = post_logic.text_parts(title=titles_by_clip.get(cid), paragraphs=entry["paragraphs"],
                                                         header_fields=fields)
-            posts.append(post_export.ExportPost(title=head, paragraphs=paras, source=source, image=entry["image"]))
-        return post_export.ExportGroup(name=name, posts=posts) if posts else None
+            item = {"clip_id": cid, "head": head, "paras": paras, "source": source, "image": entry["image"]}
+            if views:
+                view = _post_entry_view(entry, ep_src=ep_src, title=titles_by_clip.get(cid) if tab_titles else None,
+                                        header_fields=fields,
+                                        hashtags_list=hashtags_list)
+                item.update(episode_id=episode_id, code=prefixes.get(cid, "").rstrip("_"), copy_text=view["text"],
+                            posted=view["posted"], stale=view["stale"])
+            items.append(item)
+        return items
 
-    def _export_episode(video_id: str) -> post_export.ExportEpisode | None:
-        """Heading + groups "Shorts" then "Khai thị" of ``video_id`` (a Short episode); None when it has no post."""
-        groups = [g for g in (_export_group(video_id, "Shorts"),
-                              _export_group(video_id + khaithi.SUFFIX, "Khai thị")) if g is not None]
+    def _export_data(video_id: str, views: bool = False) -> tuple[str, list[tuple[str, list[dict]]]] | None:
+        """Heading + groups "Shorts" then "Khai thị" (name, items) of ``video_id`` (a Short episode); None when it
+        has no post."""
+        groups = [(n, items) for n, eid in (("Shorts", video_id), ("Khai thị", video_id + khaithi.SUFFIX))
+                  if (items := _export_items(eid, views))]
         if not groups:
             return None
         fields = _post_header_fields(video_id) or _post_header_fields(video_id + khaithi.SUFFIX) or {}
@@ -2363,7 +2399,18 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         vtitle = meta.get("title") if isinstance(meta, dict) else None
         if isinstance(vtitle, str) and vtitle.strip() and not (series and str(series).casefold() in vtitle.casefold()):
             heading += f" — {vtitle.strip()}"  # not when the video title already carries the series name
-        return post_export.ExportEpisode(heading=heading, groups=groups)
+        return heading, groups
+
+    def _export_episode(video_id: str) -> post_export.ExportEpisode | None:
+        """Heading + groups "Shorts" then "Khai thị" of ``video_id`` (a Short episode); None when it has no post."""
+        data = _export_data(video_id)
+        if data is None:
+            return None
+        heading, groups = data
+        return post_export.ExportEpisode(heading=heading, groups=[
+            post_export.ExportGroup(name=n, posts=[post_export.ExportPost(title=i["head"], paragraphs=i["paras"],
+                                                                         source=i["source"], image=i["image"])
+                                                   for i in items]) for n, items in groups])
 
     def _docx_name_of(video_id: str, images: bool = True) -> str:
         kf = ep.kind_fields(config, video_id)
@@ -2384,6 +2431,23 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             raise
         return FileResponse(tmp, media_type=DOCX_TYPE, background=BackgroundTask(os.unlink, tmp),
                             headers={"Content-Disposition": content_disposition(name), "Cache-Control": "no-store"})
+
+    def _is_numbered(e: dict) -> bool:
+        return isinstance(e.get("episode"), str) and e["episode"].isdigit() and int(e["episode"]) >= 1
+
+    def _pick_range(doc: dict, range_from: int | None, range_to: int | None,
+                    other: str | None) -> "tuple[list[dict], str] | JSONResponse":
+        """CP8.31 A1 (shared with SR2 K2): the available entries of a bộ kinh in episode order within ``from``..``to``
+        (at most ``RANGE_SIZE`` numbers) or the unnumbered ones (``other=1``) + the file-name span; 422 otherwise."""
+        entries = _by_episode_order([e for e in doc["entries"] if e.get("video_id") and e.get("available")])
+        if other is not None:
+            if other != "1" or range_from is not None or range_to is not None:
+                return JSONResponse({"detail": "dùng other=1 một mình hoặc from + to"}, status_code=422)
+            return [e for e in entries if not _is_numbered(e)], "chưa rõ"
+        if range_from is None or range_to is None or range_to < range_from or range_to - range_from >= RANGE_SIZE:
+            return JSONResponse({"detail": f"cần from, to (to ≥ from, tối đa {RANGE_SIZE} tập)"}, status_code=422)
+        return [e for e in entries if _is_numbered(e) and range_from <= int(e["episode"]) <= range_to], \
+            f"{range_from}-{range_to}"
 
     # sync handlers: FastAPI runs them in its worker thread pool, so building the file never blocks the event loop
     @app.get("/files/{episode_id}/posts.docx")
@@ -2409,23 +2473,94 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
         if (with_images := _images_flag(images)) is None:
             return JSONResponse({"detail": "images phải là 0 hoặc 1"}, status_code=422)
-        entries = _by_episode_order([e for e in doc["entries"] if e.get("video_id") and e.get("available")])
-        numbered = lambda e: isinstance(e.get("episode"), str) and e["episode"].isdigit() and int(e["episode"]) >= 1  # noqa: E731
-        if other is not None:
-            if other != "1" or range_from is not None or range_to is not None:
-                return JSONResponse({"detail": "dùng other=1 một mình hoặc from + to"}, status_code=422)
-            chosen, span = [e for e in entries if not numbered(e)], "chưa rõ"
-        else:
-            if range_from is None or range_to is None or range_to < range_from or range_to - range_from >= RANGE_SIZE:
-                return JSONResponse({"detail": f"cần from, to (to ≥ from, tối đa {RANGE_SIZE} tập)"}, status_code=422)
-            chosen = [e for e in entries if numbered(e) and range_from <= int(e["episode"]) <= range_to]
-            span = f"{range_from}-{range_to}"
+        picked = _pick_range(doc, range_from, range_to, other)
+        if isinstance(picked, JSONResponse):
+            return picked
+        chosen, span = picked
         episodes = [x for e in chosen if (x := _export_episode(e["video_id"])) is not None]
         if not episodes:
             return JSONResponse({"detail": "chưa có bài đăng nào"}, status_code=404)
         return _docx_response(playlist_series(doc) or doc.get("title") or playlist_id, episodes,
                               posts_docx_name(None, series=_playlist_docx_series(doc), fallback=playlist_id,
                                               span=span, images=with_images), with_images)
+
+    # --- SR2 K2: posts of a bộ kinh / group of 10 episodes as a reading book (read-only) -----------------------------
+
+    def _post_count(video_id: str) -> int:
+        """Posts (still rendered) of a Short episode and of its khai thị episode."""
+        return _post_stats(video_id)[0] + _post_stats(video_id + khaithi.SUFFIX)[0]
+
+    def _single_episodes() -> list[str]:
+        """Short episodes of no bộ kinh that hold at least one post, by creation date (first stage start), newest first."""
+        in_playlists = playlists.video_ids()
+        found: list[tuple[str, str]] = []
+        for ws, manifest in iter_manifests(Path(config.workspace.dir)):
+            eid = ws.episode_id
+            if eid in in_playlists or eid.endswith(khaithi.SUFFIX) or _post_count(eid) <= 0:
+                continue
+            starts = [st.get("started_at") for st in (manifest.get("stages") or {}).values()
+                      if isinstance(st, dict) and isinstance(st.get("started_at"), str)]
+            try:
+                stamp = min(starts) if starts else datetime.fromtimestamp(ws.manifest_path.stat().st_mtime,
+                                                                          timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            except OSError:
+                stamp = ""
+            found.append((stamp, eid))
+        found.sort(reverse=True)
+        return [eid for _, eid in found]
+
+    @app.get("/api/reading/khaithi")
+    def api_reading_khaithi():
+        """K2: bộ kinh with at least one post -> ranges of 10 episodes + posts; then "Video lẻ" (``_single``)."""
+        out = []
+        for doc in playlists.all():
+            entries = [e for e in doc["entries"] if e.get("video_id") and e.get("available")]
+            counts = [(int(e["episode"]) if _is_numbered(e) else None, _post_count(e["video_id"])) for e in entries]
+            ranges, other = reading.ranges_of(counts, RANGE_SIZE)
+            if ranges or other:
+                out.append({"playlist_id": doc["playlist_id"],
+                            "title": playlist_series(doc) or doc.get("title") or doc["playlist_id"],
+                            "ranges": ranges, "other": other})
+        out.sort(key=lambda b: reading.sort_key(b["title"]))
+        singles = _single_episodes()
+        if singles:
+            out.append({"playlist_id": reading.SINGLE_ID, "title": reading.SINGLE_TITLE,
+                        "ranges": reading.single_ranges(len(singles), RANGE_SIZE, [_post_count(e) for e in singles]),
+                        "other": None})
+        return out
+
+    @app.get("/api/reading/khaithi/{playlist_id}")
+    def api_reading_khaithi_book(playlist_id: str, range_from: int | None = Query(None, alias="from", ge=0),
+                                 range_to: int | None = Query(None, alias="to", ge=0), other: str | None = None):
+        """K2: one "book" (S3 + ``episode_id, clip_id, copy_text, posted, stale`` per section); episodes and posts in
+        the order of the ``.docx`` export; 404 unknown bộ / no post; 422 bad range (at most ``RANGE_SIZE`` episodes)."""
+        single = playlist_id == reading.SINGLE_ID
+        doc = None if single else _playlist_or_404(playlist_id)
+        if doc is None and not single:
+            return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
+        if single:
+            if other is not None:
+                if other != "1" or range_from is not None or range_to is not None:
+                    return JSONResponse({"detail": "dùng other=1 một mình hoặc from + to"}, status_code=422)
+                return JSONResponse({"detail": "Video lẻ không có nhóm chưa rõ số"}, status_code=404)
+            if range_from is None or range_to is None or range_to < range_from or range_to - range_from >= RANGE_SIZE:
+                return JSONResponse({"detail": f"cần from, to (to ≥ from, tối đa {RANGE_SIZE} tập)"}, status_code=422)
+            singles = _single_episodes()
+            chosen_ids = [e for pos, e in enumerate(singles, 1) if range_from <= pos <= range_to]
+            title, span = reading.SINGLE_TITLE, reading.range_label(range_from, range_to)
+        else:
+            picked = _pick_range(doc, range_from, range_to, other)
+            if isinstance(picked, JSONResponse):
+                return picked
+            chosen, _ = picked
+            chosen_ids = [e["video_id"] for e in chosen]
+            title = playlist_series(doc) or doc.get("title") or playlist_id
+            span = reading.range_label(range_from, range_to) if other is None else "Tập chưa rõ số"
+        episodes = [(d[0], [i for _, items in d[1] for i in items]) for vid in chosen_ids
+                    if (d := _export_data(vid, views=True)) is not None]
+        if not episodes:
+            return JSONResponse({"detail": "chưa có bài đăng nào"}, status_code=404)
+        return reading.book(f"{title} · {span}", episodes)
 
     @app.get("/files/{episode_id}/{name}")
     def files(episode_id: str, name: str, download: str | None = None):

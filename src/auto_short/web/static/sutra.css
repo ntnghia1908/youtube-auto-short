@@ -1,0 +1,83 @@
+/* Đọc Kinh (SR1 S7): library + reader. Reuses style.css (topbar, .btn, .card); only adds rules. */
+.lib-list { list-style: none; margin: 0; padding: 0; display: grid; gap: .6rem; }
+.lib-item { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem; background: #fafaf8; display: grid; gap: .35rem; }
+.lib-title { font-weight: 700; font-size: 1.1rem; }
+.lib-tabs { display: flex; gap: .4rem; margin-bottom: .8rem; }
+.lib-tabs .btn.on { background: var(--accent-bg); border-color: var(--accent); font-weight: 700; }
+.lib-actions { display: flex; flex-wrap: wrap; gap: .4rem; }
+
+body[data-page="reader"] { --r-bg: #f7f1e1; --r-fg: #2b2418; --r-muted: #7a6f58; --r-bar: #ece3cc; --r-border: #d9cdb0; --r-hl: #fff0b3;
+  background: var(--r-bg); color: var(--r-fg); }
+body[data-theme="light"] { --r-bg: #fff; --r-fg: #1d1d1b; --r-muted: #6b6b66; --r-bar: #f0f0ee; --r-border: #deded8; --r-hl: #fff3b0; }
+body[data-theme="paper"] { --r-bg: #f7f1e1; --r-fg: #2b2418; --r-muted: #7a6f58; --r-bar: #ece3cc; --r-border: #d9cdb0; --r-hl: #fff0b3; }
+body[data-theme="dark"] { --r-bg: #14161a; --r-fg: #d6d3c8; --r-muted: #8d8a80; --r-bar: #1f2227; --r-border: #33363c; --r-hl: #3b3516; }
+.rbar { position: fixed; top: 0; left: 0; right: 0; z-index: 20; display: flex; align-items: center; gap: .35rem; padding: .35rem .5rem;
+  background: var(--r-bar); color: var(--r-fg); border-bottom: 1px solid var(--r-border); transition: transform .2s; }
+.rbar.hidden { transform: translateY(-110%); }
+.rtitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: .9rem; }
+.rbtn { min-height: 44px; padding: .3rem .6rem; border: 1px solid var(--r-border); border-radius: 8px; background: transparent; color: inherit; font: inherit; font-size: .85rem; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; }
+.rbtn.on { background: var(--r-hl); font-weight: 700; }
+.reader { --fs: 18px; --lh: 1.7; --wt: 400; --wt-strong: 700; font-weight: var(--wt); max-width: 42rem; margin: 0 auto; padding: 4.2rem 1rem 5rem; font-size: var(--fs); line-height: var(--lh); font-family: "Noto Serif", Cambria, "Times New Roman", serif; /* not Georgia: on Windows it lacks Ế, Ấ, Ồ… and Chrome draws the tone mark beside the letter */ }
+.reader.sans { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+.reader h1, .reader h2.group, .reader h3.sec { font-weight: var(--wt-strong); }
+.reader h1 { font-size: 1.4em; text-align: center; margin: .5em 0; }
+.reader h2.group { font-size: 1.1em; color: var(--r-muted); text-transform: uppercase; letter-spacing: .04em; margin: 2em 0 .3em; border-bottom: 1px solid var(--r-border); }
+.reader h3.sec { font-size: 1.15em; text-align: center; margin: 1.8em 0 .6em; scroll-margin-top: 4rem; }
+.reader .intro { color: var(--r-muted); font-size: .9em; text-align: center; margin: 0 0 1em; }
+.reader p.para { margin: 0 0 1em; }
+.reader .line { display: block; overflow-wrap: anywhere; }
+.reader .line.inst { font-style: italic; opacity: .65; }
+.reader .line.strong { font-weight: var(--wt-strong); }
+.reader .line.han { font-family: "Noto Serif CJK SC", "Noto Serif SC", "Source Han Serif SC", "Songti SC", SimSun, serif; letter-spacing: .05em; }
+.reader .fn { font: inherit; font-size: .7em; vertical-align: super; line-height: 0; min-width: 1.6em; min-height: 1.6em; padding: 0 .25em; margin: 0 .1em; border: 1px solid var(--r-border); border-radius: 999px; background: var(--r-hl); color: inherit; cursor: pointer; }
+.reader .note { display: block; font-size: .85em; margin: .3em 0 .6em; padding: .4em .6em; border-left: 3px solid var(--r-border); background: var(--r-bar); font-style: normal; }
+/* page mode (SR1.4): the reader is a fixed viewport scrolled sideways by JS; the article is laid out in columns one page wide
+   (JS sets width / column-width / column-gap / height / margins from the viewport) */
+body.paged { overflow: hidden; }
+.reader.paged { position: fixed; inset: 0; max-width: none; margin: 0; padding: 0; overflow: hidden; touch-action: pan-y; }
+.reader.paged #r-msg { display: none; }
+.reader.paged #text { column-fill: auto; }
+.reader.paged h1, .reader.paged h2.group, .reader.paged h3.sec { break-after: avoid; break-inside: avoid; margin-top: .6em; }
+.reader.paged .para.para-keep, .reader.paged .note, .reader.paged .finish { break-inside: avoid; }
+.reader.paged .line { orphans: 2; widows: 2; }
+.reader.paged .finish { margin-top: 1.5rem; padding-bottom: 1rem; }
+.pageno { position: fixed; bottom: .5rem; left: 0; right: 0; z-index: 5; text-align: center; font-size: .8rem; color: var(--r-muted); pointer-events: none; }
+.pageno[hidden] { display: none; }
+.finish { text-align: center; margin-top: 2.5rem; }
+.finish .btn.primary { font-size: 1.1rem; padding: .8rem 1.4rem; }
+.sheet { position: fixed; inset: 0; z-index: 30; background: rgba(0,0,0,.45); display: flex; align-items: flex-end; }
+.sheet[hidden] { display: none; }
+.sheet-body { width: 100%; max-width: 42rem; margin: 0 auto; max-height: 80vh; overflow: auto; background: var(--r-bg); color: var(--r-fg); border-radius: 14px 14px 0 0; padding: .8rem 1rem 1.2rem; }
+.sheet-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: .5rem; }
+.toc-group { margin: .8rem 0 .2rem; font-size: .8rem; text-transform: uppercase; color: var(--r-muted); letter-spacing: .04em; }
+.toc-item { display: block; width: 100%; text-align: left; min-height: 44px; padding: .5rem .6rem; border: none; border-radius: 8px; background: none; color: inherit; font: inherit; cursor: pointer; }
+.toc-item.current { background: var(--r-hl); font-weight: 700; }
+.set-row { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin: .6rem 0; }
+.set-row > span:first-child { flex: 0 0 6.5rem; font-weight: 600; }
+.hist-row { display: flex; justify-content: space-between; padding: .35rem 0; border-bottom: 1px solid var(--r-border); }
+#awake { position: fixed; right: 0; bottom: 0; width: 2px; height: 2px; opacity: .01; pointer-events: none; }
+
+/* editor (SR1.2) */
+.ed-row { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin: .5rem 0; }
+.ed-text { width: 100%; box-sizing: border-box; min-height: 40vh; font: inherit; font-size: .95rem; line-height: 1.5; padding: .5rem; border: 1px solid var(--border); border-radius: var(--radius); resize: vertical; }
+.ed-warn { margin: .3rem 0; padding-left: 1.1rem; color: #8a5a00; }
+.ed-warn:empty, .ed-errors:empty { display: none; }
+.ed-errors { list-style: none; margin: .5rem 0 0; padding: 0; display: grid; gap: .3rem; }
+.ed-errors button { width: 100%; min-height: 44px; text-align: left; padding: .4rem .6rem; border: 1px solid #d9a0a0; border-radius: 8px; background: #fdf0f0; color: #7a1f1f; font: inherit; font-size: .9rem; cursor: pointer; }
+.ed-preview h4 { margin: .6rem 0 .2rem; }
+.ed-preview ol { margin: .2rem 0 .6rem; padding-left: 1.3rem; }
+.ed-preview .ed-group { font-weight: 600; margin-top: .4rem; color: #6b6b66; }
+.ed-preview p { margin: .2rem 0; }
+.ed-preview .ed-sample { border-left: 3px solid var(--border); padding-left: .6rem; margin: .5rem 0; }
+.ed-mirror { position: absolute; visibility: hidden; top: 0; left: -9999px; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
+.menu-list { display: grid; gap: .5rem; margin-top: .5rem; }
+.menu-list .btn { text-align: center; text-decoration: none; }
+.btn.danger { color: #a11; border-color: #d9a0a0; }
+
+/* Khai thị reader (SR2 K3): Copy button under a post title */
+.reader .post-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: .5rem; margin: 0 0 .8em; font-size: .85rem; font-weight: 400; }
+.reader .post-copy.done { background: var(--r-hl); font-weight: 700; }
+.reader .post-stale { color: #8a5a00; border: 1px solid #d9b46b; border-radius: 999px; padding: 0 .5rem; }
+.reader .post-note { color: var(--r-muted); }
+.reader .post-fallback { width: 100%; font: inherit; font-size: 16px; }
+.reader.paged .post-tools { break-inside: avoid; break-after: avoid; }

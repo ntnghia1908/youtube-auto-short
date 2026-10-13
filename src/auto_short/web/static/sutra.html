@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Đọc Kinh</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/sutra.css">
+</head>
+<body data-page="reader" data-theme="paper">
+<header id="rbar" class="rbar">
+  <a class="rbtn" href="/sutras">&larr; Thư viện</a>
+  <span id="rtitle" class="rtitle"></span>
+  <button id="btn-toc" class="rbtn" type="button">Mục lục</button>
+  <button id="btn-set" class="rbtn" type="button" aria-label="Cài đặt đọc">Aa</button>
+  <button id="btn-count" class="rbtn" type="button">&hellip;</button>
+  <button id="btn-menu" class="rbtn" type="button" aria-label="Sửa hoặc xóa bộ kinh">&#8942;</button>
+</header>
+<main id="reader" class="reader">
+  <p id="r-msg" class="muted">Đang tải…</p>
+  <article id="text"></article>
+  <div class="finish">
+    <button id="btn-done" class="btn primary" type="button" hidden>Tụng xong (+1 biến)</button>
+    <p id="done-msg" class="small muted"></p>
+  </div>
+</main>
+<div id="pageno" class="pageno" hidden></div>
+
+<div id="sheet-toc" class="sheet" hidden role="dialog" aria-label="Mục lục">
+  <div class="sheet-body"><div class="sheet-head"><strong>Mục lục</strong><button class="rbtn sheet-close" type="button">Đóng</button></div>
+  <div id="toc"></div></div>
+</div>
+<div id="sheet-set" class="sheet" hidden role="dialog" aria-label="Cài đặt đọc">
+  <div class="sheet-body"><div class="sheet-head"><strong>Cài đặt đọc</strong><button class="rbtn sheet-close" type="button">Đóng</button></div>
+  <div id="settings"></div></div>
+</div>
+<div id="sheet-count" class="sheet" hidden role="dialog" aria-label="Lịch sử tụng">
+  <div class="sheet-body"><div class="sheet-head"><strong>Lịch sử tụng</strong><button class="rbtn sheet-close" type="button">Đóng</button></div>
+  <div id="history"></div>
+  <p><button id="btn-undo" class="btn" type="button">Hoàn tác biến vừa ghi</button></p>
+  <p id="undo-msg" class="small muted"></p></div>
+</div>
+<div id="sheet-menu" class="sheet" hidden role="dialog" aria-label="Sửa hoặc xóa">
+  <div class="sheet-body"><div class="sheet-head"><strong>Bộ kinh này</strong><button class="rbtn sheet-close" type="button">Đóng</button></div>
+  <div class="menu-list">
+    <a id="menu-edit" class="btn" href="#">Sửa văn bản</a>
+    <button id="menu-delete" class="btn danger" type="button">Xóa bộ kinh</button>
+  </div>
+  <p id="menu-msg" class="small muted"></p></div>
+</div>
+<video id="awake" muted playsinline loop preload="auto" aria-hidden="true" tabindex="-1" src="/static/sutra-awake.mp4"></video>
+<script src="/static/sutra.js"></script>
+</body>
+</html>

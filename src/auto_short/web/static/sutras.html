@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Đọc Kinh — Auto Short</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/sutra.css">
+</head>
+<body data-page="library">
+<header class="topbar">
+  <a class="brand" href="/">&larr; Auto Short</a>
+  <nav class="topnav"><a href="/monitor">Theo dõi</a> <a href="/storage">Bộ nhớ</a> <a href="/sutras">Đọc Kinh</a>
+  <form method="post" action="/logout"><button class="btn link" type="submit">Đăng xuất</button></form></nav>
+</header>
+<main class="container">
+  <section class="card">
+    <div class="lib-tabs" role="tablist">
+      <button id="tab-sutras" class="btn on" type="button" role="tab" aria-selected="true">Đọc Kinh</button>
+      <button id="tab-kt" class="btn" type="button" role="tab" aria-selected="false">Khai thị</button>
+    </div>
+    <div id="panel-sutras" role="tabpanel">
+      <p><a class="btn primary" href="/sutras/new">Thêm bộ kinh</a></p>
+      <p id="lib-msg" class="muted small">Đang tải…</p>
+      <ul id="lib-list" class="lib-list"></ul>
+    </div>
+    <div id="panel-kt" role="tabpanel" hidden>
+      <p class="muted small">Bài đăng của các Short và video khai thị, theo bộ kinh, mỗi nhóm 10 tập.</p>
+      <p id="kt-msg" class="muted small">Đang tải…</p>
+      <ul id="kt-list" class="lib-list"></ul>
+    </div>
+  </section>
+</main>
+<script src="/static/sutra.js"></script>
+</body>
+</html>
