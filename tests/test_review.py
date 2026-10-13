@@ -115,7 +115,8 @@ def test_set_title_writes_review_and_previews(ws, rcfg):
 
 
 @pytest.mark.parametrize("text, msg", [
-    ("x" * 61, "too long"), ("", "empty title"), ("Tâm thiện 🙏", "emoji"), ("Tâm 心 thiện", "not in the font"),
+    ("x" * 61, "too long"), ("", "empty title"), ("Tâm thiện 🙏", "emoji"), ("Tâm 心 thiện", "non-Latin script"),
+    ("Tâm \ue000 thiện", "not in the font"),
     ("Nghiêngnghiêngnghiêngnghiêngnghiêngnghiêngnghiêng", "does not fit"),
 ])
 def test_invalid_title_leaves_review_unchanged(ws, rcfg, text, msg):
@@ -221,7 +222,7 @@ def test_cli_title(ws, cfg_file, capsys):
     assert f"k02\tc00002\tai\t{TITLES['k02']}\n  AI: {TITLES['k02']}\n" in out
 
     before = (ws.dir / "review.json").read_bytes()
-    for bad in (["--set", "x" * 61], ["--set", ""], ["--set", "Tâm 🙏"], ["--alternative", "5"]):
+    for bad in (["--set", "x" * 61], ["--set", ""], ["--set", "Tâm 🙏"], ["--set", "Tâm thiện 众生"], ["--alternative", "5"]):
         assert main(["title", EID, "k01", *bad, "--config", cfg_file]) == 1
         assert "auto-short: error: " in capsys.readouterr().err
         assert (ws.dir / "review.json").read_bytes() == before

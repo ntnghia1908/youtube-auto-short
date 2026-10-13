@@ -64,6 +64,7 @@ Quyết định: `docs/tasks/CP8.11-series-recognition.md` D1–D7.
   2. rỗng → `empty title`;
   3. số code point NFC < `min_chars` → `too short (n < min chars)`; > `max_chars` → `too long (n > max chars)`;
   4. emoji/pictograph → `emoji/pictograph`: ký tự trong U+1F000–1FAFF, U+2190–21FF (mũi tên), U+2300–23FF, U+2600–27BF, U+2B00–2BFF, U+FE0F, U+200D, U+20E3, U+3030, U+303D, U+3297, U+3299, U+E0020–E007F;
+  4b. chữ cái không thuộc chữ Latin → `non-Latin script`: ký tự có Unicode category `L*` mà tên Unicode không bắt đầu bằng `LATIN` (chữ Hán, kana, Hangul, Cyrillic, Thái…); chữ tiếng Việt đều là `LATIN …` nên qua. Áp trên title đã NFC, ngay sau luật 4 (**Sửa đổi 2026-10-09, FIX-title-script:** thêm 4b sau bug title lẫn chữ Hán "Hết phước今生…" làm render lỗi glyph; đặt 4b để khoảng "luật 1–8" mà CP8.2 tham chiếu không đổi số);
   5. `#` → `hashtag`; `@` → `@ mention`; `!` hoặc `！` → `exclamation mark`;
   6. URL (`http(s)://`, `www.`, hoặc `<từ>.<com|net|org|vn|info|io|me|tv|ly>`) → `URL`;
   7. bao bởi cặp ngoặc kép (`"…"`, `“…”`, `'…'`, `‘…’`, `«…»`, `„…“`, `「…」`, `『…』`) → `wrapped in quotes`;

@@ -235,6 +235,19 @@ def test_no_valid_option_retries_then_untitled(tcfg, caplog):
     assert "WARNING: clip k02 untitled" in caplog.text and "WARNING: 1 clip(s) untitled: k02" in caplog.text
 
 
+def test_non_latin_option_rejected_next_valid_chosen(tcfg):
+    ws = make_titling_episode(tcfg.workspace.dir)
+    mixed = reply(option("Hết phước今生, đời sau khổ không lối thoát?", "ý thứ 2 phần đầu chúng ta học kinh"),
+                  option("Ý thứ 2 khi học kinh", "ý thứ 2 phần đầu chúng ta học kinh"),
+                  option("Nhớ kỹ ý thứ 2", "ý thứ 2 phần cuối xin nhớ kỹ"))
+    run_titling(EID, tcfg, client=FakeClient({2: [mixed]}), sleep=NoSleep())
+    t1 = _load(ws, "titles.json")["titles"][0]
+    assert t1["title"] == "Ý thứ 2 khi học kinh" and [a["title"] for a in t1["alternatives"]] == ["Nhớ kỹ ý thứ 2"]
+    opts = _load(ws, "titling_log.json")["clips"][0]["ai_calls"][0]["options"]
+    assert [(o["status"], o["reject_reason"]) for o in opts] == \
+        [("invalid", "non-Latin script"), ("valid", None), ("valid", None)]
+
+
 def test_invalid_then_valid_retry(tcfg):
     ws = make_titling_episode(tcfg.workspace.dir)
     fake = FakeClient({2: [ALL_BAD.replace("7", "2"), http_error(), good_reply(2)]})
