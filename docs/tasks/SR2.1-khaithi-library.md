@@ -55,15 +55,16 @@ Tất cả required verification phải chạy và PASS trước READY.
 
 Thêm API đọc + một nơi gọi route ghi có sẵn (sau auth): manual test là gate trước integration.
 
-- [ ] Điện thoại: tab Khai thị → bộ Vô Lượng Thọ → "Tập 1–10": đọc, mục lục theo tập, lật trang.
-- [ ] Copy một bài → dán vào ứng dụng ghi chú đúng nội dung; tab Bài đăng của tập đó đã tick "Đã đăng bài".
-- [ ] Sửa một bài ở tab Bài đăng → mở lại thư viện thấy chữ mới.
+- [x] Điện thoại: tab Khai thị → bộ Vô Lượng Thọ → "Tập 1–10": đọc, mục lục theo tập, lật trang.
+- [x] Copy một bài → dán vào ứng dụng ghi chú đúng nội dung; tab Bài đăng của tập đó đã tick "Đã đăng bài".
+- [x] Sửa một bài ở tab Bài đăng → mở lại thư viện thấy chữ mới.
 
 ## Result
 
 - Main changes: `web/app.py` — `_export_group` / `_export_episode` tách thành `_export_items` / `_export_data` (dùng chung `.docx` và API; `.docx` không đổi), `_pick_range` (chọn tập theo `from`/`to`/`other`, dùng chung `.docx`), `GET /api/reading/khaithi`, `GET /api/reading/khaithi/{playlist_id}`, trang `/sutras/khaithi/{playlist_id}` (đăng ký trước router `sutra`). `web/reading.py` — hàm thuần (nhóm 10 tập, sách S3). `sutra.js` / `sutra.css` / `sutras.html` — tab Đọc Kinh | Khai thị (nhớ tab), nguồn khai thị, nút Copy + "Đã đăng ✓", nhãn "Short đã đổi", khóa vị trí `sutra:pos:kt:<id>:<from>-<to>|other`. Pointer CP8.15 P8 + project-profile.
 - Tests: `tests/test_web_sr21.py` (13 test); `tests/test_web_cp831.py` + `test_web_sutra_sr1*.py` PASS nguyên trạng. Toàn bộ: `python -m pytest -q -n auto` 1750 passed, 1 skipped. `node --check sutra.js` OK; `node scripts/framework-check.mjs` `framework-check` PASS.
-- Review: chưa.
+- Review: ORCHESTRATOR 2026-10-12 — đạt (không `innerHTML`; chỉ tick khi bài chưa đăng; `.docx` không đổi).
 - Important findings / decisions: (1) `copy_text` dùng title của titling như tab Bài đăng (khi titling không đọc được, tab Bài đăng không có title, thư viện cũng không; tiêu đề mục vẫn lấy fallback từ render manifest như `.docx`). (2) "Video lẻ": tập Short không thuộc bộ nào có bài, ngày tạo = `started_at` sớm nhất của manifest (dự phòng mtime), vị trí 1 = mới nhất, nhóm `from`/`to` theo vị trí. (3) Vị trí đọc khai thị lưu thêm `clip` (`episode_id/clip_id`) để khôi phục đúng bài khi số bài đổi.
 - Known limitations: "Video lẻ" đánh số theo vị trí mới nhất trước nên khi có tập lẻ mới, nhóm và vị trí đã lưu dịch đi; mã mục `s<n>` đổi khi thêm bài (đã bù bằng `clip`). Chưa thử trên điện thoại / clipboard HTTP thật (manual test). Copy dùng bản chép của `app.js`.
-- PR: chưa (không push theo yêu cầu).
+- Manual test: HUMAN LEAD 2026-10-13 trên 8080 (điện thoại + laptop) — OK. Kèm hai sửa nhỏ SR1 sau test: bỏ Georgia khỏi font đọc (Windows thiếu dấu chồng), bỏ độ đậm "Đậm vừa".
+- PR: SR1 + SR2 chung một PR.
