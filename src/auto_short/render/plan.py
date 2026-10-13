@@ -383,16 +383,35 @@ def _panel_chain(box: Box, lines: list[TextLine], font_file: Path, size: int, la
     return ",".join(parts) + f"[{label}]"
 
 
-def _video_cut(frames: list[tuple[int, int]], f: str, per_frame: str, pad: str) -> str:
+def tail_clone_limit(fps: Fraction) -> int:
+    """FIX-render-video-tail T1: most frames the last source frame may be repeated at the end (0.1 s)."""
+    return math.ceil(Fraction(1, 10) * fps)
+
+
+def tail_missing(frames: list[tuple[int, int]], fps: Fraction, video_end: float | None) -> int:
+    """FIX-render-video-tail: number ``m`` of planned output frames whose grid index lies at or after the end of
+    the source video stream (``start_time + duration``, s). Source frame ``i`` exists iff ``i < round(end x fps)``
+    (the stream of N frames ends at N / fps). ``None`` (unknown end) -> 0, the behaviour before the fix."""
+    if video_end is None:
+        return 0
+    avail = round(Fraction(video_end) * fps)
+    return sum(max(0, min(n, first + n - avail)) for first, n in frames if n > 0)
+
+
+def _tpad(tail: int) -> str:
+    return f"tpad=stop_mode=clone:stop={tail}," if tail > 0 else ""
+
+
+def _video_cut(frames: list[tuple[int, int]], f: str, per_frame: str, pad: str, tail: int = 0) -> str:
     """CP7 video chain: one ``select`` of all kept frames on the absolute grid (hard cuts)."""
     sel = "+".join(f"between(n_grid,{first},{first + n - 1})" for first, n in frames if n > 0)
     # n_grid = index of the frame on the absolute output grid (t * fps); fps= puts frames on that grid.
     sel = sel.replace("n_grid", f"round(t*{f})")
-    return f"[0:v]fps={f},select='{sel}',setpts=N/({f})/TB,{per_frame},{pad}"
+    return f"[0:v]fps={f},select='{sel}',setpts=N/({f})/TB,{per_frame},{_tpad(tail)}{pad}"
 
 
 def _video_dissolve(frames: list[tuple[int, int]], fps: Fraction, dp: DissolvePlan, per_frame: str,
-                    pad: str) -> list[str]:
+                    pad: str, tail: int = 0) -> list[str]:
     """V3: one branch per segment (``split`` + ``trim`` of the extended range + per-frame conversions), joined
     left to right with ``xfade=transition=fade`` over D_j frames (``concat`` when D_j = 0); ``pad`` after."""
     f = fps_text(fps)
@@ -417,15 +436,16 @@ def _video_dissolve(frames: list[tuple[int, int]], fps: Fraction, dp: DissolvePl
                          f":offset={_num(float(Fraction(length - d) / fps))}[{out}]")
         length += frames[i][1] + sum(dp.extend[i]) - d
         cur = out
-    chain.append(f"[{cur}]setpts=N/({f})/TB,{pad}")
+    chain.append(f"[{cur}]setpts=N/({f})/TB,{_tpad(tail)}{pad}")
     return chain
 
 
 def filter_graph(*, segments: list[tuple[int, int]], fps: Fraction, lay: Layout, font_file: Path,
                  header_lines: list[TextLine], header_size: int, title_lines: list[TextLine],
-                 title_size: int, dissolve: float = 0.0) -> str:
+                 title_size: int, dissolve: float = 0.0, tail: int = 0) -> str:
     """R6 filter graph. ``dissolve`` (s, CP8.1): video dissolve at junctions; when no junction gets a dissolve
-    (``dissolve = 0``, one segment, or every gap too short) the graph is exactly the CP7 one."""
+    (``dissolve = 0``, one segment, or every gap too short) the graph is exactly the CP7 one.
+    ``tail`` (FIX-render-video-tail T1): frames the last video frame is cloned at the end (``tpad``), 0 = none."""
     frames = frame_plan(segments, fps)
     f = fps_text(fps)
     c, v = lay.crop, lay.video
@@ -433,7 +453,8 @@ def filter_graph(*, segments: list[tuple[int, int]], fps: Fraction, lay: Layout,
                  f"scale=out_color_matrix=bt709:out_range=tv,format=yuv444p")
     pad = f"pad={WIDTH}:{HEIGHT}:{v.x}:{v.y}:color={_hex(BACKGROUND)}[vid]"
     dp = dissolve_plan(frames, fps, dissolve)
-    video = _video_dissolve(frames, fps, dp, per_frame, pad) if dp.active else [_video_cut(frames, f, per_frame, pad)]
+    video = (_video_dissolve(frames, fps, dp, per_frame, pad, tail) if dp.active
+             else [_video_cut(frames, f, per_frame, pad, tail)])
     k = len(segments)
     audio = [f"[0:a]asplit={k}" + "".join(f"[as{i}]" for i in range(k)) if k > 1 else "[0:a]anull[as0]"]
     for i, (a, b) in enumerate(segments):

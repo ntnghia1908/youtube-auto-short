@@ -161,6 +161,20 @@ def _rate(stream: dict) -> Fraction:
         raise RenderError("cannot determine the source frame rate") from None
 
 
+def video_end_seconds(video: dict, fps: Fraction) -> float | None:
+    """End of the video stream (``start_time + duration``, s); falls back to ``nb_frames / fps`` when the stream
+    has no duration; None when neither is known (FIX-render-video-tail)."""
+    try:
+        start = float(video.get("start_time") or 0)
+        if video.get("duration") not in (None, "N/A", ""):
+            return start + float(video["duration"])
+        if video.get("nb_frames") not in (None, "N/A", ""):
+            return start + int(video["nb_frames"]) / float(fps)
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
 def verify_output(path: Path, fps: Fraction, planned_frames: int, run: Runner) -> None:
     """R9: 1080x1920 h264 yuv420p at ``fps``, aac 48 kHz stereo, video and audio within 0.1 s of the planned
     length; CP8.1 V5: exactly ``planned_frames`` video frames."""
@@ -605,6 +619,7 @@ def _render_all(ws: Workspace, cfg: RenderConfig, fpath: Path, font_sha: str, me
         raise RenderError(f"source media needs a video and an audio stream: {media}")
     src_w, src_h = int(info["video"]["width"]), int(info["video"]["height"])
     fps = plan.output_fps(_rate(info["video"]))
+    video_end = video_end_seconds(info["video"], fps)
 
     header_lines = [nfc(x) for x in titles_doc["header"]["lines"]]
     try:
@@ -672,6 +687,10 @@ def _render_all(ws: Workspace, cfg: RenderConfig, fpath: Path, font_sha: str, me
                 log.info("%s: clip %s: reuse (render_key unchanged): %s (%s)", STAGE, clip["id"],
                          " / ".join(fit.lines), cp.origin)
                 continue
+            tail = plan.tail_missing(plan.frame_plan(cp.segments, fps), fps, video_end)
+            if tail > plan.tail_clone_limit(fps):  # FIX-render-video-tail T2: no encode, no .part
+                raise RenderError(f"clip {clip['id']}: video stream ends at {video_end:.3f} s, before the clip end "
+                                  f"{cp.segments[-1][1] / 1000:.3f} s")
             t_lines = _write_lines(tmp, f"t{clip['id']}_", fit.lines,
                                    baselines(len(fit.lines), font=font, size=fit.font_size, pitch=fit.line_pitch,
                                              panel_height=fit.panel_height))
@@ -679,7 +698,7 @@ def _render_all(ws: Workspace, cfg: RenderConfig, fpath: Path, font_sha: str, me
             script.write_text(plan.filter_graph(segments=cp.segments, fps=fps, lay=lay, font_file=fpath,
                                                 header_lines=h_lines, header_size=header.font_size,
                                                 title_lines=t_lines, title_size=fit.font_size,
-                                                dissolve=cfg.dissolve), encoding="utf-8")
+                                                dissolve=cfg.dissolve, tail=tail), encoding="utf-8")
             shorts_dir.mkdir(exist_ok=True)
             part = shorts_dir / f".{clip['id']}.mp4.part"
             files.staged[rel] = part
