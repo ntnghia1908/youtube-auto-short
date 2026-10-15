@@ -16,7 +16,7 @@ Implementation tham chiếu: `src/auto_short/khaithi.py`, `analysis/stage.py`, `
 ## K1. Tập khai thị
 
 - Khai thị = video 9:16 cùng template CP7 (header, tiêu đề AI CP6; layout trước CP8.14 từ CP8.21, CP7 R4), dài hơn Short, trọn một ý; đăng như video dọc thường.
-- Mỗi nguồn tối đa **một** tập khai thị: episode id `<base_id>.kt` (`base_id` = id CP2 D3 của nguồn; `<base_id>.kt` phải hợp lệ theo regex CP2 D3). Workspace `work/<base_id>.kt/`, output `output/<base_id>.kt/`; tập Short `work/<base_id>/` không bị ghi đè.
+- Mỗi nguồn tối đa **một** tập khai thị: episode id `<base_id>.kt` (`base_id` = id CP2 D3 của nguồn; `<base_id>.kt` phải hợp lệ theo CP2 D3, gồm sửa đổi FIX-youtube-id-dash: id YouTube bắt đầu `-` / `_` hợp lệ, kể cả có `.kt`). Workspace `work/<base_id>.kt/`, output `output/<base_id>.kt/`; tập Short `work/<base_id>/` không bị ghi đè.
 - Loại tập xác định **chỉ** bởi `work/<id>/khaithi.json` (không suy từ hậu tố):
 
 ```json

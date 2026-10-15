@@ -63,7 +63,7 @@ from ..review import shorts as review_shorts
 from ..review.names import hashtags as review_hashtags
 from ..review.names import posts_docx_name
 from ..titling.playlist import stored_series as playlist_series
-from ..workspace import iter_manifests
+from ..workspace import WorkspaceError, iter_manifests, validate_episode_id
 from . import episodes as ep
 from . import reading
 from . import monitor as monitor_mod
@@ -686,7 +686,15 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         # W4 per kind on its own episode (A1.1): duplicate job, archived (CP8.6 S3), low disk (CP8.6 S4)
         items: list[dict] = []
         for kind in kinds:
-            eid = video_id if kind == "short" else khaithi.episode_id_for(video_id)
+            try:  # FIX-youtube-id-dash I4: a bad id is a 4xx, never a 500
+                eid = validate_episode_id(video_id) if kind == "short" else khaithi.episode_id_for(video_id)
+            except WorkspaceError:
+                items.append({"kind": kind, "episode_id": video_id, "status": 422,
+                              "error": f"id video không hợp lệ: {video_id!r}"})
+                continue
+            except khaithi.KhaithiError as exc:
+                items.append({"kind": kind, "episode_id": video_id, "status": 422, "error": exc.vi})
+                continue
             item: dict = {"kind": kind, "episode_id": eid}
             current = runner.latest(eid)
             if current is not None and current.active:

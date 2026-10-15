@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: BUG
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -65,9 +65,9 @@ Không chạm database / security model / public API. Trên 8080 (ghim commit nh
 
 ## Result
 
-- Main changes:
-- Tests:
+- Main changes: `workspace.is_episode_id` (một chủ duy nhất của luật; `validate_episode_id` + `iter_manifests` dùng) = luật cũ HOẶC `^[A-Za-z0-9_-]{11}(\.kt)?$` (`.kt` là literal vì `khaithi` import `workspace`); `post/images.usage_counts` và `post/redistribute` dùng luật chung thay vì bỏ thư mục `_…` / regex riêng; worker enhance `tools/enhance_worker/worker.py` nhận `episode_id` YouTube (bản sao regex có chú thích, tool độc lập); `web/app.py` `_queue_video`: id sai → mục lỗi 422 tiếng Việt (không 500; bulk playlist cũng nhận); CP2 D3 sửa đổi + pointer CP8.9 K1 + README (CLI `--episode-id=-x` / `--`).
+- Tests: `tests/test_youtube_id_dash.py` (AC1, 2, 3, 5, 6) + `test_lease_and_put_for_a_dash_episode_id` trong `tests/test_enhance_api.py` (AC4). `pytest -q -n auto`: 1801 passed, 1 skipped; `node scripts/framework-check.mjs`: PASS.
 - Review:
-- Important findings / decisions:
-- Known limitations:
+- Important findings / decisions: `_LEASE_ID_RE` (web/app.py) chỉ kiểm lease id (hex ngẫu nhiên `secrets.token_hex`), không chứa episode id → giữ nguyên. enhance service `_dir` đã dùng `validate_episode_id`; `web/episodes.py`, `web/playlists.py` dùng `validate_episode_id` / `_VIDEO_ID_RE` đã cho phép `-`/`_`. Rà subprocess / yt-dlp / ffmpeg (ingest/probe, render, analysis/detect, post/dhash, enhance service/state, sutra importer, worker): argv luôn là `str(<workspace>/<id>/…)` hoặc URL `https://youtu.be/<id>` (yt-dlp qua API Python, `canonical_url`), không có id trần ở argv; chỉ argparse CLI cần `--episode-id=-x` / `--`.
+- Known limitations: Chưa chạy trên 8080 (manual test do Tech Lead). Nếu `--workspace.dir` bắt đầu bằng `-` thì đường dẫn tương đối sẽ thành argv bắt đầu `-` (không đổi, ngoài phạm vi).
 - PR:

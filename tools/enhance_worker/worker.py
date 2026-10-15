@@ -49,6 +49,12 @@ EXIT_OK, EXIT_ERROR, EXIT_AUTH = 0, 1, 3
 
 log = logging.getLogger("enhance_worker")
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+# Standalone tool (no auto_short import): mirrors workspace.is_episode_id (CP2 D3, FIX-youtube-id-dash).
+_YT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}(\.kt)?$")
+
+
+def _episode_id_ok(value) -> bool:
+    return bool(_ID_RE.match(value) or _YT_ID_RE.match(value))
 _DONE = object()
 
 DEFAULTS = {
@@ -967,7 +973,7 @@ class Worker:
                   "frames", "segment_frames", "params", "config_hash"):
             if k not in d:
                 return f"thieu '{k}'"
-        if not _ID_RE.match(str(d["episode_id"])) or not _ID_RE.match(str(d["lease_id"])):
+        if not _episode_id_ok(str(d["episode_id"])) or not _ID_RE.match(str(d["lease_id"])):
             return "episode_id / lease_id sai dinh dang"
         p = d["params"]
         for k in ("model", "denoise", "pre_height", "out_height"):

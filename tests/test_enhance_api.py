@@ -452,3 +452,20 @@ def test_queue_waiting_ai_jobs_do_not_count_while_paused(tmp_path):
         gate.set()
         runner.resume()
         runner.stop(5)
+
+
+def test_lease_and_put_for_a_dash_episode_id(ctx, segments):
+    """FIX-youtube-id-dash AC4: YouTube ids starting with '-' / '_' are valid episode ids for the worker routes."""
+    eids = ("-RjgLgw_iVk", "_xIElIoe2Ls")
+    for eid in eids:
+        make_yt_episode(ctx.cfg, eid)
+        ctx.clock.now += 10
+    seen = []
+    for headers in (H1, H2):
+        r = ctx.lease(headers)
+        assert r.status_code == 200
+        seen.append(r.json()["episode_id"])
+        lease = r.json()
+        data = segments[0]
+        assert ctx.put(lease["lease_id"], 0, data, headers=headers).status_code in (200, 201, 204)
+    assert sorted(seen) == sorted(eids)
