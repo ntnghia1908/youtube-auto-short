@@ -240,6 +240,8 @@ auto-short ingest input/rbjfCfFq3Dk/rbjfCfFq3Dk.mp4
 auto-short ingest https://youtu.be/rbjfCfFq3Dk
 
 # Options: --episode-id ID, --force (re-run even if up to date), --config PATH
+# A YouTube id may start with '-': use --episode-id=-xxxxxxxxxx, or `--` before a positional id
+# (auto-short status -- -RjgLgw_iVk)
 auto-short status <episode_id>
 ```
 

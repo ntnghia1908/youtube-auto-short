@@ -12,7 +12,7 @@ import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..workspace import atomic_write_bytes
+from ..workspace import atomic_write_bytes, is_episode_id
 
 MAX_BYTES = 15 * 1024 * 1024
 MIN_SHORT_EDGE = 600
@@ -193,7 +193,7 @@ def usage_counts(work_dir: Path) -> dict[str, int]:
     if not work_dir.is_dir():
         return counts
     for ep_dir in work_dir.iterdir():
-        if not ep_dir.is_dir() or ep_dir.name.startswith("_"):
+        if not ep_dir.is_dir() or not is_episode_id(ep_dir.name):
             continue
         doc = read_posts_quiet(ep_dir / "posts.json", ep_dir.name)
         for entry in doc.get("posts", []):

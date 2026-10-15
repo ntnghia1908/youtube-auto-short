@@ -20,10 +20,10 @@ from pathlib import Path
 
 from . import store
 from .store import PostsError
+from ..workspace import is_episode_id
 
 BACKUP_DIR = "_post-backups"
 KEEP_BACKUPS = 5
-_EP_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 
 def base_id(episode_id: str) -> str:
@@ -59,7 +59,7 @@ def plan(work_dir: Path, library: list[str]) -> Plan:
     docs: dict[str, dict] = {}
     if work_dir.is_dir():
         for d in sorted(work_dir.iterdir()):
-            if not d.is_dir() or not _EP_RE.match(d.name) or not (d / store.POSTS_NAME).is_file():
+            if not d.is_dir() or not is_episode_id(d.name) or not (d / store.POSTS_NAME).is_file():
                 continue
             try:
                 docs[d.name] = store.read_posts(d / store.POSTS_NAME, d.name)

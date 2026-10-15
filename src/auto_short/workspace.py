@@ -28,6 +28,15 @@ STAGES = ("ingest", "transcript", "analysis", "selection", "titling", "review", 
 PENDING, RUNNING, DONE, FAILED, STALE = "pending", "running", "done", "failed", "stale"
 
 _EPISODE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+# CP2 D3 (FIX-youtube-id-dash): a real YouTube video id may start with '-' or '_'. ".kt" = khaithi.SUFFIX (CP8.9 K1;
+# literal here because khaithi imports this module). System dirs at the workspace root must never be 11 (or 14 with
+# ".kt") chars long.
+_YOUTUBE_EPISODE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}(\.kt)?$")
+
+
+def is_episode_id(name: str) -> bool:
+    """Single owner of the episode id shape (CP2 D3): classic rule OR YouTube video id (+ optional ``.kt``)."""
+    return bool(_EPISODE_ID_RE.match(name) or _YOUTUBE_EPISODE_ID_RE.match(name))
 
 
 class WorkspaceError(Exception):
@@ -43,10 +52,10 @@ def utc_now() -> str:
 
 
 def validate_episode_id(episode_id: str) -> str:
-    if not _EPISODE_ID_RE.match(episode_id):
+    if not is_episode_id(episode_id):
         raise WorkspaceError(
             f"invalid episode id {episode_id!r}: use letters, digits, '.', '_' or '-' "
-            "(must start with a letter or digit, max 128 chars)"
+            "(must start with a letter or digit, max 128 chars; or an 11-char YouTube video id, optionally '.kt')"
         )
     return episode_id
 
@@ -137,7 +146,7 @@ def iter_manifests(root: Path):
     if not root.is_dir():
         return
     for child in sorted(root.iterdir()):
-        if not (child / MANIFEST_NAME).is_file() or not _EPISODE_ID_RE.match(child.name):
+        if not (child / MANIFEST_NAME).is_file() or not is_episode_id(child.name):
             continue
         ws = Workspace(root, child.name)
         try:
