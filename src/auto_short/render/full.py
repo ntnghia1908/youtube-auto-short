@@ -405,3 +405,26 @@ def _run_vertical(episode_id: str, config: Config, *, run, force: bool, note: st
     secs = time.monotonic() - t0
     log.info("full: %s: vertical %.1f MB in %.1f s", owner, size / 1e6, secs)
     return FullResult(owner, out, True, secs, size)
+
+
+def sweep_refetched_sources(config: Config, active_owners: set[str]) -> int:
+    """CP8.32 K2 start-up sweep: archived workspaces still holding ``source.*`` (a re-downloaded original whose vertical
+    job was cancelled / lost) or a stale ``.vertical-fetch-tmp``, without an active vertical job, are cleaned. Returns
+    the bytes freed."""
+    root = Path(config.workspace.dir)
+    freed = 0
+    try:
+        dirs = [d for d in root.iterdir() if d.is_dir() and not d.name.startswith("_")]
+    except OSError:
+        return 0
+    for d in dirs:
+        if owner_of(d.name) in active_owners or not (d / "archive.json").exists():
+            continue
+        tmp = d / ".vertical-fetch-tmp"
+        if tmp.is_dir():
+            shutil.rmtree(tmp, ignore_errors=True)
+        got = remove_refetched_source(config, d.name)
+        if got:
+            log.warning("full: %s: video gốc tải lại còn sót, đã dọn (%d bytes)", d.name, got)
+        freed += got
+    return freed

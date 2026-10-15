@@ -311,6 +311,7 @@ class JobRunner:
         # CP8.16 R2a: called (on the lane worker thread) with an episode job (pipeline / render / add) that ended
         # ``done`` or ``failed``; set by the web app, which submits the ``post`` job.
         self.on_finished: Callable[[Job], None] | None = None
+        self.on_vertical_failed: Callable[[Job], None] | None = None  # CP8.32 K2
         self._stopping = False
         # CP13.1b: pipeline jobs parked after titling until their HD source is ready (key -> job); in no lane queue,
         # so they hold no lane; ``on_parked(job)`` (set by the web app) re-checks the HD right after a job parks.
@@ -898,6 +899,12 @@ class JobRunner:
                 self.on_finished(job)
             except Exception:  # a bug in the hook must not kill the worker
                 log.exception("web: on_finished hook failed for job %s [%s]", job.id, job.episode_id)
+        if last and job.kind == KIND_VERTICAL and job.status in (FAILED, INTERRUPTED) and not self._stopping \
+                and self.on_vertical_failed is not None:
+            try:  # CP8.32 K2: a re-downloaded original must not outlive a failed / cut vertical job
+                self.on_vertical_failed(job)
+            except Exception:
+                log.exception("web: on_vertical_failed hook failed for job %s [%s]", job.id, job.episode_id)
         with self._lock:
             self._release_locked(job)
             if last:

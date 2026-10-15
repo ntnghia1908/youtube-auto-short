@@ -442,11 +442,8 @@ def effective_source(config: Config, episode_id: str) -> EffectiveSource | None:
         return None
     path = _source_in(d, manifest)
     if path is not None:
-        try:
-            if path.stat().st_size != source.get("size"):  # not the file the manifest describes: trust the bytes
-                sha = hashing.sha256_file(path)
-        except OSError:
-            return None
+        # identity = the ingest manifest sha256 even when the bytes differ (a re-downloaded original may; the
+        # difference is only a warning in vertical.json), so the vertical file stays "current" after the clean-up
         return EffectiveSource(SRC_ORIGINAL, path, sha, height)
     from ..review.archive import is_archived  # lazy: review imports the web-free core
     return EffectiveSource(SRC_ARCHIVED, None, sha, height) if is_archived(d) else None

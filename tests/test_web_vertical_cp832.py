@@ -466,3 +466,74 @@ def test_vertical_fetch_prefetch_is_bounded():
     assert runner.wait_idle(10)
     runner.stop(2)
     assert sorted(fetched) == list(range(5)) and sorted(rendered) == list(range(5))
+
+
+# --- review round 1: F1 identity after a re-download, F2 leaks --------------------------------------------------
+
+def test_f1_redownload_with_other_bytes_stays_current_and_bulk_skips(tcfg, orig_clip, tmp_path):
+    other = tmp_path / "other.mp4"  # same video, other encoder settings -> other size / sha256
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(orig_clip), "-c:v", "libx264", "-crf", "35",
+                    "-c:a", "aac", "-b:a", "32k", str(other)], check=True)
+    assert other.stat().st_size != orig_clip.stat().st_size
+    d, _ = make_archived(tcfg, orig_clip)
+    seed_playlist_for(tcfg, VID)
+    calls = []
+    r = full.run_vertical(VID, tcfg, downloader=fake_downloader(other, calls))
+    assert r.ran and "khác bản ingest" in full.read_meta(tcfg, VID)["source_warning"]
+    assert not list(d.glob("source.*"))
+    assert full.current(tcfg, VID)  # identity = the manifest sha256, also after the clean-up
+    c = client(tcfg, vertical_downloader=fake_downloader(other, calls))
+    login(c)
+    body = c.post(f"/api/playlists/{PL}/vertical").json()
+    assert body["queued"] == 0 and "đã có bản dọc" in body["skipped"][0]["reason"]
+    assert len(calls) == 1  # no second download
+
+
+def seed_playlist_for(cfg, vid):
+    path = Path(cfg.workspace.dir) / "_playlists" / f"{PL}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"schema_version": 1, "playlist_id": PL, "title": "T", "url": "u",
+                                "fetched_at": "2026-10-04T00:00:00Z", "entries": [
+                                    {"index": 1, "video_id": vid, "title": "Thập Thiện tập 1", "duration": 3.0,
+                                     "episode": "1", "available": True}]}), encoding="utf-8")
+
+
+def test_f2_failed_vertical_job_removes_the_refetched_original(tcfg, orig_clip):
+    d, _ = make_archived(tcfg, orig_clip)
+    calls = []
+
+    def broken(eid, cfg):
+        raise RenderError("boom after the fetch")
+
+    c = client(tcfg, vertical=broken, vertical_downloader=fake_downloader(orig_clip, calls))
+    c.__enter__()
+    login(c)
+    c.post(f"/api/episodes/{VID}/vertical")
+    for _ in range(300):
+        job = c.get(f"/api/episodes/{VID}").json()["hd_video"]["vertical"]["job"]
+        if job and job["status"] == "failed":
+            break
+        time.sleep(0.1)
+    assert job["status"] == "failed" and len(calls) == 1  # the fetch happened
+    time.sleep(0.2)
+    assert not list(d.glob("source.*")) and (d / "archive.json").exists()
+    c.__exit__(None, None, None)
+
+
+def test_f2_startup_sweep_cleans_orphans_but_not_active_jobs(tcfg, orig_clip):
+    d, _ = make_archived(tcfg, orig_clip)
+    (d / "source.mp4").write_bytes(b"x" * 100)  # left by a vanished job
+    (d / ".vertical-fetch-tmp").mkdir()
+    (d / ".vertical-fetch-tmp" / "part").write_bytes(b"y")
+    keep = make_ep(tcfg, "bbbbbbbbbb2", height=1080, archived=True)  # a restored active job owns this one
+    (keep / "source.mp4").write_bytes(b"z" * 50)
+    live = make_ep(tcfg, "cccccccccc3", height=1080)  # not archived: its original is the normal one
+    assert full.sweep_refetched_sources(tcfg, {"bbbbbbbbbb2"}) == 100
+    assert not list(d.glob("source.*")) and not (d / ".vertical-fetch-tmp").exists()
+    assert (keep / "source.mp4").exists() and (live / "source.mp4").exists()
+    # through the app start-up (lifespan)
+    (d / "source.mp4").write_bytes(b"x" * 10)
+    c = client(tcfg)
+    c.__enter__()
+    assert not (d / "source.mp4").exists()
+    c.__exit__(None, None, None)

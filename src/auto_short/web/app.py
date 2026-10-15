@@ -522,12 +522,29 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             return post_compose_target(config, clips, compose=post_compose, preflight=post_preflight, lock=post_lock)
         return None
 
+    def _vertical_failed(job) -> None:
+        """K2: the vertical job of an archived episode ended failed / interrupted: remove the original it re-downloaded
+        (unless another vertical job of the video is still active)."""
+        latest = runner.latest_vertical(ep.hd_owner(job.episode_id))
+        if latest is not None and latest is not job and latest.active:
+            return
+        render_full.remove_refetched_source(config, job.episode_id)
+
+    runner.on_vertical_failed = _vertical_failed
+
+    def _sweep_refetched() -> int:
+        active = {j.episode_id for j in runner.jobs() if j.kind == KIND_VERTICAL and j.active}
+        return render_full.sweep_refetched_sources(config, active)
+
+    app_sweep = _sweep_refetched
+
     runner.configure_persistence(Path(config.workspace.dir) / QUEUE_FILE, _rebuild_job)
     runner.priority.attach(Path(config.workspace.dir) / PRIORITY_FILE)  # CP8.26 P1
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         runner.restore()  # CP8.22 Q2: before the lanes start and before the auto clean-up sweeps
+        await asyncio.to_thread(app_sweep)  # CP8.32 K2: re-downloaded originals left by jobs that no longer exist
         runner.start()
         for eid in svc.resume_assembly():  # CP13.1b: segments all there but never assembled (restart)
             _enhance_complete(eid)
@@ -546,6 +563,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     app.state.monitor_sampler = sampler
     app.state.storage = storage
     app.state.auto_archive_pass = auto_archive_pass
+    app.state.sweep_refetched = _sweep_refetched
     app.state.playlists = playlists
     app.state.signer = signer
 
