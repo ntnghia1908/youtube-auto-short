@@ -28,7 +28,7 @@ from ..config import Config
 from ..enhance import state as enhance_state
 from ..ingest import probe as probe_mod
 from ..ingest.youtube import DownloadError, YoutubeBlocked, ytdlp_download
-from ..workspace import Workspace, WorkspaceError, atomic_write_json, validate_episode_id
+from ..workspace import Workspace, is_episode_id, WorkspaceError, atomic_write_json, validate_episode_id
 from . import plan
 from .stage import (RenderError, _last_line, _read_json, _run, _sha, _write_lines, font_path, probe_media, used_config,
                     _rate)
@@ -414,7 +414,7 @@ def sweep_refetched_sources(config: Config, active_owners: set[str]) -> int:
     root = Path(config.workspace.dir)
     freed = 0
     try:
-        dirs = [d for d in root.iterdir() if d.is_dir() and not d.name.startswith("_")]
+        dirs = [d for d in root.iterdir() if d.is_dir() and is_episode_id(d.name)]
     except OSError:
         return 0
     for d in dirs:

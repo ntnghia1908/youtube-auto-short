@@ -528,7 +528,11 @@ def test_f2_startup_sweep_cleans_orphans_but_not_active_jobs(tcfg, orig_clip):
     keep = make_ep(tcfg, "bbbbbbbbbb2", height=1080, archived=True)  # a restored active job owns this one
     (keep / "source.mp4").write_bytes(b"z" * 50)
     live = make_ep(tcfg, "cccccccccc3", height=1080)  # not archived: its original is the normal one
-    assert full.sweep_refetched_sources(tcfg, {"bbbbbbbbbb2"}) == 100
+    under = make_ep(tcfg, "_xxxxxxxxxx", height=1080, archived=True)  # PR #84: ids may start with "_"
+    (under / "source.mp4").write_bytes(b"u" * 7)
+    (Path(tcfg.workspace.dir) / "_playlists").mkdir(exist_ok=True)
+    assert full.sweep_refetched_sources(tcfg, {"bbbbbbbbbb2"}) == 107
+    assert not (under / "source.mp4").exists()
     assert not list(d.glob("source.*")) and not (d / ".vertical-fetch-tmp").exists()
     assert (keep / "source.mp4").exists() and (live / "source.mp4").exists()
     # through the app start-up (lifespan)
