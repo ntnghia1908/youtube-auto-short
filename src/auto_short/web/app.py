@@ -8,6 +8,7 @@ import html
 import io
 import json
 import logging
+import mimetypes
 import os
 import re
 import shutil
@@ -331,7 +332,8 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                auto_archive_interval: float = AUTO_ARCHIVE_INTERVAL,
                enhance_tokens: dict[str, str] | None = None, enhance_service: EnhanceService | None = None,
                proc_dir: str = "/proc", ollama_ps: Callable[[], dict] | None = None,
-               monitor_interval: float = monitor_mod.SAMPLE_SECONDS, vertical: Callable | None = None) -> FastAPI:
+               monitor_interval: float = monitor_mod.SAMPLE_SECONDS, vertical: Callable | None = None,
+               vertical_downloader: Callable | None = None) -> FastAPI:
     """``preflight`` / ``pipeline`` / ``render`` are injectable for tests (defaults: CP8 ``ollama_preflight`` /
     ``run_pipeline``, CP7/CP8.2 ``run_render``); so are ``disk_usage`` (``shutil.disk_usage``) and ``clock`` (epoch
     seconds, ages of the storage recommendations) for CP8.6; ``playlist_lister`` (yt-dlp flat listing) and
@@ -444,8 +446,9 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         for item in auto_archive_plan(rows, clock(), config.storage.auto_archive_grace_minutes * 60):
             with submit_lock:
                 parts = [r["id"] for r in rows if r["state"] != "orphan" and video_id(r["id"]) == item["video_id"]]
-                if any((j := runner.latest(eid)) is not None and j.active for eid in parts):
-                    continue
+                if any((j := runner.latest(eid)) is not None and j.active for eid in parts) \
+                        or any((j := runner.latest_vertical(ep.hd_owner(eid))) is not None and j.active for eid in parts):
+                    continue  # CP8.32: a queued vertical job still needs the original
                 for eid in item["episodes"]:
                     if enh_state.has_hd(Path(config.workspace.dir) / eid) \
                             or enh_state.is_pending(enh_state.read(Path(config.workspace.dir) / eid)):
@@ -474,6 +477,11 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                 return
             await asyncio.sleep(auto_archive_interval)
 
+    def _vertical_target(owner: str):
+        """CP8.32: the vertical job target of a video (an archived original is downloaded again in the prepare lane)."""
+        return vertical_target(config, vertical=vertical, episode_id=owner, downloader=vertical_downloader,
+                               disk_blocked=storage.block_message)
+
     def _rebuild_job(kind: str, eid: str, spec: dict, clip_ids: list[str]):
         """CP8.22 Q2: the target of a job saved in the queue file, built like at submit time; None = cannot be
         recreated (bad id / parameters, workspace gone, episode archived) -> the runner skips it with a log line."""
@@ -484,7 +492,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         if kind == KIND_POST_SEARCH:
             url = spec.get("url")
             return image_search_target(config, url, search=post_search) if isinstance(url, str) and url else None
-        if not ep.valid_episode_id(eid) or is_archived(ws / eid):
+        if not ep.valid_episode_id(eid) or (is_archived(ws / eid) and kind != KIND_VERTICAL):
             return None
         if kind == KIND_PIPELINE:
             url, kt = spec.get("url"), spec.get("episode_id")
@@ -502,7 +510,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         if kind == KIND_ENHANCE:
             return enhance_assemble_target(svc, after=_hd_ready)
         if kind == KIND_VERTICAL:
-            return vertical_target(config, vertical=vertical)
+            return _vertical_target(eid)
         if kind == KIND_ADD:
             clip = spec.get("clip_id")
             return add_short_target(config, clip, render=render, preflight=preflight, titler=titler) \
@@ -875,6 +883,36 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             e["posts_docx_url"] = f"/files/{vid}/posts.docx"
             e["posts_docx_name"] = _docx_name_of(vid)
 
+    def _vertical_status(vid: str, e: dict) -> tuple[str, str | None]:
+        """CP8.32 V3: ``("todo", None)`` when "Tạo bản dọc cả bộ" would queue this entry, else ``("skip", reason)``."""
+        if not e.get("available"):
+            return "skip", "tập không khả dụng"
+        if e.get("state") not in (playlists_mod.RENDERED, playlists_mod.COMPLETE):
+            return "skip", "chưa xong Short"
+        src = ep.hd_source(config, vid)
+        if src is None:
+            return "skip", f"không có bản HD / video gốc < {config.enhance.min_height}p"
+        if render_full.current(config, vid):
+            return "skip", "đã có bản dọc"
+        job = runner.latest_vertical(vid)
+        if job is not None and job.active:
+            return "skip", "đang chờ / đang tạo bản dọc"
+        return "todo", None
+
+    def _vertical_fields(e: dict) -> None:
+        """CP8.32: per-entry vertical status of the bộ kinh page (the icon of a ready file, the count of "cả bộ")."""
+        vid = e.get("video_id")
+        e["vertical"] = None
+        if not vid:
+            return
+        status, reason = _vertical_status(vid, e)
+        src = ep.hd_source(config, vid)
+        ready = render_full.ready_file(config, vid) if render_full.current(config, vid) else None
+        e["vertical"] = {"status": status, "reason": reason, "fetch": src is not None and src.kind == enh_state.SRC_ARCHIVED,
+                         "ready": ready is not None,
+                         "url": f"/api/episodes/{vid}/vertical" if ready is not None else None,
+                         "name": ep.video_download_name(config, vid, "Doc") if ready is not None else None}
+
     RANGE_SIZE = 10  # CP8.31 A1: episodes per posts file
 
     def _posts_ranges(playlist_id: str, entries: list[dict]) -> list[dict]:
@@ -908,10 +946,11 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         view["youtube"] = runner.youtube_status()  # FIX-youtube-botcheck-wait Y3
         for e in view["entries"]:  # CP8.26
             e["priority"] = bool(e.get("video_id")) and runner.priority.marked(e["video_id"])
-            hd = e.get("hd")  # CP8.27 H2: download icon of the finished HD video
-            if hd and hd.get("state") == "done" and e.get("video_id") and ep.hd_file(config, e["video_id"]) is not None:
+            # CP8.27 H2: download icon of the finished HD video
+            if e.get("video_id") and ep.hd_file(config, e["video_id"]) is not None:  # CP8.32: also the original >= 720p
                 e["hd_url"] = f"/api/episodes/{e['video_id']}/source-hd"
-                e["hd_name"] = ep.video_download_name(config, e["video_id"], "HD")
+                e["hd_name"] = ep.hd_download_name(config, e["video_id"])
+            _vertical_fields(e)  # CP8.32 V3
             _download_fields(e)  # CP8.31 D3
         view["priority_count"] = sum(1 for e in view["entries"] if e["priority"])
         view["posts_ranges"] = _posts_ranges(playlist_id, view["entries"])
@@ -1195,16 +1234,19 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         return view
 
     def _hd_video_view(episode_id: str) -> dict | None:
-        """CP8.27 H2 / H4: the HD download (landscape) and the vertical full-episode file of the video, None while
-        there is no finished HD source."""
-        hd = ep.hd_file(config, episode_id)
-        if hd is None:
+        """CP8.27 H2 / H4 + CP8.32: the HD download (landscape) and the vertical full-episode file of the video, None
+        while there is no effective HD source (``source``: ``hd`` | ``original`` | ``archived``; an archived original
+        has no landscape download, ``url`` is None, and its vertical job downloads it again)."""
+        src = ep.hd_source(config, episode_id)
+        if src is None:
             return None
+        hd = src.path
         owner = ep.hd_owner(episode_id)
         ready = render_full.ready_file(config, owner) if render_full.current(config, owner) else None
         job = runner.latest_vertical(owner)
-        return {"url": f"/api/episodes/{episode_id}/source-hd", "name": ep.video_download_name(config, episode_id, "HD"),
-                "size": hd.stat().st_size,
+        return {"url": f"/api/episodes/{episode_id}/source-hd" if hd is not None else None,
+                "name": ep.hd_download_name(config, episode_id) if hd is not None else None,
+                "size": hd.stat().st_size if hd is not None else None, "source": src.kind,
                 "vertical": {"ready": ready is not None, "url": f"/api/episodes/{episode_id}/vertical",
                              "name": ep.video_download_name(config, episode_id, "Doc"),
                              "size": ready.stat().st_size if ready is not None else None,
@@ -2141,6 +2183,36 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         log.info("web: playlist %s enhance lại: %d / %d tập, %d lỗi", playlist_id, redone, len(todo), len(errors))
         return {"playlist_id": playlist_id, "episodes": len(todo), "queued": redone, "errors": errors}
 
+    @app.post("/api/playlists/{playlist_id}/vertical")
+    def api_playlist_vertical(playlist_id: str):
+        """CP8.32 V3 "Tạo bản dọc cả bộ": a vertical job (episode order) for every episode whose Shorts are done, that has
+        an effective HD source (V1 / V2) and no current vertical file or pending vertical job; the others are skipped
+        with a reason. The vertical jobs start after every other job of their lane (JobRunner order)."""
+        doc = _playlist_or_404(playlist_id)
+        if doc is None:
+            return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
+        view = playlists.view(doc, _jobs_by_episode())
+        entries = _by_episode_order([e for e in view["entries"] if e.get("video_id")])
+        queued, skipped, errors = [], [], []
+        for e in entries:
+            vid = e["video_id"]
+            status, reason = _vertical_status(vid, e)
+            if status != "todo":
+                skipped.append({"episode_id": vid, "reason": reason})
+                continue
+            with submit_lock:
+                try:
+                    job, created = runner.submit(vid, KIND_VERTICAL, _vertical_target(vid))
+                except Exception as exc:  # a broken workspace must not stop the others
+                    errors.append({"episode_id": vid, "detail": str(exc)})
+                    continue
+            (queued if created else skipped).append(vid if created else {"episode_id": vid, "reason": "đang có việc bản dọc"})
+        log.info("web: playlist %s bản dọc cả bộ: queued %d, bỏ qua %d, %d lỗi", playlist_id, len(queued), len(skipped),
+                 len(errors))
+        return JSONResponse({"playlist_id": playlist_id, "episodes": len(entries), "queued": len(queued),
+                             "queued_ids": queued, "skipped": skipped, "errors": errors},
+                            status_code=202 if queued else 200)
+
     @app.post("/api/episodes/{episode_id}/enhance/rerender")
     def api_episode_rerender_hd(episode_id: str):
         """E6 "Render lại bản HD" (Shorts already ticked "Đã đăng" were kept): render job from the HD source."""
@@ -2160,13 +2232,15 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
 
     # --- CP8.27: HD video download + vertical full-episode version ---------------------------------------------
 
-    def _hd_or_404(episode_id: str) -> tuple[Path | None, JSONResponse | None]:
+    def _hd_or_404(episode_id: str, *, archived_ok: bool = False) -> tuple[Path | None, JSONResponse | None]:
+        """The landscape file (``source_hd.mp4`` or, CP8.32 V1, the original >= 720p) or a 404. ``archived_ok`` (the
+        vertical routes, V2): an archived original that can be fetched again also passes (the path is then None)."""
         if not ep.valid_episode_id(episode_id):
             return None, JSONResponse({"detail": "không có episode này"}, status_code=404)
-        hd = ep.hd_file(config, episode_id)
-        if hd is None:
+        src = ep.hd_source(config, episode_id)
+        if src is None or (src.path is None and not archived_ok):
             return None, JSONResponse({"detail": "chưa có bản HD của video này"}, status_code=404)
-        return hd, None
+        return src.path, None
 
     @app.get("/api/episodes/{episode_id}/source-hd")
     def api_episode_source_hd(episode_id: str):
@@ -2175,14 +2249,14 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         hd, bad = _hd_or_404(episode_id)
         if bad is not None:
             return bad
-        return FileResponse(hd, media_type="video/mp4", headers={
-            "Content-Disposition": content_disposition(ep.video_download_name(config, episode_id, "HD")),
+        return FileResponse(hd, media_type=mimetypes.guess_type(hd.name)[0] or "video/mp4", headers={
+            "Content-Disposition": content_disposition(ep.hd_download_name(config, episode_id)),
             "Cache-Control": "private, no-cache"})
 
     @app.get("/api/episodes/{episode_id}/vertical")
     def api_episode_vertical(episode_id: str):
         """H4: the vertical full-episode file, once made from the current HD source."""
-        _hd, bad = _hd_or_404(episode_id)
+        _hd, bad = _hd_or_404(episode_id, archived_ok=True)
         if bad is not None:
             return bad
         owner = ep.hd_owner(episode_id)
@@ -2195,14 +2269,14 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
 
     @app.post("/api/episodes/{episode_id}/vertical")
     def api_episode_vertical_make(episode_id: str):
-        """H4 "Tạo bản dọc": queue a render-lane job (reuses the file when nothing changed); 404 without HD."""
-        _hd, bad = _hd_or_404(episode_id)
+        """H4 "Tạo bản dọc": queue a render-lane job (reuses the file when nothing changed); 404 without an HD source
+        (CP8.32: ``source_hd.mp4`` or the original >= 720p; an archived original is downloaded again by the job)."""
+        _hd, bad = _hd_or_404(episode_id, archived_ok=True)
         if bad is not None:
             return bad
         owner = ep.hd_owner(episode_id)
-        if is_archived(Path(config.workspace.dir) / owner):
-            return JSONResponse({"detail": str(ArchivedError(owner))}, status_code=409)
-        job, created = runner.submit(owner, KIND_VERTICAL, vertical_target(config, vertical=vertical))
+        with submit_lock:
+            job, created = runner.submit(owner, KIND_VERTICAL, _vertical_target(owner))
         log.info("web: bản dọc [%s] -> job %s%s", owner, job.id, "" if created else " (đã có)")
         return JSONResponse({"job": _job_view(job, logs=False), "hd_video": _hd_video_view(episode_id)},
                             status_code=202 if created else 200)

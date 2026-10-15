@@ -12,6 +12,7 @@ import logging
 import os
 import shutil
 import subprocess
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from fractions import Fraction
 from pathlib import Path
@@ -141,13 +142,17 @@ def expected_size(src_w: int, src_h: int, pre_h: int, out_h: int, scale: int = 4
     return uw, uh
 
 
-def source_file(ws: Workspace, manifest: dict | None) -> Path | None:
-    """The downloaded source video inside the workspace (never a local file outside it), or None."""
+def _source_in(ws_dir: Path, manifest: dict | None) -> Path | None:
     rel = ((manifest or {}).get("source") or {}).get("path")
     if not isinstance(rel, str) or not rel or Path(rel).is_absolute() or ".." in Path(rel).parts:
         return None
-    path = ws.dir / rel
+    path = Path(ws_dir) / rel
     return path if path.is_file() else None
+
+
+def source_file(ws: Workspace, manifest: dict | None) -> Path | None:
+    """The downloaded source video inside the workspace (never a local file outside it), or None."""
+    return _source_in(ws.dir, manifest)
 
 
 # --- ffprobe -----------------------------------------------------------------------------------------------------
@@ -390,6 +395,61 @@ def hd_fingerprint(ws_dir: Path) -> FileFingerprint | None:
         log.warning("enhance: %s does not match enhance.json (sha256); the render uses the original source", path)
         return None
     return fp
+
+
+# --- CP8.32 V1: the effective HD source of a video (enhanced HD, else the original when it is >= the threshold) ----
+
+SRC_HD, SRC_ORIGINAL, SRC_ARCHIVED = "hd", "original", "archived"
+
+
+@dataclass(frozen=True)
+class EffectiveSource:
+    """Where the landscape HD download / the vertical full-episode file of a video comes from.
+
+    ``kind``: ``hd`` (``source_hd.mp4``), ``original`` (``source.<ext>`` of a download whose height is >= the enhance
+    threshold) or ``archived`` (the original was cleaned up, CP8.6; it can be fetched again for a vertical file,
+    ``path`` is None). ``sha256`` identifies the source version (HD: its recorded sha256; original / archived: the
+    sha256 of the ingest manifest, so it stays the same after a re-download)."""
+
+    kind: str
+    path: Path | None
+    sha256: str
+    height: int | None = None
+
+
+def owner_id(episode_id: str) -> str:
+    """The video whose files a khai thị episode ``<id>.kt`` uses (itself for any other id)."""
+    sfx = khaithi.SUFFIX
+    return episode_id[:-len(sfx)] if episode_id.endswith(sfx) and len(episode_id) > len(sfx) else episode_id
+
+
+def effective_source(config: Config, episode_id: str) -> EffectiveSource | None:
+    """CP8.32 V1 / V2, the one decision used by the landscape HD route, the vertical job and the views: (a) a valid
+    ``source_hd.mp4``; (b) else the original download when its height (``metadata.json``) is >= ``[enhance] min_height``
+    (the threshold of :func:`decide`), or, for an archived episode, the fact that it could be fetched again; (c) else
+    None. ``episode_id`` must be a valid id (the caller checks)."""
+    d = Path(config.workspace.dir) / owner_id(episode_id)
+    fp = hd_fingerprint(d)
+    if fp is not None:
+        return EffectiveSource(SRC_HD, fp.path, fp.sha256)
+    manifest = _read_json(d / "manifest.json")
+    source = (manifest or {}).get("source") or {}
+    sha = source.get("sha256")
+    if source.get("kind") != "youtube" or not isinstance(sha, str) or not sha:
+        return None
+    height = (_read_json(d / "metadata.json") or {}).get("height")
+    if not isinstance(height, int) or height < config.enhance.min_height:
+        return None
+    path = _source_in(d, manifest)
+    if path is not None:
+        try:
+            if path.stat().st_size != source.get("size"):  # not the file the manifest describes: trust the bytes
+                sha = hashing.sha256_file(path)
+        except OSError:
+            return None
+        return EffectiveSource(SRC_ORIGINAL, path, sha, height)
+    from ..review.archive import is_archived  # lazy: review imports the web-free core
+    return EffectiveSource(SRC_ARCHIVED, None, sha, height) if is_archived(d) else None
 
 
 def has_hd(ws_dir: Path) -> bool:

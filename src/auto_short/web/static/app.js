@@ -34,6 +34,7 @@ const AutoShort = (() => {
     trash: ["M4 7h16", "M9 7V4h6v3", "M6 7l1 13h10l1-13", "M10 11v6", "M14 11v6"],
     zip: ["M4 7l8-4 8 4v10l-8 4-8-4z", "M4 7l8 4 8-4", "M12 11v10"],
     doc: ["M7 3h8l4 4v14H7z", "M15 3v4h4", "M10 12h6", "M10 16h6"],
+    phone: ["M8 2h8a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z", "M11 18h2"],
     loop: ["M4 11V9a3 3 0 0 1 3-3h11", "M15 3l3 3-3 3", "M20 13v2a3 3 0 0 1-3 3H6", "M9 21l-3-3 3-3"],
   };
   function icon(name) {
@@ -695,9 +696,12 @@ const AutoShort = (() => {
     box.hidden = !h;
     if (!h) return;
     const land = $("#hd-landscape");
-    land.href = h.url;
-    land.setAttribute("download", h.name || "");
-    land.textContent = `Tải bản ngang (HD${h.size ? ", " + fmtGb(h.size) : ""})`;
+    land.hidden = !h.url; // CP8.32: no landscape download for an archived original (it is fetched again for the vertical only)
+    if (h.url) {
+      land.href = h.url;
+      land.setAttribute("download", h.name || "");
+      land.textContent = `Tải bản ngang (${h.source === "original" ? "video gốc" : "HD"}${h.size ? ", " + fmtGb(h.size) : ""})`;
+    }
     const v = h.vertical || {};
     const job = v.job;
     const active = !!job && (job.status === "queued" || job.status === "running");
@@ -708,6 +712,8 @@ const AutoShort = (() => {
     make.hidden = !!v.ready;
     make.disabled = active;
     make.textContent = active ? (job.status === "queued" ? "Bản dọc: đang chờ…" : "Bản dọc: đang tạo…") : "Tạo bản dọc";
+    make.title = h.source === "archived" ? "Video gốc đã được dọn: sẽ tải lại từ YouTube rồi dọn lại sau khi tạo bản dọc 1080x1920 (tốn CPU, hàng đợi render)"
+      : "Video dọc 1080x1920 cả tập, có banner tựa ở trên (tốn CPU, chạy ở hàng đợi render)";
     make.onclick = async () => {
       make.disabled = true;
       try {
@@ -2608,6 +2614,7 @@ const AutoShort = (() => {
     $("#pl-resume-all").addEventListener("click", resumePrepared);
     $("#pl-priority").addEventListener("click", priorityPlaylist);
     $("#pl-enhance-redo").addEventListener("click", enhanceRedoPlaylist);
+    $("#pl-vertical").addEventListener("click", verticalPlaylist);
     initHashtags();
     initSeries();
     initDoc();
@@ -2644,7 +2651,7 @@ const AutoShort = (() => {
   }
 
   async function bulkPost(path, body, busyText) {
-    const btns = [$("#pl-prepare"), $("#pl-resume-all"), $("#pl-enhance-redo")];
+    const btns = [$("#pl-prepare"), $("#pl-resume-all"), $("#pl-enhance-redo"), $("#pl-vertical")];
     btns.forEach((b) => { b.disabled = true; });
     bulkMessage(busyText, "muted");
     try {
@@ -2673,6 +2680,30 @@ const AutoShort = (() => {
     if (!confirm(`Chuẩn bị + HD ${n} tập chưa xử lý?\n\nChỉ tải video, phiên âm, phân tích và xin enhance HD (chưa cắt Short / khai thị, chưa dùng AI). ` +
       `Ước tính đĩa thô ≈ ${(n * HD_GB_PER_EPISODE).toFixed(0)} GB (≈ ${HD_GB_PER_EPISODE} GB / tập: nguồn + HD). Sau đó bấm "Chạy tiếp" từng tập hoặc "Chạy tiếp cả bộ".`)) return;
     bulkPost("prepare", null, "Đang xếp hàng đợi…");
+  }
+
+  // CP8.32 V3: one vertical job per finished episode with an HD source (the lane runs them after every Short job).
+  let plVerticalTodo = [], plVerticalFetch = 0;
+  const VERTICAL_HOURS_PER_EPISODE = 0.5;
+  async function verticalPlaylist() {
+    const n = plVerticalTodo.length;
+    if (!n) { bulkMessage("Không có tập nào cần tạo bản dọc (đã có, đang chờ, chưa xong Short hoặc không có video ≥ 720p).", "muted"); return; }
+    const fetchNote = plVerticalFetch ? `\n${plVerticalFetch} tập đã dọn video gốc: sẽ tải lại từ YouTube rồi dọn lại sau khi xong.` : "";
+    if (!confirm(`Tạo bản dọc cho ${n} tập?\n\nƯớc tính ≈ ${(n * VERTICAL_HOURS_PER_EPISODE).toFixed(1).replace(".", ",")} giờ làn render (≈ 0,5 giờ / tập); ` +
+      `các việc bản dọc xếp sau mọi việc Short / khai thị.${fetchNote}`)) return;
+    const btns = [$("#pl-vertical")];
+    btns.forEach((b) => { b.disabled = true; });
+    bulkMessage("Đang xếp hàng đợi…", "muted");
+    try {
+      const r = await api(`/api/playlists/${encodeURIComponent(playlistId)}/vertical`, jsonBody("POST", {}));
+      const why = {};
+      r.skipped.forEach((s) => { why[s.reason] = (why[s.reason] || 0) + 1; });
+      const skipText = Object.entries(why).map(([k, v]) => `${v} tập ${k}`).join("; ");
+      bulkMessage(`Đã xếp ${r.queued} bản dọc` + (skipText ? `; bỏ qua: ${skipText}` : "") + (r.errors.length ? `; ${r.errors.length} lỗi: ${r.errors[0].detail}` : "."),
+        r.errors.length ? "error" : "ok");
+      loadPlaylist();
+    } catch (e) { bulkMessage(e.message, "error"); }
+    btns.forEach((b) => { b.disabled = false; });
   }
 
   let plOldHd = 0;
@@ -3032,6 +3063,9 @@ const AutoShort = (() => {
     const redoBtn = $("#pl-enhance-redo");
     redoBtn.hidden = !plOldHd;
     redoBtn.textContent = `Enhance lại (${plOldHd})`;
+    plVerticalTodo = d.entries.filter((e) => e.vertical && e.vertical.status === "todo");
+    plVerticalFetch = plVerticalTodo.filter((e) => e.vertical.fetch).length;
+    $("#pl-vertical").textContent = plVerticalTodo.length ? `Tạo bản dọc cả bộ (${plVerticalTodo.length})` : "Tạo bản dọc cả bộ"; // CP8.32 V3
     renderPostsRanges(d.posts_ranges || []); // CP8.31 A1
     plPriorityCount = d.priority_count || 0; // CP8.26
     $("#pl-priority").textContent = plPriorityCount ? `Bỏ ưu tiên cả bộ (${plPriorityCount})` : "Ưu tiên cả bộ";
@@ -3052,6 +3086,10 @@ const AutoShort = (() => {
       if (e.hd_url) { // CP8.27 H2: the landscape HD video of this episode
         actions.append(el("a", { class: "btn icon-btn", href: e.hd_url, download: e.hd_name || "", title: "Tải video HD (bản ngang)",
           "aria-label": "Tải video HD (bản ngang)" }, icon("download")));
+      }
+      if (e.vertical && e.vertical.ready) { // CP8.32: the vertical full-episode file is ready
+        actions.append(el("a", { class: "btn icon-btn", href: e.vertical.url, download: e.vertical.name || "", title: "Tải bản dọc (cả tập)",
+          "aria-label": "Tải bản dọc (cả tập)" }, icon("phone")));
       }
       if (e.zip_url) { // CP8.31 D3: Shorts (+ khai thị) of the episode in one zip; a zip ticks "Đã đăng"
         const label = e.zip_url.endsWith("/all.zip") ? "Tải Short + khai thị (.zip)" : "Tải Short (.zip)";

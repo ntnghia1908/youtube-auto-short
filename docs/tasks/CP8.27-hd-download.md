@@ -42,7 +42,7 @@ Trang tập (và dòng tập ở trang bộ kinh) có nút "Tải video HD" khi 
   - **H4 Bản dọc cả tập (Amendment 1).** Nút "Tạo bản dọc" ở trang tập (khi có HD) → job làn `render` tạo video 1080×1920 cả tập từ `source_hd.mp4`: banner tựa ở trên (cùng kiểu panel header của Short — dòng "HT. Tịnh Không" + tên bộ kinh + "(tập N)" theo CP8.11 / CP8.14, không có panel tiêu đề Short ở dưới), video cắt giữa như Short, âm thanh giữ nguyên, không dissolve / cắt lặng; lưu `output/<id>/full/vertical.mp4` (dùng lại khi HD / layout / header không đổi — hash như render); nút "Tải bản dọc" + tên `<bộ kinh>_Tập<N>_Doc.mp4`. Bản ngang = H1, đổi nhãn nút thành "Tải bản ngang (HD)". Tốn CPU (cả giờ video): job theo luật làn `render` hiện có (không chạy song song quá `[render] jobs`), hủy được như job khác; IMPLEMENTER đo thời gian thật một tập và ghi vào Result.
   - **H3** Tải không tự tick "Đã đăng" / "Đã xem"; không chặn job đang chạy (đọc file, không khóa).
   - Test (file nhỏ giả) + README nếu có danh sách nút tải.
-- Out of scope: bản dọc cho video chưa enhance (chỉ từ `source_hd.mp4`); encode bản dọc trên GPU worker; tải bản HD từng đoạn / nén lại; tải video gốc; zip nhiều tập HD; xóa `source_hd.mp4`.
+- Out of scope: bản dọc cho video chưa enhance (chỉ từ `source_hd.mp4`; **CP8.32 sửa:** nguồn hiệu lực gồm cả video gốc ≥ 720p — canonical `docs/decisions/CP8.3-web-contract.md` W7 / W9); encode bản dọc trên GPU worker; tải bản HD từng đoạn / nén lại; tải video gốc; zip nhiều tập HD; xóa `source_hd.mp4`.
 
 ## Authority / key decisions
 

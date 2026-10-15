@@ -1,4 +1,7 @@
 """Vertical full-episode version (CP8.27 H4, Amendment 2): ``work/<id>/source_hd.mp4`` -> ``<output_dir>/<id>/full/vertical.mp4``.
+CP8.32: the source is the *effective* HD source (:func:`auto_short.enhance.state.effective_source`): ``source_hd.mp4``,
+else the original download when it is >= the enhance threshold; an archived episode's original is fetched again for
+the job and removed afterwards (:func:`fetch_original`, K2: the episode stays archived).
 
 1080x1920 like a Short, in the yellow rounded panel style: top panel = bộ kinh + "(tập N)", bottom panel = the speaker
 ("HT. Tịnh Không", larger font), and the video between them, centre-cropped and scaled up so only even margins of
@@ -12,15 +15,19 @@ import json
 import logging
 import os
 import re
+import shutil
 import tempfile
 import time
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
+from typing import NamedTuple
 
 from .. import hashing, khaithi
 from ..config import Config
 from ..enhance import state as enhance_state
+from ..ingest import probe as probe_mod
+from ..ingest.youtube import DownloadError, YoutubeBlocked, ytdlp_download
 from ..workspace import Workspace, WorkspaceError, atomic_write_json, validate_episode_id
 from . import plan
 from .stage import (RenderError, _last_line, _read_json, _run, _sha, _write_lines, font_path, probe_media, used_config,
@@ -40,6 +47,10 @@ FULL_PLAN_VERSION = 3  # bump when the filter graph / ffmpeg command below chang
 DURATION_TOLERANCE = 0.1  # s, audio length vs the source
 
 
+class SourceBlocked(RenderError):
+    """CP8.32 V2: YouTube refused the re-download of the original (bot check / 429): temporary, the web queue waits."""
+
+
 @dataclass
 class FullResult:
     episode_id: str
@@ -51,8 +62,7 @@ class FullResult:
 
 def owner_of(episode_id: str) -> str:
     """The video a khai thị episode (``<id>.kt``) belongs to; the HD source and the vertical file are the video's."""
-    sfx = khaithi.SUFFIX
-    return episode_id[:-len(sfx)] if episode_id.endswith(sfx) and len(episode_id) > len(sfx) else episode_id
+    return enhance_state.owner_id(episode_id)
 
 
 def vertical_dir(config: Config, episode_id: str) -> Path:
@@ -83,13 +93,88 @@ def ready_file(config: Config, episode_id: str) -> Path | None:
 
 
 def current(config: Config, episode_id: str) -> bool:
-    """True when the stored vertical file matches the HD source now there (nothing to re-encode)."""
+    """True when the stored vertical file matches the effective HD source of the video (nothing to re-encode); an
+    archived episode is judged by the manifest sha256 of its original (the file itself is not there)."""
     path = ready_file(config, episode_id)
     meta = read_meta(config, episode_id)
     if path is None or meta is None:
         return False
-    hd = enhance_state.hd_fingerprint(Path(config.workspace.dir) / owner_of(episode_id))
-    return hd is not None and meta.get("hd_sha256") == hd.sha256
+    src = enhance_state.effective_source(config, owner_of(episode_id))
+    return src is not None and meta.get("hd_sha256") == src.sha256
+
+
+class FetchResult(NamedTuple):
+    path: Path
+    downloaded: bool  # False: the original was already there
+    warning: str | None  # the new file differs from what the ingest manifest recorded (still used)
+
+
+def fetch_original(episode_id: str, config: Config, *, downloader=ytdlp_download) -> FetchResult:
+    """CP8.32 V2: download the original of an archived episode again into ``work/<id>/source.<ext>`` (yt-dlp like
+    ingest, ``[ingest]`` format) WITHOUT touching the manifest / ``archive.json`` / any stage. Verified: readable, height
+    >= ``[enhance] min_height``, duration within 2 s / 1 % of ``metadata.json``; size / sha256 differing from the ingest
+    manifest only give a warning. YouTube blocking -> :class:`SourceBlocked`."""
+    owner = owner_of(episode_id)
+    src = enhance_state.effective_source(config, owner)
+    if src is None or src.kind == enhance_state.SRC_HD:
+        raise RenderError(f"{owner!r}: không có video gốc ≥ {config.enhance.min_height}p để tải lại")
+    if src.path is not None:
+        return FetchResult(src.path, False, None)
+    d = Path(config.workspace.dir) / owner
+    manifest = _read_json(d / "manifest.json", "ingest") or {}
+    meta = _read_json(d / "metadata.json", "ingest") or {}
+    source = manifest.get("source") or {}
+    uri = source.get("uri")
+    if not isinstance(uri, str) or not uri:
+        raise RenderError(f"{owner!r}: manifest không có URL nguồn")
+    tmp = d / ".vertical-fetch-tmp"
+    shutil.rmtree(tmp, ignore_errors=True)
+    tmp.mkdir(parents=True)
+    try:
+        log.info("full: %s: tải lại video gốc %s", owner, uri)
+        try:
+            got = downloader(uri, tmp, config.ingest)
+            info = probe_mod.probe(got.path)
+        except YoutubeBlocked as exc:
+            raise SourceBlocked(str(exc)) from exc
+        except (DownloadError, probe_mod.ProbeError) as exc:
+            raise RenderError(f"tải lại video gốc lỗi: {exc}") from exc
+        height = info.get("height") or 0
+        if height < config.enhance.min_height:
+            raise RenderError(f"video tải lại cao {height}p < {config.enhance.min_height}p; không dùng")
+        want = float(meta.get("duration") or 0)
+        if want > 0 and abs(float(info["duration"]) - want) > max(2.0, 0.01 * want):
+            raise RenderError(f"video tải lại dài {info['duration']:.1f} s, bản gốc {want:.1f} s; không dùng")
+        warning = None
+        size = got.path.stat().st_size
+        if size != source.get("size"):
+            warning = f"video tải lại khác bản ingest (size {size} != {source.get('size')})"
+        elif hashing.sha256_file(got.path) != source.get("sha256"):
+            warning = "video tải lại khác bản ingest (sha256)"
+        if warning:
+            log.warning("full: %s: %s; vẫn dùng", owner, warning)
+        final = d / f"source{got.path.suffix}"
+        got.path.replace(final)
+        return FetchResult(final, True, warning)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def remove_refetched_source(config: Config, episode_id: str) -> int:
+    """K2: an archived episode (``archive.json``) keeps no ``source.*``: remove what a vertical job downloaded again.
+    No-op for an episode that is not archived. Returns the bytes freed."""
+    from ..review.archive import is_archived, source_files
+    d = Path(config.workspace.dir) / owner_of(episode_id)
+    if not is_archived(d):
+        return 0
+    freed = 0
+    for p in source_files(d):
+        try:
+            freed += p.lstat().st_size
+            p.unlink()
+        except OSError:
+            pass
+    return freed
 
 
 @dataclass(frozen=True)
@@ -205,17 +290,40 @@ def verify(path: Path, fps: Fraction, src: dict, run) -> dict:
     return {"duration": float((v or {}).get("duration") or 0), "frames": (v or {}).get("nb_frames")}
 
 
-def run_vertical(episode_id: str, config: Config, *, run=None, force: bool = False) -> FullResult:
-    """Make (or reuse) the vertical full-episode file of the video ``episode_id`` (a ``.kt`` id means its video)."""
+def run_vertical(episode_id: str, config: Config, *, run=None, force: bool = False,
+                 downloader=ytdlp_download) -> FullResult:
+    """Make (or reuse) the vertical full-episode file of the video ``episode_id`` (a ``.kt`` id means its video).
+
+    CP8.32: the source is the effective HD source. An archived episode whose file is gone (the web job normally fetched
+    it in the prepare lane; this is the fallback) downloads the original here; whatever was downloaded again is
+    removed afterwards (K2) and ``archive.json`` / the manifest are never changed."""
+    owner = owner_of(episode_id)
+    note = None
+    src0 = enhance_state.effective_source(config, owner)
+    if src0 is not None and src0.kind == enhance_state.SRC_ARCHIVED:
+        ready = ready_file(config, owner)
+        if not force and ready is not None and current(config, owner):  # nothing to encode: no need to download
+            log.info("full: %s: reuse (archived, source sha256 unchanged; the original is not fetched again)", owner)
+            return FullResult(owner, ready, False, 0.0, ready.stat().st_size)
+        note = fetch_original(owner, config, downloader=downloader).warning
+    try:
+        return _run_vertical(owner, config, run=run, force=force, note=note)
+    except Exception:
+        remove_refetched_source(config, owner)
+        raise
+
+
+def _run_vertical(episode_id: str, config: Config, *, run, force: bool, note: str | None) -> FullResult:
     runner = run or _run
     owner = owner_of(episode_id)
     try:
         ws = Workspace(config.workspace.dir, validate_episode_id(owner))
     except WorkspaceError as exc:
         raise RenderError(str(exc)) from exc
-    hd = enhance_state.hd_fingerprint(ws.dir)
-    if hd is None:
-        raise RenderError(f"chưa có bản HD của {owner!r} (cần enhance xong trước)")
+    hd = enhance_state.effective_source(config, owner)
+    if hd is None or hd.path is None:
+        raise RenderError(f"chưa có bản HD của {owner!r} (cần enhance xong trước, hoặc video gốc ≥ "
+                          f"{config.enhance.min_height}p)")
     cfg = config.render
     titles_path = ws.dir / "titles.json"
     if not titles_path.is_file():
@@ -248,6 +356,7 @@ def run_vertical(episode_id: str, config: Config, *, run=None, force: bool = Fal
     key = _sha({"full_plan_version": FULL_PLAN_VERSION, "plan_version": plan.RENDER_PLAN_VERSION,
                 "render_config_hash": hashing.config_hash(used_config(cfg, font_sha)), "font_sha256": font_sha,
                 "hd_sha256": hd.sha256, "fps": plan.fps_text(fps),
+                **({} if hd.kind == enhance_state.SRC_HD else {"source_kind": hd.kind}),
                 "layout": lay.as_dict(),
                 "header": {"display_lines": header.lines, "font_size": header.font_size},
                 "speaker": {"display_lines": spk_fit.lines, "font_size": spk_fit.font_size}})
@@ -287,10 +396,12 @@ def run_vertical(episode_id: str, config: Config, *, run=None, force: bool = Fal
         part.unlink(missing_ok=True)
         raise
     size = out.stat().st_size
-    atomic_write_json(out_dir / META_NAME, {"schema_version": 1, "key": key, "hd_sha256": hd.sha256, "size": size,
+    atomic_write_json(out_dir / META_NAME, {"schema_version": 1, "key": key, "hd_sha256": hd.sha256, "source": hd.kind, "size": size,
                                             "fps": plan.fps_text(fps), "header": header.lines, "speaker": spk_fit.lines, "layout": lay.as_dict(),
                                             "duration": facts["duration"], "frames": facts["frames"],
-                                            "seconds": round(time.monotonic() - t0, 1)})
+                                            "seconds": round(time.monotonic() - t0, 1),
+                                            **({"source_warning": note} if note else {})})
+    remove_refetched_source(config, owner)  # K2: an archived episode keeps no source file
     secs = time.monotonic() - t0
     log.info("full: %s: vertical %.1f MB in %.1f s", owner, size / 1e6, secs)
     return FullResult(owner, out, True, secs, size)

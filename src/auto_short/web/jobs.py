@@ -38,6 +38,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..config import Config
+from ..enhance.state import SRC_ARCHIVED, effective_source
 from ..ingest import IngestBlocked, needs_download
 from ..pipeline import (PIPELINE_STAGES, OllamaUnavailable, PipelineError, PreflightError, StageRun,
                         ollama_preflight, run_pipeline)
@@ -45,6 +46,7 @@ from ..post import fetch as post_fetch
 from ..post import imgsearch as post_imgsearch
 from ..post import stage as post_stage
 from ..render import RenderError, run_render
+from ..render import full as full_mod
 from ..workspace import atomic_write_json
 from . import prepared
 from .priority import Priority
@@ -95,6 +97,7 @@ LANE_STAGES: dict[str, tuple[str, ...]] = {
 PREFETCH_LIMIT = 2  # Q2: prepare starts no new job while this many prepared jobs wait for the ai lane
 GPU_RETRY_SECONDS = 60.0  # FIX-ollama-wait O5: the ai lane re-checks Ollama this often while it is down
 GPU_OK, GPU_DOWN = "ok", "down"
+VERTICAL_PREFETCH = 2  # CP8.32 V2: re-downloaded originals (one per video, GBs each) waiting for / in the render lane
 YT_RETRY_SECONDS = 15 * 60.0  # FIX-youtube-botcheck-wait Y2: first wait after YouTube blocked the download ..
 YT_RETRY_MAX_SECONDS = 120 * 60.0  # .. doubled at each consecutive block up to this
 _ISO = "%Y-%m-%dT%H:%M:%SZ"
@@ -495,9 +498,11 @@ class JobRunner:
 
     # --- CP8.26: priority order of a lane queue ---------------------------------------------------
 
-    def _rank(self, job: Job) -> float:
+    def _rank(self, job: Job) -> tuple[int, float]:
+        """Start order key: every other job before the vertical full-episode jobs (CP8.32 V3: Shorts never wait for
+        hundreds of long encodes), then the priority mark (CP8.26), then arrival."""
         rank = self.priority.rank(job.episode_id)
-        return float("inf") if rank is None else rank
+        return (1 if job.kind == KIND_VERTICAL else 0, float("inf") if rank is None else rank)
 
     def _ordered(self, queue: "deque[Job]") -> list[Job]:
         """The queue in start order: marked videos first (mark order), then the others; stable inside each group."""
@@ -505,7 +510,7 @@ class JobRunner:
 
     def _pick(self, queue: "deque[Job]", pred: Callable[[Job], bool] | None = None) -> Job | None:
         """The job of ``queue`` that starts first (optionally among those accepted by ``pred``); not removed."""
-        best, best_rank = None, float("inf")
+        best, best_rank = None, (2, float("inf"))
         for j in queue:
             if pred is not None and not pred(j):
                 continue
@@ -677,7 +682,16 @@ class JobRunner:
         """CP8.29: may ``job`` start in the prepare lane next to the jobs it already runs? Not while another job of
         the same video runs (ingest of the ``.kt`` episode reuses the source of the base episode)."""
         video = self._video_of(job)
+        if job.kind == KIND_VERTICAL and job.step == 0 and self._vertical_fetched_locked() >= VERTICAL_PREFETCH:
+            return False  # CP8.32: downloaded originals wait for the render lane; do not fill the disk with more
         return all(self._video_of(j) != video for j in self._lane_running_locked(PREPARE))
+
+    def _vertical_fetched_locked(self) -> int:
+        """Vertical jobs holding (or about to hold) a re-downloaded original: fetching now, waiting in the render queue
+        after their fetch, or encoding."""
+        waiting = sum(1 for j in self._queues.get(RENDER, ()) if j.kind == KIND_VERTICAL and j.step > 0)
+        running = sum(1 for lane in (PREPARE, RENDER) for j in self._lane_running_locked(lane) if j.kind == KIND_VERTICAL)
+        return waiting + running
 
     def _take_locked(self, lane: str) -> Job | None:
         """Next job for ``lane`` (blocks); None when stopping. While the ai lane is down it waits until the next
@@ -1644,19 +1658,60 @@ def enhance_assemble_target(service, after: Callable[[str], None] | None = None)
 # --- vertical full-episode job (CP8.27 H4) -------------------------------------------------------------------------
 
 class VerticalTarget:
-    """Job target making ``output/<id>/full/vertical.mp4`` from the HD source (lane ``render``; one long ffmpeg, so it
-    follows the lane's one-job-at-a-time rule). Runs under :func:`vertical_key`, never colliding with the episode's own
-    job."""
+    """Job target making ``output/<id>/full/vertical.mp4`` from the effective HD source (CP8.32: ``source_hd.mp4`` or the
+    original >= 720p; lane ``render``, one long ffmpeg, so it follows the lane's one-job-at-a-time rule). Runs under
+    :func:`vertical_key`, never colliding with the episode's own job.
 
-    def __init__(self, config: Config, *, vertical: Callable | None = None):
+    An *archived* episode (its original was cleaned up) first gets a ``prepare``-lane step downloading the original
+    again (V2: same lane rules as an ingest download, so YouTube's bot check makes the job wait, not fail); the render
+    step encodes and removes the file again. ``episode_id`` (the video) is needed for that decision."""
+
+    def __init__(self, config: Config, *, vertical: Callable | None = None, episode_id: str | None = None,
+                 downloader: Callable | None = None, disk_blocked: Callable[[], str | None] | None = None):
         from ..render.full import run_vertical
-        self.config, self.vertical = config, vertical or run_vertical
+        self.config, self.vertical = config, vertical
+        self._run_vertical, self.downloader, self.episode_id = run_vertical, downloader, episode_id
+        self.disk_blocked = disk_blocked
+
+    def needs_download(self) -> bool:
+        """Y2: does the job have to fetch the original (archived, no file)? Cheap; any doubt answers False (no step)."""
+        if self.episode_id is None:
+            return False
+        try:
+            src = effective_source(self.config, self.episode_id)
+            if src is None or src.kind != SRC_ARCHIVED:
+                return False
+            return not (full_mod.ready_file(self.config, self.episode_id) is not None
+                        and full_mod.current(self.config, self.episode_id))
+        except Exception:
+            return False
+
+    def fetch(self, job: Job) -> None:
+        job.stage = LANE_STAGES[PREPARE][0]
+        if self.disk_blocked is not None:
+            message = self.disk_blocked()
+            if message:
+                raise JobFailed(message)
+        kw = {"downloader": self.downloader} if self.downloader is not None else {}
+        t0 = time.monotonic()
+        try:
+            result = full_mod.fetch_original(job.episode_id, self.config, **kw)
+        except full_mod.SourceBlocked as exc:
+            raise YoutubeWait(f"tải lại video gốc: {exc}") from exc
+        except RenderError as exc:
+            raise JobFailed(f"bản dọc: {exc}") from exc
+        if result.downloaded and getattr(job, "youtube_ok", None) is not None:
+            job.youtube_ok()  # a download really worked: the block (if any) is over
+        job.stages.append({"stage": "ingest", "ran": result.downloaded, "seconds": round(time.monotonic() - t0, 3)})
 
     def run(self, job: Job) -> None:
         job.stage = "vertical"
         t0 = time.monotonic()
+        kw = {"downloader": self.downloader} if self.downloader is not None and self.vertical is None else {}
         try:
-            result = self.vertical(job.episode_id, self.config)
+            result = (self.vertical or self._run_vertical)(job.episode_id, self.config, **kw)
+        except full_mod.SourceBlocked as exc:  # the fallback download inside this step: YouTube still blocks
+            raise JobFailed(f"bản dọc: {exc}; bấm lại sau") from exc
         except RenderError as exc:
             raise JobFailed(f"bản dọc: {exc}") from exc
         job.stages.append({"stage": "vertical", "ran": bool(result.ran), "seconds": round(time.monotonic() - t0, 3)})
@@ -1664,15 +1719,22 @@ class VerticalTarget:
         job.summary = f"bản dọc {result.size / 1e6:.0f} MB" + ("" if result.ran else " (dùng lại, không encode)")
 
     def __call__(self, job: Job) -> None:
+        if self.needs_download():
+            self.fetch(job)
         self.run(job)
 
     def lane_steps(self) -> list[Step]:
+        if self.needs_download():
+            return [Step(PREPARE, self.fetch), Step(RENDER, self.run)]
         return [Step(RENDER, self.run)]
 
     def spec(self) -> dict:
         return {}
 
 
-def vertical_target(config: Config, *, vertical: Callable | None = None) -> VerticalTarget:
+def vertical_target(config: Config, *, vertical: Callable | None = None, episode_id: str | None = None,
+                    downloader: Callable | None = None,
+                    disk_blocked: Callable[[], str | None] | None = None) -> VerticalTarget:
     """See :class:`VerticalTarget`."""
-    return VerticalTarget(config, vertical=vertical)
+    return VerticalTarget(config, vertical=vertical, episode_id=episode_id, downloader=downloader,
+                          disk_blocked=disk_blocked)
