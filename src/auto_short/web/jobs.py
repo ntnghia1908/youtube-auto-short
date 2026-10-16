@@ -488,14 +488,17 @@ class JobRunner:
         seconds (a yt-dlp socket read can take a few seconds to notice). Files are cleaned by the job's own unwinding and
         ``on_vertical_failed``. Returns the jobs that were cancelled / are being cancelled."""
         done: list[Job] = []
-        running: list[tuple[str, Job]] = []
+        running: list[Job] = []
         with self._lock:
             for job in [j for j in self._jobs.values() if j.kind == KIND_VERTICAL and j.active and not j.cancel_requested
                         and (episode_ids is None or j.episode_id in episode_ids)]:
                 slot = next((sl for sl, cur in self._current.items() if cur is job), None)
                 if slot is not None:
                     job.cancel_requested = True
-                    running.append((slot, job))
+                    # signalled while holding the lock: the lane thread needs it to leave this job (_after /
+                    # _release_locked) and to take the next one (_take_locked), so the signals can never reach another job
+                    if self._signal_running_locked(slot, job):
+                        running.append(job)
                     continue
                 for queue in self._queues.values():
                     if job in queue:
@@ -512,18 +515,24 @@ class JobRunner:
                     self.on_vertical_failed(job)
                 except Exception:
                     log.exception("web: on_vertical_failed hook failed for job %s [%s]", job.id, job.episode_id)
-        for slot, job in running:
-            thread = self._threads.get(slot)
-            tid = next((t for t, sl in self._tids.items() if sl == slot), None)
-            log.info("web: cancelling running job %s [%s] (lane thread %s)", job.id, job.episode_id, slot)
-            if thread is not None and thread.ident is not None:
-                _interrupt(thread.ident)
-            for pid in _thread_children(tid):
-                try:
-                    os.kill(pid, signal.SIGINT)
-                except OSError:
-                    pass
-        return done + [job for _slot, job in running]
+        return done + running
+
+    def _signal_running_locked(self, slot: str, job: Job) -> bool:
+        """Interrupt the lane thread of ``slot`` and SIGINT its child processes, only while ``job`` is still the job
+        that slot runs (caller holds ``_lock``). False = it already left: nothing is signalled."""
+        if self._current.get(slot) is not job:
+            return False
+        thread = self._threads.get(slot)
+        tid = next((t for t, sl in self._tids.items() if sl == slot), None)
+        log.info("web: cancelling running job %s [%s] (lane thread %s)", job.id, job.episode_id, slot)
+        if thread is not None and thread.ident is not None:
+            _interrupt(thread.ident)
+        for pid in _thread_children(tid):
+            try:
+                os.kill(pid, signal.SIGINT)
+            except OSError:
+                pass
+        return True
 
     def job(self, job_id: str) -> Job | None:
         with self._lock:

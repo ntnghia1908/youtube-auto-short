@@ -641,3 +641,24 @@ def test_ac9_cancel_leaves_other_job_kinds_alone(tcfg):
     job, _ = runner.submit(VID, KIND_RENDER, lambda j: None)  # a Short render of the same video
     assert c.post(f"/api/episodes/{VID}/vertical/cancel").status_code == 409
     assert job.status == "queued"
+
+
+def test_f3_signal_never_reaches_another_job_than_the_cancelled_one():
+    """The interrupt / SIGINT are sent only while the cancelled job is still the slot's job (under the runner lock)."""
+    gate = threading.Event()
+    runner = JobRunner()
+
+    def short(job):
+        assert gate.wait(10)
+
+    vjob_runner = JobRunner()  # a finished vertical job from its own runner stands for "the job that already left"
+    stale, _ = vjob_runner.submit("v1", KIND_VERTICAL, lambda job: None)
+    runner.start()
+    s, _ = runner.submit("s1", KIND_RENDER, short)
+    wait_until(lambda: runner.running().get(jobs_mod.RENDER) is s)
+    with runner._lock:
+        assert runner._signal_running_locked(jobs_mod.RENDER, stale) is False  # slot runs the Short now: no signal
+    gate.set()
+    assert runner.wait_idle(10)
+    runner.stop(2)
+    assert s.status == "done" and s.error is None
