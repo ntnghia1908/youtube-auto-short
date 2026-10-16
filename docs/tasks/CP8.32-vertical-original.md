@@ -23,6 +23,15 @@ S2 vì: sửa luật CP8.27 H1 / H4 (nguồn HD không chỉ là `source_hd.mp4`
 - Video gốc đã bị dọn (CP8.6 W9, `archive.json`, tự dọn S5) ở nhiều tập đã xong: Vô Lượng Thọ 14/20, Thập Thiện 4/34, Cảm Ứng Thiên 3/20 (2026-10-15). Ingest hiện từ chối tập archived.
 - Mỗi bản dọc ≈ 30 phút làn `render` / tập 1 giờ (CP8.27 Result).
 
+## Amendment 1 (HUMAN LEAD 2026-10-16, manual test 8080)
+
+HUMAN LEAD bấm "Tạo bản dọc cả bộ" cho Thập Thiện rồi cần ngưng; web không có cách hủy (ORCHESTRATOR phải dừng web và sửa `.web_queue.json`). "ok thêm hủy bản dọc từ web giúp tôi" → thêm **V4**:
+
+- **V4 Hủy bản dọc.** (a) Nút "Hủy bản dọc cả bộ (n)" trên trang bộ kinh (hiện khi bộ có job bản dọc đang chờ / chạy; xác nhận): hủy mọi job bản dọc của các tập trong bộ. (b) Hủy từng job bản dọc: nút hủy ở dòng job bản dọc trong hàng đợi / tab Theo dõi và ở trang tập (khi tập có job bản dọc đang chờ / chạy). Route mới (cùng auth / cookie như route bộ kinh / tập), ví dụ `POST /api/playlists/{pid}/vertical/cancel` và `POST /api/episodes/{id}/vertical/cancel`; trả số job đã hủy.
+  - Job đang chờ → bỏ khỏi hàng đợi (không chạy, không lưu lại vào `.web_queue.json`). Job đang tải lại video gốc (bước prepare) hoặc đang encode (bước render) → dừng tiến trình con (yt-dlp / ffmpeg) trong vài giây, xóa file dở (`.vertical.mp4.part`, `.vertical-fetch-tmp`), dọn video gốc tải lại (K2, như F2). Bản dọc đã xong giữ nguyên. Job kết thúc với trạng thái "đã hủy" (khác "lỗi"), hiện đúng trên giao diện; bấm "Tạo bản dọc" / "cả bộ" lại được.
+  - Chỉ áp dụng cho job bản dọc; không thêm hủy cho job Short / khai thị / bài đăng (ngoài phạm vi).
+- AC thêm: (8) hủy cả bộ khi có job chờ + job đang tải + job đang encode (tiến trình giả) → cả ba dừng, không file dở / video gốc tải lại sót, job khác (Short) không bị ảnh hưởng, khởi động lại không khôi phục job đã hủy; (9) hủy từng job (chờ / đang chạy) qua route tập; route sai id / không có job → 4xx rõ, không 500.
+
 ## Goal
 
 Mọi tập có video chất lượng ≥ 720p — hoặc từ enhance (`source_hd.mp4`) hoặc từ video gốc — đều tạo / tải được bản dọc cả tập và bản ngang HD như Địa Tạng; trang bộ kinh có nút tạo bản dọc cho cả bộ.
