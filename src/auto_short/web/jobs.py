@@ -55,6 +55,7 @@ from ..selection.client import ChatUnavailable
 log = logging.getLogger("auto_short")
 
 QUEUED, RUNNING, DONE, FAILED, INTERRUPTED = "queued", "running", "done", "failed", "interrupted"
+CANCELLED = "cancelled"  # CP8.32 V4: a vertical job cancelled from the web (terminal, not restored, not an error)
 ACTIVE = (QUEUED, RUNNING)
 LOG_LINES = 200
 KIND_PIPELINE = "pipeline"
@@ -185,6 +186,7 @@ class Job:
     resume: tuple[str, int] | None = field(default=None, repr=False)  # CP8.22: (lane, step) interrupted by stop()
     step_t0: float = field(default=0.0, repr=False)  # CP8.28: monotonic start of the running step
     step_started_at: str | None = field(default=None, repr=False)  # CP8.28: the same, ISO (monitor tab)
+    cancel_requested: bool = field(default=False, repr=False)  # CP8.32 V4: a running vertical job being cancelled
     hd_wait: bool = False  # CP13.1b: parked after titling until the HD source is ready ("đợi HD"): in no lane queue
 
     @property
@@ -270,6 +272,16 @@ def lower_thread_priority(nice: int, *, ionice: bool = True) -> bool:
             except (OSError, AttributeError):
                 pass
     return True
+
+
+def _thread_children(tid: int | None) -> list[int]:
+    """Child processes started by one thread of this server (``/proc/self/task/<tid>/children``); empty if unknown."""
+    if tid is None:
+        return []
+    try:
+        return [int(p) for p in (Path("/proc/self/task") / str(tid) / "children").read_text().split()]
+    except (OSError, ValueError):
+        return []
 
 
 def _interrupt(thread_ident: int) -> None:
@@ -462,6 +474,56 @@ class JobRunner:
         """The newest vertical full-episode job of the video (CP8.27)."""
         with self._lock:
             return self._latest.get(vertical_key(episode_id))
+
+    def active_vertical(self, episode_ids=None) -> list[Job]:
+        """Queued / running vertical jobs (of these video ids; None = all)."""
+        with self._lock:
+            return [j for j in self._jobs.values() if j.kind == KIND_VERTICAL and j.active and not j.cancel_requested
+                    and (episode_ids is None or j.episode_id in episode_ids)]
+
+    def cancel_vertical(self, episode_ids=None) -> list[Job]:
+        """CP8.32 V4: cancel the active vertical jobs of these video ids (None = all); no other kind is ever touched.
+        A waiting job leaves its lane queue at once; a running one gets the stop mechanism (KeyboardInterrupt on its lane
+        thread + SIGINT to the child processes of THAT thread only: ffmpeg / yt-dlp's ffmpeg), ends ``cancelled`` within
+        seconds (a yt-dlp socket read can take a few seconds to notice). Files are cleaned by the job's own unwinding and
+        ``on_vertical_failed``. Returns the jobs that were cancelled / are being cancelled."""
+        done: list[Job] = []
+        running: list[tuple[str, Job]] = []
+        with self._lock:
+            for job in [j for j in self._jobs.values() if j.kind == KIND_VERTICAL and j.active and not j.cancel_requested
+                        and (episode_ids is None or j.episode_id in episode_ids)]:
+                slot = next((sl for sl, cur in self._current.items() if cur is job), None)
+                if slot is not None:
+                    job.cancel_requested = True
+                    running.append((slot, job))
+                    continue
+                for queue in self._queues.values():
+                    if job in queue:
+                        queue.remove(job)
+                job.status, job.error, job.finished_at = CANCELLED, None, _now()
+                job.lane, job.waiting, job.yt_wait, job.gpu_wait = None, False, False, False
+                done.append(job)
+            self._save_locked()
+            self._lock.notify_all()
+        for job in done:
+            log.info("web: job %s [%s] cancelled while waiting", job.id, job.episode_id)
+            if self.on_vertical_failed is not None:
+                try:
+                    self.on_vertical_failed(job)
+                except Exception:
+                    log.exception("web: on_vertical_failed hook failed for job %s [%s]", job.id, job.episode_id)
+        for slot, job in running:
+            thread = self._threads.get(slot)
+            tid = next((t for t, sl in self._tids.items() if sl == slot), None)
+            log.info("web: cancelling running job %s [%s] (lane thread %s)", job.id, job.episode_id, slot)
+            if thread is not None and thread.ident is not None:
+                _interrupt(thread.ident)
+            for pid in _thread_children(tid):
+                try:
+                    os.kill(pid, signal.SIGINT)
+                except OSError:
+                    pass
+        return done + [job for _slot, job in running]
 
     def job(self, job_id: str) -> Job | None:
         with self._lock:
@@ -814,6 +876,9 @@ class JobRunner:
             finally:
                 for _attempt in range(3):  # a late "pause now" interrupt must not skip the bookkeeping
                     try:
+                        if job.cancel_requested and not ok:  # CP8.32 V4: whatever stopped it, it ends "cancelled"
+                            paused_back, blocked, requeue = False, None, None
+                            job.status, job.error = CANCELLED, None
                         if paused_back:
                             self._requeue_paused(lane, job)
                         elif blocked is not None:
@@ -899,7 +964,7 @@ class JobRunner:
                 self.on_finished(job)
             except Exception:  # a bug in the hook must not kill the worker
                 log.exception("web: on_finished hook failed for job %s [%s]", job.id, job.episode_id)
-        if last and job.kind == KIND_VERTICAL and job.status in (FAILED, INTERRUPTED) and not self._stopping \
+        if last and job.kind == KIND_VERTICAL and job.status in (FAILED, INTERRUPTED, CANCELLED) and not self._stopping \
                 and self.on_vertical_failed is not None:
             try:  # CP8.32 K2: a re-downloaded original must not outlive a failed / cut vertical job
                 self.on_vertical_failed(job)

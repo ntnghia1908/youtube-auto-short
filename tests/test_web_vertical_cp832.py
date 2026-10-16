@@ -541,3 +541,103 @@ def test_f2_startup_sweep_cleans_orphans_but_not_active_jobs(tcfg, orig_clip):
     c.__enter__()
     assert not (d / "source.mp4").exists()
     c.__exit__(None, None, None)
+
+
+# --- Amendment 1 (V4): cancel vertical jobs ---------------------------------------------------------------------
+
+def wait_until(pred, timeout=15.0):
+    end = time.monotonic() + timeout
+    while not pred():
+        assert time.monotonic() < end, "condition not reached"
+        time.sleep(0.05)
+
+
+def seed_playlist_many(cfg, vids):
+    path = Path(cfg.workspace.dir) / "_playlists" / f"{PL}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    entries = [{"index": i, "video_id": v, "title": f"Thập Thiện tập {i}", "duration": 3.0, "episode": str(i),
+                "available": True} for i, v in enumerate(vids, 1)]
+    path.write_text(json.dumps({"schema_version": 1, "playlist_id": PL, "title": "T", "url": "u",
+                                "fetched_at": "2026-10-04T00:00:00Z", "entries": entries}), encoding="utf-8")
+
+
+def test_ac8_cancel_whole_bo_waiting_fetching_encoding(tcfg):
+    a, b, c_id, short = "aaaaaaaaaa1", "cccccccccc3", "bbbbbbbbbb2", "dddddddddd4"
+    make_ep(tcfg, a, height=1080)
+    make_ep(tcfg, b, height=1080)
+    cd = make_ep(tcfg, c_id, height=1080, archived=True)
+    seed_playlist_many(tcfg, [a, b, c_id])
+    started = {"enc": False, "fetch": False}
+    short_done = []
+
+    def vertical(eid, cfg):
+        assert eid == a, "only the first job may start encoding"
+        started["enc"] = True
+        subprocess.run(["sleep", "60"])  # the "ffmpeg" child of the lane thread
+        raise RenderError("ffmpeg failed: killed")
+
+    def downloader(url, dest, cfg):
+        started["fetch"] = True
+        (dest / "source.mp4.part").write_bytes(b"half")
+        while True:
+            time.sleep(0.05)
+
+    c = client(tcfg, vertical=vertical, vertical_downloader=downloader)
+    c.__enter__()
+    login(c)
+    runner = c.app.state.runner
+    assert c.post(f"/api/episodes/{a}/vertical").status_code == 202
+    wait_until(lambda: started["enc"])
+    assert c.post(f"/api/episodes/{b}/vertical").status_code == 202  # waits in the render queue
+    assert c.post(f"/api/episodes/{c_id}/vertical").status_code == 202  # fetches in the prepare lane
+    wait_until(lambda: started["fetch"])
+    runner.submit(short, KIND_RENDER, lambda job: short_done.append(1))
+    view = c.get(f"/api/playlists/{PL}").json()
+    assert view["vertical_active"] == 3
+    r = c.post(f"/api/playlists/{PL}/vertical/cancel")
+    assert r.status_code == 200 and r.json()["cancelled"] == 3
+    jobs = [runner.latest_vertical(x) for x in (a, b, c_id)]
+    wait_until(lambda: all(j.status == "cancelled" for j in jobs))
+    assert all(j.error is None for j in jobs)
+    wait_until(lambda: short_done)  # the Short job was not touched and runs once the lane is free
+    assert runner.wait_idle(10)
+    assert not list(cd.glob("source.*")) and not (cd / ".vertical-fetch-tmp").exists() and (cd / "archive.json").exists()
+    assert not list(full.vertical_dir(tcfg, a).glob("*.part")) if full.vertical_dir(tcfg, a).exists() else True
+    q = json.loads((Path(tcfg.workspace.dir) / ".web_queue.json").read_text())
+    assert not any(e["kind"] == "vertical" for lane in q["lanes"].values() for e in lane)
+    assert c.get(f"/api/playlists/{PL}").json()["vertical_active"] == 0
+    assert c.post(f"/api/playlists/{PL}/vertical/cancel").status_code == 409  # nothing left
+    c.__exit__(None, None, None)
+    c2 = client(tcfg)  # restart: nothing is restored
+    c2.__enter__()
+    assert not [j for j in c2.app.state.runner.jobs() if j.kind == "vertical"]
+    c2.__exit__(None, None, None)
+
+
+def test_ac9_cancel_one_job_by_episode_route(tcfg):
+    make_ep(tcfg, height=1080)
+    c = client(tcfg, vertical=fake_vertical([]))  # lifespan not started: the job stays queued
+    assert c.post(f"/api/episodes/{VID}/vertical/cancel").status_code in (303, 401)  # needs login
+    login(c)
+    runner = c.app.state.runner
+    assert c.post(f"/api/episodes/{VID}/vertical/cancel").status_code == 409  # no job
+    assert c.post("/api/episodes/%2e%2e%2fwork/vertical/cancel").status_code in (404, 422)
+    assert c.post("/api/episodes/-x/vertical/cancel").status_code in (404, 422)
+    assert c.post(f"/api/episodes/{VID}/vertical").status_code == 202
+    r = c.post(f"/api/episodes/{VID}/vertical/cancel")
+    assert r.status_code == 200 and r.json()["cancelled"] == 1
+    assert runner.latest_vertical(VID).status == "cancelled"
+    assert c.get(f"/api/episodes/{VID}").json()["hd_video"]["vertical"]["job"]["status"] == "cancelled"
+    assert c.post(f"/api/episodes/{VID}/vertical/cancel").status_code == 409
+    again = c.post(f"/api/episodes/{VID}/vertical")  # can be queued again
+    assert again.status_code == 202 and again.json()["job"]["status"] == "queued"
+
+
+def test_ac9_cancel_leaves_other_job_kinds_alone(tcfg):
+    make_ep(tcfg, height=1080)
+    c = client(tcfg)
+    login(c)
+    runner = c.app.state.runner
+    job, _ = runner.submit(VID, KIND_RENDER, lambda j: None)  # a Short render of the same video
+    assert c.post(f"/api/episodes/{VID}/vertical/cancel").status_code == 409
+    assert job.status == "queued"

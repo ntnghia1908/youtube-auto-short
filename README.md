@@ -151,6 +151,7 @@ named `…_HD.<ext>`; "Tạo bản dọc" encodes from it; `vertical.json` recor
 lane (waits while YouTube blocks), encodes, then removes the file again; the episode stays archived (no landscape
 download for it). A bộ kinh page has "Tạo bản dọc cả bộ" (one job per finished episode that has no current vertical
 file, about 0.5 h of render lane each, always started after the Short / khai thị jobs).
+A vertical job can be cancelled (bộ kinh page "Hủy bản dọc cả bộ", episode page, tab Theo dõi): waiting jobs leave the queue, running ones are stopped within seconds and their partial files / re-downloaded originals removed; Short / khai thị jobs are never affected.
 
 Khai thị videos (CP8.9): besides Shorts, a video can give longer "khai thị" videos (same 9:16 template, one
 complete teaching each, length within a chosen minute range after silence trimming; default 4–7 minutes, at most

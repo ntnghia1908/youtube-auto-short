@@ -13,7 +13,7 @@ const AutoShort = (() => {
   };
   const STATUS_LABELS = {
     pending: "chờ", running: "đang chạy", done: "xong", failed: "lỗi", stale: "cần chạy lại",
-    queued: "đang đợi", interrupted: "bị ngắt",
+    queued: "đang đợi", interrupted: "bị ngắt", cancelled: "đã hủy",
   };
   const TITLE_SOURCE_LABELS = { ai: "AI", manual: "sửa tay", alternative: "phương án AI khác" };
   const POLL_MS = 2500;
@@ -721,9 +721,19 @@ const AutoShort = (() => {
       } catch (e) { alert(e.message); }
       refreshEpisode();
     };
+    const cancel = $("#hd-vertical-cancel");
+    cancel.hidden = !active;
+    cancel.onclick = async () => {
+      if (!confirm("Hủy bản dọc của tập này?")) return;
+      cancel.disabled = true;
+      try { await api("/api/episodes/" + encodeURIComponent(episodeId) + "/vertical/cancel", { method: "POST" }); } catch (e) { alert(e.message); }
+      cancel.disabled = false;
+      refreshEpisode();
+    };
     const note = $("#hd-vertical-note");
-    note.hidden = !(job && job.status === "failed");
+    note.hidden = !(job && (job.status === "failed" || job.status === "cancelled"));
     if (job && job.status === "failed") note.textContent = `Lỗi tạo bản dọc: ${job.error || "?"}`;
+    else if (job && job.status === "cancelled") note.textContent = "Đã hủy bản dọc (bấm \"Tạo bản dọc\" để làm lại).";
   }
 
   // CP8.31 D1 / round 6: the server ticks "Đã đăng" when the zip request arrives, which on a phone can be late
@@ -2615,6 +2625,7 @@ const AutoShort = (() => {
     $("#pl-priority").addEventListener("click", priorityPlaylist);
     $("#pl-enhance-redo").addEventListener("click", enhanceRedoPlaylist);
     $("#pl-vertical").addEventListener("click", verticalPlaylist);
+    $("#pl-vertical-cancel").addEventListener("click", verticalCancelPlaylist);
     initHashtags();
     initSeries();
     initDoc();
@@ -2683,7 +2694,19 @@ const AutoShort = (() => {
   }
 
   // CP8.32 V3: one vertical job per finished episode with an HD source (the lane runs them after every Short job).
-  let plVerticalTodo = [], plVerticalFetch = 0;
+  let plVerticalTodo = [], plVerticalFetch = 0, plVerticalActive = 0;
+  async function verticalCancelPlaylist() { // CP8.32 V4: only the vertical jobs of this bộ kinh
+    if (!plVerticalActive) { bulkMessage("Không có bản dọc nào đang chờ / đang chạy.", "muted"); return; }
+    if (!confirm(`Hủy ${plVerticalActive} việc bản dọc (đang chờ hoặc đang chạy) của bộ kinh này?\n\nViệc đang chạy bị dừng ngay, file dở được dọn; bản dọc đã xong giữ nguyên. Việc Short / khai thị không bị ảnh hưởng.`)) return;
+    const btn = $("#pl-vertical-cancel");
+    btn.disabled = true;
+    try {
+      const r = await api(`/api/playlists/${encodeURIComponent(playlistId)}/vertical/cancel`, jsonBody("POST", {}));
+      bulkMessage(`Đã hủy ${r.cancelled} bản dọc.`, "ok");
+      loadPlaylist();
+    } catch (e) { bulkMessage(e.message, "error"); }
+    btn.disabled = false;
+  }
   const VERTICAL_HOURS_PER_EPISODE = 0.5;
   async function verticalPlaylist() {
     const n = plVerticalTodo.length;
@@ -3065,6 +3088,10 @@ const AutoShort = (() => {
     redoBtn.textContent = `Enhance lại (${plOldHd})`;
     plVerticalTodo = d.entries.filter((e) => e.vertical && e.vertical.status === "todo");
     plVerticalFetch = plVerticalTodo.filter((e) => e.vertical.fetch).length;
+    plVerticalActive = d.vertical_active || 0; // CP8.32 V4
+    const vcancel = $("#pl-vertical-cancel");
+    vcancel.hidden = !plVerticalActive;
+    vcancel.textContent = `Hủy bản dọc cả bộ (${plVerticalActive})`;
     $("#pl-vertical").textContent = plVerticalTodo.length ? `Tạo bản dọc cả bộ (${plVerticalTodo.length})` : "Tạo bản dọc cả bộ"; // CP8.32 V3
     renderPostsRanges(d.posts_ranges || []); // CP8.31 A1
     plPriorityCount = d.priority_count || 0; // CP8.26
@@ -3168,6 +3195,16 @@ const AutoShort = (() => {
     const ep = e.episode || {};
     return ep.label && ep.label !== e.episode_id ? el("span", { class: "muted small", title: e.episode_id, text: ` ${e.episode_id}` }) : null;
   }
+  function cancelVerticalButton(e) { // CP8.32 V4: only vertical jobs can be cancelled
+    if (e.kind !== "vertical") return null;
+    const b = el("button", { class: "btn small", type: "button", text: "Hủy", title: "Hủy bản dọc này" });
+    b.addEventListener("click", async () => {
+      if (!confirm(`Hủy bản dọc ${jobName(e)}?`)) return;
+      b.disabled = true;
+      try { await api(`/api/episodes/${encodeURIComponent(e.episode_id)}/vertical/cancel`, { method: "POST" }); } catch (err) { alert(err.message); }
+    });
+    return b;
+  }
   function jobStep(e) {
     const st = e.stage ? (STAGE_NAMES[e.stage] || e.stage) : "";
     const pr = e.progress ? ` ${e.progress.done}/${e.progress.total} clip` : "";
@@ -3185,10 +3222,11 @@ const AutoShort = (() => {
       const now = runs.length
         ? el("div", {}, ...runs.map((run) => el("div", { class: "mon-run" }, el("strong", { text: jobName(run) }), jobCode(run),
           el("div", { class: "small", text: jobStep(run) }),
-          el("div", { class: "muted small", text: `bước này đã chạy ${fmtDur(run.elapsed_seconds)}` + (run.started_at ? ` · cả việc bắt đầu ${fmtClock(run.started_at)}` : "") + ` · id ${run.id}` }))))
+          el("div", { class: "muted small", text: `bước này đã chạy ${fmtDur(run.elapsed_seconds)}` + (run.started_at ? ` · cả việc bắt đầu ${fmtClock(run.started_at)}` : "") + ` · id ${run.id}` }),
+          cancelVerticalButton(run))))
         : el("div", { class: "muted small", text: "Không có việc đang chạy." });
       const items = info.pending.map((e) => el("li", { class: "small" },
-        `${e.position}. ${jobName(e)} `, jobCode(e), el("span", { class: "muted", text: jobStep(e) + (e.waiting ? " · từ làn trước sang" : "") })));
+        `${e.position}. ${jobName(e)} `, jobCode(e), el("span", { class: "muted", text: jobStep(e) + (e.waiting ? " · từ làn trước sang" : "") }), " ", cancelVerticalButton(e)));
       const more = info.pending_total > info.pending.length
         ? el("li", { class: "muted small", text: `… còn ${info.pending_total - info.pending.length} việc nữa` }) : null;
       return el("div", { class: "mon-lane" }, head, now, items.length ? el("ol", { class: "mon-list" }, ...items, more) : null);

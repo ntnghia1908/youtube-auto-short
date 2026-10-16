@@ -926,7 +926,8 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         status, reason = _vertical_status(vid, e)
         src = ep.hd_source(config, vid)
         ready = render_full.ready_file(config, vid) if render_full.current(config, vid) else None
-        e["vertical"] = {"status": status, "reason": reason, "fetch": src is not None and src.kind == enh_state.SRC_ARCHIVED,
+        vjob = runner.latest_vertical(vid)
+        e["vertical"] = {"status": status, "reason": reason, "active": vjob is not None and vjob.active, "fetch": src is not None and src.kind == enh_state.SRC_ARCHIVED,
                          "ready": ready is not None,
                          "url": f"/api/episodes/{vid}/vertical" if ready is not None else None,
                          "name": ep.video_download_name(config, vid, "Doc") if ready is not None else None}
@@ -971,6 +972,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             _vertical_fields(e)  # CP8.32 V3
             _download_fields(e)  # CP8.31 D3
         view["priority_count"] = sum(1 for e in view["entries"] if e["priority"])
+        view["vertical_active"] = sum(1 for e in view["entries"] if (e.get("vertical") or {}).get("active"))  # CP8.32 V4
         view["posts_ranges"] = _posts_ranges(playlist_id, view["entries"])
         kc = config.khaithi  # CP8.9 A2.2: defaults of the kind bar ("Khai thị [min]–[max] phút")
         view["khaithi_defaults"] = {"min_minutes": kc.default_min_minutes, "max_minutes": kc.default_max_minutes,
@@ -1251,6 +1253,13 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                 short["rendering"] = short["clip_id"] in job.clip_ids
         return view
 
+    def _size_or_none(path: Path | None) -> int | None:
+        """A re-downloaded original can vanish between the view's checks (the vertical job cleans it up): no 500."""
+        try:
+            return path.stat().st_size if path is not None else None
+        except OSError:
+            return None
+
     def _hd_video_view(episode_id: str) -> dict | None:
         """CP8.27 H2 / H4 + CP8.32: the HD download (landscape) and the vertical full-episode file of the video, None
         while there is no effective HD source (``source``: ``hd`` | ``original`` | ``archived``; an archived original
@@ -1264,7 +1273,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         job = runner.latest_vertical(owner)
         return {"url": f"/api/episodes/{episode_id}/source-hd" if hd is not None else None,
                 "name": ep.hd_download_name(config, episode_id) if hd is not None else None,
-                "size": hd.stat().st_size if hd is not None else None, "source": src.kind,
+                "size": _size_or_none(hd), "source": src.kind,
                 "vertical": {"ready": ready is not None, "url": f"/api/episodes/{episode_id}/vertical",
                              "name": ep.video_download_name(config, episode_id, "Doc"),
                              "size": ready.stat().st_size if ready is not None else None,
@@ -2230,6 +2239,32 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         return JSONResponse({"playlist_id": playlist_id, "episodes": len(entries), "queued": len(queued),
                              "queued_ids": queued, "skipped": skipped, "errors": errors},
                             status_code=202 if queued else 200)
+
+    @app.post("/api/playlists/{playlist_id}/vertical/cancel")
+    def api_playlist_vertical_cancel(playlist_id: str):
+        """CP8.32 V4 "Hủy bản dọc cả bộ": cancel every queued / running vertical job of the bộ kinh's videos (and only
+        those); 409 when there is none."""
+        doc = _playlist_or_404(playlist_id)
+        if doc is None:
+            return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
+        ids = {e["video_id"] for e in doc["entries"] if e.get("video_id")}
+        cancelled = runner.cancel_vertical(ids)
+        log.info("web: playlist %s hủy bản dọc: %d job", playlist_id, len(cancelled))
+        if not cancelled:
+            return JSONResponse({"detail": "bộ kinh này không có bản dọc đang chờ / đang chạy"}, status_code=409)
+        return {"playlist_id": playlist_id, "cancelled": len(cancelled), "ids": sorted(j.episode_id for j in cancelled)}
+
+    @app.post("/api/episodes/{episode_id}/vertical/cancel")
+    def api_episode_vertical_cancel(episode_id: str):
+        """CP8.32 V4: cancel the queued / running vertical job of this video (a ``.kt`` id means its video)."""
+        if not ep.valid_episode_id(episode_id):
+            return JSONResponse({"detail": "không có episode này"}, status_code=404)
+        owner = ep.hd_owner(episode_id)
+        cancelled = runner.cancel_vertical({owner})
+        if not cancelled:
+            return JSONResponse({"detail": "tập này không có bản dọc đang chờ / đang chạy"}, status_code=409)
+        log.info("web: hủy bản dọc [%s]", owner)
+        return {"episode_id": owner, "cancelled": len(cancelled)}
 
     @app.post("/api/episodes/{episode_id}/enhance/rerender")
     def api_episode_rerender_hd(episode_id: str):
