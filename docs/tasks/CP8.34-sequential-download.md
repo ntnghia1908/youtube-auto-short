@@ -2,15 +2,15 @@
 
 ## Status / Approval
 
-- Status: DRAFT
+- Status: APPROVED
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
 - Execution profile: dual-agent
 - Implementer: `.claude/agents/implementer` (Sonnet) — mặc định dual-agent của project.
 - Base commit / branch: `508a94c` (`main`, sau #85 CP8.32 + #86 CP8.33) / `feature/cp8.34-sequential-download` (worktree `../youtube-auto-short-cp834`).
-- Human Lead approval: pending
-- Implementation authorized: NO
+- Human Lead approval: APPROVED D1–D7 (2026-10-17)
+- Implementation authorized: YES
 
 Lifecycle: `DRAFT → APPROVED → IN_PROGRESS → READY`. DONE suy ra từ Git sau khi merge.
 
@@ -24,13 +24,13 @@ S2 vì: route web mới + thay đổi hành vi route tải hiện có (theo dõi
 
 ## Quyết định cần HUMAN LEAD duyệt (D1–D7)
 
-- **D1 Chọn.** Trang bộ kinh: mỗi tập có ô tick; thanh "Tải lần lượt" chọn loại: zip (Short + khai thị như nút zip hiện có, CP8.31 D3), bản dọc cả tập, bản ngang HD (chỉ tập có loại đó; tập không có thì bỏ qua và ghi rõ). Nút nhanh: "Chọn tất cả chưa đăng" (tập còn Short / khai thị chưa tick "Đã đăng").
+- **D1 Chọn.** Trang bộ kinh: mỗi tập có ô tick; thanh "Tải lần lượt" chọn loại: zip (Short + khai thị như nút zip hiện có, CP8.31 D3), bản dọc cả tập, bản ngang HD (chỉ tập có loại đó; tập không có thì bỏ qua và ghi rõ). Nút nhanh: "Chọn tất cả chưa đăng" (tập còn Short / khai thị chưa tick "Đã đăng"). Lần đầu Chrome trên điện thoại có thể hỏi "Cho phép tải nhiều tệp?" — chọn Cho phép một lần; trang ghi dòng nhắc này cạnh nút "Tải lần lượt".
 - **D2 Cùng lúc.** Ô chọn 1 / 2 / 3, mặc định 2; nhớ theo trình duyệt (localStorage, try/catch).
 - **D3 Biết khi nào một file xong (server theo dõi).** Mỗi lần tải trang thêm `?dl=<token>` (ngẫu nhiên, do trang tạo) vào URL tải. Server ghi trong bộ nhớ (không lưu đĩa, hết hạn 6 h) cho token đó: `state` = `sending` / `done` (đã gửi byte cuối) / `aborted` (client ngắt giữa chừng), `bytes_sent`, `bytes_total` (nếu biết). Route mới `GET /api/downloads/{token}` (cùng auth). Trang hỏi mỗi 2 s; `done` → bắt đầu file tiếp theo; `aborted` hoặc không có request nào tới sau 60 s → lỗi. Route tải không có `dl` giữ nguyên hành vi.
 - **D4 Thử lại.** Lỗi → tự tải lại tối đa 2 lần (token mới, chờ 5 s); vẫn lỗi → dòng đỏ + nút "Thử lại", chuyển sang file sau. Zip tạo lúc tải nên tải lại là tải từ đầu (không tải tiếp phần dở); mp4 cũng tải lại từ đầu (Range: out of scope).
 - **D5 Trạng thái trên trang.** Bảng hàng đợi tải: tên file, đang chờ / đang tải (MB đã gửi / tổng nếu biết) / xong / lỗi; nút "Dừng" (không bắt đầu file mới; file đang tải thì để trình duyệt tự xong) và "Tiếp tục". Trang phải mở trong lúc tải: giữ màn hình sáng (Wake Lock như trang Đọc Kinh, nếu trình duyệt hỗ trợ) + dòng nhắc "Để trang này mở cho tới khi tải xong". Đóng / tải lại trang → hàng đợi mất (file đã xong vẫn còn trong máy).
 - **D6 "Đã đăng".** Zip vẫn tick "Đã đăng" phía server như CP8.31 D1 khi request tới (tải lại cùng zip tick lại cùng file — không đổi kết quả).
-- **D7 "Xong" = server gửi xong.** `done` nghĩa là server đã đẩy hết byte vào mạng, không phải điện thoại đã ghi xong file; với 1–3 file cùng lúc thì sai lệch chỉ là vài giây cuối. Trình quản lý tải của điện thoại tự gửi lại request (cùng URL, cùng token) → token tính theo request mới nhất.
+- **D7 "Xong" = server gửi xong.** `done` nghĩa là server đã đẩy hết byte vào mạng, không phải điện thoại đã ghi xong file; với 1–3 file cùng lúc thì sai lệch chỉ là vài giây cuối. Trình quản lý tải của điện thoại tự gửi lại request (cùng URL, cùng token) → token tính theo request mới nhất. mp4 (`FileResponse`) có hỗ trợ Range: nếu trình quản lý tải tự tải tiếp bằng Range, `done` = đã gửi tới byte cuối của file, `bytes_total` = kích thước file.
 
 ## Scope
 
