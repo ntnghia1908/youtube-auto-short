@@ -36,13 +36,19 @@ def _head(series: str | None, fallback: str) -> str:
     return truncate_utf8(clean_part(series), MAX_SERIES_BYTES) or clean_part(fallback) or "Khai thị"
 
 
-def concat_name(series: str | None, first: str, last: str, count: int, *, fallback: str = "") -> str:
-    """``<Tên bộ kinh> - Khai thị T<a>-T<b> (<n> đoạn).mp4``; ``T<a>`` when first == last."""
+KIND_WORDS = {"short": "Short", "khaithi": "Khai thị"}
+
+
+def concat_name(series: str | None, first: str, last: str, count: int, *, kinds: set[str] | frozenset[str] = frozenset({"khaithi"}),
+                fallback: str = "") -> str:
+    """``<Tên bộ kinh> - <Short|Khai thị|Short + Khai thị> T<a>-T<b> (<n> đoạn).mp4`` (word by the kinds present,
+    Amendment 2); ``T<a>`` when first == last."""
     a, b = clean_part(first), clean_part(last)
     span = f"T{a}" if a == b else f"T{a}-T{b}"  # one episode: "T5", not "T5-T5" (review fix 1)
-    return f"{_head(series, fallback)} - Khai thị {span} ({count} đoạn).mp4"
+    word = " + ".join(w for k, w in KIND_WORDS.items() if k in kinds) or KIND_WORDS["khaithi"]
+    return f"{_head(series, fallback)} - {word} {span} ({count} đoạn).mp4"
 
 
 def loop_name(series: str | None, code: str, count: int, *, fallback: str = "") -> str:
-    """``<Tên bộ kinh> - T<tập>_KT<NN> lặp <n> lần.mp4`` (``code`` = ``review.names.short_code``)."""
+    """``<Tên bộ kinh> - T<tập>_S<NN> / T<tập>_KT<NN> lặp <n> lần.mp4`` (``code`` = ``review.names.short_code``)."""
     return f"{_head(series, fallback)} - {clean_part(code)} lặp {count} lần.mp4"

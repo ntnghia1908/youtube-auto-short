@@ -47,21 +47,26 @@ def frame_color(path: Path, at: float) -> str:
     return "rgb"[max(range(3), key=lambda i: (r, g, b)[i])]
 
 
-def make_series(cfg, tmp_path: Path, spec: list[tuple[str, str, list[tuple[str, float]]]], *, series="Bộ thử",
-                playlist_id: str = PL) -> None:
-    """``spec`` = [(video_id, episode number, [(color, seconds), ...])]: one khai thị episode ``<video_id>.kt`` per
-    entry whose clips ``k01``, ``k02``, ... are real mp4 files, plus the stored bộ kinh listing the videos."""
+def make_series(cfg, tmp_path: Path, spec: list[tuple], *, series="Bộ thử", playlist_id: str = PL) -> None:
+    """``spec`` = [(video_id, episode number, [(color, seconds), ...] khai thị clips[, [(color, seconds), ...] Short
+    clips])]: a khai thị episode ``<video_id>.kt`` whose clips ``k01``, ... are real mp4 files, optionally a Short
+    episode ``<video_id>`` (clips ``s01``, ...), plus the stored bộ kinh listing the videos."""
     entries = []
-    for i, (vid, number, clips) in enumerate(spec, 1):
+    for i, (vid, number, clips, *rest) in enumerate(spec, 1):
         kid = vid + khaithi.SUFFIX
-        names = tuple(f"k{n:02d}" for n in range(1, len(clips) + 1))
-        write_episode(cfg, kid, clips=names, titles={n: f"Khai thị {number}.{j}" for j, n in enumerate(names, 1)})
-        ws = Workspace(Path(cfg.workspace.dir), kid)
-        khaithi.write(ws.dir, KhaiThi(vid, 4, 7))
-        (ws.dir / "titles.json").write_text(json.dumps({"header": {"fields": {"episode": number, "series": series}}}),
-                                            encoding="utf-8")
-        for name, (color, seconds) in zip(names, clips):
-            make_clip(Path(cfg.render.output_dir) / kid / "shorts" / f"{name}.mp4", color, seconds)
+        for eid, kind_clips, prefix, label, is_kt in ((kid, clips, "k", "Khai thị", True),
+                                                      (vid, rest[0] if rest else [], "s", "Short", False)):
+            if not kind_clips:
+                continue
+            names = tuple(f"{prefix}{n:02d}" for n in range(1, len(kind_clips) + 1))
+            write_episode(cfg, eid, clips=names, titles={n: f"{label} {number}.{j}" for j, n in enumerate(names, 1)})
+            ws = Workspace(Path(cfg.workspace.dir), eid)
+            if is_kt:
+                khaithi.write(ws.dir, KhaiThi(vid, 4, 7))
+            (ws.dir / "titles.json").write_text(json.dumps({"header": {"fields": {"episode": number, "series": series}}}),
+                                                encoding="utf-8")
+            for name, (color, seconds) in zip(names, kind_clips):
+                make_clip(Path(cfg.render.output_dir) / eid / "shorts" / f"{name}.mp4", color, seconds)
         entries.append({"index": i, "video_id": vid, "title": f"Tập {number}", "duration": 3000.0, "episode": number,
                         "available": True})
     root = Path(cfg.workspace.dir) / "_playlists"

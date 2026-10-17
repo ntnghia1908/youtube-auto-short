@@ -1202,7 +1202,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         view["enhance"] = _enhance_view(episode_id)  # CP13.1 E10
         view["hd_video"] = _hd_video_view(episode_id)  # CP8.27
         # CP8.33 G9 / G11: heart state of a khai thị episode (its bộ kinh + hearted clips), favourites that a delete loses
-        fav = compilations.episode_favorites(episode_id) if kf["kind"] == khaithi.KIND else None
+        fav = compilations.episode_favorites(episode_id)
         view["favorites"] = fav
         view["favorites_count"] = compilations.keep_count(episode_id)
         hearted = set(fav["clips"]) if fav else set()
@@ -1315,7 +1315,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     @app.post("/api/episodes/{episode_id}/shorts/{clip_id}/delete")
     def api_short_delete(episode_id: str, clip_id: str):
         response = _review_render(episode_id, clip_id, reject_clip, "delete Short")
-        if response.status_code < 300 and episode_id.endswith(khaithi.SUFFIX):
+        if response.status_code < 300:
             compilations.drop_hearts(episode_id, clip_id)  # CP8.33 G11 (c): a hand-deleted khai thị loses its heart
         return response
 

@@ -435,7 +435,7 @@ const AutoShort = (() => {
     const ok = confirm(`Xóa toàn bộ tập "${name}" (${episodeId})?\n\n` +
       `Sẽ xóa video nguồn đã tải, mọi ${noun()} và dữ liệu xử lý của tập này. ` +
       "KHÔNG khôi phục được. (Gửi lại link sau đó = chạy lại từ đầu, AI có thể chọn clip / tiêu đề khác.)" +
-      (d.favorites_count ? `\n\n${d.favorites_count} khai thị yêu thích sẽ được giữ lại trong mục Yêu thích.` : ""));
+      (d.favorites_count ? `\n\n${d.favorites_count} ${d.kind === "khaithi" ? "khai thị" : "Short"} yêu thích sẽ được giữ lại trong mục Yêu thích.` : ""));
     if (!ok) return;
     const btn = $("#delete-episode");
     btn.disabled = true;
@@ -1058,7 +1058,7 @@ const AutoShort = (() => {
     return a;
   }
 
-  // CP8.33 G9: heart of a khai thị (per bộ kinh); toggles ``favorites.json`` of the bộ kinh, no confirmation.
+  // CP8.33 G9 (+ Amendment 2: Shorts too): heart of a Short / khai thị (per bộ kinh); toggles ``favorites.json`` of the bộ kinh, no confirmation.
   function heartButton(s) {
     const pl = lastData.favorites.playlist_id;
     const b = el("button", { class: "btn icon-btn heart" + (s.favorite ? " on" : ""), type: "button",
@@ -1180,7 +1180,7 @@ const AutoShort = (() => {
       if (!restore && !confirm(`Xóa ${noun()} ${s.clip_id} "${title}"?\n\nFile video bị xóa ngay để tiết kiệm bộ nhớ; ` +
         (archived ? "tập đã dọn video nguồn nên KHÔNG khôi phục được." :
           "có thể khôi phục sau (dựng lại khoảng 16–40 giây, giữ tiêu đề).") +
-        (s.favorite ? "\n\nKhai thị này đang được yêu thích: xóa sẽ bỏ luôn tim (không giữ lại bản nào)." : ""))) return;
+        (s.favorite ? `\n\n${noun() === "Short" ? "Short" : "Khai thị"} này đang được yêu thích: xóa sẽ bỏ luôn tim (không giữ lại bản nào).` : ""))) return;
       btn.disabled = true;
       try {
         await api(`/api/episodes/${encodeURIComponent(episodeId)}/shorts/${encodeURIComponent(s.clip_id)}/${restore ? "restore" : "delete"}`,

@@ -403,3 +403,127 @@ def test_rejecting_a_favorite_clip_drops_its_heart(series, monkeypatch):
         assert r.status_code == 202, r.text
         left = json.loads((folder_of(series) / "favorites.json").read_text())["items"]
         assert [(i["episode_id"], i["clip"]) for i in left] == [(K1, "k02")]
+
+
+# --- Amendment 2 / AC13: Shorts behave like khai thị ---------------------------------------------------------------
+
+@pytest.fixture
+def mixed(tcfg, tmp_path):
+    make_series(tcfg, tmp_path, [(V1, "3", [("red", 2)], [("white", 1), ("blue", 2)]),
+                                 (V2, "5", [("green", 3)], [("white", 1)])])
+    return tcfg
+
+
+def comp_doc(cfg, cid):
+    return comp.store.read_doc(folder_of(cfg), cid)
+
+
+def test_short_heart_toggle_and_listing(mixed):
+    with client(mixed) as c:
+        login(c)
+        assert heart(c, V1, "s02").json()["count"] == 1
+        assert heart(c, V1, "s02").json()["count"] == 1  # idempotent
+        assert heart(c, K1, "k01").json()["count"] == 2
+        assert heart(c, V1, "s99").status_code == 400  # not rendered
+        assert heart(c, "dddddddddd4", "s01").status_code == 400  # outside the bộ kinh
+        ep = c.get(f"/api/episodes/{V1}").json()
+        assert ep["favorites"]["playlist_id"] == PL
+        assert {s["clip_id"]: s["favorite"] for s in ep["shorts"]} == {"s01": False, "s02": True}
+        assert c.get(BASE).json()["favorites_count"] == 2
+        favs = listing(c)["favorites"]
+        assert [(f["kind"], f["code"]) for f in favs] == [("short", "T3_S02"), ("khaithi", "T3_KT01")]  # Shorts first
+        assert heart(c, V1, "s02", False).json()["count"] == 1
+
+
+def test_mixed_concat_order_name_and_description(mixed):
+    out = Path(mixed.render.output_dir)
+    with client(mixed) as c:
+        login(c)
+        items = [item(K2, "k01"), item(V2, "s01"), item(K1, "k01"), item(V1, "s02")]
+        r = c.post(f"{BASE}/compilations", json={"mode": "concat", "items": items})
+        assert r.status_code == 202
+        wait_done(c)
+        v = next(x for x in listing(c)["compilations"] if x["cid"] == r.json()["cid"])
+        assert v["state"] == "done" and v["download_name"] == "Bộ thử - Short + Khai thị T3-T5 (4 đoạn).mp4"
+        lines = v["description"].split("\n\n")[0].split("\n")
+        assert [ln.split(" ", 1)[1] for ln in lines] == ["Short 3.2", "Khai thị 3.1", "Short 5.1", "Khai thị 5.1"]
+        mp4 = out / "_compilations" / PL / f"{r.json()['cid']}.mp4"
+        assert [frame_color(mp4, t) for t in (0.5, 2.5, 4.5, 5.5)] == ["b", "r", "w", "g"]  # S02, KT01, S01(5), KT01(5)
+        only = c.post(f"{BASE}/compilations", json={"mode": "concat", "items": [item(V1, "s01"), item(V1, "s02")]})
+        wait_done(c)
+        assert next(x for x in listing(c)["compilations"] if x["cid"] == only.json()["cid"])["download_name"] \
+            == "Bộ thử - Short T3 (2 đoạn).mp4"
+
+
+def test_loop_of_a_short_name(mixed):
+    with client(mixed) as c:
+        login(c)
+        r = c.post(f"{BASE}/compilations", json={"mode": "loop", "item": item(V1, "s02"), "minutes": 1})
+        assert r.status_code == 202
+        wait_done(c)
+        v = next(x for x in listing(c)["compilations"] if x["cid"] == r.json()["cid"])
+        n = v["repeat"]
+        assert v["state"] == "done" and v["download_name"] == f"Bộ thử - T3_S02 lặp {n} lần.mp4"
+        assert v["description"].split("\n\n")[0] == "Short 3.2"
+
+
+def test_auto_with_kinds_filter(mixed):
+    with client(mixed) as c:
+        login(c)
+        for eid, clip in ((V1, "s01"), (K1, "k01"), (V2, "s01")):
+            heart(c, eid, clip)
+
+        def run(kinds):
+            body = {"mode": "auto", "minutes": 1} if kinds is None else {"mode": "auto", "minutes": 1, "kinds": kinds}
+            r = c.post(f"{BASE}/compilations", json=body)
+            assert r.status_code in (200, 202), r.text  # 200: the same spec again (G4)
+            return [(i["episode_id"], i["clip"]) for i in comp_doc(mixed, r.json()["cid"])["items"]]
+
+        both = run(None)
+        assert both[:3] == [(V1, "s01"), (K1, "k01"), (V2, "s01")]
+        assert run(["short", "khaithi"]) == both
+        assert {i for i, _ in run(["short"])} == {V1, V2}
+        assert run(["short"])[:2] == [(V1, "s01"), (V2, "s01")]
+        assert {i for i, _ in run(["khaithi"])} == {K1} and set(run(["khaithi"])) == {(K1, "k01")}
+        wait_done(c)
+        for bad in ([], ["x"], "short"):
+            assert c.post(f"{BASE}/compilations", json={"mode": "auto", "minutes": 1, "kinds": bad}).status_code == 400
+        heart(c, V1, "s01", False)
+        heart(c, V2, "s01", False)
+        r = c.post(f"{BASE}/compilations", json={"mode": "auto", "minutes": 1, "kinds": ["short"]})
+        assert r.status_code == 400  # no usable Short favourite left
+
+
+def test_delete_short_episode_keeps_favorite_shorts(mixed):
+    out = Path(mixed.render.output_dir)
+    with client(mixed) as c:
+        login(c)
+        heart(c, V1, "s01")
+        heart(c, V1, "s02")
+        heart(c, K1, "k01")
+        assert c.delete(f"/api/episodes/{V1}").status_code == 200
+        assert not (out / V1).exists() and (out / K1).exists()
+        kept = folder_of(mixed) / "kept" / V1
+        assert sorted(p.name for p in kept.iterdir()) == ["s01.mp4", "s02.mp4"]
+        by = {(f["episode_id"], f["clip"]): f for f in listing(c)["favorites"]}
+        assert by[(V1, "s02")]["kept"] and by[(V1, "s02")]["code"] == "T3_S02" and by[(V1, "s02")]["kind"] == "short"
+        assert not by[(K1, "k01")]["kept"]
+        # kept Short + live khai thị still join; the khai thị episode delete keeps its own favourite
+        r = c.post(f"{BASE}/compilations", json={"mode": "concat", "items": [item(K1, "k01"), item(V1, "s02")]})
+        assert r.status_code == 202
+        wait_done(c)
+        assert next(x for x in listing(c)["compilations"] if x["cid"] == r.json()["cid"])["state"] == "done"
+        assert c.delete(f"/api/episodes/{K1}").status_code == 200
+        assert (folder_of(mixed) / "kept" / K1 / "k01.mp4").is_file()
+        assert heart(c, V1, "s02", False).status_code == 200 and not (kept / "s02.mp4").exists()
+
+
+def test_rejecting_a_favorite_short_drops_its_heart(mixed, monkeypatch):
+    with client(mixed) as c:
+        login(c)
+        heart(c, V1, "s01")
+        heart(c, V1, "s02")
+        monkeypatch.setattr(app_mod, "reject_clip", lambda eid, cfg, clip: True)
+        assert c.post(f"/api/episodes/{V1}/shorts/s01/delete").status_code == 202
+        left = json.loads((folder_of(mixed) / "favorites.json").read_text())["items"]
+        assert [(i["episode_id"], i["clip"]) for i in left] == [(V1, "s02")]

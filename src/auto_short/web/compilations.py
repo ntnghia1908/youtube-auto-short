@@ -40,21 +40,31 @@ def by_episode_order(entries: list[dict]) -> list[dict]:
 
 @dataclass(frozen=True)
 class Clip:
-    """A rendered, not deleted khai thị clip of a bộ kinh (G1)."""
+    """A rendered, not deleted Short or khai thị clip of a bộ kinh (G1, Amendment 2)."""
 
     item: Item
-    rank: tuple  # G1 order: (position of the episode in the bộ kinh, ``KT`` number)
+    rank: tuple  # G1 order: (position of the episode in the bộ kinh, 0 Short / 1 khai thị, clip number)
     label: str  # episode label ("29"), as in the download names
-    number: int  # 1-based position in the render manifest (``KT<NN>``)
+    number: int  # 1-based position in the render manifest (``S<NN>`` / ``KT<NN>``)
     total: int  # clips in the render manifest (width of ``NN``)
     title: str | None
     manifest_duration: float | None
     path: Path
     kept: bool = False  # G11: the file is the kept copy of a deleted episode's favourite
+    kind: str = "khaithi"  # "short" | "khaithi" (decided by the episode id: ``<id>`` / ``<id>.kt``)
 
     @property
     def code(self) -> str:
-        return short_code(self.label, self.number, self.total, khaithi=True)
+        return short_code(self.label, self.number, self.total, khaithi=self.kind == "khaithi")
+
+
+def kind_of(episode_id: str) -> str:
+    """Amendment 2: a khai thị episode is ``<video_id>.kt`` (CP8.9 K8), every other episode is a Short episode."""
+    return "khaithi" if episode_id.endswith(khaithi.SUFFIX) else "short"
+
+
+def base_of(episode_id: str) -> str:
+    return episode_id.removesuffix(khaithi.SUFFIX)
 
 
 class Compilations:
@@ -90,35 +100,38 @@ class Compilations:
         for pos, entry in enumerate(entries):
             order[entry["video_id"]] = pos
             try:
-                kid = khaithi.episode_id_for(entry["video_id"])
+                parts = [(entry["video_id"], "short"), (khaithi.episode_id_for(entry["video_id"]), "khaithi")]
             except khaithi.KhaithiError:
                 continue
-            kf = ep.kind_fields(self.config, kid)
-            render = ep._render_manifest(self.config, kid)
-            if kf["kind"] != khaithi.KIND or render is None:
-                continue
-            files = {cid: path for cid, path, _ in ep.short_files(self.config, kid) or []}
-            label, shorts = ep._label(self.config, kid, kf), render.get("shorts") or []
-            for n, s in enumerate(shorts, 1):
-                cid = s.get("clip_id") if isinstance(s, dict) else None
-                if cid in files:
-                    d = s.get("duration")
-                    item = Item(kid, cid)
-                    out[item] = Clip(item, (pos, n), label, n, len(shorts),
-                                     s.get("title") if isinstance(s.get("title"), str) else None,
-                                     float(d) if isinstance(d, (int, float)) else None, files[cid])
+            for part, (eid, kind) in enumerate(parts):
+                kf = ep.kind_fields(self.config, eid)
+                render = ep._render_manifest(self.config, eid)
+                if kf["kind"] != kind or render is None:
+                    continue
+                files = {cid: path for cid, path, _ in ep.short_files(self.config, eid) or []}
+                label, shorts = ep._label(self.config, eid, kf), render.get("shorts") or []
+                for n, s in enumerate(shorts, 1):
+                    cid = s.get("clip_id") if isinstance(s, dict) else None
+                    if cid in files:
+                        d = s.get("duration")
+                        item = Item(eid, cid)
+                        out[item] = Clip(item, (pos, part, n), label, n, len(shorts),
+                                         s.get("title") if isinstance(s.get("title"), str) else None,
+                                         float(d) if isinstance(d, (int, float)) else None, files[cid], kind=kind)
         folder = self.folder(doc["playlist_id"])
         for fav in self.favorites(doc["playlist_id"]):
             path = store.kept_path(folder, fav)
             if path is None or not path.is_file():
                 continue
             k = fav.kept
-            base = fav.episode_id.removesuffix(khaithi.SUFFIX)
+            base = base_of(fav.episode_id)
             tap = int(k["episode_number"]) if k["episode_number"].isdigit() else 999999
             pos = order.get(base, 1_000_000 + tap)
-            out[Item(fav.episode_id, fav.clip)] = Clip(Item(fav.episode_id, fav.clip), (pos, k["clip_number"]),
+            out[Item(fav.episode_id, fav.clip)] = Clip(Item(fav.episode_id, fav.clip),
+                                                       (pos, 1 if kind_of(fav.episode_id) == "khaithi" else 0, k["clip_number"]),
                                                        k["episode_number"], k["clip_number"], k["clip_total"],
-                                                       k["title"], float(k["duration"]), path, kept=True)
+                                                       k["title"], float(k["duration"]), path, kept=True,
+                                                       kind=kind_of(fav.episode_id))
         return sorted(out.values(), key=lambda c: c.rank)
 
     def _info(self, path: Path) -> comp.MediaInfo:
@@ -139,12 +152,10 @@ class Compilations:
         return info.duration
 
     def owns(self, doc: dict, episode_id: str) -> bool:
-        """Does the khai thị episode ``episode_id`` belong to a (available) entry of the bộ kinh?"""
-        if not episode_id.endswith(khaithi.SUFFIX):
-            return False
-        base = episode_id[:-len(khaithi.SUFFIX)]
+        """Does the Short / khai thị episode ``episode_id`` belong to a (available) entry of the bộ kinh?"""
+        base = base_of(episode_id)
         return any(e.get("video_id") == base and e.get("available") for e in doc["entries"]) \
-            and ep.kind_fields(self.config, episode_id)["kind"] == khaithi.KIND
+            and ep.kind_fields(self.config, episode_id)["kind"] == kind_of(episode_id)
 
     # --- favourites (G9) ------------------------------------------------------------------------------------------
 
@@ -181,11 +192,9 @@ class Compilations:
             return current
 
     def episode_favorites(self, episode_id: str) -> dict | None:
-        """For the episode page of a khai thị episode: the bộ kinh it belongs to (the first stored one listing its
-        base video) and the hearted clip ids; None when it belongs to none."""
-        if not episode_id.endswith(khaithi.SUFFIX):
-            return None
-        base = episode_id[:-len(khaithi.SUFFIX)]
+        """For the episode page of a Short / khai thị episode: the bộ kinh it belongs to (the first stored one
+        listing its base video) and the hearted clip ids; None when it belongs to none."""
+        base = base_of(episode_id)
         for doc in self.playlists.all():
             if any(e.get("video_id") == base and e.get("available") for e in doc["entries"]):
                 pid = doc["playlist_id"]
@@ -200,7 +209,7 @@ class Compilations:
         except CompilationError:
             duration = c.manifest_duration
         return {"episode_id": c.item.episode_id, "clip": c.item.clip, "tap": c.label, "number": c.number,
-                "code": c.code, "title": c.title, "duration": duration, "usable": duration is not None,
+                "code": c.code, "kind": c.kind, "title": c.title, "duration": duration, "usable": duration is not None,
                 "favorite": favorite, "kept": c.kept,
                 "video_url": None if c.kept else f"/files/{c.item.episode_id}/{c.item.clip}.mp4"}
 
@@ -211,12 +220,14 @@ class Compilations:
             c = by_item.get(item)
             if c is None and item.kept is not None:  # G11: kept but the file is gone
                 out.append({"episode_id": item.episode_id, "clip": item.clip, "tap": item.kept["episode_number"],
-                            "number": item.kept["clip_number"], "code": item.episode_id + "/" + item.clip,
+                            "number": item.kept["clip_number"], "kind": kind_of(item.episode_id),
+                            "code": item.episode_id + "/" + item.clip,
                             "title": item.kept["title"], "duration": None, "usable": False, "favorite": True,
                             "kept": True, "video_url": None})
                 continue
             if c is None:  # G9: deleted / not rendered any more / orphan -> shown dimmed, can only be un-hearted
                 out.append({"episode_id": item.episode_id, "clip": item.clip, "tap": None, "number": None,
+                            "kind": kind_of(item.episode_id),
                             "code": item.episode_id + "/" + item.clip, "title": None, "duration": None,
                             "usable": False, "favorite": True, "kept": False, "video_url": None})
             else:
@@ -287,7 +298,11 @@ class Compilations:
             spec = comp.build_loop(clip.item, d, body.get("minutes"), limit)
             return spec, [clip] * spec.repeat, {"segments": spec.repeat, "repeat": spec.repeat,
                                                "duration": spec.repeat * d}
-        usable = [c for c in (by_item.get(i) for i in self.favorites(playlist_id)) if c is not None]
+        kinds = body.get("kinds", ["short", "khaithi"])
+        if not isinstance(kinds, list) or not kinds or not set(kinds) <= {"short", "khaithi"}:
+            raise CompilationError("kinds phải là danh sách con của short, khaithi")
+        usable = [c for c in (by_item.get(i) for i in self.favorites(playlist_id)) if c is not None
+                  and c.kind in kinds]
         usable.sort(key=lambda c: c.rank)
         durations = {c.item: self.duration(c) for c in usable}
         spec, rounds = comp.build_auto([c.item for c in usable], durations, body.get("minutes"), limit)
@@ -303,7 +318,8 @@ class Compilations:
             return comp.meta.loop_name(series, c.code, spec.repeat, fallback=fallback), c.title
         lo = min(clips, key=lambda c: c.rank)
         hi = max(clips, key=lambda c: c.rank)
-        return comp.meta.concat_name(series, lo.label, hi.label, len(clips), fallback=fallback), None
+        return comp.meta.concat_name(series, lo.label, hi.label, len(clips), kinds={c.kind for c in clips},
+                                     fallback=fallback), None
 
     # --- submit / job / delete (G4, G5) -----------------------------------------------------------------------------------
 
@@ -418,12 +434,10 @@ class Compilations:
                    if i.episode_id == episode_id and i.kept is None)
 
     def keep_favorites(self, episode_id: str) -> Callable[[], None]:
-        """G11 (a): before the khai thị episode ``episode_id`` is deleted, move each hearted clip that is currently
+        """G11 (a): before the Short / khai thị episode ``episode_id`` is deleted, move each hearted clip that is currently
         rendered to ``<_compilations>/<pid>/kept/<episode_id>/<clip>.mp4`` and store its snapshot in
         ``favorites.json``. Raises :class:`CompilationError` (nothing changed) on any failure. Returns ``undo()``
         (used when the deletion itself fails)."""
-        if not episode_id.endswith(khaithi.SUFFIX):
-            return lambda: None
         moved: list[tuple[Path, Path]] = []  # (original, kept)
         written: list[tuple[Path, list[Item]]] = []  # (folder, previous favourites)
 

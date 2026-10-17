@@ -145,6 +145,8 @@ def test_timecode_chapters_description_and_names():
     assert comp.meta.description("concat", ch[:1], None, []) == "00:00 Một"
     assert comp.meta.concat_name("Địa Tạng", "3", "9", 4) == "Địa Tạng - Khai thị T3-T9 (4 đoạn).mp4"
     assert comp.meta.concat_name("Địa Tạng", "5", "5", 2) == "Địa Tạng - Khai thị T5 (2 đoạn).mp4"
+    assert comp.meta.concat_name("Địa Tạng", "3", "9", 4, kinds={"short"}) == "Địa Tạng - Short T3-T9 (4 đoạn).mp4"
+    assert comp.meta.concat_name("Địa Tạng", "3", "9", 4, kinds={"short", "khaithi"}) == "Địa Tạng - Short + Khai thị T3-T9 (4 đoạn).mp4"
     assert comp.meta.loop_name("Địa Tạng", "T3_KT02", 12) == "Địa Tạng - T3_KT02 lặp 12 lần.mp4"
     assert comp.meta.loop_name(None, "T3_KT02", 2, fallback="PLx") == "PLx - T3_KT02 lặp 2 lần.mp4"
 

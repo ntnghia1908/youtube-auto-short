@@ -9,6 +9,12 @@ const Favorites = (() => {
   let pid = "", data = null, timer = null;
   const ticked = new Set(); // "episode_id|clip"
   let openLoop = null; // key of the row whose "Lặp" box is open
+  const KINDS = ["all", "short", "khaithi"];
+  let kindFilter = "all"; // Amendment 2: Tất cả | Short | Khai thị (remembered per browser)
+  function store(key, value) {
+    try { if (value === undefined) return localStorage.getItem(key); localStorage.setItem(key, value); } catch (_) { /* private mode */ }
+    return null;
+  }
 
   function el(tag, attrs = {}, ...children) {
     const node = document.createElement(tag);
@@ -49,7 +55,9 @@ const Favorites = (() => {
     return h ? `${h} giờ ${String(m).padStart(2, "0")} ph` : (m ? `${m} ph ${String(sec).padStart(2, "0")} s` : `${sec} s`);
   }
   const keyOf = (f) => f.episode_id + "|" + f.clip;
-  const usable = () => (data ? data.favorites.filter((f) => f.usable) : []);
+  const shown = (f) => kindFilter === "all" || f.kind === kindFilter;
+  const usable = () => (data ? data.favorites.filter((f) => f.usable && shown(f)) : []);
+  const kindsOfFilter = () => (kindFilter === "all" ? ["short", "khaithi"] : [kindFilter]);
 
   function legacyCopy(text) {
     const ta = document.createElement("textarea");
@@ -156,7 +164,7 @@ const Favorites = (() => {
   function updateAuto() {
     const t = parseInt($("#fv-auto-min").value, 10);
     const p = autoPreview(t);
-    $("#fv-auto-preview").textContent = p ? `${p.n} đoạn (${p.rounds} vòng) ≈ ${fmtDur(p.total)}` : (usable().length ? "" : "Chưa có khai thị yêu thích dùng được.");
+    $("#fv-auto-preview").textContent = p ? `${p.n} đoạn (${p.rounds} vòng) ≈ ${fmtDur(p.total)}` : (usable().length ? "" : "Chưa có mục yêu thích dùng được.");
     $("#fv-auto").disabled = !p;
   }
 
@@ -190,13 +198,15 @@ const Favorites = (() => {
   }
 
   function render() {
-    $("#fv-title").textContent = `Khai thị yêu thích — ${data.series || data.title || pid}`;
+    $("#fv-title").textContent = `Yêu thích — ${data.series || data.title || pid}`;
     document.title = `Yêu thích — ${data.series || data.title || pid} — Auto Short`;
     $("#fv-max").textContent = data.max_minutes;
     $("#fv-auto-min").max = data.max_minutes;
     $("#fv-count").textContent = data.favorites.length;
-    $("#fv-list").replaceChildren(...(data.favorites.length ? data.favorites.map(row)
-      : [el("li", { class: "muted", text: "Chưa có khai thị yêu thích. Bấm ♥ ở trang một tập khai thị." })]));
+    document.querySelectorAll("#fv-filters [data-kind]").forEach((b) => b.classList.toggle("active", b.dataset.kind === kindFilter));
+    const rows = data.favorites.filter(shown);
+    $("#fv-list").replaceChildren(...(rows.length ? rows.map(row)
+      : [el("li", { class: "muted", text: "Chưa có mục yêu thích. Bấm ♥ ở trang một tập (Short hoặc khai thị)." })]));
     $("#fv-comps").replaceChildren(...(data.compilations.length ? data.compilations.map(compRow)
       : [el("li", { class: "muted", text: "Chưa có." })]));
     updateConcat();
@@ -217,6 +227,13 @@ const Favorites = (() => {
 
   function init() {
     pid = decodeURIComponent(location.pathname.split("/").filter(Boolean)[1] || "");
+    const saved = store("autoShort.fvKind");
+    if (KINDS.includes(saved)) kindFilter = saved;
+    document.querySelectorAll("#fv-filters [data-kind]").forEach((b) => b.addEventListener("click", () => {
+      kindFilter = b.dataset.kind;
+      store("autoShort.fvKind", kindFilter);
+      render();
+    }));
     $("#fv-back").href = "/playlists/" + encodeURIComponent(pid);
     $("#fv-all").addEventListener("change", (ev) => {
       for (const f of usable()) { if (ev.target.checked) ticked.add(keyOf(f)); else ticked.delete(keyOf(f)); }
@@ -227,7 +244,7 @@ const Favorites = (() => {
       create({ mode: "concat", items }, ev.target);
     });
     $("#fv-auto-min").addEventListener("input", updateAuto);
-    $("#fv-auto").addEventListener("click", (ev) => create({ mode: "auto", minutes: parseInt($("#fv-auto-min").value, 10) }, ev.target));
+    $("#fv-auto").addEventListener("click", (ev) => create({ mode: "auto", minutes: parseInt($("#fv-auto-min").value, 10), kinds: kindsOfFilter() }, ev.target));
     load();
   }
 

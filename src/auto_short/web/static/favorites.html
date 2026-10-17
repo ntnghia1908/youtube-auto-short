@@ -14,13 +14,18 @@
 </header>
 <main class="container">
   <section class="card">
-    <h2 id="fv-title">Khai thị yêu thích</h2>
+    <h2 id="fv-title">Yêu thích</h2>
     <p class="small"><a id="fv-back" href="/">&larr; Về bộ kinh</a></p>
-    <p class="muted small">Tick nhiều khai thị rồi bấm "Ghép" để nối liền theo thứ tự tập; bấm "Lặp" để lặp một khai thị cho đủ thời lượng; hoặc để máy tự ghép các khai thị yêu thích cho đủ thời lượng. Tổng tối đa <span id="fv-max">720</span> phút.</p>
+    <p class="muted small">Tick nhiều mục (Short và / hoặc khai thị) rồi bấm "Ghép" để nối liền theo thứ tự tập; bấm "Lặp" để lặp một mục cho đủ thời lượng; hoặc để máy tự ghép các mục yêu thích (theo bộ lọc đang chọn) cho đủ thời lượng. Tổng tối đa <span id="fv-max">720</span> phút.</p>
     <p id="fv-msg" class="small" hidden></p>
   </section>
   <section class="card">
-    <h3>Khai thị yêu thích (<span id="fv-count">0</span>)</h3>
+    <h3>Yêu thích (<span id="fv-count">0</span>)</h3>
+    <div id="fv-filters" class="filters">
+      <button class="btn small" type="button" data-kind="all">Tất cả</button>
+      <button class="btn small" type="button" data-kind="short">Short</button>
+      <button class="btn small" type="button" data-kind="khaithi">Khai thị</button>
+    </div>
     <ul id="fv-list" class="fv-list"><li class="muted">Đang tải…</li></ul>
     <div class="actions">
       <label class="inline"><input id="fv-all" type="checkbox"> Chọn tất cả</label>
@@ -29,7 +34,7 @@
   </section>
   <section class="card">
     <h3>Tự ghép theo thời lượng</h3>
-    <p class="muted small">Lấy các khai thị yêu thích dùng được theo thứ tự tập, hết thì lặp vòng lại, dừng khi đủ thời lượng (không cắt dở khai thị cuối).</p>
+    <p class="muted small">Lấy các mục yêu thích dùng được (theo bộ lọc Tất cả / Short / Khai thị) theo thứ tự tập, hết thì lặp vòng lại, dừng khi đủ thời lượng (không cắt dở khai thị cuối).</p>
     <div class="actions">
       <input id="fv-auto-min" type="number" min="1" step="1" value="60" inputmode="numeric" aria-label="Tổng thời lượng (phút)"> phút
       <span id="fv-auto-preview" class="small muted"></span>
