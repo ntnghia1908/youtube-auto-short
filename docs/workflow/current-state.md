@@ -8,6 +8,8 @@ Chỉ ghi operational state không suy ra được từ Git, task contract hoặ
 
 ## Current focus
 
+Auto Short (cập nhật 2026-10-17): `main` = `508a94c`. Đã merge sau 2026-10-13: FIX-youtube-id-dash (#84, id YouTube bắt đầu `-` / `_`), CP8.32 bản dọc / bản ngang HD từ video gốc ≥ 720p + nút "Tạo bản dọc cả bộ" + hủy bản dọc (#85), CP8.33 yêu thích Short / khai thị (♥, trang `/playlists/{pid}/favorites`) + ghép video dài / lặp / tự ghép theo thời lượng, giữ clip yêu thích khi xóa tập (#86; manual test HUMAN LEAD đạt 2026-10-17). Video ghép ở `output/_compilations/<playlist_id>/`.
+
 Auto Short (cập nhật 2026-10-09): `main` = `6c36861`. Đã merge sau 2026-10-04: CP13.3 đo chất lượng enhance (#73), CP8.30 tìm ảnh theo từ khóa (#76), FIX-enhance-yield (#77), CP8.31 zip tick "Đã đăng" + xuất bài đăng `.docx` (python-docx, theo khoảng 10 tập, có / không hình) + nút tải trên trang bộ kinh + bố cục mobile + huy hiệu tiến độ + enhance sang tab Theo dõi (#78; manual test HUMAN LEAD đạt 2026-10-09). VM IP hiện `10.8.102.102` (đổi 2026-10-08).
 
 Auto Short (cập nhật 2026-10-04): `main` = `abd6704`. Phiên 2026-10-04 đã merge: CP13.2 "Chuẩn bị + HD" (#62), CP8.23 ngưỡng im lặng tự chọn (#63), CP8.24 văn bản gốc nhiều video / trang (#64), FIX-doc-match-050 (#65), FIX-youtube-botcheck-wait (#66), CP8.26 ưu tiên (#67), CP8.28 tab Theo dõi (#68), FIX-post-title-upper (#69), FIX-monitor-labels (#70), CP8.27 tải bản ngang HD + bản dọc cả tập (#71), CP8.29 chuẩn bị song song + nice (#72), CP13.4 GFPGAN cả tập (#74). CP8.25 (tự tìm văn bản gốc): HUMAN LEAD bỏ.
@@ -24,11 +26,11 @@ Chinese Learning (CL1, bản đồ: `docs/tasks/CL1-roadmap.md`): CL1.1, CL1.2 M
 
 Đọc Kinh (SR1 + SR2, `docs/decisions/SR1-sutra-reader-contract.md`, `docs/decisions/SR2-khaithi-library-contract.md`): MERGED #82 (2026-10-13), manual test HUMAN LEAD OK. Trang `/sutras` (tab Đọc Kinh \| Khai thị). Dữ liệu kinh ở `work/_sutras/` (8 bộ, không trong git — bản quyền); dependency mới `pypdf==6.20.0` (env `auto-short` đã cài).
 
-Web chạy cho HUMAN LEAD trong tmux `youtube:web` từ worktree `../youtube-auto-short-web` (detached, ghim `f3f5e02` = `main` sau #80, #81, #82, 2026-10-13), `PYTHONPATH=<worktree>/src`, `--config` repo chính; mật khẩu chỉ ở env của pane. Khởi động lại: Ctrl-C trong pane rồi gõ thẳng `PYTHONPATH=/home/ntnghia/youtube-auto-short-web/src auto-short web --config /home/ntnghia/youtube-auto-short/config.toml` (không dùng phím Up — dòng trước có `read -rs` hỏi mật khẩu); chỉ khi làn render rảnh (dòng `render: rendered N/N clips` / `job … done … Shorts (`). Sau reboot VM: tmux mới, `conda activate auto-short`, `source ~/.nvm/nvm.sh`, `set -a; source ~/.local/share/auto-short/enhance-tokens.env; set +a`, HUMAN LEAD gõ mật khẩu.
+Web chạy cho HUMAN LEAD trong tmux `youtube:web` từ worktree `../youtube-auto-short-web` (detached, ghim `508a94c` = `main` sau #86, 2026-10-17), `PYTHONPATH=<worktree>/src`, `--config` repo chính; mật khẩu chỉ ở env của pane. Khởi động lại: Ctrl-C trong pane rồi gõ thẳng `PYTHONPATH=/home/ntnghia/youtube-auto-short-web/src auto-short web --config /home/ntnghia/youtube-auto-short/config.toml` (không dùng phím Up — dòng trước có `read -rs` hỏi mật khẩu); chỉ khi làn render rảnh (dòng `render: rendered N/N clips` / `job … done … Shorts (`). Sau reboot VM: tmux mới, `conda activate auto-short`, `source ~/.nvm/nvm.sh`, `set -a; source ~/.local/share/auto-short/enhance-tokens.env; set +a`, HUMAN LEAD gõ mật khẩu.
 
 ## Next proposed action
 
-1. PR #73 (CP13.3 đo chất lượng enhance: script + hướng dẫn + báo cáo, đã review) — chờ HUMAN LEAD merge; điền số GPU thật 3090 / 3050 (`~/.cache/auto-short-cp133-test/results/cp133-results-{3090,3050}.zip`) vào báo cáo.
+1. CP8.34 tải lần lượt nhiều file (1–3 cùng lúc) trên trang bộ kinh: contract DRAFT `docs/tasks/CP8.34-sequential-download.md` trên nhánh `feature/cp8.34-sequential-download` (worktree `../youtube-auto-short-cp834`) — chờ HUMAN LEAD duyệt D1–D7.
 2. FIX nhỏ `tools/enhance_worker/windows/setup-enhance-worker.ps1` (S1, chưa có contract): self-test dừng script vì `UserWarning` trên stderr (PowerShell 5.1 + `ErrorActionPreference = Stop`); facexlib tải lại 2 trọng số dò mặt vào `enhance-worker\models` (setup đặt ở `facexlib\weights`); `setup-gpu-node-v4.ps1` mặc định IP cũ; `auto-fix-gpu-v4.ps1` báo lỗi giả khi tunnel đã lên.
 3. Khi tập 1 Địa Tạng có HD GFPGAN (≈ 0 h 2026-10-05 VN): HUMAN LEAD xem Short / bản dọc; quyết "Chạy tiếp cả bộ".
 4. CP14 Whisper trên GPU: tạm gác (worktree `../youtube-auto-short-wgpu`); số đo GPU chưa có.
