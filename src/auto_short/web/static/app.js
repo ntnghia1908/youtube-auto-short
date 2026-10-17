@@ -434,7 +434,8 @@ const AutoShort = (() => {
     const name = d.title || episodeId;
     const ok = confirm(`Xóa toàn bộ tập "${name}" (${episodeId})?\n\n` +
       `Sẽ xóa video nguồn đã tải, mọi ${noun()} và dữ liệu xử lý của tập này. ` +
-      "KHÔNG khôi phục được. (Gửi lại link sau đó = chạy lại từ đầu, AI có thể chọn clip / tiêu đề khác.)");
+      "KHÔNG khôi phục được. (Gửi lại link sau đó = chạy lại từ đầu, AI có thể chọn clip / tiêu đề khác.)" +
+      (d.favorites_count ? `\n\n${d.favorites_count} khai thị yêu thích sẽ được giữ lại trong mục Yêu thích.` : ""));
     if (!ok) return;
     const btn = $("#delete-episode");
     btn.disabled = true;
@@ -833,7 +834,7 @@ const AutoShort = (() => {
   function cardKey(s) {
     return JSON.stringify([s.status, s.sha256, s.title, s.pending_title, s.override, s.rendering, s.editable,
       s.alternatives.length, s.deleted, s.rejected, s.published, s.published_stale, s.watched, s.watched_stale, s.download_name, archived, uiFlags.advanced,
-      s.origin, s.cut]);
+      s.origin, s.cut, s.favorite, !!(lastData && lastData.favorites)]);
   }
 
   // Filter + "Short đã xóa" toggle only hide / show cards (no rebuild: a playing video keeps playing).
@@ -966,6 +967,7 @@ const AutoShort = (() => {
       el("div", { class: "short-actions" },
         s.download_url ? downloadLink(s) : null,
         video ? loopButton(s.clip_id, video) : null,
+        lastData && lastData.favorites && s.status === "rendered" ? heartButton(s) : null,
         s.editable && !(archived && s.deleted) ? deleteButton(s) : null),
       s.editable && !s.deleted && !archived ? titleEditor(s) : el("div", { class: "title-edit", hidden: true }),
       s.editable && !s.deleted && !archived && uiFlags.advanced ? cutEditor(s) : null);
@@ -1054,6 +1056,32 @@ const AutoShort = (() => {
       "aria-label": "Tải về" }, icon("download"));
     a.addEventListener("click", () => setTimeout(refreshEpisode, 1500));
     return a;
+  }
+
+  // CP8.33 G9: heart of a khai thị (per bộ kinh); toggles ``favorites.json`` of the bộ kinh, no confirmation.
+  function heartButton(s) {
+    const pl = lastData.favorites.playlist_id;
+    const b = el("button", { class: "btn icon-btn heart" + (s.favorite ? " on" : ""), type: "button",
+      "aria-pressed": s.favorite ? "true" : "false", title: s.favorite ? "Bỏ yêu thích" : "Yêu thích",
+      "aria-label": s.favorite ? "Bỏ yêu thích" : "Yêu thích", text: s.favorite ? "♥" : "♡" });
+    b.addEventListener("click", async () => {
+      b.disabled = true;
+      try {
+        const r = await api(`/api/playlists/${encodeURIComponent(pl)}/favorites`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ episode_id: episodeId, clip: s.clip_id, favorite: !s.favorite }) });
+        s.favorite = r.favorite;
+        lastData.favorites_count = Math.max(0, (lastData.favorites_count || 0) + (r.favorite ? 1 : -1));
+        const entry = cards.get(s.clip_id);
+        if (entry) entry.key = cardKey(s);
+        b.classList.toggle("on", s.favorite);
+        b.setAttribute("aria-pressed", s.favorite ? "true" : "false");
+        b.title = b.ariaLabel = s.favorite ? "Bỏ yêu thích" : "Yêu thích";
+        b.textContent = s.favorite ? "♥" : "♡";
+      } catch (e) { alert(e.message); }
+      b.disabled = false;
+    });
+    return b;
   }
 
   // "Đã đăng" (X4): user state only, no job, allowed while a job runs; updated in place (no card rebuild).
@@ -1151,7 +1179,8 @@ const AutoShort = (() => {
       const title = (s.title && s.title.text) || s.clip_id;
       if (!restore && !confirm(`Xóa ${noun()} ${s.clip_id} "${title}"?\n\nFile video bị xóa ngay để tiết kiệm bộ nhớ; ` +
         (archived ? "tập đã dọn video nguồn nên KHÔNG khôi phục được." :
-          "có thể khôi phục sau (dựng lại khoảng 16–40 giây, giữ tiêu đề)."))) return;
+          "có thể khôi phục sau (dựng lại khoảng 16–40 giây, giữ tiêu đề).") +
+        (s.favorite ? "\n\nKhai thị này đang được yêu thích: xóa sẽ bỏ luôn tim (không giữ lại bản nào)." : ""))) return;
       btn.disabled = true;
       try {
         await api(`/api/episodes/${encodeURIComponent(episodeId)}/shorts/${encodeURIComponent(s.clip_id)}/${restore ? "restore" : "delete"}`,
@@ -3033,6 +3062,9 @@ const AutoShort = (() => {
     redoBtn.hidden = !plOldHd;
     redoBtn.textContent = `Enhance lại (${plOldHd})`;
     renderPostsRanges(d.posts_ranges || []); // CP8.31 A1
+    const fl = $("#pl-favorites"); // CP8.33 G9
+    fl.textContent = `Yêu thích (${d.favorites_count || 0})`;
+    fl.href = `/playlists/${encodeURIComponent(playlistId)}/favorites`;
     plPriorityCount = d.priority_count || 0; // CP8.26
     $("#pl-priority").textContent = plPriorityCount ? `Bỏ ưu tiên cả bộ (${plPriorityCount})` : "Ưu tiên cả bộ";
     let busy = false;

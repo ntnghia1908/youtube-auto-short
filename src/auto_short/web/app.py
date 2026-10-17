@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import parse_qs, quote
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response,
                                StreamingResponse)
 from fastapi.staticfiles import StaticFiles
@@ -31,6 +31,9 @@ from starlette.background import BackgroundTask
 from pydantic import BaseModel, Field, StrictBool
 
 from .. import khaithi
+from ..compilation import CID_RE as CID_RE
+from ..compilation import CompilationError, Item
+from ..compilation import store as comp_store
 from ..config import Config, whisper_threads_per_job
 from ..enhance import state as enh_state
 from ..enhance.service import EnhanceService
@@ -66,10 +69,11 @@ from ..titling.playlist import stored_series as playlist_series
 from ..workspace import WorkspaceError, iter_manifests, validate_episode_id
 from . import episodes as ep
 from . import reading
+from . import compilations as comp_web
 from . import monitor as monitor_mod
 from .auth import COOKIE_NAME, SessionSigner, load_or_create_secret
 from .storage import BLOCK_MESSAGE, StorageCache, auto_archive_plan, episode_sizes, video_id
-from .jobs import (KIND_ADD, KIND_ENHANCE, KIND_IMAGE_SEARCH, KIND_PIPELINE, KIND_POST, KIND_POST_SEARCH, KIND_RENDER, KIND_VERTICAL,
+from .jobs import (KIND_ADD, KIND_COMPILATION, KIND_ENHANCE, KIND_IMAGE_SEARCH, KIND_PIPELINE, KIND_POST, KIND_POST_SEARCH, KIND_RENDER, KIND_VERTICAL,
                    POST_IMAGES_KEY, JobRunner, add_short_target, enhance_assemble_target, image_search_target, keyword_search_target,
                    pipeline_target, post_compose_target, render_target, vertical_target)
 from . import playlists as playlists_mod
@@ -159,6 +163,12 @@ class SeriesIn(BaseModel):
 class DocIn(BaseModel):
     url: Any = None  # CP8.19 D1: the lecture-document link, or null to remove it (checked by the store -> 422)
     videos_per_page: Any = None  # CP8.24 P1: videos per text page (integer 1..10); absent / null keeps the stored one
+
+
+class FavoriteIn(BaseModel):
+    episode_id: str = Field(max_length=128)
+    clip: str = Field(max_length=64)
+    favorite: StrictBool
 
 
 class TitleIn(BaseModel):
@@ -484,6 +494,8 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         if kind == KIND_POST_SEARCH:
             url = spec.get("url")
             return image_search_target(config, url, search=post_search) if isinstance(url, str) and url else None
+        if kind == KIND_COMPILATION:  # CP8.33 G5: the key is ``compilation:<playlist_id>:<cid>``, not an episode
+            return compilations.rebuild(eid, spec)
         if not ep.valid_episode_id(eid) or is_archived(ws / eid):
             return None
         if kind == KIND_PIPELINE:
@@ -514,6 +526,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             return post_compose_target(config, clips, compose=post_compose, preflight=post_preflight, lock=post_lock)
         return None
 
+    compilations = comp_web.Compilations(config, playlists, runner, lambda doc: _playlist_docx_series(doc))
     runner.configure_persistence(Path(config.workspace.dir) / QUEUE_FILE, _rebuild_job)
     runner.priority.attach(Path(config.workspace.dir) / PRIORITY_FILE)  # CP8.26 P1
 
@@ -539,6 +552,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     app.state.storage = storage
     app.state.auto_archive_pass = auto_archive_pass
     app.state.playlists = playlists
+    app.state.compilations = compilations
     app.state.signer = signer
 
     @app.middleware("http")
@@ -643,7 +657,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         items = ep.list_episodes(config)
         known = {i["id"] for i in items}
         for job in runner.jobs():  # queued jobs whose workspace does not exist yet
-            if job.active and job.episode_id not in known:
+            if job.active and job.episode_id not in known and job.kind != KIND_COMPILATION:
                 known.add(job.episode_id)
                 items.insert(0, {**ep.kind_fields(config, job.episode_id), "id": job.episode_id, "title": None,
                                  "stages_done": 0, "stages_total": len(PIPELINE_STAGES), "running": None,
@@ -915,6 +929,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             _download_fields(e)  # CP8.31 D3
         view["priority_count"] = sum(1 for e in view["entries"] if e["priority"])
         view["posts_ranges"] = _posts_ranges(playlist_id, view["entries"])
+        view["favorites_count"] = compilations.favorites_count(playlist_id)  # CP8.33 G9
         kc = config.khaithi  # CP8.9 A2.2: defaults of the kind bar ("Khai thị [min]–[max] phút")
         view["khaithi_defaults"] = {"min_minutes": kc.default_min_minutes, "max_minutes": kc.default_max_minutes,
                                     "max_minutes_limit": kc.max_minutes_limit}
@@ -924,10 +939,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
 
     def _by_episode_order(entries: list[dict]) -> list[dict]:
         """H2: episode number order (the numbered first), then playlist order."""
-        def key(e: dict):
-            n = e.get("episode")
-            return (0, int(n), e["index"]) if isinstance(n, str) and n.isdigit() else (1, 0, e["index"])
-        return sorted(entries, key=key)
+        return comp_web.by_episode_order(entries)
 
     def _bulk_result(playlist_id: str, items: list[dict], episodes: int) -> dict:
         errors = [{"episode_id": i["episode_id"], "detail": i["error"]} for i in items if "error" in i]
@@ -1189,6 +1201,13 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         view["post_job"] = _job_view(runner.latest_post(episode_id))  # CP8.16 R3 (job stays the episode's own job)
         view["enhance"] = _enhance_view(episode_id)  # CP13.1 E10
         view["hd_video"] = _hd_video_view(episode_id)  # CP8.27
+        # CP8.33 G9 / G11: heart state of a khai thị episode (its bộ kinh + hearted clips), favourites that a delete loses
+        fav = compilations.episode_favorites(episode_id) if kf["kind"] == khaithi.KIND else None
+        view["favorites"] = fav
+        view["favorites_count"] = compilations.keep_count(episode_id)
+        hearted = set(fav["clips"]) if fav else set()
+        for short in view["shorts"]:
+            short["favorite"] = short["clip_id"] in hearted
         if job is not None and job.active and job.kind in (KIND_RENDER, KIND_ADD):
             for short in view["shorts"]:
                 short["rendering"] = short["clip_id"] in job.clip_ids
@@ -1295,7 +1314,10 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
 
     @app.post("/api/episodes/{episode_id}/shorts/{clip_id}/delete")
     def api_short_delete(episode_id: str, clip_id: str):
-        return _review_render(episode_id, clip_id, reject_clip, "delete Short")
+        response = _review_render(episode_id, clip_id, reject_clip, "delete Short")
+        if response.status_code < 300 and episode_id.endswith(khaithi.SUFFIX):
+            compilations.drop_hearts(episode_id, clip_id)  # CP8.33 G11 (c): a hand-deleted khai thị loses its heart
+        return response
 
     @app.post("/api/episodes/{episode_id}/shorts/{clip_id}/restore")
     def api_short_restore(episode_id: str, clip_id: str):
@@ -1927,11 +1949,18 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             if current is not None and current.active:
                 return JSONResponse({"detail": "episode đang có job chạy/đợi; xóa sau khi job xong",
                                      "job": _job_view(current)}, status_code=409)
+            try:  # CP8.33 G11: the hearted clips of a khai thị episode are kept; a failure here deletes nothing
+                undo_keep = compilations.keep_favorites(episode_id)
+            except CompilationError as exc:
+                log.error("web: delete episode %s: %s", episode_id, exc)
+                return JSONResponse({"detail": str(exc)}, status_code=500)
             try:
                 removed = delete_episode(episode_id, config)
             except EpisodeNotFound:
+                undo_keep()
                 return JSONResponse({"detail": "không có episode này"}, status_code=404)
             except (ReviewError, OSError) as exc:
+                undo_keep()
                 log.error("web: delete episode %s failed: %s", episode_id, exc)
                 return JSONResponse({"detail": f"không xóa được: {exc}"}, status_code=500)
             runner.forget(episode_id)
@@ -2569,6 +2598,75 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         if not episodes:
             return JSONResponse({"detail": "chưa có bài đăng nào"}, status_code=404)
         return reading.book(f"{title} · {span}", episodes)
+
+    # --- CP8.33: favourites + compilations ---------------------------------------------------------------------
+
+    def _compilation_playlist(playlist_id: str):
+        doc = _playlist_or_404(playlist_id)
+        return doc if doc is not None else JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
+
+    @app.get("/playlists/{playlist_id}/favorites")
+    async def favorites_page(playlist_id: str):
+        if not valid_playlist_id(playlist_id):
+            return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
+        return FileResponse(STATIC_DIR / "favorites.html", headers={"Cache-Control": "no-cache"})
+
+    @app.post("/api/playlists/{playlist_id}/favorites")
+    def api_favorite(playlist_id: str, body: FavoriteIn):
+        doc = _compilation_playlist(playlist_id)
+        if isinstance(doc, JSONResponse):
+            return doc
+        if not ep.valid_episode_id(body.episode_id) or not ep.valid_clip_id(body.clip):
+            return JSONResponse({"detail": "khai thị không hợp lệ"}, status_code=400)
+        try:
+            items = compilations.set_favorite(playlist_id, doc, Item(body.episode_id, body.clip), body.favorite)
+        except CompilationError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        storage.invalidate()  # CP8.33 G11: the heart changes what the storage tab may recommend
+        return {"playlist_id": playlist_id, "episode_id": body.episode_id, "clip": body.clip,
+                "favorite": body.favorite, "count": len(items)}
+
+    @app.get("/api/playlists/{playlist_id}/compilations")
+    def api_compilations(playlist_id: str):
+        doc = _compilation_playlist(playlist_id)
+        if isinstance(doc, JSONResponse):
+            return doc
+        return compilations.view(playlist_id, doc)
+
+    @app.post("/api/playlists/{playlist_id}/compilations")
+    def api_compilation_create(playlist_id: str, body: dict = Body(...)):
+        doc = _compilation_playlist(playlist_id)
+        if isinstance(doc, JSONResponse):
+            return doc
+        try:
+            view, created = compilations.submit(playlist_id, doc, body)
+        except CompilationError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse({"cid": view["cid"], "created": created, "compilation": view}, status_code=202 if created else 200)
+
+    @app.delete("/api/playlists/{playlist_id}/compilations/{cid}")
+    def api_compilation_delete(playlist_id: str, cid: str):
+        if _playlist_or_404(playlist_id) is None or not CID_RE.match(cid):
+            return JSONResponse({"detail": "không có video ghép này"}, status_code=404)
+        result = compilations.delete(playlist_id, cid)
+        if result == "busy":
+            return JSONResponse({"detail": "video ghép đang chờ / đang ghép; xóa sau khi xong"}, status_code=409)
+        if result == "missing":
+            return JSONResponse({"detail": "không có video ghép này"}, status_code=404)
+        return {"deleted": cid}
+
+    @app.get("/files/playlists/{playlist_id}/compilations/{name}")
+    def compilation_file(playlist_id: str, name: str):
+        cid = name[:-4] if name.endswith(".mp4") else ""
+        if not valid_playlist_id(playlist_id) or not CID_RE.match(cid):
+            return JSONResponse({"detail": "không có file này"}, status_code=404)
+        path = compilations.video_file(playlist_id, cid)
+        stored = comp_store.read_doc(compilations.folder(playlist_id), cid)
+        if path is None or stored is None:
+            return JSONResponse({"detail": "không có file này"}, status_code=404)
+        return FileResponse(path, media_type="video/mp4", headers={
+            "Content-Disposition": content_disposition(stored.get("download_name") or f"{cid}.mp4"),
+            "Cache-Control": "private, no-cache"})
 
     @app.get("/files/{episode_id}/{name}")
     def files(episode_id: str, name: str, download: str | None = None):

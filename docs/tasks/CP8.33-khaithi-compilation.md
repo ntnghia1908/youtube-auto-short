@@ -2,14 +2,14 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
 - Execution profile: dual-agent
 - Implementer: `.claude/agents/implementer` (Sonnet) — mặc định dual-agent của project.
 - Base commit / branch: `185ba20` (`main`) / `feature/cp8.33-khaithi-compilation` (worktree `../youtube-auto-short-cp833`); PR #85 (CP8.32, cũng sửa trang bộ kinh) còn mở: làm trên `main` hiện tại, rebase khi #85 merge (UI ghép nằm ở trang mới nên xung đột dự kiến nhỏ).
-- Human Lead approval: APPROVED 2026-10-17 ("Tôi đồng ý … nhưng thêm một chi tiết là thêm một chức năng tích các bài yêu thích với icon hình trái tim … đưa vào một danh sách yêu thích ở trong một trang khác … để lựa chọn ghép hoặc lặp lại video … cũng nên có chức năng tự động ghép video yêu thích"; câu hỏi cùng ngày: yêu thích **riêng từng bộ kinh**, tự động = **tự ghép theo thời lượng**) → G1–G8 duyệt, G6 sửa theo G9, thêm G9–G10.
+- Human Lead approval: APPROVED 2026-10-17 ("Tôi đồng ý … nhưng thêm một chi tiết là thêm một chức năng tích các bài yêu thích với icon hình trái tim … đưa vào một danh sách yêu thích ở trong một trang khác … để lựa chọn ghép hoặc lặp lại video … cũng nên có chức năng tự động ghép video yêu thích"; câu hỏi cùng ngày: yêu thích **riêng từng bộ kinh**, tự động = **tự ghép theo thời lượng**) → G1–G8 duyệt, G6 sửa theo G9, thêm G9–G10. Amendment 1 (HUMAN LEAD 2026-10-17): "Tạm thời khi dọn dẹp sẽ không xóa các video trong mục yêu thích", làm rõ: "Ý tôi không phải là video nguồn mà là khi xóa Khai Thị thì giữ lại các Khai Thị được yêu thích" → thêm G11 (nguồn / gợi ý dọn W9 không đổi).
 - Implementation authorized: YES
 
 Lifecycle: `DRAFT → APPROVED → IN_PROGRESS → READY`. DONE suy ra từ Git sau khi merge.
@@ -40,12 +40,17 @@ HUMAN LEAD đánh dấu khai thị yêu thích (icon trái tim) rồi, trên tra
 - **G7 Tên file tải về + mô tả.** `concat`: `<Tên bộ kinh> - Khai thị T<a>-T<b> (<n> đoạn).mp4`; `loop`: `<Tên bộ kinh> - T<tập>_KT<NN> lặp <n> lần.mp4` (dùng quy ước tên của `review/names.py`, CP8.21). "Copy mô tả": `concat` → mỗi dòng `MM:SS <title khai thị>` (từ `00:00`, giờ thì `H:MM:SS`) + hashtag của bộ kinh (CP8.8); `loop` → title khai thị + hashtag (không chapter).
 - **G9 Yêu thích (riêng từng bộ kinh).** Icon trái tim (bật / tắt, không cần xác nhận) trên mỗi khai thị ở trang tập và trang bộ kinh (danh sách tập / khai thị của bộ). Lưu `output/_compilations/<playlist_id>/favorites.json` (`schema_version`, `items` = `{episode_id, clip}` sắp theo G1; ghi atomic). Khai thị của tập không thuộc bộ → 400. Trang bộ kinh có link "Yêu thích (n)" → trang mới `/playlists/{pid}/favorites` (cùng auth). Khai thị yêu thích sau đó bị xóa (`rejected`) / chưa render / render lại thành ít khai thị hơn: vẫn hiện trên trang Yêu thích nhưng mờ, không tick được, không dùng cho G10; bỏ tim được. Video ghép đã tạo không đổi khi danh sách yêu thích đổi. Route: `POST /api/playlists/{pid}/favorites` body `{"episode_id", "clip", "favorite": true|false}` (idempotent). Xóa tập / bộ kinh không bắt buộc dọn `favorites.json` (mục mồ côi hiện mờ).
 - **G10 Tự ghép theo thời lượng (`auto`).** Nhập tổng `T` phút (cùng giới hạn G2) → lấy các khai thị yêu thích dùng được theo thứ tự G1, nối lần lượt, hết danh sách thì lặp vòng từ đầu, dừng khi tổng ≥ `60·T` (không cắt dở khai thị cuối). Xem trước "n đoạn (k vòng) ≈ X phút" trước khi tạo. Kết quả mở rộng thành spec `concat` (cùng `cid`, metadata, tên file G7 dạng concat, mô tả có chapter G7); `mode` ghi `auto` trong `<cid>.json`. Không có yêu thích dùng được → 400.
+- **G11 Giữ khai thị yêu thích khi xóa tập (Amendment 1).** Dọn video nguồn (W9 S3 / S5) và gợi ý (S2) không đổi.
+  (a) `DELETE /api/episodes/{id}` (trang tập hoặc gợi ý Bộ nhớ) của tập khai thị `<id>.kt`: TRƯỚC khi xóa, mỗi clip là yêu thích (trong `favorites.json` của bất kỳ bộ kinh nào) và đang `rendered` được chuyển (rename; khác ổ đĩa → copy + kiểm kích thước rồi xóa nguồn) sang `output/_compilations/<playlist_id>/kept/<episode_id>/<clip>.mp4` (nhiều bộ kinh cùng yêu thích → mỗi bộ một bản); mục yêu thích nhận snapshot `kept` = `{path (tương đối với thư mục bộ kinh), title, duration, episode_number (tập), clip_number (KT), clip_total (độ rộng NN, bổ sung), saved_at}`; `favorites.json` ghi atomic. Lỗi lúc giữ, hoặc xóa tập thất bại sau đó → hoàn tác, trả 500, không xóa gì.
+  (b) Mục yêu thích "dùng được" nếu clip của tập đang `rendered` HOẶC có file `kept` còn tồn tại; có `kept` thì luôn dùng file `kept` (kể cả khi tập được gửi lại và render lại, (e)). Trang Yêu thích, concat / loop / auto, chapters, tên file, hashtag dùng snapshot; mục đã giữ hiện "đã lưu" (không có nút "Xem").
+  (c) Bỏ tim mục đã giữ → xóa file `kept` (xác nhận "Khai thị này đã bị xóa khỏi tập, bỏ tim sẽ xóa hẳn"). Xóa tay một khai thị (CP8.5 reject) đang yêu thích → bỏ luôn tim, không giữ bản nào (hộp xác nhận nói rõ).
+  (d) Hộp xác nhận xóa tập `.kt` có yêu thích: "n khai thị yêu thích sẽ được giữ lại trong mục Yêu thích" (`favorites_count` của `GET /api/episodes/{id}`). Số byte "giải phóng" ở Bộ nhớ không đổi (Known limitation: ước tính cao hơn thực tế bằng dung lượng file giữ lại).
 - **G8 Config.** Section mới `[compilation]`: `max_minutes` (int, 1–720, mặc định 720). Không key nào khác.
 
 ## Scope
 
 - In scope: G1–G10; module `src/auto_short/compilation/` (spec, ghép ffmpeg, metadata, tên file, mô tả) — web chỉ gọi; job kind + route + UI trang bộ kinh; README mục ngắn; cập nhật `docs/ai/project-profile.md` §3 (module map) và pointer trong `docs/decisions/CP8.3-web-contract.md`.
-- Out of scope: CLI; ghép khác bộ kinh; ghép Short thường; sắp xếp tay; khoảng lặng / dissolve / intro / outro; thumbnail; tick "Đã đăng" cho video ghép; trái tim cho Short thường; tự ghép lại khi danh sách yêu thích đổi; sắp tay danh sách yêu thích; tab Bộ nhớ đếm dung lượng video ghép (ghi Known limitation); hủy job đang chạy.
+- Out of scope: CLI; ghép khác bộ kinh; ghép Short thường; sắp xếp tay; khoảng lặng / dissolve / intro / outro; thumbnail; tick "Đã đăng" cho video ghép; endpoint xem trước file `kept`; trái tim cho Short thường; tự ghép lại khi danh sách yêu thích đổi; sắp tay danh sách yêu thích; tab Bộ nhớ đếm dung lượng video ghép (ghi Known limitation); hủy job đang chạy.
 
 ## Authority / key decisions
 
@@ -71,6 +76,7 @@ HUMAN LEAD đánh dấu khai thị yêu thích (icon trái tim) rồi, trên tra
 9. Trái tim bật / tắt ghi đúng `favorites.json` (idempotent, thứ tự G1); khai thị ngoài bộ → 400; mục không còn dùng được hiện mờ, không vào `auto`; trang `/playlists/{pid}/favorites` và route yêu thích không có cookie → 401 / chuyển hướng đăng nhập như trang khác.
 10. `auto` với `T` phút: thứ tự + lặp vòng + dừng khi ≥ T đúng G10 (kiểm cả danh sách 1 mục và danh sách dài hơn T); không yêu thích dùng được → 400.
 11. Tập Short, khai thị, bộ kinh hiện có: artifact và route cũ không đổi (full suite PASS).
+12. G11: xóa tập `.kt` có 2 clip yêu thích trong 3 clip → 2 file `kept` + snapshot, tập biến mất, trang Yêu thích liệt kê, concat / loop / auto dùng được file `kept`; bỏ tim mục đã giữ → file bị xóa; xóa tay một clip yêu thích → tim bị bỏ; tập không có yêu thích xóa y như trước; lỗi lúc giữ / lúc xóa → không mất gì.
 
 ## Required verification
 
@@ -88,13 +94,14 @@ Chạm public API (route web mới, cùng auth hiện có); không chạm databa
 - [ ] Lặp một khai thị 30 phút → số lần lặp đúng như xem trước, tải về xem được.
 - [ ] Tự ghép 60 phút từ yêu thích → số đoạn / vòng đúng như xem trước.
 - [ ] "Copy mô tả" dán vào YouTube Studio → chapter nhận đúng.
+- [ ] Xóa một tập khai thị có clip yêu thích (xác nhận nói "được giữ lại") → vẫn thấy ở trang Yêu thích ("đã lưu"), ghép / lặp được; bỏ tim → mất hẳn.
 - [ ] Gửi lại cùng lựa chọn → không ghép lại; xóa → biến mất khỏi danh sách và đĩa.
 
 ## Result
 
-- Main changes:
-- Tests:
+- Main changes: package `src/auto_short/compilation/` (spec, probe, assemble, meta, store); `web/compilations.py` + job kind `compilation` (`web/jobs.py`); routes / favourites / G11 keep-on-delete in `web/app.py`; UI `favorites.html` + `favorites.js`, heart in `app.js`, link on the bộ kinh page; config `[compilation]`; README, project profile §3, CP8.3 pointers.
+- Tests: `tests/test_compilation.py`, `tests/test_web_compilation.py` (AC 1–12).
 - Review:
-- Important findings / decisions:
-- Known limitations:
+- Important findings / decisions: `<cid>.json` also carries `download_name`, `title`, `duration_estimate`, `size`, `reencoded`, `error`, `finished_at`; `cid` of `auto` = `cid` of the equal `concat`; the heart on a khai thị lives on the episode page and the Yêu thích page (the bộ kinh page lists episodes, not clips: it carries the "Yêu thích (n)" link); kept snapshot has an extra `clip_total`.
+- Known limitations: a re-rendered clip with the same clip id reuses the old compilation (cid is of ids, not file hashes); Bộ nhớ "giải phóng" overstated by kept files; compilations not counted in the Bộ nhớ tab; no cancel of a running job; kept files have no preview link.
 - PR:

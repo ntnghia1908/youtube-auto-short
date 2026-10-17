@@ -252,6 +252,13 @@ class KhaithiConfig:
     soft_label_max_seconds: float = 5.0  # A3.1: shorter non_speech labels are no hard break (khai thị only)
 
 
+@dataclass(frozen=True)
+class CompilationConfig:
+    """Khai thị compilations (docs/tasks/CP8.33-khaithi-compilation.md G8). Execution-only: no stage uses it."""
+
+    max_minutes: int = 720  # longest compilation (YouTube's limit is 12 h)
+
+
 def _default_corrections_path() -> Path:
     """CP8.18 D1 default of ``[post] corrections_path`` (a function so tests can redirect it away from the home dir)."""
     return Path("~/.local/share/auto-short/post-corrections.json").expanduser()
@@ -356,6 +363,7 @@ class Config:
     post: PostConfig = field(default_factory=PostConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
     enhance: EnhanceConfig = field(default_factory=EnhanceConfig)
+    compilation: CompilationConfig = field(default_factory=CompilationConfig)
 
 
 def _section(data: dict, name: str) -> dict:
@@ -750,6 +758,12 @@ def _khaithi(data: dict) -> KhaithiConfig:
     return cfg
 
 
+def _compilation(data: dict) -> CompilationConfig:
+    co = _section(data, "compilation")
+    d, w = CompilationConfig(), "compilation"
+    return CompilationConfig(max_minutes=_int(co, "max_minutes", d.max_minutes, w, lo=1, hi=720))
+
+
 def _post(data: dict) -> PostConfig:
     po = _section(data, "post")
     d, w = PostConfig(), "post"
@@ -815,6 +829,7 @@ def from_dict(data: dict) -> Config:
         post=_post(data),
         storage=_storage(data),
         enhance=_enhance(data),
+        compilation=_compilation(data),
     )
 
 
