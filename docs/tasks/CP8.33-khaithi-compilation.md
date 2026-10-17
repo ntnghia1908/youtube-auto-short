@@ -108,4 +108,4 @@ Chạm public API (route web mới, cùng auth hiện có); không chạm databa
 - Amendment 2 (Shorts like khai thị): kind derived from the episode id (`.kt`), no `kind` stored; `Clip.rank` is `(episode position, 0 Short / 1 khai thị, clip number)` so khai thị-only `cid`s are unchanged; `kinds` filter on `auto`; tests `test_web_compilation.py` (AC13).
 - Review fix 1 (HUMAN LEAD 2026-10-17): concat name uses `T<a>` when first == last episode; hearts on the bộ kinh page confirmed not needed (Deviation 1 accepted).
 - Known limitations: a re-rendered clip with the same clip id reuses the old compilation (cid is of ids, not file hashes); Bộ nhớ "giải phóng" overstated by kept files; compilations not counted in the Bộ nhớ tab; no cancel of a running job; kept files have no preview link.
-- PR:
+- PR: #86
