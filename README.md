@@ -107,6 +107,8 @@ never deleted. The "Đã đăng" checkbox marks Shorts you have uploaded (`work/
 input); a Short re-rendered after ticking shows "đã đăng bản cũ". Filters: Tất cả / Chưa đăng / Đã đăng on the
 episode page, Tất cả / Còn Short chưa đăng / Đã đăng hết on the episode list.
 
+Sequential download (CP8.34): on a bộ kinh page tick episodes, pick zip / vertical / HD, and "Tải lần lượt" downloads them one to three at a time (default 2, remembered); the server reports each `?dl=<token>` download at `/api/downloads/{token}`, failed files are retried twice. Keep the page open until it finishes.
+
 Downloads and exports (CP8.31): any zip ("Tải tất cả Short", "Tải tất cả khai thị", "Tải cả hai") ticks every Short
 it contains as "Đã đăng". Each episode row of a bộ kinh page has icon buttons for the Short + khai thị zip and for
 the posts file, and coloured badges `Short x/y`, `Khai thị x/y`, `Bài x/y` (green all posted, amber partly, grey none). "Tải bài đăng (.docx)" on the bộ kinh page downloads the community posts of up to 10 episodes per Word file (ranges 1–10, 11–20, …; per episode "Shorts" then "Khai thị"; title in capitals, image, paragraphs, source line; no

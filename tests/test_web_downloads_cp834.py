@@ -314,3 +314,14 @@ def test_playlist_entries_expose_kinds_for_the_queue(tcfg):
     assert by[VID]["zip_url"] and by[VID]["hd_url"] and by[VID]["vertical"]["ready"] and by[VID]["vertical"]["url"]
     assert by[VID2]["zip_url"] and not by[VID2].get("hd_url") and not (by[VID2]["vertical"] or {}).get("ready")
     assert {"shorts", "published", "khaithi_videos", "khaithi_published"} <= set(by[VID])
+
+
+def test_playlist_page_static_wiring(tcfg):
+    c = client(tcfg)
+    login(c)
+    html = c.get(f"/playlists/{PL}").text
+    assert html.index("/static/dlqueue.js") < html.index("/static/app.js")
+    for el_id in ("dq-kind", "dq-conc", "dq-unposted", "dq-start", "dq-pause", "dq-resume", "dq-rows"):
+        assert f'id="{el_id}"' in html
+    assert "Để trang này mở cho tới khi tải xong" in html and "Cho phép tải nhiều tệp" in html
+    assert c.get("/static/dlqueue.js").status_code == 200

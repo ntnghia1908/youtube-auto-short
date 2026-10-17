@@ -2659,6 +2659,7 @@ const AutoShort = (() => {
     initSeries();
     initDoc();
     $("#pl-delete").addEventListener("click", deletePlaylist);
+    initDownloadQueue();
     loadPlaylist();
     checkDisk();
   }
@@ -3129,6 +3130,8 @@ const AutoShort = (() => {
     plPriorityCount = d.priority_count || 0; // CP8.26
     $("#pl-priority").textContent = plPriorityCount ? `Bỏ ưu tiên cả bộ (${plPriorityCount})` : "Ưu tiên cả bộ";
     let busy = false;
+    dqEntries = d.entries;
+    dqRefreshSummary();
     $("#pl-entries").replaceChildren(...d.entries.map((e) => {
       if (RUNNING_STATES.includes(e.state)) busy = true;
       const title = e.title || e.video_id || "(không rõ)";
@@ -3162,6 +3165,7 @@ const AutoShort = (() => {
       }
       if (e.video_id && !["unavailable", "deleted"].includes(e.state) && !e.complete) actions.append(priorityButton(e.video_id, !!e.priority, loadPlaylist));
       return el("li", { class: "pl-entry " + e.state, "data-group": e.group || "none" },
+        dqCheckbox(e),
         el("span", { class: "pl-index muted", text: `${e.index}.` }),
         el("div", { class: "pl-body" }, head,
           el("span", { class: "muted small", text: [e.episode ? `tập ${e.episode}` : null, e.duration ? fmtSeconds(e.duration) : null].filter(Boolean).join(" · ") }),
@@ -3174,6 +3178,175 @@ const AutoShort = (() => {
     }));
     applyPlFilter();
     if (busy) plTimer = setTimeout(loadPlaylist, POLL_MS * 2);
+  }
+
+
+  // --- CP8.34 sequential download queue (pure logic: static/dlqueue.js; the server reports progress per ?dl token) ---
+
+  const DQ_POLL_MS = 2000;
+  const DQ_KINDS = {
+    zip: { label: "zip", url: (e) => e.zip_url, name: (e) => e.zip_name || "", missing: "chưa có Short" },
+    vertical: { label: "bản dọc", url: (e) => (e.vertical && e.vertical.ready ? e.vertical.url : null), name: (e) => (e.vertical && e.vertical.name) || "",
+      missing: "chưa có bản dọc" },
+    hd: { label: "HD", url: (e) => e.hd_url, name: (e) => e.hd_name || "", missing: "chưa có bản HD" },
+  };
+  let dqEntries = [];
+  const dqSelected = new Set(); // video ids ticked on the list (survives the list re-render)
+  let dqQueue = null;
+  let dqTimer = null;
+  let dqPolling = false;
+  let dqSentinel = null;
+
+  function dqCheckbox(e) {
+    if (!e.video_id || ["unavailable", "deleted"].includes(e.state)) return el("span", { class: "dq-check-slot" });
+    const box = el("input", { type: "checkbox", class: "dq-check", "aria-label": "Chọn để tải lần lượt" });
+    box.checked = dqSelected.has(e.video_id);
+    box.addEventListener("change", () => {
+      if (box.checked) dqSelected.add(e.video_id); else dqSelected.delete(e.video_id);
+      dqRefreshSummary();
+    });
+    return box;
+  }
+
+  function dqRefreshSummary() {
+    const n = dqSelected.size;
+    const s = $("#dq-summary");
+    if (s) s.textContent = n ? `đã chọn ${n} tập` : "chưa chọn tập";
+  }
+
+  function dqUnposted(e) { // an episode still holding Short / khai thị that are not ticked "Đã đăng"
+    return !!e.zip_url && ((e.published || 0) < (e.shorts || 0) || (e.khaithi_published || 0) < (e.khaithi_videos || 0));
+  }
+
+  function dqToken() {
+    const bytes = new Uint8Array(12);
+    if (window.crypto && crypto.getRandomValues) crypto.getRandomValues(bytes);
+    else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+    return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  }
+
+  function dqMb(n) { return (n / 1048576).toFixed(n >= 104857600 ? 0 : 1) + " MB"; }
+
+  function dqStatusText(i) {
+    switch (i.status) {
+      case "waiting": return "đang chờ";
+      case "sending": return i.seen ? `đang tải${i.bytesSent ? " · " + dqMb(i.bytesSent) + (i.bytesTotal ? " / " + dqMb(i.bytesTotal) : "") : ""}` : "đang bắt đầu…";
+      case "retrywait": return `thử lại sau vài giây (lần ${i.attempts + 1}) — ${i.reason}`;
+      case "done": return "xong" + (i.bytesSent ? " · " + dqMb(i.bytesSent) : "");
+      case "error": return `lỗi: ${i.reason}`;
+      default: return "bỏ qua: " + i.reason;
+    }
+  }
+
+  function dqRender() {
+    const q = dqQueue;
+    const table = $("#dq-table");
+    table.hidden = !q.items.length;
+    $("#dq-rows").replaceChildren(...q.items.map((i) => {
+      const retry = i.status === "error" ? el("button", { class: "btn small", type: "button", text: "Thử lại" }) : null;
+      if (retry) retry.addEventListener("click", () => { q.retry(i.id); dqTick(); });
+      return el("tr", { class: "dq-" + i.status }, el("td", { text: i.name }), el("td", { class: "dq-state", text: dqStatusText(i) }), el("td", {}, retry));
+    }));
+    const c = q.counts();
+    const idle = !q.active();
+    $("#dq-pause").hidden = idle || q.isPaused();
+    $("#dq-resume").hidden = idle || !q.isPaused();
+    $("#dq-tidy").hidden = !(c.done || c.skipped);
+    $("#dq-note").hidden = idle;
+  }
+
+  async function dqWakeLock(on) {
+    try {
+      if (on && !dqSentinel && navigator.wakeLock && typeof navigator.wakeLock.request === "function" && !document.hidden) {
+        dqSentinel = await navigator.wakeLock.request("screen");
+        dqSentinel.addEventListener("release", () => { dqSentinel = null; });
+      } else if (!on && dqSentinel) {
+        const s = dqSentinel;
+        dqSentinel = null;
+        await s.release();
+      }
+    } catch (_) { dqSentinel = null; /* not supported / refused: the note still tells the user to keep the page open */ }
+  }
+
+  function dqStartNative(url, name) { // a real browser download (never fetch + blob: a file can be several GB)
+    const a = el("a", { href: url, download: name || "", class: "dq-hidden-link", hidden: true });
+    document.body.append(a);
+    a.click();
+    setTimeout(() => a.remove(), 1000);
+  }
+
+  async function dqTick() {
+    if (dqPolling) return;
+    dqPolling = true;
+    try {
+      const q = dqQueue;
+      const now = Date.now();
+      for (const { item, token } of q.step(now, dqToken)) dqStartNative(DownloadQueue.withToken(item.url, token), item.name);
+      await Promise.all(q.items.filter((i) => i.status === "sending").map(async (i) => {
+        const token = i.token;
+        let info = null;
+        try {
+          const r = await fetch(`/api/downloads/${encodeURIComponent(token)}`, { credentials: "same-origin", cache: "no-store" });
+          if (r.ok) info = await r.json();
+          else if (r.status === 401) { location.reload(); return; }
+        } catch (_) { return; /* network blip: ask again next time */ }
+        const before = i.status;
+        q.report(i.id, token, info, Date.now());
+        if (before === "sending" && i.status === "done" && i.kind === "zip") loadPlaylist(); // the zip ticked "Đã đăng"
+      }));
+      dqRender();
+    } finally { dqPolling = false; }
+    const active = dqQueue.active();
+    dqWakeLock(active && !(dqQueue.isPaused() && !dqQueue.counts().sending));
+    clearTimeout(dqTimer);
+    dqTimer = active ? setTimeout(dqTick, DQ_POLL_MS) : null;
+  }
+
+  function initDownloadQueue() {
+    const conc = parseInt(store("autoShort.dlConcurrency") || "2", 10);
+    dqQueue = DownloadQueue.createQueue({ concurrency: conc });
+    $("#dq-conc").value = String(dqQueue.getConcurrency());
+    $("#dq-conc").addEventListener("change", () => {
+      dqQueue.setConcurrency($("#dq-conc").value);
+      store("autoShort.dlConcurrency", String(dqQueue.getConcurrency()));
+      dqTick();
+    });
+    $("#dq-unposted").addEventListener("click", () => {
+      dqEntries.filter(dqUnposted).forEach((e) => dqSelected.add(e.video_id));
+      dqSyncChecks();
+    });
+    $("#dq-clear").addEventListener("click", () => { dqSelected.clear(); dqSyncChecks(); });
+    $("#dq-start").addEventListener("click", () => {
+      const kind = DQ_KINDS[$("#dq-kind").value];
+      const kindKey = $("#dq-kind").value;
+      const specs = dqEntries.filter((e) => dqSelected.has(e.video_id)).map((e) => {
+        const url = kind.url(e);
+        const label = `tập ${e.episode || e.index} (${kind.label})`;
+        return { key: `${e.video_id}:${kindKey}`, kind: kindKey, name: url ? (kind.name(e) || label) : label, url, skipped: url ? "" : kind.missing };
+      });
+      if (!specs.length) { $("#dq-summary").textContent = "chưa chọn tập"; return; }
+      dqQueue.add(specs);
+      dqQueue.resume();
+      dqTick();
+    });
+    $("#dq-pause").addEventListener("click", () => { dqQueue.pause(); dqRender(); });
+    $("#dq-resume").addEventListener("click", () => { dqQueue.resume(); dqTick(); });
+    $("#dq-tidy").addEventListener("click", () => {
+      dqQueue.items.splice(0, dqQueue.items.length, ...dqQueue.items.filter((i) => !["done", "skipped"].includes(i.status)));
+      dqRender();
+    });
+    document.addEventListener("visibilitychange", () => { if (!document.hidden && dqQueue.active()) dqWakeLock(true); });
+    window.addEventListener("beforeunload", (ev) => { if (dqQueue.active()) { ev.preventDefault(); ev.returnValue = ""; } });
+  }
+
+  function dqSyncChecks() {
+    document.querySelectorAll("#pl-entries .dq-check").forEach((b) => {
+      const li = b.closest("li");
+      const idx = Array.from(li.parentNode.children).indexOf(li);
+      const e = dqEntries[idx];
+      b.checked = !!e && dqSelected.has(e.video_id);
+    });
+    dqRefreshSummary();
   }
 
   // --- CP8.28 monitor tab: queue detail, VM CPU, Ollama, GPU workers (refresh every few seconds) ---------------

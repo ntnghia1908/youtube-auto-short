@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -21,6 +21,10 @@ S2 vì: route web mới + thay đổi hành vi route tải hiện có (theo dõi
 - HUMAN LEAD: "Nên hỗ trợ tải tuần tự … trên điện thoại tôi chỉ tải một lần được hai video hoặc hai bản zip để đảm bảo tốc độ tải. Nếu tôi tải nhiều bản thì sẽ chậm và có thể bị mất gói. Nên có chức năng cho tải nhiều nhưng tải từ từ, mỗi lần một hai gói." Trả lời câu hỏi cùng ngày: chọn ở **trang bộ kinh**; số file cùng lúc **chọn được 1–3, mặc định 2**; lỗi → **tự thử lại 2 lần**.
 - Tải hiện nay: link `<a download>` → trình duyệt / trình quản lý tải của điện thoại tải thẳng (không giữ file trong bộ nhớ trang). Zip (`shorts.zip`, `all.zip`) là `StreamingResponse` tạo lúc tải (không có `Content-Length`, không hỗ trợ Range); mp4 (bản dọc, bản ngang HD, Short) là `FileResponse`.
 - Trang web **không biết** khi nào một lần tải native xong. Tải bằng `fetch` + blob thì biết, nhưng giữ cả file (có thể vài GB) trong RAM điện thoại → không dùng.
+
+## Goal
+
+Trang bộ kinh tải lần lượt nhiều file đã chọn (zip / bản dọc / bản ngang HD), 1–3 file cùng lúc, tự thử lại khi lỗi; server báo khi mỗi file đã gửi xong.
 
 ## Quyết định cần HUMAN LEAD duyệt (D1–D7)
 
@@ -64,9 +68,9 @@ Chạm public API (route mới + tham số mới ở route tải, cùng auth); k
 
 ## Result
 
-- Main changes:
-- Tests:
+- Main changes: `web/downloads.py` (bảng token trong bộ nhớ, TTL 6 h, `TrackedResponse` bọc ASGI `send` đếm byte, bỏ `pathsend` khi có `dl`, request mới cùng token thay request cũ); tham số `dl` ở `/files/{id}/{shorts.zip,all.zip,<clip>.mp4}`, `/api/episodes/{id}/vertical`, `/api/episodes/{id}/source-hd` (không `dl` hoặc token sai định dạng: không đổi); route `GET /api/downloads/{token}`; route trả lỗi có `dl` hợp lệ → token `aborted`. UI: `static/dlqueue.js` (máy trạng thái thuần), khối "Tải lần lượt" + ô tick từng tập trong `playlist.html` / `app.js` / `style.css`; Wake Lock, ghi chú Chrome, `localStorage` `autoShort.dlConcurrency`. Pointer CP8.3 web contract + dòng README. Thêm mục `## Goal` vào contract (framework-check yêu cầu).
+- Tests: `tests/test_web_downloads_cp834.py` (17: AC2, AC6, D6, D7 Range, ngắt kết nối bằng ASGI thật, bytes giống hệt khi không `dl`, API bộ kinh), `tests/test_dlqueue_cp834.py` (5, chạy `dlqueue.js` bằng Node: AC1, AC3, AC4, AC5). Suite đầy đủ: 1878 passed, 1 skipped. `node scripts/framework-check.mjs`: PASS.
 - Review:
-- Important findings / decisions:
-- Known limitations:
+- Important findings / decisions: lớp UI trong `app.js` (DOM, fetch, Wake Lock, thẻ `<a download>`) chưa có test tự động — chỉ kiểm cú pháp (`node --check`) và manual test; phần logic hàng đợi nằm ở `dlqueue.js` có test.
+- Known limitations: file đang `sending` mà mạng treo (không `aborted`) thì hàng đợi chờ tới khi TCP ngắt; "xong" = server gửi xong (D7); tải lại luôn từ đầu (không Range); hàng đợi mất khi đóng / tải lại trang.
 - PR:
