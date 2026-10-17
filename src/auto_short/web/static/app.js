@@ -3194,7 +3194,6 @@ const AutoShort = (() => {
   const dqSelected = new Set(); // video ids ticked on the list (survives the list re-render)
   let dqQueue = null;
   let dqTimer = null;
-  let dqPolling = false;
   let dqSentinel = null;
 
   function dqCheckbox(e) {
@@ -3275,29 +3274,30 @@ const AutoShort = (() => {
     setTimeout(() => a.remove(), 1000);
   }
 
-  async function dqTick() {
-    if (dqPolling) return;
-    dqPolling = true;
+  const DQ_POLL_TIMEOUT_MS = 10000;
+
+  async function dqPollOne(i) { // A1c: independent of the other items; a hung request ends after 10 s
+    const token = i.token;
+    const q = dqQueue;
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), DQ_POLL_TIMEOUT_MS);
     try {
-      const q = dqQueue;
-      const now = Date.now();
-      for (const { item, token } of q.step(now, dqToken)) dqStartNative(DownloadQueue.withToken(item.url, token), item.name);
-      await Promise.all(q.items.filter((i) => i.status === "sending").map(async (i) => {
-        const token = i.token;
-        let info = null;
-        try {
-          const r = await fetch(`/api/downloads/${encodeURIComponent(token)}`, { credentials: "same-origin", cache: "no-store" });
-          if (r.ok) info = await r.json();
-          else if (r.status === 401) { location.reload(); return; }
-        } catch (_) { return; /* network blip: ask again next time */ }
-        const before = i.status;
-        q.report(i.id, token, info, Date.now());
-        if (before === "sending" && i.status === "done" && i.kind === "zip") loadPlaylist(); // the zip ticked "Đã đăng"
-      }));
-      dqRender();
-    } finally { dqPolling = false; }
-    const active = dqQueue.active();
-    dqWakeLock(active && !(dqQueue.isPaused() && !dqQueue.counts().sending));
+      const r = await fetch(`/api/downloads/${encodeURIComponent(token)}`, { credentials: "same-origin", cache: "no-store", signal: ctl.signal });
+      if (r.status === 401) { location.reload(); return; }
+      const before = i.status;
+      q.report(i.id, token, r.ok ? await r.json() : null, Date.now());
+      if (before === "sending" && i.status === "done" && i.kind === "zip") loadPlaylist(); // the zip ticked "Đã đăng"
+    } catch (_) { /* timeout / network blip: ask again next round */ }
+    finally { clearTimeout(timer); q.pollDone(i.id, token); dqRender(); }
+  }
+
+  function dqTick() {
+    const q = dqQueue;
+    for (const { item, token } of q.step(Date.now(), dqToken)) dqStartNative(DownloadQueue.withToken(item.url, token), item.name);
+    for (const i of q.pollTargets()) dqPollOne(i);
+    dqRender();
+    const active = q.active();
+    dqWakeLock(active && !(q.isPaused() && !q.counts().sending));
     clearTimeout(dqTimer);
     dqTimer = active ? setTimeout(dqTick, DQ_POLL_MS) : null;
   }

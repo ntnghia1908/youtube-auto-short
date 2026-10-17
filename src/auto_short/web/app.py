@@ -590,7 +590,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         if dl is None or not dl_mod.TOKEN_RE.match(dl):
             return response
         if response.status_code >= 400:
-            download_table.begin(dl, state=dl_mod.ABORTED)
+            download_table.fail(dl)
             return response
         return dl_mod.TrackedResponse(response, download_table, dl)
 

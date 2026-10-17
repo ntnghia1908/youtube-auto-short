@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS (Amendment A1)
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -93,4 +93,5 @@ Chạm public API (route mới + tham số mới ở route tải, cùng auth); k
 - Review: ORCHESTRATOR 2026-10-17 ACCEPTED — đọc diff server (`downloads.py`, `_tracked`, route `/api/downloads`) + client (`dlqueue.js`, `app.js`, `playlist.html`); chạy lại `pytest -q -n auto` (1878 passed, 1 skipped) + `framework-check` PASS. Chấp nhận 2 điểm ngoài chữ contract: lỗi 4xx có `dl` → `aborted` ngay (đúng tinh thần D3/D4); hộp xác nhận `beforeunload` khi hàng đợi còn chạy (hỗ trợ D5, HUMAN LEAD có thể bỏ). Còn chờ manual test điện thoại.
 - Important findings / decisions: lớp UI trong `app.js` (DOM, fetch, Wake Lock, thẻ `<a download>`) chưa có test tự động — chỉ kiểm cú pháp (`node --check`) và manual test; phần logic hàng đợi nằm ở `dlqueue.js` có test.
 - Known limitations: file đang `sending` mà mạng treo (không `aborted`) thì hàng đợi chờ tới khi TCP ngắt; "xong" = server gửi xong (D7); tải lại luôn từ đầu (không Range); hàng đợi mất khi đóng / tải lại trang.
+- Amendment A1: `TrackedResponse` nghe `receive()` song song (anyio task group) và huỷ response khi `http.disconnect` tới trước chunk cuối (cờ `final` đặt trước `await send(final)` nên disconnect do middleware báo sau khi xong không bị tính là abort); bảng token gộp khoảng byte của mọi request cùng token + số request đang chạy + cách kết thúc request cuối (`merge_interval`, `DownloadTable.begin/set_total/add_bytes/end/fail`); tổng không biết (zip) giữ luật một request. Một khúc Range kết thúc bình thường mà còn lỗ hổng, không còn request chạy → vẫn `sending` (chỉ `aborted` khi request cuối kết thúc bằng ngắt / lỗi, đúng chữ A1b). Log INFO `web: tải [token6…] <path> range=… đã gửi a/b byte -> done|partial|aborted (token: …)` ở logger `auto_short`. Trang: mỗi lần hỏi trạng thái có AbortController 10 s, `pollTargets/pollDone` trong `dlqueue.js` (mỗi item độc lập, không còn `Promise.all`). Test A1: `test_web_downloads_cp834.py` (silent-drop ASGI, disconnect cùng chunk cuối, Range mọi thứ tự, thiếu khúc → aborted → hồi phục, uvicorn thật trong thread, log), `test_dlqueue_cp834.py` (poll độc lập). Suite: 1887 passed, 1 skipped; framework-check PASS.
 - PR:

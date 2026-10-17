@@ -123,3 +123,18 @@ console.log(JSON.stringify({none, started, startedWhilePaused, counts: q.counts(
     assert r["dup"] == 0  # same key already live
     assert r["conc"] == [2, 3]
     assert r["url"] == "/a?b=1&dl=t%20k" and r["url2"] == "/a?dl=tt"
+
+
+def test_hung_status_request_blocks_only_its_own_item():
+    r = run_js("""
+const q = Q.createQueue({concurrency: 2}); q.add(specs(2));
+q.step(0, tok);
+const [a, b] = q.items;
+const r1 = q.pollTargets().map((i) => i.name);     // both polled
+const r2 = q.pollTargets().map((i) => i.name);     // a and b still in flight: nothing new
+q.report(b.id, b.token, {state: "sending", bytes_sent: 3, bytes_total: 9}, 1); q.pollDone(b.id, b.token);
+const r3 = q.pollTargets().map((i) => i.name);     // b polls again while a's request hangs
+q.report(a.id, a.token, {state: "done", bytes_sent: 1, bytes_total: 1}, 2); q.pollDone(a.id, a.token);
+console.log(JSON.stringify([r1, r2, r3, a.status, a.polling]));
+""")
+    assert r == [["f0", "f1"], [], ["f1"], "done", False]

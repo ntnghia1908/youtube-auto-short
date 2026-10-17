@@ -220,8 +220,8 @@ def test_range_to_last_byte_is_done_partial_is_not(tcfg):
     r = c.get(f"/files/{VID}/k01.mp4?dl={TOK}", headers={"Range": "bytes=0-99"})
     assert r.status_code == 206
     assert progress(c) == {"state": "sending", "bytes_sent": 100, "bytes_total": n}
-    r = c.get(f"/files/{VID}/k01.mp4?dl={TOK}", headers={"Range": f"bytes=1000-"})
-    assert r.status_code == 206 and r.content == BIG[1000:]
+    r = c.get(f"/files/{VID}/k01.mp4?dl={TOK}", headers={"Range": "bytes=100-"})
+    assert r.status_code == 206 and r.content == BIG[100:]
     assert progress(c) == {"state": "done", "bytes_sent": n, "bytes_total": n}
 
 
@@ -237,12 +237,13 @@ def test_hd_and_vertical_routes_track_and_stay_identical(tcfg):
     (d / full.META_NAME).write_text(json.dumps({"hd_sha256": sha, "size": 5000, "key": "k"}), encoding="utf-8")
     c = client(tcfg)
     login(c)
-    for url, size in ((f"/api/episodes/{VID}/source-hd", len(BIG)), (f"/api/episodes/{VID}/vertical", 5000)):
+    for n, (url, size) in enumerate(((f"/api/episodes/{VID}/source-hd", len(BIG)), (f"/api/episodes/{VID}/vertical", 5000))):
+        tok = f"{TOK}-{n}"
         a = c.get(url)
-        b = c.get(f"{url}?dl={TOK}")
+        b = c.get(f"{url}?dl={tok}")
         assert a.status_code == b.status_code == 200 and a.content == b.content
         assert a.headers["content-disposition"] == b.headers["content-disposition"]
-        assert progress(c) == {"state": "done", "bytes_sent": size, "bytes_total": size}
+        assert progress(c, tok) == {"state": "done", "bytes_sent": size, "bytes_total": size}
     # a missing vertical (other episode) ends the token as aborted
     write_episode(tcfg, VID2, clips=("k01",))
     assert c.get(f"/api/episodes/{VID2}/vertical?dl=tok2-abcdefgh").status_code == 404
@@ -278,17 +279,26 @@ def test_all_zip_with_dl_ticks_both_kinds(tcfg):
 
 # --- table unit tests ---------------------------------------------------------------------------------------------------
 
-def test_table_expiry_and_stale_update():
+def test_table_expiry_and_interval_merge():
     now = [0.0]
     t = dl_mod.DownloadTable(clock=lambda: now[0], ttl=100)
-    s1 = t.begin("tokentoken1")
-    s2 = t.begin("tokentoken1")
-    t.update("tokentoken1", s1, state=dl_mod.ABORTED)  # an older request never overwrites the latest
+    t.begin("tokentoken1")
+    t.set_total("tokentoken1", 100)
+    t.add_bytes("tokentoken1", 0, 40)
+    assert t.end("tokentoken1", "aborted") == "aborted"
+    t.begin("tokentoken1")  # a new request after aborted -> sending again
     assert t.get("tokentoken1")["state"] == "sending"
-    t.update("tokentoken1", s2, state=dl_mod.DONE)
-    assert t.get("tokentoken1")["state"] == "done"
+    t.add_bytes("tokentoken1", 40, 100)
+    assert t.end("tokentoken1", "finished") == "done"
     now[0] = 101.0
     assert t.get("tokentoken1") is None
+
+
+def test_merge_interval():
+    iv: list[list[int]] = []
+    for a, b in ((50, 60), (0, 10), (10, 20), (55, 70), (30, 40), (20, 30), (40, 50)):
+        dl_mod.merge_interval(iv, a, b)
+    assert iv == [[0, 70]]
 
 
 # --- D1 / AC4: the playlist API gives the page what it needs to skip missing kinds ---------------------------------------
@@ -325,3 +335,201 @@ def test_playlist_page_static_wiring(tcfg):
         assert f'id="{el_id}"' in html
     assert "Để trang này mở cho tới khi tải xong" in html and "Cho phép tải nhiều tệp" in html
     assert c.get("/static/dlqueue.js").status_code == 200
+
+
+# --- A1a: a disconnect that the server's ``send`` swallows (uvicorn), found through ``receive`` -----------------------------
+
+HUGE = bytes(range(256)) * 16384  # 4 MiB: 64 chunks of 64 KiB
+
+
+def silent_asgi_get(app, path, cookie, *, disconnect_after=None, headers=()):
+    """Like uvicorn after the peer left: ``send`` never raises, ``receive`` yields ``http.request`` and then
+    ``http.disconnect`` once ``disconnect_after`` body chunks went out (``None`` = right when the final chunk is
+    being sent, the way the middleware reports a finished response)."""
+    sent = {"body": 0}
+
+    async def run():
+        parts = urlsplit(path)
+        scope = {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": "GET", "scheme": "http",
+                 "path": parts.path, "raw_path": parts.path.encode(), "query_string": parts.query.encode(),
+                 "root_path": "", "client": ("127.0.0.1", 1), "server": ("testserver", 80),
+                 "headers": [(b"cookie", cookie.encode()), (b"host", b"testserver"), *headers],
+                 "extensions": {"http.response.pathsend": {}}}
+        gone = asyncio.Event()
+        first = [True]
+
+        async def receive():
+            if first[0]:
+                first[0] = False
+                return {"type": "http.request", "body": b"", "more_body": False}
+            await gone.wait()
+            return {"type": "http.disconnect"}
+
+        async def send(message):
+            await asyncio.sleep(0)  # let the other tasks run, as a socket write would
+            if message["type"] == "http.response.body":
+                sent["body"] += 1
+                if disconnect_after is not None and sent["body"] >= disconnect_after:
+                    gone.set()
+                elif disconnect_after is None and not message.get("more_body", False):
+                    gone.set()
+
+        await app(scope, receive, send)
+
+    asyncio.run(run())
+    return sent
+
+
+def big_app(tcfg, data=HUGE):
+    write_episode(tcfg, VID, clips=("k01",))
+    (Path(tcfg.render.output_dir) / VID / "shorts" / "k01.mp4").write_bytes(data)
+    app = make_app(tcfg)
+    c = TestClient(app, follow_redirects=False)
+    login(c)
+    return app, c, session_cookie(c)
+
+
+def test_silent_disconnect_mid_file_is_aborted_with_partial_bytes(tcfg):
+    app, c, cookie = big_app(tcfg)
+    silent_asgi_get(app, f"/files/{VID}/k01.mp4?download=1&dl={TOK}", cookie, disconnect_after=5)
+    p = progress(c)
+    assert p["state"] == "aborted" and 0 < p["bytes_sent"] < len(HUGE) and p["bytes_total"] == len(HUGE)
+
+
+def test_disconnect_reported_with_the_final_chunk_is_still_done(tcfg):
+    app, c, cookie = big_app(tcfg)
+    silent_asgi_get(app, f"/files/{VID}/k01.mp4?download=1&dl={TOK}", cookie, disconnect_after=None)
+    assert progress(c) == {"state": "done", "bytes_sent": len(HUGE), "bytes_total": len(HUGE)}
+
+
+def test_silent_disconnect_mid_zip_is_aborted(tcfg):
+    app, c, cookie = big_app(tcfg)
+    silent_asgi_get(app, f"/files/{VID}/shorts.zip?dl={TOK}", cookie, disconnect_after=3)
+    assert progress(c)["state"] == "aborted"
+
+
+# --- A1b: several Range requests of one token, merged -------------------------------------------------------------------
+
+def test_ranges_any_order_bounded_middle_last_is_done(tcfg):
+    app, c, _ = big_app(tcfg, BIG)
+    n = len(BIG)
+    for rng, state in (("100000-199999", "sending"), ("0-49999", "sending"), ("200000-", "sending")):
+        assert c.get(f"/files/{VID}/k01.mp4?dl={TOK}", headers={"Range": f"bytes={rng}"}).status_code == 206
+        assert progress(c)["state"] == state
+    r = c.get(f"/files/{VID}/k01.mp4?dl={TOK}", headers={"Range": "bytes=50000-99999"})  # the hole, bounded, last
+    assert r.status_code == 206 and r.content == BIG[50000:100000]
+    assert progress(c) == {"state": "done", "bytes_sent": n, "bytes_total": n}
+
+
+def test_missing_slice_and_no_running_request_is_aborted_then_recovers(tcfg):
+    app, c, cookie = big_app(tcfg, HUGE)
+    n = len(HUGE)
+    half = n // 2
+    assert c.get(f"/files/{VID}/k01.mp4?dl={TOK}", headers={"Range": f"bytes=0-{half - 1}"}).status_code == 206
+    silent_asgi_get(app, f"/files/{VID}/k01.mp4?dl={TOK}", cookie, disconnect_after=3,
+                    headers=[(b"range", f"bytes={half}-".encode())])
+    p = progress(c)
+    assert p["state"] == "aborted" and half < p["bytes_sent"] < n
+    assert c.get(f"/files/{VID}/k01.mp4?dl={TOK}", headers={"Range": f"bytes={half}-"}).status_code == 206  # retry
+    assert progress(c)["state"] == "done"
+
+
+# --- A1a / AC8 on a real uvicorn server -------------------------------------------------------------------------------------
+
+def run_uvicorn(app):
+    import socket
+    import threading
+    import time
+
+    import uvicorn
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", lifespan="off"))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    for _ in range(200):
+        if server.started:
+            break
+        time.sleep(0.05)
+    assert server.started
+    return server, thread, port
+
+
+def wait_state(get, want, seconds=15):
+    import time
+
+    deadline = time.time() + seconds
+    last = None
+    while time.time() < deadline:
+        last = get()
+        if last["state"] == want:
+            return last
+        time.sleep(0.1)
+    raise AssertionError(f"state never became {want}: {last}")
+
+
+def test_real_uvicorn_disconnect_is_aborted_and_full_download_is_done(tcfg):
+    pytest.importorskip("uvicorn")
+    import http.client
+    import socket
+
+    data = bytes(range(256)) * 262144  # 64 MiB: far more than the socket buffers hold
+    app, c, _ = big_app(tcfg, data)
+    server, thread, port = run_uvicorn(app)
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=20)
+        conn.request("POST", "/login", body=f"password={PW}", headers={"Content-Type": "application/x-www-form-urlencoded"})
+        resp = conn.getresponse()
+        resp.read()
+        cookie = resp.getheader("set-cookie").split(";")[0]
+        conn.close()
+
+        def poll(token):
+            def get():
+                h = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+                h.request("GET", f"/api/downloads/{token}", headers={"Cookie": cookie})
+                r = h.getresponse()
+                body = r.read()
+                h.close()
+                return json.loads(body) if r.status == 200 else {"state": f"http {r.status}"}
+            return get
+
+        # a client that reads a little and leaves
+        s = socket.create_connection(("127.0.0.1", port), timeout=10)
+        s.sendall(f"GET /files/{VID}/k01.mp4?download=1&dl=realabort01 HTTP/1.1\r\nHost: x\r\nCookie: {cookie}\r\n\r\n".encode())
+        got = 0
+        while got < 300_000:
+            got += len(s.recv(65536))
+        s.close()
+        p = wait_state(poll("realabort01"), "aborted")
+        assert p["bytes_sent"] < len(data) and p["bytes_total"] == len(data)
+
+        # a client that downloads everything
+        h = http.client.HTTPConnection("127.0.0.1", port, timeout=60)
+        h.request("GET", f"/files/{VID}/k01.mp4?download=1&dl=realdone001", headers={"Cookie": cookie})
+        r = h.getresponse()
+        total = 0
+        while chunk := r.read(1 << 20):
+            total += len(chunk)
+        h.close()
+        assert total == len(data)
+        assert wait_state(poll("realdone001"), "done")["bytes_sent"] == len(data)
+    finally:
+        server.should_exit = True
+        thread.join(10)
+
+
+def test_one_info_log_line_per_tracked_request(tcfg, caplog):
+    import logging
+
+    write_episode(tcfg, VID, clips=("k01",))
+    big_clip(tcfg, VID)
+    c = client(tcfg)
+    login(c)
+    with caplog.at_level(logging.INFO, logger="auto_short"):
+        c.get(f"/files/{VID}/k01.mp4?download=1&dl={TOK}", headers={"Range": "bytes=0-99"})
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("web: tải")]
+    assert len(lines) == 1
+    assert TOK[:6] in lines[0] and "k01.mp4" in lines[0] and "bytes=0-99" in lines[0] and "partial" in lines[0]

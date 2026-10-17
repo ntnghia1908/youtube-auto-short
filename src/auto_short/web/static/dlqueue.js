@@ -63,7 +63,7 @@
           if (sendingCount() >= concurrency) break;
           if (i.status !== "waiting") continue;
           i.status = "sending"; i.attempts += 1; i.token = makeToken(); i.startedAt = now; i.seen = false;
-          i.bytesSent = 0; i.bytesTotal = null; i.reason = "";
+          i.bytesSent = 0; i.bytesTotal = null; i.reason = ""; i.polling = false;
           started.push({ item: i, token: i.token });
         }
         return started;
@@ -83,6 +83,14 @@
         if (info.state === "done") { i.status = "done"; i.reason = ""; }
         else if (info.state === "aborted") fail(i, now, "bị ngắt giữa chừng");
       },
+      /** A1c: the `sending` items that have no status request in flight (each is marked in flight). One hung request
+       *  blocks only its own item, never the polling of the others or the next round. */
+      pollTargets() {
+        const out = items.filter((i) => i.status === "sending" && !i.polling);
+        for (const i of out) i.polling = true;
+        return out;
+      },
+      pollDone(id, token) { const i = items.find((x) => x.id === id && x.token === token); if (i) i.polling = false; },
       /** Anything still to do (drives the timer and the Wake Lock). */
       active() { return items.some((i) => ["waiting", "sending", "retrywait"].includes(i.status)); },
       counts() {
