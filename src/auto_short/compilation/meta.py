@@ -37,8 +37,10 @@ def _head(series: str | None, fallback: str) -> str:
 
 
 def concat_name(series: str | None, first: str, last: str, count: int, *, fallback: str = "") -> str:
-    """``<Tên bộ kinh> - Khai thị T<a>-T<b> (<n> đoạn).mp4``."""
-    return f"{_head(series, fallback)} - Khai thị T{clean_part(first)}-T{clean_part(last)} ({count} đoạn).mp4"
+    """``<Tên bộ kinh> - Khai thị T<a>-T<b> (<n> đoạn).mp4``; ``T<a>`` when first == last."""
+    a, b = clean_part(first), clean_part(last)
+    span = f"T{a}" if a == b else f"T{a}-T{b}"  # one episode: "T5", not "T5-T5" (review fix 1)
+    return f"{_head(series, fallback)} - Khai thị {span} ({count} đoạn).mp4"
 
 
 def loop_name(series: str | None, code: str, count: int, *, fallback: str = "") -> str:
