@@ -152,6 +152,15 @@ render-lane job writing `output/<id>/full/vertical.mp4`: 1080x1920 with the Shor
 centre-cropped below, all audio, no cuts; reused while the HD source / layout / header are unchanged; downloaded as
 `…_Tập<N>_Doc.mp4`). A download never ticks "Đã đăng" / "Đã xem".
 
+Landscape / vertical full-episode versions of videos that need no enhance (CP8.32): a video whose original is at least
+`[enhance] min_height` (720p) uses that original as its HD source (the landscape download is the original file as it is,
+named `…_HD.<ext>`; "Tạo bản dọc" encodes from it; `vertical.json` records `source: original`). An *archived* episode
+(source cleaned up) of such a video still offers "Tạo bản dọc": the job downloads the original again in the `prepare`
+lane (waits while YouTube blocks), encodes, then removes the file again; the episode stays archived (no landscape
+download for it). A bộ kinh page has "Tạo bản dọc cả bộ" (one job per finished episode that has no current vertical
+file, about 0.5 h of render lane each, always started after the Short / khai thị jobs).
+A vertical job can be cancelled (bộ kinh page "Hủy bản dọc cả bộ", episode page, tab Theo dõi): waiting jobs leave the queue, running ones are stopped within seconds and their partial files / re-downloaded originals removed; Short / khai thị jobs are never affected.
+
 Khai thị videos (CP8.9): besides Shorts, a video can give longer "khai thị" videos (same 9:16 template, one
 complete teaching each, length within a chosen minute range after silence trimming; default 4–7 minutes, at most
 15) in a separate episode `<video id>.kt` next to the Short episode. On the home page both boxes "Short" and
