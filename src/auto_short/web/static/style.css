@@ -318,3 +318,15 @@ body.modal-open { overflow: hidden; }
 .mon-gpu { margin-bottom: .6rem; }
 .mon-bar.core { display: flex; align-items: flex-end; }
 .mon-bar.core .mon-fill { width: 100%; }
+
+/* CP8.33: Yêu thích page + heart */
+.fv-list { list-style: none; padding: 0; margin: 0 0 .5rem; display: grid; gap: .4rem; }
+.fv-row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; justify-content: space-between; border: 1px solid var(--border); border-radius: 8px; padding: .5rem .6rem; }
+.fv-row.dim { opacity: .5; }
+.fv-main { flex: 1 1 14rem; }
+.fv-actions { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; }
+.fv-loop { flex: 1 1 100%; display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; }
+.fv-loop input, #fv-auto-min { width: 5.5rem; padding: .35rem; font-size: 1rem; }
+.heart { font-size: 1.3rem; line-height: 1; color: var(--muted); }
+.heart.on { color: #d6336c; border-color: #d6336c; }
+.kept-note { font-size: .8rem; color: var(--muted); }

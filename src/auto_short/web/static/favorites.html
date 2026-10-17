@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Yêu thích — Auto Short</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/">&larr; Auto Short</a>
+  <nav class="topnav"><a href="/monitor">Theo dõi</a> <a href="/storage">Bộ nhớ</a> <a href="/sutras">Đọc Kinh</a>
+  <form method="post" action="/logout"><button class="btn link" type="submit">Đăng xuất</button></form></nav>
+</header>
+<main class="container">
+  <section class="card">
+    <h2 id="fv-title">Yêu thích</h2>
+    <p class="small"><a id="fv-back" href="/">&larr; Về bộ kinh</a></p>
+    <p class="muted small">Tick nhiều mục (Short và / hoặc khai thị) rồi bấm "Ghép" để nối liền theo thứ tự tập; bấm "Lặp" để lặp một mục cho đủ thời lượng; hoặc để máy tự ghép các mục yêu thích (theo bộ lọc đang chọn) cho đủ thời lượng. Tổng tối đa <span id="fv-max">720</span> phút.</p>
+    <p id="fv-msg" class="small" hidden></p>
+  </section>
+  <section class="card">
+    <h3>Yêu thích (<span id="fv-count">0</span>)</h3>
+    <div id="fv-filters" class="filters">
+      <button class="btn small" type="button" data-kind="all">Tất cả</button>
+      <button class="btn small" type="button" data-kind="short">Short</button>
+      <button class="btn small" type="button" data-kind="khaithi">Khai thị</button>
+    </div>
+    <ul id="fv-list" class="fv-list"><li class="muted">Đang tải…</li></ul>
+    <div class="actions">
+      <label class="inline"><input id="fv-all" type="checkbox"> Chọn tất cả</label>
+      <button id="fv-concat" class="btn primary small" type="button" disabled>Ghép</button>
+    </div>
+  </section>
+  <section class="card">
+    <h3>Tự ghép theo thời lượng</h3>
+    <p class="muted small">Lấy các mục yêu thích dùng được (theo bộ lọc Tất cả / Short / Khai thị) theo thứ tự tập, hết thì lặp vòng lại, dừng khi đủ thời lượng (không cắt dở khai thị cuối).</p>
+    <div class="actions">
+      <input id="fv-auto-min" type="number" min="1" step="1" value="60" inputmode="numeric" aria-label="Tổng thời lượng (phút)"> phút
+      <span id="fv-auto-preview" class="small muted"></span>
+      <button id="fv-auto" class="btn small" type="button">Tạo</button>
+    </div>
+  </section>
+  <section class="card">
+    <h3>Video ghép</h3>
+    <ul id="fv-comps" class="fv-list"><li class="muted">Chưa có.</li></ul>
+  </section>
+</main>
+<script src="/static/favorites.js"></script>
+<script>Favorites.init();</script>
+</body>
+</html>

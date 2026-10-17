@@ -66,6 +66,7 @@ KIND_POST_SEARCH = "post_search"  # CP8.15 P5b: find images from a link (lane pr
 KIND_IMAGE_SEARCH = "image_search"  # CP8.30 P5c: find images by keyword -> candidates (lane prepare; no Ollama)
 KIND_ENHANCE = "enhance"  # CP13.1b: assemble ``source_hd.mp4`` from the received segments (lane render; runs under enhance_key)
 KIND_VERTICAL = "vertical"  # CP8.27 H4: vertical full-episode video from ``source_hd.mp4`` (lane render; runs under vertical_key)
+KIND_COMPILATION = "compilation"  # CP8.33 G5: khai thị compilation (lane render; key ``compilation:<playlist_id>:<cid>``)
 POST_IMAGES_KEY = "_post_images"  # CP8.15 P9: pseudo episode id for the (single, global) image search job
 EPISODE_KINDS = (KIND_PIPELINE, KIND_RENDER, KIND_ADD)  # jobs of an episode that run the render step (CP8.16 R2a)
 
@@ -413,7 +414,7 @@ class JobRunner:
         lane_steps = getattr(target, "lane_steps", None)
         if lane_steps is not None:
             return list(lane_steps())
-        return [Step(RENDER if kind in (KIND_RENDER, KIND_ENHANCE, KIND_VERTICAL) else PREPARE, target)]
+        return [Step(RENDER if kind in (KIND_RENDER, KIND_ENHANCE, KIND_VERTICAL, KIND_COMPILATION) else PREPARE, target)]
 
     def _enqueue_locked(self, episode_id: str, kind: str, target: Callable[[Job], None],
                         clip_ids: list[str] | None) -> Job:
@@ -1819,3 +1820,35 @@ def vertical_target(config: Config, *, vertical: Callable | None = None, episode
     """See :class:`VerticalTarget`."""
     return VerticalTarget(config, vertical=vertical, episode_id=episode_id, downloader=downloader,
                           disk_blocked=disk_blocked)
+
+
+# --- khai thị compilation job (CP8.33 G5) --------------------------------------------------------------------------
+
+def compilation_key(playlist_id: str, cid: str) -> str:
+    """CP8.33 G5: the runner key (= the job's ``episode_id``) of a compilation job."""
+    return f"compilation:{playlist_id}:{cid}"
+
+
+class CompilationTarget:
+    """Job target of a khai thị compilation (lane ``render``: one long ffmpeg, the lane's one-job-at-a-time rule).
+    ``work(job)`` (the web layer: resolve the clips, assemble, write ``<cid>.json``) raises :class:`JobFailed`;
+    ``spec`` is what the queue file keeps to recreate the job after a restart."""
+
+    def __init__(self, spec: dict, work: Callable[[Job], None]):
+        self._spec, self.work = dict(spec), work
+
+    def run(self, job: Job) -> None:
+        job.stage = "compilation"
+        t0 = time.monotonic()
+        self.work(job)
+        job.stages.append({"stage": "compilation", "ran": True, "seconds": round(time.monotonic() - t0, 3)})
+        job.stage = None
+
+    def __call__(self, job: Job) -> None:
+        self.run(job)
+
+    def lane_steps(self) -> list[Step]:
+        return [Step(RENDER, self.run)]
+
+    def spec(self) -> dict:
+        return dict(self._spec)

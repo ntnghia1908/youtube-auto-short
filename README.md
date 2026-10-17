@@ -113,6 +113,14 @@ the posts file, and coloured badges `Short x/y`, `Khai thị x/y`, `Bài x/y` (g
 link or hashtags), `<series>_Tập1-10_BaiDang.docx`; untick "Có hình" for a file without images (`…_KhongHinh.docx`). The Posts tab of an episode downloads that video's posts
 (`Tập<N>_BaiDang.docx`). Exporting never ticks "Đã đăng bài" (needs `python-docx`, extra `[web]`).
 
+Favourites and long videos (CP8.33): the heart on a Short or a khai thị (episode page) marks it as a favourite of its
+bộ kinh (Yêu thích page filter: Tất cả / Short / Khai thị); the bộ kinh page links to "Yêu thích (n)" (`/playlists/<id>/favorites`). There tick several favourites and
+press "Ghép" (joined in episode order, stream copy), press "Lặp" on one for a total number of minutes, or let
+"Tự ghép theo thời lượng" cycle through the favourites until the minutes are reached. The video is written to
+`output/_compilations/<playlist id>/<cid>.mp4` (+ `.json` with chapters), downloadable with "Copy mô tả" (chapters +
+hashtags for YouTube). `[compilation] max_minutes` (default 720) caps the length. Deleting a khai thị episode keeps its
+favourite clips (`…/kept/`); deleting a single khai thị removes its heart.
+
 Playlists / bộ kinh (CP8.7): paste a playlist link (`youtube.com/playlist?list=…`) to list every episode of the
 series without downloading anything (a `watch?v=…&list=…` link asks: this episode only, or the whole playlist; Mix
 / Watch later / Liked lists are refused). The home page shows the bộ kinh and the single episodes ("Tập lẻ"); a
