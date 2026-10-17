@@ -90,20 +90,20 @@ Tất cả required verification phải chạy và PASS trước READY.
 
 Chạm public API (route web mới, cùng auth hiện có); không chạm database, security model. Manual test trên 8080 (ghim commit nhánh) là điểm danh trước integration.
 
-- [ ] Bấm tim vài khai thị ở trang tập + trang bộ kinh → hiện trên trang Yêu thích; bỏ tim → mất.
-- [ ] Bộ Địa Tạng: ghép 3–4 khai thị → tải về, xem trên điện thoại: thứ tự đúng, chỗ nối không giật / không tiếng tách.
-- [ ] Lặp một khai thị 30 phút → số lần lặp đúng như xem trước, tải về xem được.
-- [ ] Tự ghép 60 phút từ yêu thích → số đoạn / vòng đúng như xem trước.
-- [ ] "Copy mô tả" dán vào YouTube Studio → chapter nhận đúng.
-- [ ] Bấm tim vài Short ở trang tập Short; trang Yêu thích lọc Tất cả / Short / Khai thị; ghép trộn Short + khai thị, tự ghép chỉ Short → tên file / chapter đúng.
-- [ ] Xóa một tập khai thị có clip yêu thích (xác nhận nói "được giữ lại") → vẫn thấy ở trang Yêu thích ("đã lưu"), ghép / lặp được; bỏ tim → mất hẳn.
-- [ ] Gửi lại cùng lựa chọn → không ghép lại; xóa → biến mất khỏi danh sách và đĩa.
+- [x] Bấm tim vài khai thị ở trang tập + trang bộ kinh → hiện trên trang Yêu thích; bỏ tim → mất.
+- [x] Bộ Địa Tạng: ghép 3–4 khai thị → tải về, xem trên điện thoại: thứ tự đúng, chỗ nối không giật / không tiếng tách.
+- [x] Lặp một khai thị 30 phút → số lần lặp đúng như xem trước, tải về xem được.
+- [x] Tự ghép 60 phút từ yêu thích → số đoạn / vòng đúng như xem trước.
+- [x] "Copy mô tả" dán vào YouTube Studio → chapter nhận đúng.
+- [x] Bấm tim vài Short ở trang tập Short; trang Yêu thích lọc Tất cả / Short / Khai thị; ghép trộn Short + khai thị, tự ghép chỉ Short → tên file / chapter đúng.
+- [x] Xóa một tập khai thị có clip yêu thích (xác nhận nói "được giữ lại") → vẫn thấy ở trang Yêu thích ("đã lưu"), ghép / lặp được; bỏ tim → mất hẳn.
+- [x] Gửi lại cùng lựa chọn → không ghép lại; xóa → biến mất khỏi danh sách và đĩa.
 
 ## Result
 
 - Main changes: package `src/auto_short/compilation/` (spec, probe, assemble, meta, store); `web/compilations.py` + job kind `compilation` (`web/jobs.py`); routes / favourites / G11 keep-on-delete in `web/app.py`; UI `favorites.html` + `favorites.js`, heart in `app.js`, link on the bộ kinh page; config `[compilation]`; README, project profile §3, CP8.3 pointers.
 - Tests: `tests/test_compilation.py`, `tests/test_web_compilation.py` (AC 1–12).
-- Review:
+- Review: ORCHESTRATOR review ACCEPTED 2026-10-17 (code + real-data smoke: 3 khai thị → 740,86 s = tổng, `-c copy`, 1,6 s; suite 1831 passed / 1 skipped). Manual test HUMAN LEAD trên 8080 (local merge với #85): đạt 2026-10-17 ("CP8.33 test ok").
 - Important findings / decisions: `<cid>.json` also carries `download_name`, `title`, `duration_estimate`, `size`, `reencoded`, `error`, `finished_at`; `cid` of `auto` = `cid` of the equal `concat`; the heart on a khai thị lives on the episode page and the Yêu thích page (the bộ kinh page lists episodes, not clips: it carries the "Yêu thích (n)" link); kept snapshot has an extra `clip_total`.
 - Amendment 2 (Shorts like khai thị): kind derived from the episode id (`.kt`), no `kind` stored; `Clip.rank` is `(episode position, 0 Short / 1 khai thị, clip number)` so khai thị-only `cid`s are unchanged; `kinds` filter on `auto`; tests `test_web_compilation.py` (AC13).
 - Review fix 1 (HUMAN LEAD 2026-10-17): concat name uses `T<a>` when first == last episode; hearts on the bộ kinh page confirmed not needed (Deviation 1 accepted).
