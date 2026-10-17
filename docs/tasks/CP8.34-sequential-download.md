@@ -8,7 +8,7 @@
 - Owner: HUMAN LEAD
 - Execution profile: dual-agent
 - Implementer: `.claude/agents/implementer` (Sonnet) — mặc định dual-agent của project.
-- Base commit / branch: `185ba20` (`main`) / `feature/cp8.34-sequential-download` (worktree `../youtube-auto-short-cp834`). **Bắt đầu sau khi PR #85 (CP8.32) và CP8.33 merge** (cả hai sửa trang bộ kinh): rebase lên `main` mới rồi mới giao IMPLEMENTER.
+- Base commit / branch: `508a94c` (`main`, sau #85 CP8.32 + #86 CP8.33) / `feature/cp8.34-sequential-download` (worktree `../youtube-auto-short-cp834`).
 - Human Lead approval: pending
 - Implementation authorized: NO
 
