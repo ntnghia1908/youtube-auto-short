@@ -71,6 +71,7 @@ from ..workspace import WorkspaceError, iter_manifests, validate_episode_id
 from . import episodes as ep
 from . import reading
 from . import compilations as comp_web
+from . import downloads as dl_mod
 from . import monitor as monitor_mod
 from .auth import COOKIE_NAME, SessionSigner, load_or_create_secret
 from .storage import BLOCK_MESSAGE, StorageCache, auto_archive_plan, episode_sizes, video_id
@@ -580,6 +581,18 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     app.state.playlists = playlists
     app.state.compilations = compilations
     app.state.signer = signer
+    download_table = dl_mod.DownloadTable()  # CP8.34 D3: progress of ``?dl=<token>`` downloads (memory only)
+    app.state.downloads = download_table
+
+    def _tracked(dl: str | None, response: Response) -> Response:
+        """CP8.34: a download with a valid ``?dl=<token>`` reports its progress to the table; without one (or with a
+        malformed token) the response is returned untouched. An error response ends the token as ``aborted``."""
+        if dl is None or not dl_mod.TOKEN_RE.match(dl):
+            return response
+        if response.status_code >= 400:
+            download_table.begin(dl, state=dl_mod.ABORTED)
+            return response
+        return dl_mod.TrackedResponse(response, download_table, dl)
 
     @app.middleware("http")
     async def auth_middleware(request: Request, call_next):
@@ -2324,30 +2337,38 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             return None, JSONResponse({"detail": "chưa có bản HD của video này"}, status_code=404)
         return src.path, None
 
+    @app.get("/api/downloads/{token}")
+    def api_download_progress(token: str):
+        """CP8.34 D3: ``{state: sending | done | aborted, bytes_sent, bytes_total}`` of a ``?dl=<token>`` download."""
+        found = download_table.get(token) if dl_mod.TOKEN_RE.match(token) else None
+        if found is None:
+            return JSONResponse({"detail": "không có lượt tải này"}, status_code=404)
+        return JSONResponse(found, headers={"Cache-Control": "no-store"})
+
     @app.get("/api/episodes/{episode_id}/source-hd")
-    def api_episode_source_hd(episode_id: str):
+    def api_episode_source_hd(episode_id: str, dl: str | None = None):
         """H1: the landscape HD video (``source_hd.mp4``, no banner); Range supported (FileResponse). A download never
         ticks "Đã đăng" / "Đã xem" (H3)."""
         hd, bad = _hd_or_404(episode_id)
         if bad is not None:
-            return bad
-        return FileResponse(hd, media_type=mimetypes.guess_type(hd.name)[0] or "video/mp4", headers={
+            return _tracked(dl, bad)
+        return _tracked(dl, FileResponse(hd, media_type=mimetypes.guess_type(hd.name)[0] or "video/mp4", headers={
             "Content-Disposition": content_disposition(ep.hd_download_name(config, episode_id)),
-            "Cache-Control": "private, no-cache"})
+            "Cache-Control": "private, no-cache"}))
 
     @app.get("/api/episodes/{episode_id}/vertical")
-    def api_episode_vertical(episode_id: str):
+    def api_episode_vertical(episode_id: str, dl: str | None = None):
         """H4: the vertical full-episode file, once made from the current HD source."""
         _hd, bad = _hd_or_404(episode_id, archived_ok=True)
         if bad is not None:
-            return bad
+            return _tracked(dl, bad)
         owner = ep.hd_owner(episode_id)
         path = render_full.ready_file(config, owner) if render_full.current(config, owner) else None
         if path is None:
-            return JSONResponse({"detail": "chưa có bản dọc (bấm \"Tạo bản dọc\")"}, status_code=404)
-        return FileResponse(path, media_type="video/mp4", headers={
+            return _tracked(dl, JSONResponse({"detail": "chưa có bản dọc (bấm \"Tạo bản dọc\")"}, status_code=404))
+        return _tracked(dl, FileResponse(path, media_type="video/mp4", headers={
             "Content-Disposition": content_disposition(ep.video_download_name(config, episode_id, "Doc")),
-            "Cache-Control": "private, no-cache"})
+            "Cache-Control": "private, no-cache"}))
 
     @app.post("/api/episodes/{episode_id}/vertical")
     def api_episode_vertical_make(episode_id: str):
@@ -2796,7 +2817,10 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             "Cache-Control": "private, no-cache"})
 
     @app.get("/files/{episode_id}/{name}")
-    def files(episode_id: str, name: str, download: str | None = None):
+    def files(episode_id: str, name: str, download: str | None = None, dl: str | None = None):
+        return _tracked(dl, _files_response(episode_id, name, download))
+
+    def _files_response(episode_id: str, name: str, download: str | None) -> Response:
         if not ep.valid_episode_id(episode_id):
             return JSONResponse({"detail": "không có file này"}, status_code=404)
         if name == "shorts.zip":
