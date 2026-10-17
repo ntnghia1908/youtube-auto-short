@@ -411,13 +411,29 @@ def hd_owner(episode_id: str) -> str:
     return episode_id[:-len(suffix)] if episode_id.endswith(suffix) and len(episode_id) > len(suffix) else episode_id
 
 
-def hd_file(config: Config, episode_id: str) -> Path | None:
-    """CP8.27 H1: the finished HD source of the video (``enhance.json`` state done, size / mtime or sha256 match),
-    else None. Always inside ``work/<id>/``."""
+def hd_source(config: Config, episode_id: str) -> enh_state.EffectiveSource | None:
+    """CP8.32 V1 / V2: the effective HD source of the video (``source_hd.mp4``, else the original >= the enhance
+    threshold, else an archived original that a vertical job could fetch again); None for an invalid id / nothing."""
     if not valid_episode_id(episode_id):
         return None
-    fp = enh_state.hd_fingerprint(Path(config.workspace.dir) / hd_owner(episode_id))
-    return fp.path if fp is not None else None
+    return enh_state.effective_source(config, hd_owner(episode_id))
+
+
+def hd_file(config: Config, episode_id: str) -> Path | None:
+    """CP8.27 H1 / CP8.32 V1: the file of the landscape HD download: the finished HD source (``enhance.json`` state
+    done, size / mtime or sha256 match), else the original download when its height is >= the enhance threshold; None
+    otherwise (also for an archived episode: no re-download for the landscape version). Always inside ``work/<id>/``."""
+    src = hd_source(config, episode_id)
+    return src.path if src is not None else None
+
+
+def hd_download_name(config: Config, episode_id: str) -> str:
+    """Name of the landscape download: ``…_HD.mp4``; an original keeps its own extension (``…_HD.<ext>``, no re-encode)."""
+    name = video_download_name(config, episode_id, "HD")
+    path = hd_file(config, episode_id)
+    if path is not None and path.suffix.lower() not in ("", ".mp4") and name.endswith(".mp4"):
+        return name[:-len(".mp4")] + path.suffix.lower()
+    return name
 
 
 def video_download_name(config: Config, episode_id: str, suffix: str) -> str:
