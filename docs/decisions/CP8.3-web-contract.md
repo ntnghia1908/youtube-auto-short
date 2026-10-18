@@ -72,6 +72,7 @@ Implementation tham chiếu: `src/auto_short/web/` (`app.py` app factory + route
   - Job `pipeline` vào cuối hàng `prepare`; xong một làn → vào cuối hàng làn kế; lỗi / bị ngắt ở làn nào → job kết thúc ở đó (`failed` / `interrupted`, W4). Mỗi làn gọi `run_pipeline(…, stages=<các stage của làn>)` (CP8 E7); làn sau dùng episode id mà ingest trả về. Stage tự skip khi up to date (CP8 E3).
   - Job `render` (sửa title / xóa / khôi phục Short) vào thẳng cuối hàng làn `render`, không ưu tiên (FIFO với render của job pipeline).
   - **Sửa đổi CP9** (C6, C7): sửa đầu/cuối một Short = job `render` như sửa title. Thêm Short = job `add`: làn `ai` (preflight Ollama rồi title AI của đúng Short đó, `titling.added.title_added`, `stage` = `preflight` → `titling`), rồi cuối hàng làn `render` (render, Short khác tái dùng). AI không cho title (preflight lỗi, không lần nào đúng schema, không option hợp lệ) → Short ở lại `untitled`, render vẫn chạy (Short hiện ra, chờ title tay), job `failed` với `error` = lỗi AI + "gõ tiêu đề tay". `serial`: hai bước liền trong một lần chạy.
+  - **Sửa đổi CP8.36 (HUMAN LEAD 2026-10-18, D1–D6):** làn `render` có `[web] render_workers` slot (1–4, mặc định 2; slot thêm `render#1`, …); slot thêm chỉ bắt đầu việc khi % CPU bận trung bình ~60 s (`/proc/stat`) < `render_max_cpu` (0–1, mặc định 0.6; Amendment A1); hai việc cùng video và `compilation` (chạy một mình) không chạy cùng lúc. Canonical: `docs/tasks/CP8.36-render-parallel.md`.
   - Giới hạn tải trước: làn `prepare` không bắt đầu job mới khi đã có **2** job xong `prepare` đang đợi làn `ai` (hằng trong code `PREFETCH_LIMIT`, không phải config).
   - Ngay trước ingest ở làn `prepare`: kiểm lại ngưỡng ổ W9 (< 3 GB) → job `failed`, `error` = message 507 của W9, không tải.
   - Short + khai thị cùng video (CP8.9 K5): không có cơ chế phụ thuộc riêng; hai job đi qua làn `prepare` FIFO (Short trước, W4 / K7) nên ingest của `<id>.kt` luôn chạy sau transcript của `<id>` và dùng lại nguồn.
@@ -370,6 +371,7 @@ Trang `/playlists/{id}/favorites`, route `POST /api/playlists/{id}/favorites`, `
 | `session_days` | `30` | 1–365, tuổi cookie đăng nhập |
 | `hashtags` | `["TịnhKhông", "LờiPhậtDạy", "TịnhĐộ", "NiệmPhật"]` | CP8.7: hashtag sau `#<series>` khi Copy title (W6); bộ kinh có danh sách riêng (CP8.8) không dùng |
 | `show_advanced` | `false` | CP8.21 D5: hiện nút "Sửa đầu/cuối" và "Từ điển sửa lỗi" (bool; sai kiểu → lỗi load config) |
+| `render_workers` / `render_max_cpu` | `2` / `0.6` | CP8.36: số việc làn `render` chạy cùng lúc (1–4) / ngưỡng % CPU bận (0–1, > 0; khóa cũ `render_max_load` → `ConfigError`) để slot thêm bắt đầu việc |
 | `queue_mode` | `"lanes"` | CP8.10: `"lanes"` (làn prepare / ai / render, W5) \| `"serial"` (một job chạy trọn tại một thời điểm); giá trị khác → lỗi load config |
 
 Execution-only: không stage nào dùng, không vào config hash.
