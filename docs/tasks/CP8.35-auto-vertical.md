@@ -64,9 +64,11 @@ Tất cả required verification phải chạy và PASS trước READY.
 
 Chạm public API (field mới ở `POST /api/episodes`, cùng auth); không chạm database, security model. Manual test qua 8080 (ghim commit nhánh) là gate trước integration.
 
-- [ ] Trang bộ kinh: ô "Bản dọc" đã tick sẵn; "Xử lý" một tập không enhance (gốc ≥ 720p) → sau khi Short xong có job bản dọc trong hàng đợi, tải được bản dọc.
-- [ ] Một tập có enhance: Short xong → chưa có job bản dọc ("sẽ tạo khi có HD"); HD xong → job bản dọc tự xếp.
-- [ ] Bỏ tick "Bản dọc" → "Xử lý" không tạo bản dọc.
+- [x] Trang bộ kinh: ô "Bản dọc" đã tick sẵn; "Xử lý" một tập không enhance (gốc ≥ 720p) → sau khi Short xong có job bản dọc trong hàng đợi, tải được bản dọc.
+- [x] Một tập có enhance: Short xong → chưa có job bản dọc ("sẽ tạo khi có HD"); HD xong → job bản dọc tự xếp.
+- [x] Bỏ tick "Bản dọc" → "Xử lý" không tạo bản dọc.
+
+HUMAN LEAD 2026-10-18: "đạt" (manual test qua 8080 ghim bản gộp thử `5d408a7` = main + #89 + CP8.35 + CP8.36 + FIX-runner-stop).
 
 ## Result
 
