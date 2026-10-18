@@ -83,6 +83,39 @@
       </div>
     </details>
   </section>
+  <section id="dq-box" class="card">
+    <details id="dq-details">
+      <summary>Tải lần lượt (<span id="dq-summary">chưa chọn tập</span>)</summary>
+      <p class="muted small">Tick các tập bên dưới, chọn loại file rồi bấm "Tải lần lượt": trang tải từng file một (1–3 file cùng lúc) để điện thoại không bị chậm hay mất gói. Để trang này mở cho tới khi tải xong. Lần đầu Chrome trên điện thoại có thể hỏi "Cho phép tải nhiều tệp?" — chọn Cho phép.</p>
+      <div class="actions dq-controls">
+        <label class="inline" for="dq-kind">Loại
+          <select id="dq-kind" aria-label="Loại file tải">
+            <option value="zip">Short + khai thị (.zip)</option>
+            <option value="vertical">Bản dọc cả tập</option>
+            <option value="hd">Video HD (bản ngang)</option>
+          </select>
+        </label>
+        <label class="inline" for="dq-conc">Cùng lúc
+          <select id="dq-conc" aria-label="Số file tải cùng lúc">
+            <option value="1">1</option><option value="2" selected>2</option><option value="3">3</option>
+          </select>
+        </label>
+        <button id="dq-unposted" class="btn small" type="button" title="Tick các tập còn Short / khai thị chưa tick Đã đăng">Chọn tất cả chưa đăng</button>
+        <button id="dq-clear" class="btn small" type="button">Bỏ chọn</button>
+        <button id="dq-start" class="btn small primary" type="button">Tải lần lượt</button>
+        <button id="dq-pause" class="btn small" type="button" hidden>Dừng</button>
+        <button id="dq-resume" class="btn small" type="button" hidden>Tiếp tục</button>
+        <button id="dq-tidy" class="btn small" type="button" hidden>Xóa các dòng xong</button>
+      </div>
+      <p id="dq-awake-warn" class="small error" hidden>Trang này không mở bằng HTTPS nên trình duyệt có thể không giữ màn hình sáng. Đang thử cách dự phòng (video nhỏ bên dưới). Nếu màn hình vẫn tắt, hãy chỉnh thời gian tắt màn hình của máy hoặc bật lại màn hình để hàng đợi chạy tiếp.</p>
+      <video id="dq-awake" class="dq-awake" src="/static/keepawake.mp4" muted loop playsinline preload="auto" width="48" height="48" aria-hidden="true" tabindex="-1" hidden></video>
+      <p id="dq-note" class="small" hidden>Để trang này mở cho tới khi tải xong.</p>
+      <table id="dq-table" class="dq-table" hidden>
+        <thead><tr><th>File</th><th>Trạng thái</th><th></th></tr></thead>
+        <tbody id="dq-rows"></tbody>
+      </table>
+    </details>
+  </section>
   <section class="card">
     <div id="pl-kinds" class="kind-box">
       <span class="small">Khi bấm Xử lý tạo:</span>
@@ -116,6 +149,7 @@
     <p id="pl-failed-empty" class="muted small" hidden>Không có tập nào lỗi / dở dang</p>
   </section>
 </main>
+<script src="/static/dlqueue.js"></script>
 <script src="/static/app.js"></script>
 <script>AutoShort.initPlaylist();</script>
 </body>
