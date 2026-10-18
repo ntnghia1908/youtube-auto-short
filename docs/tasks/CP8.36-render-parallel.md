@@ -83,7 +83,7 @@ HUMAN LEAD 2026-10-18: "đạt" (manual test qua 8080 ghim bản gộp thử `5d
 - Review A1: ORCHESTRATOR 2026-10-18 ACCEPTED — đọc `CpuAverage`, luồng `auto-short-cpu`, `_cpu_idle`, config `render_max_cpu` (khóa cũ `render_max_load` → `ConfigError`); `config.toml` repo chính không có khóa cũ. Sau khởi động lại slot thêm chờ ≈ 30 s (đủ mẫu) — chấp nhận.
 - Important findings / decisions: `JobRunner()` constructor default `render_workers=1` (as `prepare_workers`); the config default 2 applies through `create_app`. The "drain" rule for a compilation at the head of the queue is an IMPLEMENTER choice (avoids starvation by a steady stream of jobs).
 - Known limitations: unreadable load counts as busy (extra slot idle); load is not re-evaluated for running jobs.
-- PR:
+- PR: #91
 
 ### Result — Amendment A1
 
