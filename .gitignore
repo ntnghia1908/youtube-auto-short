@@ -13,6 +13,8 @@ work/
 temp/
 models/
 *.mp4
+# FIX-keepawake-mp4: CP8.34 A2 keep-awake video (static asset)
+!src/auto_short/web/static/keepawake.mp4
 !src/auto_short/web/static/sutra-awake.mp4
 *.mkv
 *.webm
