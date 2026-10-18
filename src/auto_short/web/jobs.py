@@ -289,6 +289,74 @@ def _interrupt(thread_ident: int) -> None:
     ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_ulong(thread_ident), ctypes.py_object(KeyboardInterrupt))
 
 
+class _RunnerLock(type(threading.RLock())):  # type: ignore[misc]
+    """The runner's lock + condition. ``stop()`` / "pause now" / cancel raise ``KeyboardInterrupt`` in a lane thread
+    asynchronously (``PyThreadState_SetAsyncExc``), at any bytecode boundary. ``threading.Condition.__enter__`` is a
+    Python function: an exception landing after its inner ``acquire`` but before it returns leaves the lock held by a
+    thread that never reaches ``__exit__`` (FIX-runner-stop). Here ``with lock:`` uses the C ``RLock`` enter / exit,
+    which an asynchronous exception cannot tear, and ``wait`` re-takes the lock if it is cut in the middle."""
+
+    def __init__(self) -> None:
+        self._cond = threading.Condition(self)
+
+    def wait(self, timeout: float | None = None) -> bool:
+        try:
+            return self._cond.wait(timeout)
+        except KeyboardInterrupt:
+            while not self._is_owned():  # cut between the release and the re-acquire: the caller's ``with`` needs it
+                self.acquire()
+            raise
+
+    def notify(self, n: int = 1) -> None:
+        self._cond.notify(n)
+
+    def notify_all(self) -> None:
+        self._cond.notify_all()
+
+
+def _descendants() -> list[int]:
+    """Every live descendant process of this server (children, grandchildren ...; zombies excluded); Linux ``/proc``
+    only, else empty."""
+    kids: dict[int, list[int]] = {}
+    try:
+        names = os.listdir("/proc")
+    except OSError:
+        return []
+    for name in names:
+        if not name.isdigit():
+            continue
+        try:
+            stat = Path(f"/proc/{name}/stat").read_text()
+            state, ppid = stat[stat.rindex(")") + 2:].split()[:2]
+        except (OSError, ValueError):
+            continue
+        if state not in ("Z", "X"):
+            kids.setdefault(int(ppid), []).append(int(name))
+    out: list[int] = []
+    todo = [os.getpid()]
+    while todo:
+        for pid in kids.get(todo.pop(), ()):
+            out.append(pid)
+            todo.append(pid)
+    return out
+
+
+def _become_subreaper() -> None:
+    """Linux ``PR_SET_CHILD_SUBREAPER``: a descendant orphaned by its parent's death is re-parented to this server
+    (not to init), so :func:`_descendants` still finds it."""
+    try:
+        ctypes.CDLL(None, use_errno=True).prctl(36, 1, 0, 0, 0)
+    except (OSError, AttributeError):
+        pass
+
+
+def _signal_pid(pid: int, sig: int) -> None:
+    try:
+        os.kill(pid, sig)
+    except OSError:
+        pass
+
+
 class JobRunner:
     """``mode`` = ``[web] queue_mode``: ``"lanes"`` (CP8.10) or ``"serial"`` (one worker, whole job)."""
 
@@ -312,7 +380,7 @@ class JobRunner:
         # CP8.29 A1: nice of the heavy lanes' worker threads (``prepare`` / ``render`` / serial; 0 = unchanged)
         self.worker_nice = worker_nice
         self.prepare_workers = sum(1 for lane in self._slot_lane.values() if lane == PREPARE)
-        self._lock = threading.Condition()
+        self._lock = _RunnerLock()
         self._queues: dict[str, deque[Job]] = {lane: deque() for lane in self._lane_names}
         self._current: dict[str, Job | None] = {slot: None for slot in self._slot_lane}  # slot -> running job
         self._threads: dict[str, threading.Thread] = {}
@@ -364,14 +432,25 @@ class JobRunner:
             self._threads[slot] = thread
             thread.start()
 
+    def begin_stop(self) -> None:
+        """FIX-runner-stop: no job / step starts from now on. Called as soon as the process is told to exit (Ctrl-C
+        reaches ffmpeg through the terminal's process group before the web server's shutdown reaches :meth:`stop`,
+        and the lane would take the next job in between). A plain flag, safe in a signal handler."""
+        self._stopping = True
+
     def stop(self, timeout: float = 30.0) -> None:
         """Stop every lane. Each running job gets KeyboardInterrupt on its lane thread (the stage records
         ``failed`` / ``interrupted``, CP2) and the child processes SIGINT; waits up to ``timeout`` seconds in total.
-        A stage blocked in a long call that ignores the interrupt keeps ``running`` in the manifest and resumes on
-        resubmit. Jobs waiting between two lanes end ``interrupted``. CP8.22: the queue is saved first and again
-        at the end, so every job that did not finish is restored at the next start."""
+        FIX-runner-stop: no job / step starts any more; every descendant process still alive (also grandchildren and
+        processes started after the interrupt) gets SIGINT when first seen, SIGTERM after a grace, then SIGKILL, and
+        all are killed at the deadline, so none outlives the call. A stage blocked in a long call that ignores the
+        interrupt keeps ``running`` in the manifest and resumes on resubmit. Jobs waiting between two lanes end
+        ``interrupted``. CP8.22: the queue is saved first and again at the end, so every job that did not finish is
+        restored at the next start. Returns within ``timeout`` + ~4 s."""
+        deadline = time.monotonic() + timeout
+        _become_subreaper()
+        self._stopping = True
         with self._lock:
-            self._stopping = True
             self._lock.notify_all()
             running = [(slot, job) for slot, job in self._current.items() if job is not None]
             self._save_locked()  # Q3: the queue (running jobs at the head of their lane) is on disk before any interrupt
@@ -381,28 +460,57 @@ class JobRunner:
                 log.info("web: stopping, interrupting job %s [%s]%s", job.id, job.episode_id,
                          "" if slot == _SERIAL else f" (lane {self._slot_lane[slot]})")
                 _interrupt(thread.ident)
-        if running:
-            for pid in _child_pids():
-                try:
-                    os.kill(pid, signal.SIGINT)
-                except OSError:
-                    pass
-        deadline = time.monotonic() + timeout
-        for thread in self._threads.values():
-            thread.join(max(0.0, deadline - time.monotonic()))
+        term_after, kill_after = min(3.0, timeout * 0.3), min(6.0, timeout * 0.6)
+        next_nudge = time.monotonic() + 1.0
+        seen: dict[int, tuple[float, int]] = {}  # pid -> (first seen, last signal sent)
+        while True:
+            now = time.monotonic()
+            for pid in _descendants():
+                first, last = seen.setdefault(pid, (now, 0))
+                age = now - first
+                sig = signal.SIGKILL if age >= kill_after else signal.SIGTERM if age >= term_after else signal.SIGINT
+                if sig == signal.SIGKILL or sig != last:  # SIGINT once, SIGTERM once, then SIGKILL every pass
+                    _signal_pid(pid, sig)
+                    seen[pid] = (first, sig)
+            alive = [t for t in self._threads.values() if t.is_alive()]
+            if not alive or now >= deadline:
+                break
+            if now >= next_nudge:  # a job that swallowed the interrupt gets it again (safe: it cannot leak the lock)
+                next_nudge = now + 1.0
+                for slot, thread in self._threads.items():
+                    if thread.is_alive() and thread.ident is not None and self._current.get(slot) is not None:
+                        _interrupt(thread.ident)
+            alive[0].join(min(0.1, max(0.0, deadline - now)))
         if any(t.is_alive() for t in self._threads.values()):
             log.warning("web: job still running after %.0f s; exiting anyway", timeout)
-        with self._lock:
-            for queue in self._queues.values():
-                for job in queue:
-                    if job.status == RUNNING:  # waiting between two lanes (or for the GPU)
-                        job.status = INTERRUPTED
-                        job.error = "interrupted while waiting for GPU" if job.gpu_wait \
-                            else "interrupted while waiting for YouTube" if job.yt_wait \
-                            else f"interrupted while waiting for {job.lane}"
-                        job.finished_at, job.waiting, job.gpu_wait, job.yt_wait = _now(), False, False, False
-            self._save_locked()  # jobs cut by the stop come back first; those that finished meanwhile are gone
-            self._lock.notify_all()
+        kill_until = time.monotonic() + 2.0  # whatever is left: SIGKILL, and wait for it to be gone
+        while True:
+            left = _descendants()
+            if not left or time.monotonic() >= kill_until:
+                break
+            for pid in left:
+                _signal_pid(pid, signal.SIGKILL)
+            time.sleep(0.05)
+        if left:
+            log.warning("web: child processes still alive at exit: %s", left)
+        got = self._lock.acquire(timeout=2.0)  # never hang on a lock a dead lane thread might hold
+        try:
+            if got:
+                for queue in self._queues.values():
+                    for job in queue:
+                        if job.status == RUNNING:  # waiting between two lanes (or for the GPU)
+                            job.status = INTERRUPTED
+                            job.error = "interrupted while waiting for GPU" if job.gpu_wait \
+                                else "interrupted while waiting for YouTube" if job.yt_wait \
+                                else f"interrupted while waiting for {job.lane}"
+                            job.finished_at, job.waiting, job.gpu_wait, job.yt_wait = _now(), False, False, False
+                self._save_locked()  # jobs cut by the stop come back first; those that finished meanwhile are gone
+                self._lock.notify_all()
+            else:
+                log.warning("web: runner lock busy at exit; the queue saved at the start of the stop stays")
+        finally:
+            if got:
+                self._lock.release()
         log.removeHandler(self._handler)
         self._threads = {}
 
@@ -878,8 +986,13 @@ class JobRunner:
                     job.status, job.error = FAILED, str(exc)
                     log.error("web: job %s failed [%s]: %s", job.id, job.episode_id, exc)
             except JobFailed as exc:
-                job.status, job.error = FAILED, str(exc)
-                log.error("web: job %s failed [%s]: %s", job.id, job.episode_id, exc)
+                if self._stopping and not job.cancel_requested:  # cut by the stop (its child got the terminal's SIGINT)
+                    job.status, job.error = INTERRUPTED, f"interrupted during {job.stage or 'start'}: {exc}"
+                    job.resume = (lane, job.step)
+                    log.info("web: job %s interrupted [%s]: %s", job.id, job.episode_id, exc)
+                else:
+                    job.status, job.error = FAILED, str(exc)
+                    log.error("web: job %s failed [%s]: %s", job.id, job.episode_id, exc)
             except Exception as exc:  # a bug must not kill the worker
                 job.status, job.error = FAILED, f"{type(exc).__name__}: {exc}"
                 log.exception("web: job %s crashed [%s]", job.id, job.episode_id)
