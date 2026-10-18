@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: DRAFT
+- Status: IN_PROGRESS
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -65,9 +65,9 @@ Không chạm database / security / public API (web ở phase C).
 
 ## Result
 
-- Main changes:
-- Tests:
-- Review:
-- Important findings / decisions:
-- Known limitations:
-- PR:
+- Main changes (Codex, 2026-10-18): `src/auto_short/theme_render/__init__.py` (`render_landscape`, `filter_graph` 1920×1080 giữ DAR + pad, nguồn present / tải lại vào `theme/.fetch/` tạm, `_verify` codec / kích thước / SAR / fps / số frame / thời lượng, ghép bằng `assemble`, chapters + mô tả, cache `plan_fingerprint` + `encode_key` + sha), `src/auto_short/theme_render/audio.py` (envelope RMS 20 ms, lag ±0,5 s, ngưỡng corr 0,9 / lag 0,04 s / thời lượng 0,1 s), `tests/test_theme_render.py` (25 test, gồm ffmpeg thật, nguồn lệch, dọn tạm, cache / revision, SAR).
+- Tests: trong sandbox Codex: TC1–TC3 94 passed; full suite không chạy được (sandbox cấm socket loopback) → Codex báo BLOCKED verification, không claim PASS. ORCHESTRATOR chạy ngoài sandbox: TC1–TC3 94 passed; `-m pytest -q -n auto` 2069 passed, 1 skipped, exit 0; framework-check PASS; `git diff --check` exit 0; inventory = 3 file mới trong Owned paths.
+- Review: ACCEPTED, không blocking. Notes: nguồn tải lại của nhiều video giữ tới cuối lần render (đĩa tạm ≈ tổng kích thước nguồn); `-m slow` không bắt buộc (không sửa render / worker).
+- Important findings: (Codex) TC1 loại clip khi file Short gốc đã mất dù còn bản kept CP8.33 — TC3 đã hỗ trợ kept, TC1 chưa; ngoài scope, đề xuất FIX sau.
+- Pilot Codex IMPLEMENTER: `gpt-6.1-sol` effort high, 16:23:48→16:36:29 UTC (≈ 12,7 phút), 146 649 tokens, một vòng, không sửa ngoài Owned paths, báo cáo trung thực. Sandbox `workspace-write` chặn socket loopback → full suite phải do ORCHESTRATOR chạy.
+- PR: chưa (cần HUMAN LEAD).
