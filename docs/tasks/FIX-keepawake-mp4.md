@@ -2,15 +2,15 @@
 
 ## Status / Approval
 
-- Status: DRAFT
+- Status: READY
 - Type: BUG
 - Change class: S1
 - Owner: HUMAN LEAD
 - Execution profile: single-agent
 - Implementer: — (single-agent: sửa 2 dòng `.gitignore` + 1 file tĩnh tạo lại bằng lệnh đã ghi; giao implementer không đáng)
 - Base commit / branch: `e7a9d05` (`main`) / `fix/keepawake-mp4` (worktree `../youtube-auto-short-keepawake`).
-- Human Lead approval: pending
-- Implementation authorized: NO
+- Human Lead approval: APPROVED (2026-10-18)
+- Implementation authorized: YES
 
 Lifecycle: `DRAFT → APPROVED → IN_PROGRESS → READY`. DONE suy ra từ Git sau khi merge.
 
@@ -46,9 +46,9 @@ Không chạm public API, database, security model.
 
 ## Result
 
-- Main changes:
-- Tests:
-- Review:
-- Important findings / decisions:
-- Known limitations:
+- Main changes: `.gitignore` thêm `!src/auto_short/web/static/keepawake.mp4` (dòng chú thích riêng: `.gitignore` không nhận chú thích cuối dòng); `keepawake.mp4` tạo lại bằng lệnh ở Scope (1 708 byte) và commit.
+- Tests: worktree sạch `git worktree add --detach` của commit fix: `python -m pytest -q -n auto` 1889 passed, 1 skipped (gồm `test_keep_awake_fallback_video_and_warning`); `node scripts/framework-check.mjs` PASS; `git status --ignored` không còn file cần mà chưa track.
+- Review: single-agent; ORCHESTRATOR tự kiểm như trên.
+- Important findings / decisions: repo đã có `static/sutra-awake.mp4` (trang Đọc Kinh có cách dự phòng video riêng) — ghi chú CP8.34 "trang Đọc Kinh cùng vấn đề" chỉ đúng phần Wake Lock; không gộp hai file trong FIX này.
+- Known limitations: —
 - PR:
