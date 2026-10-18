@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: READY
+- Status: IN_PROGRESS (Amendment A1)
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -34,6 +34,13 @@ Khi CPU còn rảnh, làn render chạy tới 2 việc cùng lúc (cấu hình �
 - **D4 nice / threads.** Slot thêm dùng cùng `worker_nice`. Không đổi `[render] jobs` / threads ffmpeg của mỗi việc.
 - **D5 Hiển thị.** Thanh hàng đợi / tab Theo dõi hiện đủ các việc render đang chạy (nhiều dòng như làn prepare); `/api/queue` `running` đếm đúng.
 - **D6 Lưu hàng đợi.** Lưu / khôi phục hàng đợi qua khởi động lại (CP8.22) đúng với nhiều việc render đang chạy (việc đang chạy lúc dừng quay lại đầu hàng như hiện nay).
+
+## Amendment A1 (2026-10-18, HUMAN LEAD: "CPU hiện tại avg 55% đáng ra phải render song song")
+
+Thử trên 8080 (ghim `32f71e4`): CPU bận ≈ 53 % (`top`: 46,6 % idle) nhưng load average 1 phút 20,8 > 19,2 (0,6 × 32) → slot thêm không chạy. Load average đếm cả luồng chờ CPU (ffmpeg nhiều luồng, nice) nên cao hơn % CPU thật; HUMAN LEAD nhìn % CPU (tab Theo dõi).
+
+- **A1a Thước đo.** Thay D2 "load average 1 phút < `render_max_load` × số nhân" bằng **% CPU bận trung bình ≈ 60 s** (từ `/proc/stat`, cùng cách tính tab Theo dõi CP8.28: (total − idle − iowait) / total trên mọi nhân; lấy mẫu định kỳ, trung bình trượt ~60 s) **< `[web] render_max_cpu`** (tỉ lệ 0–1, **mặc định 0.6**). Không đọc được / chưa đủ mẫu → coi như bận (slot thêm chờ). Bỏ `render_max_load` (chưa phát hành; config có khóa cũ → cảnh báo một dòng hoặc `ConfigError` rõ, implementer chọn và ghi lại).
+- Còn lại của D1–D6 giữ nguyên. AC 2 đọc theo thước đo mới; nguồn % CPU phải inject được trong test.
 
 ## Scope
 
