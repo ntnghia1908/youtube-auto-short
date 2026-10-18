@@ -90,16 +90,17 @@ A successful unit test alone is **not sufficient** to pass the pilot; native wor
 
 ## Result
 
-- Status: NOT RUN — awaiting Codex CLI pilot
-- Codex CLI version / main model (runtime reported): PENDING
-- Native worker evidence / thread ID / worker model (runtime reported): PENDING
-- Changes (tracked + untracked): PENDING
-- Worker verification (command, exit code): PENDING
-- ORCHESTRATOR independent verification (command, exit code): PENDING
-- Scope and diff-first review: PENDING
-- Findings / limitations: PENDING
-- Conclusion: NOT RUN (READY or BLOCKED only after evidence)
-- PR: NOT AUTHORIZED
+- Status: READY — pilot thực thi 2026-10-18; HUMAN LEAD APPROVE COMMIT + PUSH + PR ngày 2026-10-18; không authorize merge.
+- Authorization / Git: task APPROVED, Implementation authorized YES; branch `feature/codex-native-pilot-01`, working tree sạch trước delegation. HEAD `eeb06d63a24f69f17de804ac6fe0473d230d99b8` là setup commit chỉ thêm contract này trên base `409cf5e5d5cd8ea291dab2b2c2767c720e737fc5` (đã kiểm log/diff); HEAD không đổi sau implementation. Đã kiểm `git worktree list`; worker duy nhất của pilot ghi trong worktree riêng này, không thao tác worktree khác.
+- Codex CLI version / main model (runtime reported): `codex --version` → `codex-cli 0.163.0`, exit 0. Runtime không công bố exact active model ID của main; không suy đoán từ tên CLI/config.
+- Native worker evidence / thread ID / worker model (runtime reported): ORCHESTRATOR gọi native `collaboration.spawn_agent` với `task_name="hashing_worker"`, không override model; tool trả `{"task_name":"/root/hashing_worker"}`. `collaboration.list_agents` xác nhận `/root` và `/root/hashing_worker` đang running. Worker bootstrap, tạo test, chạy targeted verification và trả FINAL_ANSWER riêng; main sau đó review và retest. Canonical worker thread identity: `/root/hashing_worker`; runtime không cung cấp UUID hoặc exact worker model ID. Không gọi CLI/provider khác, không fallback single-agent, không tạo worker thứ hai.
+- Changes (tracked + untracked): worker chỉ tạo `tests/test_hashing_codex_pilot.py` (6 cases); ORCHESTRATOR chỉ cập nhật Result của contract này. Test bao phủ empty/binary vượt chunk, resolved fingerprint fields, cache reuse không hash, invalidation riêng size/mtime qua `os.utime`, nested key ordering/Unicode và config value change.
+- Worker verification (command, exit code): `/home/ntnghia/miniconda3/envs/auto-short/bin/python -m pytest -q tests/test_hashing_codex_pilot.py` → 6 passed in 1.40s, exit 0; `git diff --check` → exit 0.
+- ORCHESTRATOR independent verification (command, exit code): cùng lệnh targeted ở trên → 6 passed in 0.71s, exit 0; `/home/ntnghia/miniconda3/envs/auto-short/bin/python -m pytest -q -n auto` → 1932 passed, 1 skipped, 1116 warnings in 96.85s, exit 0; `node scripts/framework-check.mjs` → PASS, exit 0. Python dùng conda env `auto-short`; pytest mặc định loại marker slow theo project policy.
+- Scope and diff-first review: ACCEPTED, không có blocking finding. Main đọc toàn bộ test untracked, review contract → diff → AC → verification; kiểm spies bắt hash reuse/recompute và metadata invalidation tách biệt. `git diff --check`, `git status --short --untracked-files=all`, `git diff --name-only 409cf5e5d5cd8ea291dab2b2c2767c720e737fc5`, inventory untracked xác nhận chỉ hai owned paths; source, existing tests, framework/policy/dependency không đổi. Không commit/push/PR/merge implementation.
+- Findings / limitations: sandbox command ban đầu lỗi `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`; lệnh cần thiết chạy lại bằng escalation được phê duyệt, không thay permission/config repository. Full suite có deprecation warnings Starlette/httpx/cookies và 1 skipped; không sửa ngoài scope. Exact model IDs không được runtime expose; delegation evidence là native tool record/thread và worker execution thực tế, không phải model suy đoán. Git inventory không chứng minh trạng thái mọi tiến trình ngoài session; không phát hiện thay đổi bất ngờ trong pilot worktree.
+- Conclusion: READY — native delegation, independent review và required verification hoàn tất. HUMAN LEAD đã authorize commit đúng hai owned paths, push `origin/feature/codex-native-pilot-01` và tạo PR vào `main`; không merge. Evidence verification giữ nguyên vì không đổi tests/source; integration chỉ cập nhật authorization trong Result.
+- PR: AUTHORIZED — title `test: verify Codex native dual-agent pilot`, base `main`; URL do integration report ghi nhận sau khi tạo.
 
 ## Handoff
 
