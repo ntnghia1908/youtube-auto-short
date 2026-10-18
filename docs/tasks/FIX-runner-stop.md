@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: BUG
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -52,9 +52,12 @@ Không chạm public API, database, security model.
 
 ## Result
 
-- Main changes:
-- Tests:
+- Main changes (`web/jobs.py`, `web/server.py`):
+  1. **Vì sao job 19 bắt đầu khi đang dừng.** Ctrl-C trên terminal gửi SIGINT cho *cả process group*: ffmpeg của job 18 chết (exit 255) ngay, trước khi uvicorn chạy lifespan shutdown (đợi graceful tới 5 s) và gọi `stop()`. Lúc đó `_stopping` còn False nên làn lấy ngay job 19; `stop()` tới sau, chỉ SIGINT các con *có mặt lúc đó* (một lần) + ngắt bất đồng bộ một lần, nên ffmpeg sinh sau đó (PPID 1 khi server thoát) không bao giờ bị tín hiệu. Sửa: `JobRunner.begin_stop()` (cờ thuần, an toàn trong signal handler) gọi từ `uvicorn.Server.handle_exit` ngay khi nhận SIGINT/SIGTERM (`server.py`); job `JobFailed` trong lúc đang dừng thành `INTERRUPTED` + `resume` (khôi phục CP8.22, không `failed`). Kiểm `_stopping` sẵn có ở `_take_locked` chặn mọi job / bước kế (kể cả bước 2 của job nhiều bước).
+  2. **Vì sao ffmpeg sống sót.** SIGINT một lần, chỉ con trực tiếp; không bao giờ SIGTERM / SIGKILL; không tiến trình cháu / mồ côi; không quét lại. Sửa: `stop()` đặt `PR_SET_CHILD_SUBREAPER`, rồi quét `/proc` mỗi 0,1 s mọi hậu duệ (con, cháu, tiến trình sinh sau ngắt): SIGINT lúc thấy lần đầu, SIGTERM sau `min(3, 0,3·timeout)` s, SIGKILL lặp sau `min(6, 0,6·timeout)` s; ngắt lại thread làn còn giữ job mỗi 1 s (job nuốt ngắt); hết hạn thì SIGKILL tất cả và đợi ≤ 2 s tới khi không còn (zombie không tính).
+  3. **Rò khóa.** `_lock` là `threading.Condition`: `Condition.__enter__` là hàm Python; ngoại lệ bất đồng bộ rơi sau `acquire` bên trong nhưng trước khi nó return khiến khóa bị giữ mà `__exit__` không bao giờ chạy (thread chết giữ RLock; `stop()` treo ở `with self._lock`). Tái hiện: vòng `with Condition(): pass` + 1500 lần `_interrupt` rò khóa 10/10 lần. Sửa (giữ cơ chế ngắt bất đồng bộ vì giai đoạn dài là code Python không có điểm hợp tác): `_lock = _RunnerLock`, lớp con của `RLock` C — `with lock:` dùng `__enter__`/`__exit__` C, không thể bị xé ở ranh giới bytecode; `wait` lấy lại khóa nếu bị cắt giữa chừng. Thêm: phần cuối `stop()` lấy khóa với timeout 2 s (không bao giờ treo). `stop()` luôn trả về trong `timeout` + ≤ ~4 s.
+- Tests: `tests/test_web_stop_fix.py` (9 test, AC 1–4, tiến trình con thật: `sleep`, child bỏ qua SIGINT + cháu, cháu mồ côi, tiến trình sinh sau ngắt; ngắt lặp quanh khóa; `wait` bị cắt; stop với job đập khóa; lưu / khôi phục CP8.22). AC3 lặp 30 lần `-o faulthandler_timeout=20`: 0 lỗi, 0 treo. Cả suite `-n auto`: 1897 passed, 1 skipped, 1 failed (đã biết trên main: `test_keep_awake_fallback_video_and_warning`, PR #89). `node scripts/framework-check.mjs` PASS.
 - Review:
-- Important findings / decisions:
-- Known limitations:
+- Important findings / decisions: Giả thuyết (1) suy ra từ code + log HUMAN LEAD, không có log chi tiết của job 19 để kiểm. Test cũ không sửa. Ctrl-C vẫn đến ffmpeg qua process group (không đổi); `begin_stop` làm điều đó vô hại.
+- Known limitations: tiến trình đã mồ côi *trước* khi `stop()` bắt đầu (re-parent về init) không tìm lại được; `stop()` giờ SIGINT/SIGTERM/SIGKILL mọi tiến trình con của server (không chỉ của job), chấp nhận khi thoát. Một job nuốt ngắt mãi vẫn là thread daemon sống tới khi process thoát (con của nó đã bị giết).
 - PR:
