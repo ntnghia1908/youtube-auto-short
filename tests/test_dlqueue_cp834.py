@@ -138,3 +138,12 @@ q.report(a.id, a.token, {state: "done", bytes_sent: 1, bytes_total: 1}, 2); q.po
 console.log(JSON.stringify([r1, r2, r3, a.status, a.polling]));
 """)
     assert r == [["f0", "f1"], [], ["f1"], "done", False]
+
+
+def test_keep_awake_mode_wakelock_else_video_else_none():
+    r = run_js("""
+const m = (o) => Q.keepAwakeMode(Object.assign({hasWakeLock: false, wakeLockFailed: false, active: true, paused: false, sending: 1}, o));
+console.log(JSON.stringify([m({}), m({hasWakeLock: true}), m({hasWakeLock: true, wakeLockFailed: true}),
+  m({active: false}), m({paused: true, sending: 0}), m({paused: true, sending: 1})]));
+""")
+    assert r == ["video", "wakelock", "video", "none", "none", "video"]

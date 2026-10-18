@@ -104,7 +104,15 @@
   /** Append ``dl=<token>`` to a download URL. */
   function withToken(url, token) { return url + (url.indexOf("?") >= 0 ? "&" : "?") + "dl=" + encodeURIComponent(token); }
 
-  const api = { createQueue, withToken, DEFAULTS };
+  /** A2: how to keep the screen on. ``wakelock`` (Secure Context only), else the tiny looping ``video`` fallback,
+   *  ``none`` when the queue has nothing to do (or is paused with nothing still sending). */
+  function keepAwakeMode(s) {
+    const wanted = !!s.active && !(s.paused && !s.sending);
+    if (!wanted) return "none";
+    return s.hasWakeLock && !s.wakeLockFailed ? "wakelock" : "video";
+  }
+
+  const api = { createQueue, withToken, keepAwakeMode, DEFAULTS };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.DownloadQueue = api;
 })(typeof window !== "undefined" ? window : this);

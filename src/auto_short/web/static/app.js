@@ -3254,17 +3254,45 @@ const AutoShort = (() => {
     $("#dq-note").hidden = idle;
   }
 
-  async function dqWakeLock(on) {
+  // A2: Wake Lock needs a secure context (HTTPS / localhost); over plain http the page plays a tiny looping muted video
+  // instead (``static/keepawake.mp4``, see the CP8.34 task contract for the ffmpeg command).
+  let dqWakeFailed = false;
+
+  function dqHasWakeLock() { return !!(navigator.wakeLock && typeof navigator.wakeLock.request === "function"); }
+
+  function dqVideo(on) { // call synchronously from a click handler for the first play() (user gesture)
+    const v = $("#dq-awake");
+    if (!v) return;
     try {
-      if (on && !dqSentinel && navigator.wakeLock && typeof navigator.wakeLock.request === "function" && !document.hidden) {
-        dqSentinel = await navigator.wakeLock.request("screen");
-        dqSentinel.addEventListener("release", () => { dqSentinel = null; });
-      } else if (!on && dqSentinel) {
-        const s = dqSentinel;
-        dqSentinel = null;
-        await s.release();
+      if (on) {
+        v.hidden = false;
+        v.muted = true;
+        const p = v.play();
+        if (p && p.catch) p.catch(() => { $("#dq-awake-warn").hidden = false; /* needs a tap: keep the warning visible */ });
+      } else if (!v.paused) {
+        v.pause();
       }
-    } catch (_) { dqSentinel = null; /* not supported / refused: the note still tells the user to keep the page open */ }
+      if (!on) v.hidden = true;
+    } catch (_) { /* ignore */ }
+  }
+
+  function dqKeepAwake() {
+    const q = dqQueue;
+    const c = q.counts();
+    const mode = DownloadQueue.keepAwakeMode({ hasWakeLock: dqHasWakeLock(), wakeLockFailed: dqWakeFailed, active: q.active(),
+      paused: q.isPaused(), sending: c.sending });
+    $("#dq-awake-warn").hidden = dqHasWakeLock() && !dqWakeFailed;
+    dqVideo(mode === "video");
+    if (mode === "wakelock" && !dqSentinel && !document.hidden) {
+      navigator.wakeLock.request("screen").then((s) => {
+        dqSentinel = s;
+        s.addEventListener("release", () => { if (dqSentinel === s) dqSentinel = null; });
+      }).catch(() => { dqWakeFailed = true; dqKeepAwake(); });
+    } else if (mode !== "wakelock" && dqSentinel) {
+      const s = dqSentinel;
+      dqSentinel = null;
+      s.release().catch(() => {});
+    }
   }
 
   function dqStartNative(url, name) { // a real browser download (never fetch + blob: a file can be several GB)
@@ -3297,7 +3325,7 @@ const AutoShort = (() => {
     for (const i of q.pollTargets()) dqPollOne(i);
     dqRender();
     const active = q.active();
-    dqWakeLock(active && !(q.isPaused() && !q.counts().sending));
+    dqKeepAwake();
     clearTimeout(dqTimer);
     dqTimer = active ? setTimeout(dqTick, DQ_POLL_MS) : null;
   }
@@ -3306,6 +3334,7 @@ const AutoShort = (() => {
     const conc = parseInt(store("autoShort.dlConcurrency") || "2", 10);
     dqQueue = DownloadQueue.createQueue({ concurrency: conc });
     $("#dq-conc").value = String(dqQueue.getConcurrency());
+    $("#dq-awake-warn").hidden = dqHasWakeLock();
     $("#dq-conc").addEventListener("change", () => {
       dqQueue.setConcurrency($("#dq-conc").value);
       store("autoShort.dlConcurrency", String(dqQueue.getConcurrency()));
@@ -3335,7 +3364,7 @@ const AutoShort = (() => {
       dqQueue.items.splice(0, dqQueue.items.length, ...dqQueue.items.filter((i) => !["done", "skipped"].includes(i.status)));
       dqRender();
     });
-    document.addEventListener("visibilitychange", () => { if (!document.hidden && dqQueue.active()) dqWakeLock(true); });
+    document.addEventListener("visibilitychange", () => { if (!document.hidden && dqQueue.active()) dqKeepAwake(); });
     window.addEventListener("beforeunload", (ev) => { if (dqQueue.active()) { ev.preventDefault(); ev.returnValue = ""; } });
   }
 

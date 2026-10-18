@@ -346,3 +346,5 @@ body.modal-open { overflow: hidden; }
   .pl-entry .rec-actions { flex-basis: calc(100% - 5rem); }
   .dq-controls select { min-height: 40px; }
 }
+.dq-awake { display: block; width: 48px; height: 48px; margin: .4rem 0; border: 1px solid var(--border); opacity: .7; }
+.dq-awake[hidden] { display: none; }

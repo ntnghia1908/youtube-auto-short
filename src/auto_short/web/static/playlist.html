@@ -107,6 +107,8 @@
         <button id="dq-resume" class="btn small" type="button" hidden>Tiếp tục</button>
         <button id="dq-tidy" class="btn small" type="button" hidden>Xóa các dòng xong</button>
       </div>
+      <p id="dq-awake-warn" class="small error" hidden>Trang này không mở bằng HTTPS nên trình duyệt có thể không giữ màn hình sáng. Đang thử cách dự phòng (video nhỏ bên dưới). Nếu màn hình vẫn tắt, hãy chỉnh thời gian tắt màn hình của máy hoặc bật lại màn hình để hàng đợi chạy tiếp.</p>
+      <video id="dq-awake" class="dq-awake" src="/static/keepawake.mp4" muted loop playsinline preload="auto" width="48" height="48" aria-hidden="true" tabindex="-1" hidden></video>
       <p id="dq-note" class="small" hidden>Để trang này mở cho tới khi tải xong.</p>
       <table id="dq-table" class="dq-table" hidden>
         <thead><tr><th>File</th><th>Trạng thái</th><th></th></tr></thead>

@@ -533,3 +533,19 @@ def test_one_info_log_line_per_tracked_request(tcfg, caplog):
     lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("web: tải")]
     assert len(lines) == 1
     assert TOK[:6] in lines[0] and "k01.mp4" in lines[0] and "bytes=0-99" in lines[0] and "partial" in lines[0]
+
+
+def test_keep_awake_fallback_video_and_warning(tcfg):
+    c = client(tcfg)
+    login(c)
+    html = c.get(f"/playlists/{PL}").text
+    tag = html[html.index('<video id="dq-awake"'):]
+    tag = tag[:tag.index(">") + 1]
+    for attr in (" muted", " loop", " playsinline", 'src="/static/keepawake.mp4"'):
+        assert attr in tag
+    assert "display:none" not in tag.replace(" ", "")  # visible (the class is a small box), not hidden by style
+    assert 'id="dq-awake-warn"' in html and "không mở bằng HTTPS" in html
+    r = c.get("/static/keepawake.mp4")
+    assert r.status_code == 200 and len(r.content) <= 10_000 and r.content[4:8] == b"ftyp"
+    js = c.get("/static/app.js").text
+    assert "keepAwakeMode" in js and ".muted = true" in js
