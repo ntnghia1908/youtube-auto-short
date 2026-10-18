@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: DRAFT
+- Status: READY
 - Type: CHANGE
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -54,8 +54,8 @@ Không chạm database / security / public API.
 
 ## Result
 
-- Main changes:
-- Tests:
-- Review:
+- Main changes: `auto_archive_plan` bỏ qua video có phần `.kt` (`KT_SUFFIX`); CP8.3 header + W9 S5 thêm sửa đổi. Test cũ giả định tự dọn cả cặp Short + khai thị được viết lại cho video chỉ có Short (`tests/test_storage_suggest.py`, `tests/test_enhance_state.py::test_auto_archive_skips_hd_and_pending_episodes` — ngoài owned paths nhưng buộc phải đổi theo hành vi mới); thêm test mới `test_plan_skips_video_with_khaithi_part`, `test_auto_archive_skips_video_with_khaithi`.
+- Tests: 3 file mục tiêu 52 passed (exit 0); full `-n auto` 2008 passed, 1 skipped; framework-check PASS; `git diff --check` sạch. (Lần chạy đầu 8 fail do test cũ; lần chạy lại sau khi sửa test không còn fail.)
+- Review: ORCHESTRATOR ACCEPTED 2026-10-18 (IMPLEMENTER Sonnet subagent, ~6,6 phút, 33k tokens). Ngoài Owned paths: `tests/test_enhance_state.py` một assert đổi theo hành vi mới (video có `.kt` không tự dọn); các assert HD / pending cho video một phần vẫn giữ. ORCHESTRATOR chạy lại full suite: xem Tests.
 - Known limitations:
 - PR:

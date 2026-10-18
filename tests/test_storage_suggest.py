@@ -106,14 +106,21 @@ def test_old_source_and_stale_per_video():
 # --- D4: auto_archive_plan (pure) ------------------------------------------------------------------------------
 
 def test_plan_grace_and_all_parts():  # AC6
-    rows = [_row("v1", complete_since=NOW - GRACE), _row("v1.kt", complete_since=NOW - 2 * GRACE)]
+    rows = [_row("v1", complete_since=NOW - GRACE)]
     (item,) = auto_archive_plan(rows, NOW, GRACE)
-    assert item["video_id"] == "v1" and item["episodes"] == ["v1", "v1.kt"] and item["freed"] == 1200 * MB
-    assert auto_archive_plan(rows, NOW - 1, GRACE) == []  # the latest part has not held for the grace period
-    rows[1]["complete"] = False
+    assert item["video_id"] == "v1" and item["episodes"] == ["v1"] and item["freed"] == 600 * MB
+    assert auto_archive_plan(rows, NOW - 1, GRACE) == []  # the part has not held for the grace period
+    rows[0]["complete"] = False
     assert auto_archive_plan(rows, NOW, GRACE) == []
-    rows[1].update(complete=True, state="processing")
+    rows[0].update(complete=True, state="processing")
     assert auto_archive_plan(rows, NOW, GRACE) == []
+
+
+def test_plan_skips_video_with_khaithi_part():  # FIX-keep-khaithi-source
+    rows = [_row("kv", complete_since=NOW - DAY), _row("kv.kt", complete_since=NOW - DAY),
+            _row("so", complete_since=NOW - DAY)]
+    assert [i["video_id"] for i in auto_archive_plan(rows, NOW, GRACE)] == ["so"]
+    assert auto_archive_plan(rows[:2], NOW, GRACE) == []
 
 
 def test_plan_ignores_local_archived_and_unfinished_render():
@@ -148,6 +155,11 @@ def video(tcfg, tmp_path):
     write_episode(tcfg, EID, titles=TITLES)
     _clone(tcfg, EID, KT)
     return tcfg
+
+
+def _short_only(cfg):
+    """Drop the khai thị workspace: auto clean-up never plans a video that has one (FIX-keep-khaithi-source)."""
+    shutil.rmtree(Path(cfg.workspace.dir) / KT)
 
 
 def _tick_all(cfg, eids=(EID, KT)):
@@ -193,14 +205,15 @@ def test_storage_api_merged_video(video):  # AC2, AC4 through the route
 
 
 def test_auto_archive_after_grace(video):  # AC6
-    _tick_all(video)
+    _short_only(video)
+    _tick_all(video, (EID,))
     clock = [time.time()]
     app = _app(video, lambda: clock[0])
     assert app.state.auto_archive_pass() == []  # just ticked: inside the grace period
     clock[0] += GRACE + 5
     done = app.state.auto_archive_pass()
-    assert sorted(done) == sorted([EID, KT])
-    for eid in (EID, KT):
+    assert done == [EID]
+    for eid in (EID,):
         ar = read_archive(Path(video.workspace.dir) / eid)
         assert ar["auto"] is True and ar["removed"]
         assert not list((Path(video.workspace.dir) / eid).glob("source.*"))
@@ -210,23 +223,31 @@ def test_auto_archive_after_grace(video):  # AC6
         assert c.get(f"/api/episodes/{EID}").json()["archived"]["auto"] is True
 
 
-def test_auto_archive_unticking_in_grace_and_one_part_open(video):
-    _tick_all(video, (EID,))  # khai thị part not ticked
+def test_auto_archive_skips_video_with_khaithi(video):  # FIX-keep-khaithi-source
+    _tick_all(video)
+    app = _app(video, lambda: time.time() + 10 * GRACE)
+    assert app.state.auto_archive_pass() == []
+    assert list((Path(video.workspace.dir) / EID).glob("source.*")) and read_archive(Path(video.workspace.dir) / KT) is None
+
+
+def test_auto_archive_unticking_in_grace(video):
+    _short_only(video)
     clock = [time.time() + 10 * GRACE]
     app = _app(video, lambda: clock[0])
-    assert app.state.auto_archive_pass() == []
-    _tick_all(video, (KT,))
+    assert app.state.auto_archive_pass() == []  # not ticked
+    _tick_all(video, (EID,))
     set_published(EID, video, "k01", False)  # un-tick inside the grace period
     assert app.state.auto_archive_pass() == []
     set_published(EID, video, "k01", True)  # re-ticked "now" (real time) -> grace restarts
     clock[0] = time.time() + 1
     assert app.state.auto_archive_pass() == []
     clock[0] = time.time() + GRACE + 60
-    assert sorted(app.state.auto_archive_pass()) == sorted([EID, KT])
+    assert app.state.auto_archive_pass() == [EID]
 
 
 def test_auto_archive_disabled_and_job_waits(video):
-    _tick_all(video)
+    _short_only(video)
+    _tick_all(video, (EID,))
     off = Config(workspace=video.workspace, render=video.render, transcript=video.transcript,
                  storage=StorageConfig(auto_archive=False))
     far = lambda: time.time() + 10 * GRACE  # noqa: E731
@@ -234,16 +255,17 @@ def test_auto_archive_disabled_and_job_waits(video):
     assert read_archive(Path(video.workspace.dir) / EID) is None
     app = _app(video, far)
     runner = app.state.runner
-    busy = SimpleNamespace(episode_id=KT, active=True)
-    runner.latest = lambda eid: busy if eid == KT else None
+    busy = SimpleNamespace(episode_id=EID, active=True)
+    runner.latest = lambda eid: busy if eid == EID else None
     runner.jobs = lambda: [busy]
-    assert app.state.auto_archive_pass() == []  # a part has a job: the whole video waits
+    assert app.state.auto_archive_pass() == []  # the part has a job: the video waits
     runner.latest = lambda eid: None
     runner.jobs = lambda: []
-    assert len(app.state.auto_archive_pass()) == 2
+    assert app.state.auto_archive_pass() == [EID]
 
 
 def test_auto_archive_never_touches_local_source(video):
+    _short_only(video)
     ws = Path(video.workspace.dir) / EID
     m = json.loads((ws / "manifest.json").read_text())
     m["source"]["kind"] = "local"
@@ -251,9 +273,8 @@ def test_auto_archive_never_touches_local_source(video):
     _tick_all(video, (EID,))
     rows = {r["id"]: r for r in episode_sizes(video)}
     assert rows[EID]["complete"]
-    _tick_all(video, (KT,))
     app = _app(video, lambda: time.time() + 10 * GRACE)
-    assert app.state.auto_archive_pass() == [KT]  # the local part is left alone
+    assert app.state.auto_archive_pass() == []  # the local part is left alone
     assert read_archive(ws) is None and (ws / "source.mp4").exists()
 
 
@@ -280,4 +301,4 @@ def test_hard_linked_source_counted_once(video):
     assert arch["frees"] == 4096 and arch["episodes"] == [EID, KT]
     assert delete["frees"] == by[EID]["total"] + by[KT]["total"] - 4096
     plan = auto_archive_plan(rows, time.time() + 10 * GRACE, GRACE)
-    assert plan[0]["freed"] == 4096
+    assert plan == []  # FIX-keep-khaithi-source: a video with a khai thị part is not auto-planned
