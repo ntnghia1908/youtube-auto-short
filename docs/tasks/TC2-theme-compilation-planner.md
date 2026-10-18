@@ -8,7 +8,7 @@
 - Owner: HUMAN LEAD
 - Execution profile: dual-agent
 - Orchestrator: claude-code — main session (Opus), review độc lập
-- Implementer: codex — `codex exec` local trong worktree task, một writer; HUMAN LEAD đề nghị dùng Codex để tiết kiệm token ORCHESTRATOR (2026-10-18)
+- Implementer: claude-code — subagent `implementer` (Sonnet), một writer. Ban đầu chọn `codex exec`; 2026-10-18 Codex BLOCKED trước khi sửa file (sandbox bwrap lỗi `RTM_NEWADDR` trên VM, chạy không sandbox bị chặn) → đổi binding, không có code Codex.
 - Human Lead: HUMAN LEAD
 - Authorization mode: boundary
 - Authorization source: `docs/decisions/TC1-TC3-implementation-authorization.md` (ACCEPTED 2026-10-18) + Amendment A1 trong file đó (khoảng thời lượng 240–420 s)
