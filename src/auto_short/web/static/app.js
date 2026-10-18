@@ -173,6 +173,7 @@ const AutoShort = (() => {
     const body = { url, series: series || null, episode: episode || null, mode: mode || null };
     if (opts && opts.kinds) body.kinds = opts.kinds;
     if (opts && opts.min !== undefined) Object.assign(body, { min_minutes: opts.min, max_minutes: opts.max });
+    if (opts && opts.vertical) body.vertical = true; // CP8.35 D3: absent = false (old behaviour)
     return api("/api/episodes", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -223,6 +224,10 @@ const AutoShort = (() => {
     document.querySelectorAll('input[name="kind"]').forEach((r) => r.addEventListener("change", () => {
       $("#kt-minutes").hidden = !kindsOf().includes("khaithi");
     }));
+    // CP8.35 D1: "Bản dọc" (default on, remembered; a missing key = on); not a kind
+    const vbox = $("#idx-vertical");
+    vbox.checked = store("autoShort.idxVertical") !== "0";
+    vbox.addEventListener("change", () => store("autoShort.idxVertical", vbox.checked ? "1" : "0"));
     async function send(mode) {
       err.hidden = true;
       const url = $("#url").value;
@@ -233,7 +238,7 @@ const AutoShort = (() => {
         err.hidden = false;
         return;
       }
-      const opts = { kinds };
+      const opts = { kinds, vertical: vbox.checked };
       if (kinds.includes("khaithi")) Object.assign(opts, ktMinutes("#kt-min", "#kt-max"));
       const maybeAsk = mode === null && /[?&]list=/.test(url); // the server first asks "tập lẻ / cả bộ kinh"
       if (!isPlaylist && !maybeAsk && kinds.includes("khaithi") && !(await confirmKhaithi(videoIdOf(url), opts))) return;
@@ -2613,7 +2618,7 @@ const AutoShort = (() => {
   // CP8.9 A2.2: what "Xử lý" / "Xử lý lại" create (Short / khai thị + minutes), remembered by the browser.
   function plKinds() {
     const kinds = [...document.querySelectorAll('#pl-kinds input[name="pl-kind"]:checked')].map((b) => b.value);
-    const opts = { kinds };
+    const opts = { kinds, vertical: $("#pl-vertical-box").checked }; // CP8.35 D1
     if (kinds.includes("khaithi")) Object.assign(opts, ktMinutes("#pl-kt-min", "#pl-kt-max"));
     return opts;
   }
@@ -2623,12 +2628,13 @@ const AutoShort = (() => {
     try { saved = JSON.parse(store("autoShort.plKinds") || "null"); } catch (_) { saved = null; }
     if (saved && Array.isArray(saved.kinds)) {
       document.querySelectorAll('#pl-kinds input[name="pl-kind"]').forEach((b) => { b.checked = saved.kinds.includes(b.value); });
+      $("#pl-vertical-box").checked = saved.vertical !== false; // CP8.35 D1: a choice saved before CP8.35 = ticked
       if (saved.min) $("#pl-kt-min").value = saved.min;
       if (saved.max) $("#pl-kt-max").value = saved.max;
     }
     const changed = (ev) => {
       const o = plKinds();
-      if (ev) store("autoShort.plKinds", JSON.stringify({ kinds: o.kinds, min: $("#pl-kt-min").value, max: $("#pl-kt-max").value }));
+      if (ev) store("autoShort.plKinds", JSON.stringify({ kinds: o.kinds, vertical: o.vertical, min: $("#pl-kt-min").value, max: $("#pl-kt-max").value }));
       $("#pl-kt-minutes").hidden = !o.kinds.includes("khaithi");
       $("#pl-kinds-note").hidden = o.kinds.length > 0;
       document.querySelectorAll("#pl-entries button[data-action='process'], #pl-entries button[data-action='reprocess']")
@@ -2771,7 +2777,7 @@ const AutoShort = (() => {
     if (!n) { bulkMessage("Không có tập nào đã chuẩn bị.", "muted"); return; }
     if (!confirm(`Chạy tiếp ${n} tập đã chuẩn bị (AI chọn đoạn + tiêu đề rồi render Short và khai thị)? Tập chưa có HD sẽ đợi HD trước khi render.`)) return;
     const m = ktMinutes("#pl-kt-min", "#pl-kt-max"); // the minutes of the kind bar
-    bulkPost("resume-prepared", { min_minutes: m.min, max_minutes: m.max }, "Đang xếp hàng đợi…");
+    bulkPost("resume-prepared", { min_minutes: m.min, max_minutes: m.max, vertical: plKinds().vertical }, "Đang xếp hàng đợi…");
   }
 
   async function deletePlaylist() {
@@ -3014,7 +3020,7 @@ const AutoShort = (() => {
       "Dữ liệu tập này đã bị xóa: sẽ tải lại video (≈ 700 MB) và chạy lại từ đầu (≈ 25 phút); " +
       "AI có thể chọn đoạn / tiêu đề khác lần trước.")) return;
     // CP8.9 A2.2: "Xử lý" / "Xử lý lại" follow the kind bar; A1.2: "Chạy tiếp" -> only the unfinished ones
-    const opts = e.action === "resume" ? (e.resume_kinds ? { kinds: e.resume_kinds } : null) : plKinds();
+    const opts = e.action === "resume" ? (e.resume_kinds ? { kinds: e.resume_kinds, vertical: plKinds().vertical } : null) : plKinds();
     if (opts && !opts.kinds.length) return;
     btn.disabled = true;
     try {
@@ -3172,7 +3178,8 @@ const AutoShort = (() => {
           el("span", { class: "pl-badges" }, progressBadge("Short", e.published || 0, e.shorts || 0),
             progressBadge("Khai thị", e.khaithi_published || 0, e.khaithi_videos || 0),
             progressBadge("Bài", e.posts_posted || 0, e.posts_total || 0)),
-          el("span", { class: "pl-state small", text: (e.priority ? "★ ưu tiên · " : "") + entryState(e) }),
+          el("span", { class: "pl-state small", text: (e.priority ? "★ ưu tiên · " : "") + entryState(e) +
+            (e.vertical && e.vertical.auto_waiting ? " · bản dọc: sẽ tạo khi có HD" : "") }),
           e.state === "failed" && e.error ? el("span", { class: "error small", text: e.error }) : null),
         actions);
     }));
