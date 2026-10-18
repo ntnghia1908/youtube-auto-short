@@ -27,6 +27,7 @@ codex exec -C <worktree> -s workspace-write -c model_reasoning_effort='"medium"'
 
 - Prompt theo mẫu delegation (contract, branch / HEAD, Owned paths, không commit / push / PR / gọi agent khác, required verification với đúng env, READY report). Mặc định effort của Codex trên VM là `none`: luôn đặt `medium` (hoặc cao hơn cho task khó).
 - Sandbox không cho mạng; tests không cần mạng (conftest chặn dịch vụ thật). Cần mạng thì ORCHESTRATOR tự chạy phần đó.
+- Quota: Codex có cửa sổ giới hạn 5 giờ và 1 tuần (đo 2026-10-18: ba lần chạy ≈ 150k token mỗi lần dùng 79 % cửa sổ 5 giờ, 14 % tuần). `codex exec` không in mức dùng: chạy `~/.local/bin/codex-usage` (đọc `rate_limits` trong log phiên `~/.codex/sessions`) trước mỗi lần giao và sau khi chạy. Cửa sổ 5 giờ ≥ 85 % hoặc tuần ≥ 80 % → giao subagent `implementer` (Sonnet) thay vì Codex; Codex hết quota giữa chừng → ORCHESTRATOR kiểm diff dở rồi giao tiếp cho Sonnet, ghi vào Result.
 - Sau khi chạy: ORCHESTRATOR kiểm `git status` / `git log` (không commit lạ, inventory ⊆ Owned paths) rồi review như mọi IMPLEMENTER. Vòng fix: `codex exec resume <session id>` (cùng context) hoặc lần chạy mới kèm finding.
 
 ## Delegation
