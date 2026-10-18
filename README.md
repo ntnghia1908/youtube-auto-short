@@ -239,6 +239,8 @@ enhancing. The worker sends the GPU numbers (optional `gpu_stats`, `nvidia-smi`;
 `docs/guides/enhance-worker-windows.md`); a worker not yet updated shows "chưa có số liệu GPU". JSON: `/api/monitor/queue`
 (`?limit=`), `/system`, `/ollama`, `/gpu` (login required). Task: `docs/tasks/CP8.28-monitor.md`.
 
+CP8.36: with `[web] render_workers = 2` (1-4, default 2) the render lane runs up to two jobs at once while the CPU is idle (1-minute load below `render_max_load` x cores, default 0.6; the first slot always runs); jobs of one video and compilations never overlap another render job.
+
 Storage tab (CP8.6, "Bộ nhớ" in the top bar, `/storage`): free / used space of the drive holding `work/` and
 `output/`, the size of every episode (source video / Shorts / other) and of the Whisper models, and clean-up
 suggestions with a "Làm" button (asks first; nothing is ever deleted automatically): episodes whose Shorts are all

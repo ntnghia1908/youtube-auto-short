@@ -64,6 +64,7 @@ KIND_ADD = "add"  # CP9 C7: AI title of a Short added by hand (lane ai), then re
 KIND_POST = "post"  # CP8.15 P1: compose / recompose community post text (lane ai; no render)
 KIND_POST_SEARCH = "post_search"  # CP8.15 P5b: find images from a link (lane prepare; no Ollama)
 KIND_IMAGE_SEARCH = "image_search"  # CP8.30 P5c: find images by keyword -> candidates (lane prepare; no Ollama)
+LOAD_CHECK_SECONDS = 30.0  # CP8.36 D2: an extra render slot held back by the CPU load re-checks this often
 KIND_ENHANCE = "enhance"  # CP13.1b: assemble ``source_hd.mp4`` from the received segments (lane render; runs under enhance_key)
 KIND_VERTICAL = "vertical"  # CP8.27 H4: vertical full-episode video from ``source_hd.mp4`` (lane render; runs under vertical_key)
 KIND_COMPILATION = "compilation"  # CP8.33 G5: khai thị compilation (lane render; key ``compilation:<playlist_id>:<cid>``)
@@ -296,7 +297,9 @@ class JobRunner:
                  youtube_retry_seconds: float = YT_RETRY_SECONDS, youtube_retry_max_seconds: float = YT_RETRY_MAX_SECONDS,
                  monotonic: Callable[[], float] = time.monotonic, wall: Callable[[], float] = time.time,
                  priority: Priority | None = None, prepare_workers: int = 1,
-                 worker_nice: int = 0) -> None:
+                 worker_nice: int = 0, render_workers: int = 1, render_max_load: float = 0.6,
+                 load_source: Callable[[], float] | None = None, cpu_count: int | None = None,
+                 load_check_seconds: float = LOAD_CHECK_SECONDS) -> None:
         if mode not in (MODE_LANES, MODE_SERIAL):
             raise ValueError(f"unknown queue mode {mode!r}")
         self.mode = mode
@@ -309,9 +312,18 @@ class JobRunner:
         if mode == MODE_LANES:
             for i in range(1, max(1, int(prepare_workers))):
                 self._slot_lane[f"{PREPARE}#{i}"] = PREPARE
+            for i in range(1, max(1, int(render_workers))):  # CP8.36: extra render slots start only while the CPU is idle
+                self._slot_lane[f"{RENDER}#{i}"] = RENDER
         # CP8.29 A1: nice of the heavy lanes' worker threads (``prepare`` / ``render`` / serial; 0 = unchanged)
         self.worker_nice = worker_nice
         self.prepare_workers = sum(1 for lane in self._slot_lane.values() if lane == PREPARE)
+        self.render_workers = sum(1 for lane in self._slot_lane.values() if lane == RENDER)
+        # CP8.36 D2: an extra render slot starts a job only while the 1-minute load average is below
+        # ``render_max_load`` x CPU count; the load source is injectable (tests)
+        self.render_max_load = render_max_load
+        self._load_source = load_source if load_source is not None else (lambda: os.getloadavg()[0])
+        self._cpu_count = cpu_count if cpu_count else (os.cpu_count() or 1)
+        self.load_check_seconds = load_check_seconds
         self._lock = threading.Condition()
         self._queues: dict[str, deque[Job]] = {lane: deque() for lane in self._lane_names}
         self._current: dict[str, Job | None] = {slot: None for slot in self._slot_lane}  # slot -> running job
@@ -739,6 +751,31 @@ class JobRunner:
 
     # --- workers -------------------------------------------------------------------------------
 
+    def _cpu_idle(self) -> bool:
+        """CP8.36 D2: is the CPU load below the limit that lets an extra render slot start a job?"""
+        try:
+            return float(self._load_source()) < self.render_max_load * self._cpu_count
+        except Exception:  # unreadable load: behave as one slot
+            return False
+
+    def _render_pick_locked(self, queue: "deque[Job]", extra: bool) -> tuple[Job | None, bool]:
+        """CP8.36 D3: the next job the render lane may start next to those it runs; ``(job, load_wait)`` where
+        ``load_wait`` = an extra slot is held back by the CPU load only."""
+        running = self._lane_running_locked(RENDER)
+        if any(j.kind == KIND_COMPILATION for j in running):
+            return None, False  # a compilation runs alone
+        busy = {self._video_of(j) for j in running}
+        top = self._pick(queue)
+        if running and top is not None and top.kind == KIND_COMPILATION:
+            return None, False  # drain: let the running jobs finish so the compilation can start alone
+        job = self._pick(queue, lambda j: j.kind != KIND_COMPILATION and self._video_of(j) not in busy
+                         if running else True)
+        if job is None:
+            return None, False
+        if extra and not self._cpu_idle():
+            return None, True
+        return self._pop(queue, lambda j: j is job), False
+
     def _can_start(self, lane: str) -> bool:
         if not self._queues[lane]:
             return False
@@ -766,7 +803,7 @@ class JobRunner:
         running = sum(1 for lane in (PREPARE, RENDER) for j in self._lane_running_locked(lane) if j.kind == KIND_VERTICAL)
         return waiting + running
 
-    def _take_locked(self, lane: str) -> Job | None:
+    def _take_locked(self, lane: str, slot: str | None = None) -> Job | None:
         """Next job for ``lane`` (blocks); None when stopping. While the ai lane is down it waits until the next
         check time (``Condition.wait``, so ``stop()`` never waits it out), but an ``add`` job (CP9) never waits."""
         queue = self._queues[lane]
@@ -803,6 +840,15 @@ class JobRunner:
                     self._lock.wait(left)
                     continue
                 return self._pop(queue)
+            if lane == RENDER and queue:  # CP8.36: parallel render slots
+                job, load_wait = self._render_pick_locked(queue, slot is not None and slot != RENDER)
+                if job is not None:
+                    return job
+                if load_wait:
+                    self._lock.wait(self.load_check_seconds)
+                    continue
+                self._lock.wait()
+                continue
             if self._can_start(lane):
                 job = self._pop(queue, self._no_clash) if lane == PREPARE else self._pop(queue)
                 if job is not None:
@@ -832,7 +878,7 @@ class JobRunner:
             blocked: str | None = None
             paused_back = False
             with self._lock:
-                job = self._take_locked(lane)
+                job = self._take_locked(lane, slot)
                 if job is None:
                     return
                 job.pause_requeue = False
