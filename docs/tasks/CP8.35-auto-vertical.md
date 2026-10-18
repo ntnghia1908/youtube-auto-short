@@ -70,9 +70,9 @@ Chạm public API (field mới ở `POST /api/episodes`, cùng auth); không ch�
 
 ## Result
 
-- Main changes:
-- Tests:
+- Main changes: `POST /api/episodes` / `resume-prepared` nhận `vertical: bool`; ý muốn lưu `<workspace>/.web_auto_vertical.json` (module `web/auto_vertical.py`, như `.web_priority.json`, không nằm trong thư mục tập nên không tạo "tập mồ côi"); `_auto_vertical_check` chạy từ `runner.on_finished` (hook gộp `_on_episode_finished` = `_auto_post` rồi bản dọc, lỗi hook này không chặn hook kia) và từ `_hd_ready`; `jobs.py` không đổi. UI: ô "Bản dọc" ở `playlist.html` (`#pl-vertical-box`, khóa `vertical` trong `autoShort.plKinds`, thiếu = tick) và `index.html` (`#idx-vertical`, khóa mới `autoShort.idxVertical`); Xử lý / Xử lý lại / Chạy tiếp / Chạy tiếp cả bộ gửi `vertical`; entry bộ kinh có `vertical.auto_waiting` + dòng "bản dọc: sẽ tạo khi có HD".
+- Tests: `tests/test_web_auto_vertical_cp835.py` (AC 1–6); AC7 = toàn suite.
 - Review:
-- Important findings / decisions:
-- Known limitations:
+- Important findings / decisions: ý muốn lưu ở file trung tâm trong workspace dir thay vì trong thư mục video (thư mục chỉ chứa file này sẽ hiện là tập mồ côi ở danh sách dung lượng và chưa tồn tại lúc gửi video mới). Bản dọc chỉ xếp khi không còn job `pipeline` / `render` / `add` active của hai phần (Short, `.kt`) và đã có Short render; "enhance đang đợi HD" = `enhance.json` `wanted` + `pending` / `assembling` của Short hoặc `.kt`. Enhance `failed` thì không coi là đợi: dùng nguồn hiệu lực hiện có (gốc ≥ min_height) hoặc bỏ ý muốn.
+- Known limitations: ý muốn chỉ được kiểm tra khi job render kết thúc hoặc `_hd_ready`; HD ghép xong trong lúc server tắt thì ý muốn chờ tới sự kiện kế (render lại / bấm "Tạo bản dọc"). "Chạy tiếp" từng tập cũng gửi `vertical` theo ô (ngoài danh sách D2 nhưng cùng ý nghĩa). Không có bản dọc nếu HD tới sau bản dọc từ gốc (ngoài scope).
 - PR:

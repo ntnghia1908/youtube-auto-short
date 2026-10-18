@@ -107,6 +107,8 @@ never deleted. The "Đã đăng" checkbox marks Shorts you have uploaded (`work/
 input); a Short re-rendered after ticking shows "đã đăng bản cũ". Filters: Tất cả / Chưa đăng / Đã đăng on the
 episode page, Tất cả / Còn Short chưa đăng / Đã đăng hết on the episode list.
 
+Auto vertical (CP8.35): the "Bản dọc" box (ticked by default) next to "Xử lý" on the bộ kinh page and the single-video form also makes the vertical full-episode file by itself once the Shorts are rendered and the best HD source is ready (with enhance on, after the HD is assembled).
+
 Sequential download (CP8.34): on a bộ kinh page tick episodes, pick zip / vertical / HD, and "Tải lần lượt" downloads them one to three at a time (default 2, remembered); the server reports each `?dl=<token>` download at `/api/downloads/{token}`, failed files are retried twice. Keep the page open until it finishes.
 
 Downloads and exports (CP8.31): any zip ("Tải tất cả Short", "Tải tất cả khai thị", "Tải cả hai") ticks every Short
