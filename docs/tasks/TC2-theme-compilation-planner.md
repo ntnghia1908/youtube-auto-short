@@ -16,8 +16,8 @@
 - Owned paths: xem §Owned paths
 - Dependencies: TC1 + TC-WEB1 (merged PR #96, `a77f04a`); không dependency thư viện mới
 - Base commit / branch: `c7fd2ae` (authorization, con của `main` `d56d200`) / `feature/tc2-theme-plan`, worktree `/home/ntnghia/youtube-auto-short-tc2`
-- Human Lead approval: boundary inherited; G1 accepted 2026-10-18; G2–G4 pending
-- Implementation authorized: NO — chờ HUMAN LEAD quyết G2–G4 (decision gate API/security và eligibility)
+- Human Lead approval: boundary inherited; G1 accepted 2026-10-18; G2–G4 pending (decision gate API/security và eligibility — chưa authorize implementation)
+- Implementation authorized: NO
 
 Lifecycle: `boundary` mode = `DRAFT → IN_PROGRESS → READY`. Push / PR / merge / deploy cần HUMAN LEAD duyệt riêng.
 
