@@ -97,9 +97,12 @@ Tất cả required verification phải chạy và PASS trước READY.
 
 Chạm public API (route mới + tham số mới ở route tải, cùng auth); không chạm database, security model. Manual test trên điện thoại (8080 ghim commit nhánh) là gate trước integration.
 
-- [ ] Trên điện thoại: chọn 6 tập zip, cùng lúc 2 → luôn chỉ 2 file đang tải, đủ 6 file, mở được.
-- [ ] Tắt Wi-Fi giữa chừng một file → tự thử lại, rồi báo lỗi nếu vẫn mất mạng; bật lại → "Thử lại" được.
-- [ ] Bản dọc cả tập (file lớn) qua hàng đợi, cùng lúc 1.
+- [x] Trên điện thoại: chọn 6 tập zip, cùng lúc 2 → luôn chỉ 2 file đang tải, đủ 6 file, mở được.
+- [x] Tắt Wi-Fi giữa chừng một file → tự thử lại, rồi báo lỗi nếu vẫn mất mạng; bật lại → "Thử lại" được.
+- [x] Bản dọc cả tập (file lớn) qua hàng đợi, cùng lúc 1.
+- [x] A1: 4 bản dọc, cùng lúc 2 → đều xong. A2: giữ màn hình (trang http).
+
+HUMAN LEAD 2026-10-18: "CP8.34 đã ổn" (manual test trên điện thoại qua 8080 ghim `7164e15`).
 
 ## Result
 
@@ -113,4 +116,5 @@ Chạm public API (route mới + tham số mới ở route tải, cùng auth); k
 - Amendment A1: `TrackedResponse` nghe `receive()` song song (anyio task group) và huỷ response khi `http.disconnect` tới trước chunk cuối (cờ `final` đặt trước `await send(final)` nên disconnect do middleware báo sau khi xong không bị tính là abort); bảng token gộp khoảng byte của mọi request cùng token + số request đang chạy + cách kết thúc request cuối (`merge_interval`, `DownloadTable.begin/set_total/add_bytes/end/fail`); tổng không biết (zip) giữ luật một request. Một khúc Range kết thúc bình thường mà còn lỗ hổng, không còn request chạy → vẫn `sending` (chỉ `aborted` khi request cuối kết thúc bằng ngắt / lỗi, đúng chữ A1b). Log INFO `web: tải [token6…] <path> range=… đã gửi a/b byte -> done|partial|aborted (token: …)` ở logger `auto_short`. Trang: mỗi lần hỏi trạng thái có AbortController 10 s, `pollTargets/pollDone` trong `dlqueue.js` (mỗi item độc lập, không còn `Promise.all`). Test A1: `test_web_downloads_cp834.py` (silent-drop ASGI, disconnect cùng chunk cuối, Range mọi thứ tự, thiếu khúc → aborted → hồi phục, uvicorn thật trong thread, log), `test_dlqueue_cp834.py` (poll độc lập). Suite: 1887 passed, 1 skipped; framework-check PASS.
 - Amendment A2: dự phòng giữ màn hình khi không có Wake Lock (trang http). `static/keepawake.mp4` (1,7 KB) tạo bằng `ffmpeg -y -f lavfi -i color=c=0x020202:s=64x64:r=5 -t 3 -c:v libx264 -profile:v baseline -pix_fmt yuv420p -an -movflags +faststart keepawake.mp4`; `<video id="dq-awake" muted loop playsinline>` nhỏ (48 px) hiển thị khi hàng đợi chạy, `play()` gọi đồng bộ trong click "Tải lần lượt" / "Tiếp tục" (dqTick), dừng khi hết việc, thử lại khi trang hiện lại; chọn cách bằng hàm thuần `DownloadQueue.keepAwakeMode` (wakelock / video / none; `request` lỗi → video); cảnh báo `#dq-awake-warn` (A2b) hiện khi không có Wake Lock hoặc `play()` bị từ chối. Không đổi server, không đổi trang Đọc Kinh. Suite: 1889 passed, 1 skipped; framework-check PASS.
 - Known limitation (A2): trang Đọc Kinh có cùng vấn đề Wake Lock trên http (follow-up); HTTPS cho 8080 là task riêng; hiệu quả thật của video dự phòng chỉ kiểm bằng manual test điện thoại.
+- Log thật từ điện thoại (A1d, 2026-10-18): Chrome Android tải mỗi bản dọc bằng 3 request song song (`range=-`, `bytes=⅓-`, `bytes=⅔-`, mở cuối), huỷ từng khúc khi chạm khúc sau và có lúc mở lại khúc → đúng nghi vấn A1; gộp khoảng byte cho `done` đúng. Có lúc token `aborted` thoáng qua giữa hai request khúc (không còn request nào chạy trong tích tắc) → trang thử lại bằng token mới, tải trùng cùng file (follow-up nhỏ: chờ vài giây trước khi coi `aborted` là lỗi).
 - PR:
