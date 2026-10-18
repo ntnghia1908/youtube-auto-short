@@ -78,6 +78,7 @@ HUMAN LEAD giữ scope, architecture, dependency, project-wide conventions, inte
 - Được phép: `single-agent`, `dual-agent`.
 - Profile của từng task là source of truth; không suy đoán profile từ tool/model.
 - Tuỳ chọn `dual-agent` mặc định (adaptive, không có orchestrator cố định): Claude Code native (session chính Opus = ORCHESTRATOR, `.claude/agents/implementer` Sonnet = IMPLEMENTER) và Codex native worker (chỉ có tài liệu, chưa chạy thử runtime, không hard-code model ID). Copilot vẫn là tuỳ chọn IMPLEMENTER; `single-agent` vẫn được phép.
+- Danh sách IMPLEMENTER khi Claude Code là ORCHESTRATOR (HUMAN LEAD 2026-10-18): (1) `.claude/agents/implementer` (Sonnet); (2) **Codex CLI** `codex exec` chạy local trong worktree của task (adapter `codex`, vai trò `implementer`; cách gọi ở `.claude/rules/execution.md`). ORCHESTRATOR chọn một trong hai lúc viết contract, ghi `Implementer: <adapter> — <lý do>`; vẫn một writer mỗi lúc. Gợi ý: Codex cho phần việc tự chứa, spec rõ, để tiết kiệm token ORCHESTRATOR; Sonnet khi cần bám nhiều quy ước / ngữ cảnh repo. Trạng thái Codex: sandbox `workspace-write` chạy được trên VM từ 2026-10-18 (yêu cầu ở §8); task thật đầu tiên là pilot, ghi evidence vào Result của task đó.
 - Governance `boundary/3`: task mới vẫn cần Implementation Authorization Boundary đã được HUMAN LEAD duyệt và ghi trong task contract; số writer thực tế là 1 cho tới khi có pilot worktree-isolation được duyệt riêng.
 - Profile và Implementer của task đã có không bị đổi hồi tố. Validate task legacy và ghi chú migration: `docs/ai/framework-migration-notes.md` (canonical owner).
 
@@ -88,6 +89,8 @@ Runtime, packaging, dependency được duyệt và giả định GPU/Ollama: xe
 Cài đặt môi trường (conda env `auto-short`, `pip install -e ".[dev]"`, `config.toml`, `ffmpeg`) và cách chạy CLI: xem `README.md` (Setup / Usage).
 
 Framework checker: `node scripts/framework-check.mjs`.
+
+Codex CLI (IMPLEMENTER): sandbox `workspace-write` cần `bubblewrap` hệ thống + AppArmor profile `/etc/apparmor.d/bwrap` cho phép `userns` (Ubuntu 24.04 bật `kernel.apparmor_restrict_unprivileged_userns`; bwrap đóng gói của Codex báo `RTM_NEWADDR` / `uid map` lỗi). Đã cài trên VM 2026-10-18 (sudo, HUMAN LEAD). Kiểm: `codex exec --skip-git-repo-check -s workspace-write "echo sandbox-ok"`. Không chạy Codex với `danger-full-access`.
 
 ### Test policy
 
