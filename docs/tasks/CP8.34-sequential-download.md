@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: READY
+- Status: IN_PROGRESS (Amendment A2)
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -55,6 +55,21 @@ AC bổ sung:
 8. Trên uvicorn thật (test chạy server thật hoặc giả lập `send` không raise + `receive` trả `http.disconnect`): ngắt giữa chừng → `aborted`, byte < tổng; tải trọn → `done`.
 9. Nhiều request Range cùng token, tới theo thứ tự bất kỳ (gồm khúc giữa có giới hạn cuối tới sau cùng), phủ hết file → `done`; thiếu một khúc và không còn request chạy → `aborted`.
 10. Một lần hỏi trạng thái treo không làm hàng đợi đứng (test hàm thuần / JS nếu tách được).
+
+## Amendment A2 (2026-10-18, HUMAN LEAD APPROVED: "thực thi cách 2")
+
+Manual test: màn hình điện thoại vẫn tự tắt khi hàng đợi chạy. Nguyên nhân: Wake Lock API chỉ có trong secure context (HTTPS / `localhost`); 8080 mở bằng `http://10.8.102.102:8080` → `navigator.wakeLock` không có, trang im lặng bỏ qua. Màn hình tắt → Chrome đóng băng trang → hàng đợi không bắt đầu file mới (file đang tải vẫn tải trong trình quản lý tải). HUMAN LEAD đã bật cờ Chrome `unsafely-treat-insecure-origin-as-secure` cho địa chỉ 8080 (cách tạm, phải sửa khi IP đổi).
+
+- **A2a Dự phòng giữ màn hình.** Không có Wake Lock (hoặc `request` lỗi) → khi hàng đợi chạy, trang phát một video rất nhỏ (file tĩnh mới, vài KB, H.264, không tiếng, vài giây, `muted` `loop` `playsinline`, đặt hiển thị nhỏ trong khung "Tải lần lượt" — không `display:none`), bắt đầu từ cú bấm "Tải lần lượt" / "Tiếp tục" (cần cử chỉ người dùng để `play()`); dừng khi hàng đợi hết việc. Trang quay lại (visibilitychange) → thử lại Wake Lock hoặc `play()`.
+- **A2b Cảnh báo.** Khi không có Wake Lock, khung "Tải lần lượt" hiện dòng cảnh báo rõ: trang không phải HTTPS nên trình duyệt có thể không giữ màn hình sáng; đang thử cách dự phòng; nếu màn hình vẫn tắt thì chỉnh thời gian tắt màn hình của máy hoặc bật lại màn hình để hàng đợi chạy tiếp. Khi có Wake Lock, không hiện.
+- Không đổi server, không đổi trang Đọc Kinh (cùng vấn đề, ghi Known limitation / follow-up). HTTPS cho 8080: out of scope (task riêng).
+
+AC bổ sung:
+
+11. Không có `navigator.wakeLock` → hàng đợi chạy thì video dự phòng phát (`muted`, `loop`, `playsinline`), hết việc thì dừng; có Wake Lock → không dùng video. (Test hàm thuần / kiểm tra trang tĩnh; hiệu quả thật kiểm bằng manual test điện thoại.)
+12. Cảnh báo A2b hiện đúng khi không có Wake Lock.
+
+Manual test bổ sung: tắt cờ Chrome, chạy hàng đợi, để yên điện thoại quá thời gian tắt màn hình → màn hình còn sáng (nếu không: ghi kết quả, giữ cảnh báo).
 
 ## Scope
 
