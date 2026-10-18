@@ -34,8 +34,8 @@ class Fake:
     def chat(self, **kwargs):
         self.calls.append(kwargs)
         evidence = json.loads(kwargs['messages'][1]['content'])['evidence']
-        ref = {k: evidence[0][k] for k in ('evidence_id', 'text')}
-        doc = dict(topic='Tu học', subtopic='Chuyên tâm', synopsis=ref, key_messages=[ref], uncertainty=[])
+        sid = evidence[0]['evidence_id']
+        doc = dict(topic='Tu học', subtopic='Chuyên tâm', synopsis=[sid], key_messages=[sid], uncertainty=[])
         if self.bad:
             self.bad(doc)
         return ChatResult(json.dumps(doc, ensure_ascii=False))
@@ -154,7 +154,7 @@ def test_invalidation(episode, field):
     if field == 'model':
         cfg = replace(cfg, selection=replace(cfg.selection, model='different-model'))
     elif field == 'prompt':
-        kwargs['prompt_version'] = 'tc1-v2'
+        kwargs['prompt_version'] = 'tc1-future'
     elif field == 'transcript':
         path = ws.dir / 'transcript.json'
         change(path, lambda d: d['segments'][1].update(text='Lời tu học đã sửa.'))
@@ -172,12 +172,108 @@ def test_invalidation(episode, field):
 
 
 @pytest.mark.parametrize('bad', [lambda d: d.update(quote='invented'),
-    lambda d: d['synopsis'].update(text='invented'), lambda d: d['key_messages'][0].update(evidence_id='outside'),
-    lambda d: d.update(topic='“invented speech”'), lambda d: d.update(uncertainty='unknown')])
-def test_hallucination_rejected(episode, bad):
+    lambda d: d.update(synopsis=[{'evidence_id': 's1', 'text': 'invented'}]),
+    lambda d: d.update(synopsis='s1'), lambda d: d.update(synopsis=None),
+    lambda d: d.update(synopsis=['s1'] * 3), lambda d: d.update(key_messages=['s1'] * 9),
+    lambda d: d.update(key_messages=[1]), lambda d: d.update(key_messages=None),
+    lambda d: d.update(topic=123), lambda d: d.update(topic='“invented speech”'),
+    lambda d: d.update(topic='a\nb'), lambda d: d.update(subtopic='a\rb'),
+    lambda d: d.update(topic='x' * 121), lambda d: d.update(uncertainty='unknown')])
+def test_malformed_metadata_rejected(episode, bad):
     cfg, *_ = episode
     record = build_index(cfg, 'PLtest', client=Fake(bad))['records'][0]
     assert record['status'] == 'ai_error'
+
+
+def test_id_only_output_is_resolved_verbatim_and_options_recorded(episode):
+    cfg, ws, *_ = episode
+    text = '  Phải chuyên tâm tu học, giữ nguyên dấu câu!\nKhông tự viết lại.  '
+    change(ws.dir / 'transcript.json', lambda d: d['segments'][1].update(text=text))
+    transcript = json.loads((ws.dir / 'transcript.json').read_text())
+    digest = hashing.config_hash(transcript['segments'])
+    change(ws.dir / 'transcript.json', lambda d: d.update(transcript_sha256=digest))
+    change(ws.dir / 'candidates.json', lambda d: d.update(transcript_sha256=digest))
+    candidates = json.loads((ws.dir / 'candidates.json').read_text())
+    out = cfg.render.output_dir / ws.episode_id
+    change(out / 'render_manifest.json', lambda d: d.update(candidates_sha256=hashing.config_hash(candidates)))
+    fake = Fake()
+    record = build_index(cfg, 'PLtest', client=fake)['records'][0]
+    assert record['status'] == 'indexed'
+    ref = {'evidence_id': 's1', 'text': text}
+    assert record['metadata']['synopsis'] == ref
+    assert record['metadata']['key_messages'] == [ref]
+    assert record['metadata']['uncertainty'] == []
+    call = fake.calls[0]
+    assert call['options']['num_predict'] == tc1.NUM_PREDICT == 8192
+    assert record['provenance']['options'] == call['options']
+    assert record['provenance']['prompt_version'] == 'tc1-v2'
+    assert call['format']['properties']['synopsis']['items'] == {'type': 'string'}
+    assert call['format']['properties']['key_messages']['maxItems'] == 8
+
+
+@pytest.mark.parametrize('synopsis,messages,expected_synopsis,expected_messages', [
+    (['outside', 's1'], ['s1', 'outside'], 's1', ['s1']),
+    (['s1', 's1'], ['s1', 's1'], 's1', ['s1']),
+    (['outside'], ['outside'], None, []),
+    ([], ['s1'], None, ['s1']),
+])
+def test_unknown_and_duplicate_ids_are_dropped_with_uncertainty(
+        episode, synopsis, messages, expected_synopsis, expected_messages):
+    cfg, *_ = episode
+    fake = Fake(lambda d: d.update(synopsis=synopsis, key_messages=messages))
+    record = build_index(cfg, 'PLtest', client=fake)['records'][0]
+    assert record['status'] == 'indexed'
+    meta = record['metadata']
+    assert (meta['synopsis']['evidence_id'] if meta['synopsis'] else None) == expected_synopsis
+    assert [r['evidence_id'] for r in meta['key_messages']] == expected_messages
+    assert meta['uncertainty'] == ['missing_metadata']
+    assert build_index(cfg, 'PLtest', client=fake)['records'][0]['cached']
+    assert len(fake.calls) == 1
+
+
+@pytest.mark.parametrize('field', ['topic', 'subtopic', 'synopsis', 'key_messages'])
+@pytest.mark.parametrize('absent', [False, True])
+def test_missing_metadata_is_indexed(episode, field, absent):
+    def missing(doc):
+        if absent:
+            doc.pop(field)
+        else:
+            doc[field] = None if field in ('topic', 'subtopic') else []
+        doc['uncertainty'] = ['uncertain_topic']
+    fake = Fake(missing)
+    record = build_index(episode[0], 'PLtest', client=fake)['records'][0]
+    assert record['status'] == 'indexed'
+    assert not record['metadata'][field]
+    assert record['metadata']['uncertainty'] == ['uncertain_topic', 'missing_metadata']
+    assert build_index(episode[0], 'PLtest', client=fake)['records'][0]['cached']
+    assert len(fake.calls) == 1
+
+
+def test_null_subtopic_adds_missing_metadata_without_model_uncertainty(episode):
+    record = build_index(episode[0], 'PLtest', client=Fake(lambda d: d.update(subtopic=None)))['records'][0]
+    assert record['status'] == 'indexed'
+    assert record['metadata']['subtopic'] is None
+    assert record['metadata']['uncertainty'] == ['missing_metadata']
+
+
+def test_two_synopsis_ids_keep_first_valid_ref_for_existing_consumers():
+    evidence = [{'evidence_id': sid, 'text': text} for sid, text in
+                [('s1', 'Câu chính thứ nhất.'), ('s2', 'Câu chính thứ hai.')]]
+    metadata = validate_metadata(dict(topic='Tu học', subtopic='Thực hành', synopsis=['s2', 's1'],
+                                      key_messages=['s1', 's2'], uncertainty=[]), evidence)
+    assert metadata['synopsis'] == {'evidence_id': 's2', 'text': 'Câu chính thứ hai.'}
+    assert metadata['key_messages'] == evidence
+    assert metadata['uncertainty'] == []
+
+
+def test_num_predict_change_invalidates_index_cache(episode, monkeypatch):
+    fake = Fake()
+    first = build_index(episode[0], 'PLtest', client=fake)['records'][0]
+    monkeypatch.setattr(tc1, 'NUM_PREDICT', 4096)
+    second = build_index(episode[0], 'PLtest', client=fake)['records'][0]
+    assert second['status'] == 'indexed' and not second['cached']
+    assert first['input_fingerprint'] != second['input_fingerprint']
+    assert fake.calls[1]['options']['num_predict'] == second['provenance']['options']['num_predict'] == 4096
 
 
 def test_unheart_and_watched_do_not_approve(episode):

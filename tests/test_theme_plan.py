@@ -77,9 +77,13 @@ def test_proposal_basic_and_truncated_to_max(multi):
     c = p['clips'][0]
     assert c['render_sha256'] and c['input_fingerprint'] and c['topic'] == 'Tu học' and c['synopsis']
     saved = json.loads((tp._folder(cfg, 'PLtest') / 'theme_proposals.json').read_text())
-    assert saved['proposals'][0]['proposal_id'] == p['proposal_id'] and saved['provenance']['prompt_version'] == 'tc2-v1'
+    assert saved['proposals'][0]['proposal_id'] == p['proposal_id'] and saved['provenance']['prompt_version'] == 'tc2-v2'
+    assert fake.plan_calls[0]['options']['num_predict'] == tp.NUM_PREDICT == 8192
+    assert saved['provenance']['options'] == fake.plan_calls[0]['options']
     prompt = json.loads(fake.plan_calls[0]['messages'][1]['content'])
     assert {x['id'] for x in prompt['clips']} == set(ids(8))
+    assert prompt['clips'][0]['synopsis'] == c['synopsis'] == 'Phải chuyên tâm tu học.'
+    assert prompt['clips'][0]['key_messages'] == ['Phải chuyên tâm tu học.']
 
 
 def test_short_proposal_reports_shortfall(multi):

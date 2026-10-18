@@ -38,8 +38,8 @@ class FakeClient:
     def chat(self, **kwargs):
         self.calls.append(kwargs)
         evidence = json.loads(kwargs["messages"][1]["content"])["evidence"]
-        ref = {k: evidence[0][k] for k in ("evidence_id", "text")}
-        doc = dict(topic="Tu học (giả lập)", subtopic="Chuyên tâm (giả lập)", synopsis=ref, key_messages=[ref],
+        sid = evidence[0]["evidence_id"]
+        doc = dict(topic="Tu học (giả lập)", subtopic="Chuyên tâm (giả lập)", synopsis=[sid], key_messages=[sid],
                    uncertainty=[])
         return ChatResult(json.dumps(doc, ensure_ascii=False))
 
