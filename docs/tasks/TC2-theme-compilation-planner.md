@@ -16,7 +16,7 @@
 - Owned paths: xem §Owned paths
 - Dependencies: TC1 + TC-WEB1 (merged PR #96, `a77f04a`); không dependency thư viện mới
 - Base commit / branch: `c7fd2ae` (authorization, con của `main` `d56d200`) / `feature/tc2-theme-plan`, worktree `/home/ntnghia/youtube-auto-short-tc2`
-- Human Lead approval: boundary inherited; G1, G2, G4 accepted 2026-10-18; G3 (HTTP API/UI) pending — phase A/B không chạm web
+- Human Lead approval: boundary inherited; G1, G2, G3, G4 accepted 2026-10-18
 - Implementation authorized: YES
 
 Lifecycle: `boundary` mode = `DRAFT → IN_PROGRESS → READY`. Push / PR / merge / deploy cần HUMAN LEAD duyệt riêng.
@@ -54,7 +54,7 @@ Trên một bộ kinh, HUMAN LEAD bấm một nút để (1) sinh / cập nhật
 - **G2 — ACCEPTED 2026-10-18 (HUMAN LEAD: “Tải lại file nguồn nếu cần”): phương án A**; TC3 tải lại nguồn theo CP8.32 (`render/full.fetch_original`) khi render. Bối cảnh: Audit 240–420: vẫn 0 eligible vì `work/<ep>.kt/source.mp4` đã bị xoá (27/40 workspace khai thị không còn source lẫn HD). TC2 chỉ cần văn bản; TC3 mới cần video.
   - A (đề xuất): eligible cho index/plan nếu `manifest.source.sha256` = `transcript.media_sha256`, `render_manifest.source_sha256` khớp source gốc hoặc `enhance.json source_hd_sha256` đã ghi, mọi artifact văn bản còn và khớp; file còn thì vẫn hash như cũ. Record ghi `source_status: present | missing`; trang hiển thị; TC3 phải khôi phục (CP8.32) và kiểm hash / timing, không khớp thì fail closed.
   - B: giữ nguyên — clip mất nguồn không eligible (hiện 0 clip dùng được).
-- **G3 — PENDING: HTTP API / UI.** HUMAN LEAD 2026-10-18: không muốn trang riêng cho TC2 → đề xuất đặt mục “Ghép theo chủ đề (AI)” trong trang Yêu thích hiện có; routes dưới đây chờ duyệt, implement ở phase C (authorization §4 tách riêng). Đề xuất, sau auth middleware hiện có, JSON, không media, không route ghi file ngoài `output/_compilations/<pid>/`:
+- **G3 — ACCEPTED 2026-10-18 (HUMAN LEAD “duyệt UI”):** không trang riêng; mục “Ghép theo chủ đề (AI)” trong trang Yêu thích hiện có: AI gợi ý (job làn `ai`) → dùng chủ đề → sắp / bỏ / thêm clip → duyệt (tick khi ngoài 30–40 phút) → xuất video ngang (job làn `render`, TC3) → tải về + copy mô tả; plan đổi dữ liệu → “cần xem lại”. Routes JSON sau auth hiện có + một route tải file như video ghép CP8.33; implement ở phase C (authorization §4 tách riêng). Đề xuất, sau auth middleware hiện có, JSON, không media, không route ghi file ngoài `output/_compilations/<pid>/`:
   - `GET /playlists/{pid}/theme-plan` — trang.
   - `GET /api/playlists/{pid}/theme-plan` — trạng thái job, tóm tắt index (đếm theo status, `source_status`), proposals, plans kèm kết quả kiểm stale.
   - `POST /api/playlists/{pid}/theme-plan/generate` — xếp job làn `ai`: `build_index(write=True)` rồi đề xuất; 202, job đang có thì 200.
@@ -75,7 +75,7 @@ Trên một bộ kinh, HUMAN LEAD bấm một nút để (1) sinh / cập nhật
 
 - **A (authorized, đang làm):** TC1 A1 + G2; module `src/auto_short/theme_plan/` (propose / plan store / edit / approve / stale) + tests. Không chạm web.
 - **B (authorized):** TC3 renderer — contract riêng `docs/tasks/TC3-landscape-renderer.md` sau khi A READY.
-- **C (chờ G3):** web — job làn `ai`, routes, mục UI trong trang Yêu thích.
+- **C (authorized, sau TC3):** web — job làn `ai`, routes, mục UI trong trang Yêu thích.
 
 Owned paths phase A: `src/auto_short/theme_index/__init__.py`, `src/auto_short/theme_plan/`, `tests/test_theme_index.py`, `tests/test_web_theme_index.py` (chỉ biên thời lượng), `tests/test_theme_plan*.py`, contract này.
 
