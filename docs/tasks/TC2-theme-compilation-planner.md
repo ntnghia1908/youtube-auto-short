@@ -16,8 +16,8 @@
 - Owned paths: xem §Owned paths
 - Dependencies: TC1 + TC-WEB1 (merged PR #96, `a77f04a`); không dependency thư viện mới
 - Base commit / branch: `c7fd2ae` (authorization, con của `main` `d56d200`) / `feature/tc2-theme-plan`, worktree `/home/ntnghia/youtube-auto-short-tc2`
-- Human Lead approval: boundary inherited; G1 accepted 2026-10-18; G2–G4 pending (decision gate API/security và eligibility — chưa authorize implementation)
-- Implementation authorized: NO
+- Human Lead approval: boundary inherited; G1, G2, G4 accepted 2026-10-18; G3 (HTTP API/UI) pending — phase A/B không chạm web
+- Implementation authorized: YES
 
 Lifecycle: `boundary` mode = `DRAFT → IN_PROGRESS → READY`. Push / PR / merge / deploy cần HUMAN LEAD duyệt riêng.
 
@@ -51,10 +51,10 @@ Trên một bộ kinh, HUMAN LEAD bấm một nút để (1) sinh / cập nhật
 
 - Boundary: `docs/decisions/TC1-TC3-implementation-authorization.md` §2, §4, §6. Media: CP8.9, CP5, CP7, CP8.3; CP8.33 (favorites, `output/_compilations/<pid>/`); TC1 / TC-WEB1 contracts.
 - **G1 — ACCEPTED 2026-10-18:** khoảng 240–420 s (HUMAN LEAD “duyệt 240–420”). Lý do: audit read-only 3 bộ kinh — 31 khai thị yêu thích đều 242–297 s, 0 clip ≥ 300 s.
-- **G2 — PENDING: file nguồn đã xoá.** Audit 240–420: vẫn 0 eligible vì `work/<ep>.kt/source.mp4` đã bị xoá (27/40 workspace khai thị không còn source lẫn HD). TC2 chỉ cần văn bản; TC3 mới cần video.
+- **G2 — ACCEPTED 2026-10-18 (HUMAN LEAD: “Tải lại file nguồn nếu cần”): phương án A**; TC3 tải lại nguồn theo CP8.32 (`render/full.fetch_original`) khi render. Bối cảnh: Audit 240–420: vẫn 0 eligible vì `work/<ep>.kt/source.mp4` đã bị xoá (27/40 workspace khai thị không còn source lẫn HD). TC2 chỉ cần văn bản; TC3 mới cần video.
   - A (đề xuất): eligible cho index/plan nếu `manifest.source.sha256` = `transcript.media_sha256`, `render_manifest.source_sha256` khớp source gốc hoặc `enhance.json source_hd_sha256` đã ghi, mọi artifact văn bản còn và khớp; file còn thì vẫn hash như cũ. Record ghi `source_status: present | missing`; trang hiển thị; TC3 phải khôi phục (CP8.32) và kiểm hash / timing, không khớp thì fail closed.
   - B: giữ nguyên — clip mất nguồn không eligible (hiện 0 clip dùng được).
-- **G3 — PENDING: HTTP API / trang mới** (authorization §4 tách riêng). Đề xuất, sau auth middleware hiện có, JSON, không media, không route ghi file ngoài `output/_compilations/<pid>/`:
+- **G3 — PENDING: HTTP API / UI.** HUMAN LEAD 2026-10-18: không muốn trang riêng cho TC2 → đề xuất đặt mục “Ghép theo chủ đề (AI)” trong trang Yêu thích hiện có; routes dưới đây chờ duyệt, implement ở phase C (authorization §4 tách riêng). Đề xuất, sau auth middleware hiện có, JSON, không media, không route ghi file ngoài `output/_compilations/<pid>/`:
   - `GET /playlists/{pid}/theme-plan` — trang.
   - `GET /api/playlists/{pid}/theme-plan` — trạng thái job, tóm tắt index (đếm theo status, `source_status`), proposals, plans kèm kết quả kiểm stale.
   - `POST /api/playlists/{pid}/theme-plan/generate` — xếp job làn `ai`: `build_index(write=True)` rồi đề xuất; 202, job đang có thì 200.
@@ -63,13 +63,21 @@ Trên một bộ kinh, HUMAN LEAD bấm một nút để (1) sinh / cập nhật
   - `POST /api/playlists/{pid}/theme-plans/{plan_id}/approve` `{revision}` — duyệt; stale / invalid / lệch revision 409.
   - `DELETE /api/playlists/{pid}/theme-plans/{plan_id}`.
   - Lỗi 404 / 422 theo kiểu TC-WEB1; redaction đường dẫn tuyệt đối dùng lại `web/theme_index.py`.
-- **G4 — PENDING: thời lượng khi duyệt.** A (đề xuất): đề xuất AI chỉ là "đủ" khi 30–40 phút (thiếu thì ghi rõ thiếu bao nhiêu phút); HUMAN LEAD vẫn được duyệt plan ngoài 30–40 phút sau khi tick xác nhận cảnh báo (`duration_override: true` ghi trong plan). B: chặn cứng — chỉ duyệt khi 30–40 phút.
+- **G4 — ACCEPTED 2026-10-18: phương án A (cảnh báo, cho duyệt với `duration_override`).** A (đề xuất): đề xuất AI chỉ là "đủ" khi 30–40 phút (thiếu thì ghi rõ thiếu bao nhiêu phút); HUMAN LEAD vẫn được duyệt plan ngoài 30–40 phút sau khi tick xác nhận cảnh báo (`duration_override: true` ghi trong plan). B: chặn cứng — chỉ duyệt khi 30–40 phút.
 - Quyết định cục bộ S1 (ORCHESTRATOR):
   - Artifact: `output/_compilations/<pid>/theme_proposals.json` (lần đề xuất mới nhất) và `theme_plans/<plan_id>.json`, ghi atomic; `schema_version: 1`. Không đụng `<cid>.json` / `favorites.json` của CP8.33.
   - Plan chứa: `plan_id`, `revision`, `title`, `theme` (label + rationale), `clips` theo thứ tự (identity, episode/clip label, duration, `input_fingerprint`, `render_sha256`, `source_reference` tương đối, `source_status`, evidence id/synopsis), `total_duration`, `proposal` gốc + provenance (model/prompt), `created_at` / `updated_at`, `approval: null | {revision, plan_fingerprint, approved_at, duration_override}`.
   - Stale: mỗi lần đọc, TC1 re-audit (cache, `RefusingClient`, không ghi); một clip không còn `indexed` hoặc `input_fingerprint` / `render_sha256` đổi → plan `stale`, approval bị coi là vô hiệu (giữ dữ liệu cũ để xem, không cho TC3 dùng). Sửa plan → revision + 1, approval = null.
   - AI chỉ chọn trong record `indexed`: output schema strict (nhãn chủ đề ≤ 120 ký tự, không ngoặc kép / xuống dòng như TC1; rationale ngắn mô tả, không trích dẫn; `clip_ids` phải là id thật, không trùng); vi phạm → loại đề xuất đó, ghi lý do. Thời lượng và cắt về ≤ 40 phút làm bằng code, không tin AI. Một clip có thể xuất hiện ở nhiều đề xuất khác nhau, không trùng trong cùng plan.
   - Job: key `theme:<pid>`, chạy làn `ai` qua `lane_steps()`; Ollama không trả lời thì dùng cơ chế chờ GPU hiện có; không `rebuild` sau restart (bị bỏ qua có log). Kind string định nghĩa trong module mới, không sửa `jobs.py`.
+
+## Phases (outcome-driven, HUMAN LEAD 2026-10-18)
+
+- **A (authorized, đang làm):** TC1 A1 + G2; module `src/auto_short/theme_plan/` (propose / plan store / edit / approve / stale) + tests. Không chạm web.
+- **B (authorized):** TC3 renderer — contract riêng `docs/tasks/TC3-landscape-renderer.md` sau khi A READY.
+- **C (chờ G3):** web — job làn `ai`, routes, mục UI trong trang Yêu thích.
+
+Owned paths phase A: `src/auto_short/theme_index/__init__.py`, `src/auto_short/theme_plan/`, `tests/test_theme_index.py`, `tests/test_web_theme_index.py` (chỉ biên thời lượng), `tests/test_theme_plan*.py`, contract này.
 
 ## Implementation approach
 
