@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kiểm tra chỉ mục chủ đề — Auto Short</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/">&larr; Auto Short</a>
+  <nav class="topnav"><form method="post" action="/logout"><button class="btn link" type="submit">Đăng xuất</button></form></nav>
+</header>
+<main class="container">
+  <section class="card">
+    <h2>Kiểm tra chỉ mục chủ đề (TC1)</h2>
+    <p class="small"><strong>Dữ liệu kiểm thử tổng hợp; metadata giả lập; chưa đánh giá độ đúng chủ đề của AI thật.</strong>
+      Trang chỉ đọc: không sinh metadata, không tạo / phát / tải video, không lưu duyệt.</p>
+    <p id="ti-mode" class="small muted"></p>
+    <div class="actions"><button id="ti-refresh" class="btn small" type="button">Kiểm tra lại</button>
+      <span id="ti-checked" class="small muted"></span></div>
+    <p id="ti-msg" class="small" hidden></p>
+    <p id="ti-counts" class="small"></p>
+  </section>
+  <section class="card">
+    <h3>Các mục yêu thích (<span id="ti-total">0</span>)</h3>
+    <ul id="ti-list"><li class="muted">Đang tải…</li></ul>
+  </section>
+</main>
+<script src="/static/theme_index.js"></script>
+</body>
+</html>
