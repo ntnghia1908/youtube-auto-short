@@ -82,7 +82,7 @@ def test_two_videos_render_at_once_when_idle(mk):  # AC1
         r.submit(n, KIND_RENDER, g[n])
     wait_for(lambda: len(log) == 2)
     settle()
-    assert log == ["a", "b"] and set(r.running_slots()) == {"render", "render#1"}
+    assert sorted(log) == ["a", "b"] and set(r.running_slots()) == {"render", "render#1"}
     assert r.queue_state()["running"] == 2
     assert r.monitor_queue()["lanes"]["render"]["workers"] == 2
     assert len(r.monitor_queue()["lanes"]["render"]["running_all"]) == 2
@@ -136,7 +136,7 @@ def test_same_video_never_overlaps(mk, first, second, fid, sid):  # AC3
     r.submit("other", KIND_RENDER, g["z"])
     wait_for(lambda: len(log) == 2)
     settle()
-    assert log == ["x", "z"]  # y waits for its video, the next video runs
+    assert sorted(log) == ["x", "z"]  # y waits for its video, the next video runs
     g["x"].gate.set()
     wait_for(lambda: "y" in log)
     release(g)
@@ -199,10 +199,10 @@ def test_order_priority_and_pause_with_two_slots(mk):  # AC6
     r.pause("after")
     release({"a": g["a"], "b": g["b"]})
     settle()
-    assert log == ["a", "b"]  # paused: nothing new
+    assert sorted(log) == ["a", "b"]  # paused: nothing new
     r.resume()
     wait_for(lambda: len(log) == 4)
-    assert log[2:] == ["d", "c"]  # priority first, then arrival
+    assert sorted(log[2:]) == ["c", "d"]  # both free slots take the two waiting non-vertical jobs (v stays last)
     release(g)
     assert r.wait_idle(10)
     assert log[4] == "v"
@@ -211,9 +211,11 @@ def test_order_priority_and_pause_with_two_slots(mk):  # AC6
 def test_vertical_is_last_even_with_a_free_slot(mk):
     r = mk(cpu_source=Load(0.0))
     log, g = gates("v", "a", "b")
+    r.pause("after")  # hold the slots until all three are queued (V1 orders only jobs queued together)
     r.submit("v", KIND_VERTICAL, g["v"])
     r.submit("a", KIND_RENDER, g["a"])
     r.submit("b", KIND_RENDER, g["b"])
+    r.resume()
     wait_for(lambda: len(log) == 2)
     assert set(log) == {"a", "b"}
     release(g)

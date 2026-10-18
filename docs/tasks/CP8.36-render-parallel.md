@@ -88,3 +88,7 @@ Không chạm public API, database, security model; đổi mô hình hàng đợ
 - Main changes: the load-average gate is replaced by CPU busy fraction. `web/jobs.py` — `CpuAverage` (sliding ~60 s window of `/proc/stat` samples, formula of the CP8.28 monitor via `monitor.read_cpu_times`; `None` until the samples span >= 30 s or when unreadable = busy); a daemon thread `auto-short-cpu` samples every 5 s (only when `render_workers` > 1 and no injected source) and wakes the render slots; `JobRunner(render_max_cpu, cpu_source)` replaces `render_max_load` / `load_source` / `cpu_count`; extra slot starts only while `cpu_source() < render_max_cpu`. `config.py` — `[web] render_max_cpu` (0 < x <= 1, default 0.6); a leftover `render_max_load` key raises `ConfigError` ("replaced by web.render_max_cpu") — chosen over a warning so a stale setting is never silently ignored. README, `config.example.toml`, CP8.3 W5 / config table updated. `stop()` untouched.
 - Tests: `tests/test_web_render_slots_cp836.py` 16 tests (AC 2 on the CPU fraction, unreadable = busy, `CpuAverage` over fake `/proc/stat`, config validation incl. the old key). Full-suite numbers: see the READY report.
 
+
+### Result — test-only follow-up
+
+- `test_vertical_is_last_even_with_a_free_slot` raced (an idle slot could take `v` before `a` / `b` were queued): the queue is now paused until all three are queued, then resumed. Other tests compared the start order of jobs that two slots start concurrently; those assertions now compare sorted lists. No runner change.
