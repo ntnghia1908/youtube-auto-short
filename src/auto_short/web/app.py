@@ -75,10 +75,11 @@ from . import downloads as dl_mod
 from . import monitor as monitor_mod
 from .auth import COOKIE_NAME, SessionSigner, load_or_create_secret
 from .storage import BLOCK_MESSAGE, StorageCache, auto_archive_plan, episode_sizes, video_id
-from .jobs import (KIND_ADD, KIND_COMPILATION, KIND_ENHANCE, KIND_IMAGE_SEARCH, KIND_PIPELINE, KIND_POST, KIND_POST_SEARCH, KIND_RENDER, KIND_VERTICAL,
+from .jobs import (EPISODE_KINDS, KIND_ADD, KIND_COMPILATION, KIND_ENHANCE, KIND_IMAGE_SEARCH, KIND_PIPELINE, KIND_POST, KIND_POST_SEARCH, KIND_RENDER, KIND_VERTICAL,
                    POST_IMAGES_KEY, JobRunner, add_short_target, enhance_assemble_target, image_search_target, keyword_search_target,
                    pipeline_target, post_compose_target, render_target, vertical_target)
 from . import playlists as playlists_mod
+from .auto_vertical import WISH_FILE, AutoVertical
 from .priority import PRIORITY_FILE
 from .playlists import LIST_TIMEOUT, PlaylistError, PlaylistStore, ytdlp_list
 from .urls import ASK, PLAYLIST, UrlError, canonical_url, classify_url, valid_playlist_id
@@ -109,6 +110,8 @@ class SubmitIn(BaseModel):
     kinds: Any = None
     min_minutes: Any = None
     max_minutes: Any = None
+    # CP8.35 D3: also make the vertical full-episode version once the Shorts and the best HD source are ready
+    vertical: bool = False
 
 
 class ResumeAllIn(BaseModel):
@@ -116,6 +119,7 @@ class ResumeAllIn(BaseModel):
 
     min_minutes: Any = None
     max_minutes: Any = None
+    vertical: bool = False  # CP8.35 D2: also the vertical full-episode version of each episode
 
 
 class EnhanceLeaseIn(BaseModel):
@@ -374,6 +378,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     # Serialises "no active job for the episode?" + review.json write + job submit (W5: no title write while a
     # pipeline / render job of the episode is queued or running).
     submit_lock = threading.Lock()
+    auto_vertical = AutoVertical()  # CP8.35 D3: videos whose vertical full-episode version is made by itself
     publish_lock = threading.Lock()  # publish.json read-modify-write (no job check: allowed while a job runs)
     post_lock = threading.Lock()  # posts.json read-modify-write (CP8.15 P7: allowed even while a job runs)
     signer = SessionSigner(secret if secret is not None else load_or_create_secret(Path(config.workspace.dir)),
@@ -406,6 +411,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         """The HD source of the video is ready: its parts leave "đợi HD" / re-render (E6)."""
         for part in enh_state.video_parts(config, eid):
             _release_hd(part)
+        _auto_vertical_check(eid)  # CP8.35 D4
 
     def _hd_published(eid: str, rm: dict | None) -> bool:
         """Is any rendered Short of the episode ticked "Đã đăng" for its current file? (then no auto re-render)"""
@@ -494,6 +500,40 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         return vertical_target(config, vertical=vertical, episode_id=owner, downloader=vertical_downloader,
                                disk_blocked=storage.block_message)
 
+    def _auto_vertical_waiting(vid: str) -> bool:
+        """CP8.35 D6: the video has the wish and its vertical job waits for the HD source (enhance on, HD not done)."""
+        if not auto_vertical.wanted(vid):
+            return False
+        return any(enh_state.is_pending(enh_state.read(Path(config.workspace.dir) / p)) for p in (vid, vid + khaithi.SUFFIX))
+
+    def _auto_vertical_check(eid: str) -> None:
+        """CP8.35 D4: the wish "tự tạo bản dọc" of the video is met when its Shorts are rendered and the best HD source is
+        ready -> queue the vertical job (the "Tạo bản dọc" submit); not yet -> keep the wish; no HD source -> drop it."""
+        owner = ep.hd_owner(eid)
+        if not auto_vertical.wanted(owner):
+            return
+        with submit_lock:
+            if not auto_vertical.wanted(owner):
+                return
+            parts = (owner, owner + khaithi.SUFFIX)  # a part may still be before its first manifest
+            if not any(post_stage.rendered_clip_ids(config, p) for p in parts):
+                return  # the Shorts are not rendered (yet)
+            if any((j := runner.latest(p)) is not None and j.active and j.kind in EPISODE_KINDS for p in parts):
+                return  # a job of the video still runs the render step: its end checks again
+            if _auto_vertical_waiting(owner):
+                return  # enhance on, HD not done: _hd_ready checks again
+            if render_full.current(config, owner):
+                auto_vertical.set(owner, False)
+                return
+            if ep.hd_source(config, owner) is None:
+                auto_vertical.set(owner, False)
+                log.info("web: bản dọc tự động [%s]: bỏ qua, không có bản HD / video gốc < %sp", owner,
+                         config.enhance.min_height)
+                return
+            job, created = runner.submit(owner, KIND_VERTICAL, _vertical_target(owner))
+            auto_vertical.set(owner, False)
+        log.info("web: bản dọc tự động [%s] -> job %s%s", owner, job.id, "" if created else " (đã có)")
+
     def _rebuild_job(kind: str, eid: str, spec: dict, clip_ids: list[str]):
         """CP8.22 Q2: the target of a job saved in the queue file, built like at submit time; None = cannot be
         recreated (bad id / parameters, workspace gone, episode archived) -> the runner skips it with a log line."""
@@ -555,6 +595,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     compilations = comp_web.Compilations(config, playlists, runner, lambda doc: _playlist_docx_series(doc))
     runner.configure_persistence(Path(config.workspace.dir) / QUEUE_FILE, _rebuild_job)
     runner.priority.attach(Path(config.workspace.dir) / PRIORITY_FILE)  # CP8.26 P1
+    auto_vertical.attach(Path(config.workspace.dir) / WISH_FILE)  # CP8.35 D3
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -575,6 +616,8 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
 
     app = FastAPI(title="auto-short web", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.state.runner = runner
+    app.state.auto_vertical = auto_vertical  # CP8.35
+    app.state.hd_ready = _hd_ready
     app.state.monitor_sampler = sampler
     app.state.storage = storage
     app.state.auto_archive_pass = auto_archive_pass
@@ -731,7 +774,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         return kinds
 
     def _queue_video(video_id: str, kinds: list[str], lo, hi, series: str | None, episode: str | None, *,
-                     prepare_only: bool = False) -> list[dict]:
+                     prepare_only: bool = False, vertical_wish: bool | None = None) -> list[dict]:
         """Queue the pipeline job of each of ``kinds`` for a video (W4 per kind on its own episode: duplicate job,
         archived, low disk) and return one item per kind: ``{kind, episode_id, created, job}`` or
         ``{kind, episode_id, error, status}``. ``prepare_only`` (CP13.2 H1, Short only): the "Chuẩn bị + HD" job."""
@@ -759,6 +802,9 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                 item.update(error=BLOCK_MESSAGE, status=507)
             items.append(item)
         todo = [i for i in items if "job" not in i and "error" not in i]
+        previous = auto_vertical.wanted(video_id)
+        if vertical_wish is not None and any("error" not in i for i in items):
+            auto_vertical.set(video_id, vertical_wish)  # CP8.35 D3: before the jobs, so a fast job still sees it
         # FIX-ollama-wait O4: no Ollama preflight here - the ai lane checks it and waits for the GPU
         with submit_lock:
             for i in todo:  # Short first, then khai thị (K5 reuses the Short's source + transcript)
@@ -782,6 +828,8 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                                     disk_blocked=storage.block_message, enhance=svc,
                                     prepare_only=prepare_only))
                 i.update(created=created, job=job)
+        if vertical_wish and all("error" in i for i in items):
+            auto_vertical.set(video_id, previous)  # nothing was queued: keep the earlier wish
         playlists.invalidate(video_id)
         storage.invalidate()
         return items
@@ -812,7 +860,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                 return JSONResponse({"detail": exc.vi}, status_code=422)
         video_id = parsed.video_id
         series, episode = _clean(body.series), _clean(body.episode)
-        items = _queue_video(video_id, kinds, lo, hi, series, episode)
+        items = _queue_video(video_id, kinds, lo, hi, series, episode, vertical_wish=body.vertical)
         out = [{k: (_job_view(v) if k == "job" else v) for k, v in i.items()} for i in items]
         ok = [i for i in out if "error" not in i]
         if not ok:
@@ -952,10 +1000,14 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         if not vid:
             return
         status, reason = _vertical_status(vid, e)
+        waiting = _auto_vertical_waiting(vid)  # CP8.35 D6
+        if waiting and status != "todo":
+            reason = "sẽ tạo khi có HD"
         src = ep.hd_source(config, vid)
         ready = render_full.ready_file(config, vid) if render_full.current(config, vid) else None
         vjob = runner.latest_vertical(vid)
-        e["vertical"] = {"status": status, "reason": reason, "active": vjob is not None and vjob.active, "fetch": src is not None and src.kind == enh_state.SRC_ARCHIVED,
+        e["vertical"] = {"status": status, "reason": reason, "active": vjob is not None and vjob.active,
+                         "auto_waiting": waiting, "fetch": src is not None and src.kind == enh_state.SRC_ARCHIVED,
                          "ready": ready is not None,
                          "url": f"/api/episodes/{vid}/vertical" if ready is not None else None,
                          "name": ep.video_download_name(config, vid, "Doc") if ready is not None else None}
@@ -1056,7 +1108,8 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         for e in todo:
             kinds = [k for k in KINDS if k in (e.get("resume_kinds") or ["short"])]
             items += _queue_video(e["video_id"], kinds, lo if khaithi.KIND in kinds else None,
-                                  hi if khaithi.KIND in kinds else None, None, None)
+                                  hi if khaithi.KIND in kinds else None, None, None,
+                                  vertical_wish=body.vertical)
         out = _bulk_result(playlist_id, items, len(todo))
         log.info("web: playlist %s chạy tiếp cả bộ: %d tập, queued %d, %d lỗi", playlist_id, len(todo), out["queued"],
                  len(out["errors"]))
@@ -1568,7 +1621,16 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         log.info("web: tự soạn bài [%s] sau job %s -> job %s%s", eid, job.id, posted.id,
                  "" if created else " (đã có)")
 
-    runner.on_finished = _auto_post
+    def _on_episode_finished(job) -> None:
+        """The one ``on_finished`` hook: CP8.16 R2a (auto post) then CP8.35 D4 (auto vertical); one failing does not
+        stop the other."""
+        for hook in (_auto_post, lambda j: _auto_vertical_check(j.episode_id)):
+            try:
+                hook(job)
+            except Exception:
+                log.exception("web: hook sau job %s [%s] lỗi", job.id, job.episode_id)
+
+    runner.on_finished = _on_episode_finished
 
     def _post_now() -> str:
         return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
