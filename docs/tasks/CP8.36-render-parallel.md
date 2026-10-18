@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -68,9 +68,9 @@ Không chạm public API, database, security model; đổi mô hình hàng đợ
 
 ## Result
 
-- Main changes:
-- Tests:
+- Main changes: `web/jobs.py` — `JobRunner(render_workers, render_max_load, load_source, cpu_count, load_check_seconds)`: slots `render`, `render#1`, ..; `_render_pick_locked` (D3: no job of a video another running job holds, `<id>` / `<id>.kt` via `_video_of`; `compilation` alone both ways, and when a compilation is the first in start order the lane drains instead of starting others); extra slots start only while `load_source()` (default `os.getloadavg()[0]`) < `render_max_load` x CPU count, re-checked every 30 s (`Condition.wait` timeout) and on every submit / finish; first slot never load-gated. `config.py` — `[web] render_workers` (1-4, default 2), `render_max_load` (> 0, default 0.6). `web/app.py` — one wiring line. Monitor / `/api/queue` / persistence needed no change (already per running job, CP8.29 / CP8.22). `config.example.toml`, README, CP8.3 W5 pointer + config table.
+- Tests: `tests/test_web_render_slots_cp836.py` (14 tests, AC 1-7); full suite `-n auto`: 1902 passed, 1 skipped, 1 failed (`test_web_downloads_cp834.py::test_keep_awake_fallback_video_and_warning`, 404, fails identically on base `e7a9d05`: pre-existing, outside scope); `node scripts/framework-check.mjs` PASS.
 - Review:
-- Important findings / decisions:
-- Known limitations:
+- Important findings / decisions: `JobRunner()` constructor default `render_workers=1` (as `prepare_workers`); the config default 2 applies through `create_app`. The "drain" rule for a compilation at the head of the queue is an IMPLEMENTER choice (avoids starvation by a steady stream of jobs).
+- Known limitations: unreadable load counts as busy (extra slot idle); load is not re-evaluated for running jobs.
 - PR:
