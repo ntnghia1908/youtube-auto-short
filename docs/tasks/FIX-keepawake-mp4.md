@@ -51,4 +51,4 @@ Không chạm public API, database, security model.
 - Review: single-agent; ORCHESTRATOR tự kiểm như trên.
 - Important findings / decisions: repo đã có `static/sutra-awake.mp4` (trang Đọc Kinh có cách dự phòng video riêng) — ghi chú CP8.34 "trang Đọc Kinh cùng vấn đề" chỉ đúng phần Wake Lock; không gộp hai file trong FIX này.
 - Known limitations: —
-- PR:
+- PR: #89
