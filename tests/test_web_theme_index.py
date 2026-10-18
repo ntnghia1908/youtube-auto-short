@@ -136,14 +136,13 @@ def test_mixed_playlist_keeps_every_favorite_with_reasons(client, root):
     assert [x["favorite_position"] for x in recs] == list(range(7)) and body["total"] == 7
     reasons = [x.get("reason", "") for x in recs]
     assert recs[0]["status"] == "indexed"
-    assert all(x["status"] == "ineligible" for x in recs[1:])
+    # G2: the lost original source (consistent sha chain) is no longer ineligible; the seeded cache still hits
+    assert recs[1]["status"] == "indexed" and recs[1]["cached"] is True
+    assert all(x["status"] == "ineligible" for x in recs[2:])
     assert any("duration" in s for s in reasons) and any(s == "rejected" for s in reasons)
     assert any("not a khai thi" in s for s in reasons) and any("kept" in s for s in reasons)
-    assert reasons[1]  # lost original source: reason kept (path redacted below)
-    assert body["counts"] == {"indexed": 1, "eligible": 0, "ineligible": 6, "ai_error": 0}
+    assert body["counts"] == {"indexed": 2, "eligible": 0, "ineligible": 5, "ai_error": 0}
     assert str(root) not in json.dumps(body)
-    lost = recs[1]["reason"]
-    assert web.HIDDEN in lost  # the OSError text contained an absolute path
     assert recs[2].get("duration") is None  # nothing inferred for ineligible records
     assert recs[-1]["favorite"] == {"episode_id": "", "clip": 3}
 
@@ -304,7 +303,7 @@ def test_invalidation_prompt_change(seeded, monkeypatch):
     _assert_not_usable(_status(seeded))
 
 
-@pytest.mark.parametrize("duration,eligible", [(299, False), (300, True), (420, True), (421, False)])
+@pytest.mark.parametrize("duration,eligible", [(239, False), (240, True), (420, True), (421, False)])
 def test_duration_boundaries(root, duration, eligible):
     root.mkdir()
     cfg = config_mod.load(fx.write_config(root))
@@ -370,7 +369,7 @@ def test_service_stubs_refuse(seeded):
 
 def test_redact_helper():
     assert web.redact("cannot read /home/u/work/x.json: boom") == f"cannot read {web.HIDDEN}: boom"
-    assert web.redact("duration outside 300-420 seconds") == "duration outside 300-420 seconds"
+    assert web.redact("duration outside 240-420 seconds") == "duration outside 240-420 seconds"
     assert web.redact("a/b relative") == "a/b relative"
 
 

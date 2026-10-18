@@ -219,7 +219,7 @@ def test_reconstructed_source_change_invalidates(episode):
     assert second['input_fingerprint'] != first['input_fingerprint']
 
 
-@pytest.mark.parametrize('duration,eligible', [(299, False), (300, True), (420, True), (421, False)])
+@pytest.mark.parametrize('duration,eligible', [(239, False), (240, True), (420, True), (421, False)])
 def test_duration_boundaries(episode, duration, eligible):
     cfg, ws, _, out = episode
     change(ws.dir / 'clips.json', lambda d: d['clips'][0].update(source_end=duration + 10, duration=duration))
@@ -259,3 +259,78 @@ def test_malformed_json(episode):
 def test_uncertainty_cannot_carry_fabricated_speech(episode):
     record = build_index(episode[0], 'PLtest', client=Fake(lambda d: d.update(uncertainty=['invented speech'])))['records'][0]
     assert record['status'] == 'ai_error'
+
+
+# --- G2: source files deleted (disk cleanup) -------------------------------------------------------------------
+def _write_hd(ws, original_sha, wanted_state='done'):
+    hd = ws.dir / 'source_hd.mp4'
+    hd.write_bytes(b'enhanced-hd')
+    hd_sha = hashing.sha256_file(hd)
+    atomic_write_json(ws.dir / 'enhance.json', dict(schema_version=1, state=wanted_state, wanted=True,
+                      source_sha256=original_sha, source_hd_sha256=hd_sha, source_hd_size=hd.stat().st_size,
+                      source_hd_mtime_ns=hd.stat().st_mtime_ns))
+    return hd, hd_sha
+
+
+def test_source_present_status(episode):
+    cfg, *_ = episode
+    record = audit_playlist(cfg, 'PLtest')[0]
+    assert record['status'] == 'eligible' and record['source_status'] == 'present'
+    assert record['source_reference']['sha256'] == record['source_reference']['original_sha256']
+
+
+def test_source_missing_valid_chain_same_fingerprint(episode):
+    cfg, ws, *_ = episode
+    fake = Fake()
+    first = build_index(cfg, 'PLtest', client=fake)['records'][0]
+    (ws.dir / 'source.mp4').unlink()
+    audited = audit_playlist(cfg, 'PLtest')[0]
+    assert audited['status'] == 'eligible' and audited['source_status'] == 'missing'
+    assert audited['source_reference']['sha256'] == first['source_reference']['sha256']
+    second = build_index(cfg, 'PLtest', client=fake)['records'][0]
+    assert second['status'] == 'indexed' and second['cached'] and len(fake.calls) == 1
+    assert second['input_fingerprint'] == first['input_fingerprint']
+    assert first['source_status'] == 'present' and second['source_status'] == 'missing'
+
+
+@pytest.mark.parametrize('broken', ['transcript', 'render', 'manifest'])
+def test_source_missing_inconsistent_chain_ineligible(episode, broken):
+    cfg, ws, _, out = episode
+    (ws.dir / 'source.mp4').unlink()
+    if broken == 'transcript':
+        change(ws.dir / 'transcript.json', lambda d: d.update(media_sha256='other'))
+    elif broken == 'render':
+        change(out / 'render_manifest.json', lambda d: d.update(source_sha256='other'))
+    else:
+        change(ws.dir / 'manifest.json', lambda d: d['source'].update(sha256='other'))
+    record = audit_playlist(cfg, 'PLtest')[0]
+    assert record['status'] == 'ineligible' and 'stale' in record['reason'], record
+
+
+def test_hd_missing_trusts_recorded_sha(episode):
+    cfg, ws, _, out = episode
+    sha = json.loads((ws.dir / 'manifest.json').read_text())['source']['sha256']
+    hd, hd_sha = _write_hd(ws, sha)
+    change(out / 'render_manifest.json', lambda d: d.update(source_sha256=hd_sha))
+    present = audit_playlist(cfg, 'PLtest')[0]
+    assert present['status'] == 'eligible' and present['source_status'] == 'present'
+    hd.unlink()
+    (ws.dir / 'source.mp4').unlink()
+    missing = audit_playlist(cfg, 'PLtest')[0]
+    assert missing['status'] == 'eligible' and missing['source_status'] == 'missing', missing
+    assert missing['source_reference']['sha256'] == hd_sha and missing['source_reference']['original_sha256'] == sha
+    fake = Fake()
+    assert build_index(cfg, 'PLtest', client=fake)['records'][0]['status'] == 'indexed'
+    assert build_index(cfg, 'PLtest', client=fake)['records'][0]['cached']
+    # recorded HD sha no longer matches the render -> fail closed
+    change(out / 'render_manifest.json', lambda d: d.update(source_sha256='other'))
+    assert audit_playlist(cfg, 'PLtest')[0]['status'] == 'ineligible'
+
+
+def test_hd_present_but_changed_is_stale(episode):
+    cfg, ws, _, out = episode
+    sha = json.loads((ws.dir / 'manifest.json').read_text())['source']['sha256']
+    hd, hd_sha = _write_hd(ws, sha)
+    change(out / 'render_manifest.json', lambda d: d.update(source_sha256=hd_sha))
+    hd.write_bytes(b'tampered-hd-different-size')
+    assert audit_playlist(cfg, 'PLtest')[0]['status'] == 'ineligible'

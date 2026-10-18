@@ -117,9 +117,8 @@ Task thêm public HTTP API (G3) → manual test là gate trước integration.
 
 ## Result
 
-- Main changes:
-- Tests:
-- Review:
-- Important findings / decisions:
-- Known limitations:
-- PR:
+- Phase A (2026-10-18, IMPLEMENTER subagent Sonnet): TC1 `MIN_DURATION, MAX_DURATION = 240, 420`; G2 — file nguồn / HD mất được chấp nhận khi chuỗi sha ghi trong manifest / transcript / render / enhance nhất quán, `source_status` present|missing (không vào `input_fingerprint`). Module mới `src/auto_short/theme_plan/__init__.py`: `propose`, `read_proposals`, `create_plan`, `update_plan`, `approve_plan`, `delete_plan`, `list_plans`, `check_plan`, `approved_plan`. Tests: `tests/test_theme_plan.py` (31), TC1 +G2 / biên 239–421; `tests/test_web_theme_index.py` biên + ca `mixlost` nay eligible theo G2.
+- Tests (ORCHESTRATOR tự chạy lại): `-m pytest -q -n auto` → 2044 passed, 1 skipped, exit 0; framework-check PASS; `git diff --check` exit 0; inventory ⊆ Owned paths phase A.
+- Review phase A: ACCEPTED, không blocking finding. Note: `check_plan` / `list_plans` / `update_plan` chạy lại TC1 audit (hash toàn file) mỗi lần — đúng nhưng tốn trên playlist lớn; `enhance._hd_usable` (private) được dùng từ TC1; nhãn "mất nguồn" của preview fixture TC-WEB1 nay không còn là ca ineligible.
+- Audit thật read-only sau phase A (không AI, không ghi): `…BdXCp…` 5 eligible / 22,2 phút; `…A6C9…` 35 / 163,6 phút (4 `stale render: origin`); `…A3FS…` 2 / 10,9 phút; cả 42 `source_status: missing` → TC3 phải tải lại nguồn.
+- PR: chưa (cần HUMAN LEAD cho phép).
