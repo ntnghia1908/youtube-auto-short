@@ -15,7 +15,7 @@
 - Parallel group: —
 - Owned paths: `src/auto_short/theme_render/` (mới), `tests/test_theme_render.py` (mới), contract này
 - Dependencies: TC2 phase A (`src/auto_short/theme_plan/`, `approved_plan`); không dependency thư viện mới
-- Base commit / branch: commit READY của TC2 phase A / `feature/tc2-theme-plan` (cùng branch, tuần tự, một writer)
+- Base commit / branch: `ceda96b` (TC2 phase A READY) / `feature/tc2-theme-plan` (cùng branch, tuần tự, một writer)
 - Human Lead approval: inherited from boundary
 - Implementation authorized: YES
 
