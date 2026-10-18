@@ -2,13 +2,13 @@
 
 ## Status / Approval
 
-- Status: DRAFT
+- Status: READY
 - Type: BUG
 - Change class: S1
 - Owner: HUMAN LEAD
 - Execution profile: dual-agent
 - Orchestrator: claude-code — main session
-- Implementer: codex — `codex exec` (gpt-6.1-sol), một writer; chạy sau TC3
+- Implementer: claude-code — subagent implementer (Sonnet); Codex quota 5 h ≥ 84 % (project rule)
 - Human Lead: HUMAN LEAD
 - Authorization mode: task
 - Authorization source: HUMAN LEAD 2026-10-18 “ok fix cuda”
@@ -52,8 +52,8 @@ Không chạm database / security / public API.
 
 ## Result
 
-- Main changes:
-- Tests:
-- Review:
-- Known limitations:
+- Main changes: `worker.py` — `EXIT_CUDA_FATAL = 4`, `CUDA_FATAL_MARKERS` / `is_cuda_fatal`; lỗi CUDA nghiêm trọng ở đoạn → release một lần → `work_lease` trả `cuda_fatal` → `run` thoát mã 4 (wrapper chạy lại sau 15 s). `service.py` — `release` đếm error-release theo (token, episode) (3 lần / 1 giờ → `_avoid_until` 1 giờ, log warning), `lease` bỏ qua video bị tránh; xóa bộ đếm khi nhận đoạn (`accept`) hoặc `_complete`; phân loại bằng `NON_ERROR_RELEASE_PREFIXES` (model khong ho tro, can cap nhat worker, het dung luong, lease khong hop le, preempt, dung, stop).
+- Tests: thêm 3 test `tests/test_enhance_api.py`, 3 test `tests/test_enhance_worker.py`. Targeted 37 passed; `-n auto` 2012 passed, 1 skipped; `-n auto -m slow` 17 passed; framework-check PASS; `git diff --check` sạch.
+- Review: ORCHESTRATOR ACCEPTED 2026-10-18 (Sonnet subagent ≈ 8,8 phút, 43k tokens); tự chạy lại full suite + `-m slow` PASS. Worker cũ trên máy GPU vẫn gửi "doan N loi lien tiep" → phía server tránh lặp ngay khi deploy server, kể cả trước khi cập nhật worker.py.
+- Known limitations: bộ đếm in-memory (mất khi restart server); tiền tố phân loại dựa trên chuỗi worker gửi.
 - PR:

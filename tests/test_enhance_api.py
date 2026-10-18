@@ -207,6 +207,48 @@ def test_heartbeat_and_release(ctx):
     assert ctx.lease(H2).json()["episode_id"] == E1  # back in the queue
 
 
+def _release(ctx, lease, reason, headers=H1):
+    return ctx.client.post(f"/api/enhance/{lease['lease_id']}/release", json={"reason": reason}, headers=headers)
+
+
+def test_error_releases_make_the_server_avoid_the_video_for_that_worker(ctx):
+    make_yt_episode(ctx.cfg, E1)
+    make_yt_episode(ctx.cfg, E2)
+    for _ in range(3):
+        lease = ctx.lease().json()
+        assert lease["episode_id"] == E1
+        assert _release(ctx, lease, "doan 0 loi lien tiep: boom").status_code == 200
+    other = ctx.lease().json()
+    assert other["episode_id"] == E2                        # w3090 gets the other video
+    assert ctx.lease(H2).json()["episode_id"] == E1         # another worker still gets the avoided one
+    _release(ctx, other, "dung")                            # non-error release: E2 is free again, E1 still avoided
+    assert ctx.lease().json()["episode_id"] == E2
+
+
+def test_avoid_expires_and_non_error_releases_are_not_counted(ctx):
+    make_yt_episode(ctx.cfg, E1)
+    for reason in ("model khong ho tro: x", "can cap nhat worker: y", "het dung luong toi da", "preempt"):
+        for _ in range(3):
+            lease = ctx.lease().json()
+            assert lease["episode_id"] == E1
+            _release(ctx, lease, reason)
+    for _ in range(3):
+        _release(ctx, ctx.lease().json(), "tai nguon loi 500")
+    assert ctx.lease().status_code == 204
+    ctx.clock.now += 3601
+    assert ctx.lease().json()["episode_id"] == E1
+
+
+def test_upload_progress_clears_error_count(ctx, segments):
+    make_yt_episode(ctx.cfg, E1)
+    for _ in range(2):
+        _release(ctx, ctx.lease().json(), "loi")
+    lease = ctx.lease().json()
+    assert ctx.put(lease["lease_id"], 0, segments[0]).status_code == 200
+    _release(ctx, lease, "loi")                             # would have been the 3rd without the upload
+    assert ctx.lease().json()["episode_id"] == E1
+
+
 # --- E3: source with Range ---------------------------------------------------------------------------------------
 
 def test_source_download_supports_range(ctx):

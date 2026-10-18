@@ -46,6 +46,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))  # srvgg.py, face.py ca
 import face as face_mod  # noqa: E402  (khong nap torch o muc module)
 
 EXIT_OK, EXIT_ERROR, EXIT_AUTH = 0, 1, 3
+EXIT_CUDA_FATAL = 4  # FIX-enhance-cuda-fatal: context CUDA hong -> thoat de wrapper chay tien trinh moi (khac 0 / 3)
+# Loi CUDA ma sau do context cua tien trinh hong vinh vien (so khop khong phan biet hoa thuong).
+CUDA_FATAL_MARKERS = ("illegal memory access", "device-side assert", "cuda error: unspecified launch failure",
+                      "cudaerrorlaunchfailure", "cublas_status_execution_failed")
+
+
+def is_cuda_fatal(err: object) -> bool:
+    text = str(err).lower()
+    return any(m in text for m in CUDA_FATAL_MARKERS)
+
 
 log = logging.getLogger("enhance_worker")
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
@@ -917,6 +927,10 @@ class Worker:
                     self.release(lease, str(e)[:200])
                     self.sleep(self.cfg["error_seconds"])
                     continue
+                if res == "cuda_fatal":
+                    log.error("LOI CUDA NGHIEM TRONG - da tra viec, thoat ma %d de khoi dong lai tien trinh",
+                              EXIT_CUDA_FATAL)
+                    return EXIT_CUDA_FATAL
                 if res == "stopped":
                     return EXIT_OK
                 if self.once:
@@ -1108,6 +1122,9 @@ class Worker:
                 if eng.encoder == "h264_nvenc" and "nvenc" in str(e).lower():
                     log.warning("NVENC loi -> chuyen libx264")
                     eng.encoder = "libx264"
+                if is_cuda_fatal(e):
+                    self.release(lease, f"loi CUDA nghiem trong, worker khoi dong lai: {str(e)[:150]}")
+                    return "cuda_fatal"
                 if fails[n] >= 3:
                     self.release(lease, f"doan {n} loi lien tiep: {str(e)[:150]}")
                     return "released"
