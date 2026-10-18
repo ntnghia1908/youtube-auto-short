@@ -70,4 +70,5 @@ Không chạm database / security / public API (web ở phase C).
 - Review: ACCEPTED, không blocking. Notes: nguồn tải lại của nhiều video giữ tới cuối lần render (đĩa tạm ≈ tổng kích thước nguồn); `-m slow` không bắt buộc (không sửa render / worker).
 - Important findings: (Codex) TC1 loại clip khi file Short gốc đã mất dù còn bản kept CP8.33 — TC3 đã hỗ trợ kept, TC1 chưa; ngoài scope, đề xuất FIX sau.
 - Pilot Codex IMPLEMENTER: `gpt-6.1-sol` effort high, 16:23:48→16:36:29 UTC (≈ 12,7 phút), 146 649 tokens, một vòng, không sửa ngoài Owned paths, báo cáo trung thực. Sandbox `workspace-write` chặn socket loopback → full suite phải do ORCHESTRATOR chạy.
+- Chạy thật: bằng chứng end-to-end (video 32 phút, 6 / 6 clip audio corr 1,0) và chặn YouTube ở `docs/tasks/TC2-theme-compilation-planner.md` Result.
 - PR: chưa (cần HUMAN LEAD).
