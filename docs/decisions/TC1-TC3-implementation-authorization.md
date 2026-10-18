@@ -76,3 +76,7 @@ Create a cohesive 30–40 minute thematic teaching compilation, assembled **only
 - 2026-10-18: HUMAN LEAD accepted the proposed TC1–TC3 feature scope, MVP-first, and allowed Claude Code/Codex interchangeably under the repo AI framework.
 - 2026-10-18: TC1 + TC-WEB1 work already integrated under their respective session/task approvals (PR #96); this record is **subsequent formalization**, not evidence fabricated retrospectively.
 - 2026-10-18: HUMAN LEAD requested this independent authorization document be pushed into repository for agent bootstrap/handoff. Documentation-only branch commit is authorized by that request; merge/feature integration is not implied.
+
+## 9. Amendments
+
+- **A1 — 2026-10-18 (HUMAN LEAD “duyệt 240–420”):** khoảng thời lượng eligible ở §2 (và TC1) đổi từ 300–420 s thành **240–420 s inclusive**. Lý do: audit read-only cả 3 bộ kinh có ♥ — 31 khai thị yêu thích đều 242–297 s, không clip nào ≥ 300 s. Mục tiêu 30–40 phút ở §4 giữ nguyên (khoảng 5–10 clip). Áp dụng qua TC2 (`docs/tasks/TC2-theme-compilation-planner.md`); không viết lại contract TC1 / TC-WEB1 đã hoàn tất.
