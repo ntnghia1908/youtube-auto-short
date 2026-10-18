@@ -73,6 +73,7 @@ from . import reading
 from . import compilations as comp_web
 from . import downloads as dl_mod
 from . import monitor as monitor_mod
+from . import theme_index as theme_index_web
 from .auth import COOKIE_NAME, SessionSigner, load_or_create_secret
 from .storage import BLOCK_MESSAGE, StorageCache, auto_archive_plan, episode_sizes, video_id
 from .jobs import (EPISODE_KINDS, KIND_ADD, KIND_COMPILATION, KIND_ENHANCE, KIND_IMAGE_SEARCH, KIND_PIPELINE, KIND_POST, KIND_POST_SEARCH, KIND_RENDER, KIND_VERTICAL,
@@ -2926,5 +2927,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             headers["Content-Disposition"] = content_disposition(download_name)
             _mark_downloaded(episode_id, [clip_id])  # plain playback (no download=1) never ticks
         return FileResponse(path, media_type="video/mp4", headers=headers)
+
+    theme_index_web.register(app, config, playlists, STATIC_DIR)  # TC-WEB1: GET-only TC1 preview
 
     return app
