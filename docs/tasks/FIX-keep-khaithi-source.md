@@ -13,7 +13,7 @@
 - Authorization mode: task
 - Authorization source: HUMAN LEAD 2026-10-18: “Hiện tại nếu bấm tải (khai thị + Short) thì sẽ tự xóa luôn file nguồn gây ảnh hưởng đến điểm này, hãy tìm cách khắc phục” (sau khi chọn “Tải lại file nguồn nếu cần, sửa lại không xóa file nguồn khi bấm tải về”)
 - Parallel group: —
-- Owned paths: `src/auto_short/web/storage.py` (chỉ `auto_archive_plan`), test của nó (`tests/test_enhance_state.py` hoặc file test storage hiện có), `docs/decisions/CP8.3-web-contract.md` (W9, một câu + header), contract này
+- Owned paths: `src/auto_short/web/storage.py` (chỉ `auto_archive_plan`), `tests/test_storage_suggest.py`, `docs/decisions/CP8.3-web-contract.md` (W9, một câu + header), contract này
 - Dependencies: none
 - Base commit / branch: `d56d200` / `fix/keep-khaithi-source`, worktree `/home/ntnghia/youtube-auto-short-keepsrc`
 - Human Lead approval: accepted (yêu cầu trực tiếp 2026-10-18)
@@ -43,7 +43,7 @@ Tải zip (Short + khai thị) vẫn tick "Đã đăng", nhưng tự dọn ngu�
 
 ## Required verification
 
-- `env PYTHONPATH=/home/ntnghia/youtube-auto-short-keepsrc/src /home/ntnghia/miniconda3/envs/auto-short/bin/python -m pytest -q tests/test_enhance_state.py tests/test_web_storage*.py -x --tb=short` (file test tồn tại) — AC1–2.
+- `env PYTHONPATH=/home/ntnghia/youtube-auto-short-keepsrc/src /home/ntnghia/miniconda3/envs/auto-short/bin/python -m pytest -q tests/test_enhance_state.py tests/test_storage_suggest.py tests/test_storage_cp86.py -x --tb=short` — AC1–2.
 - Cùng prefix `-m pytest -q -n auto`; `node scripts/framework-check.mjs`; `git diff --check`.
 
 ## Manual test checklist (Tech Lead)
