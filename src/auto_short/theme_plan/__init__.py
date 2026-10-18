@@ -182,11 +182,19 @@ def propose(config: Config, playlist_id: str, *, client: ChatClient | None = Non
              "key_messages": [m["text"] for m in r["metadata"].get("key_messages", [])[:5]]}
             for cid, r in known.items()]
     active = client or OllamaClient(resolve_host(cfg.ollama_host), cfg.timeout)
-    response = active.chat(model=cfg.model, messages=[{"role": "system", "content": SYSTEM},
-                           {"role": "user", "content": json.dumps({"clips": data}, ensure_ascii=False)}],
+    messages = [{"role": "system", "content": SYSTEM},
+                {"role": "user", "content": json.dumps({"clips": data}, ensure_ascii=False)}]
+    provenance["think_used"] = cfg.think
+    response = active.chat(model=cfg.model, messages=messages,
                            format=SCHEMA, options=provenance["options"], think=cfg.think)  # ChatError propagates
     try:
-        out = json.loads(response.content)
+        try:
+            out = json.loads(response.content)
+        except json.JSONDecodeError:
+            provenance["think_used"] = False
+            response = active.chat(model=cfg.model, messages=messages, format=SCHEMA,
+                                   options=provenance["options"], think=False)
+            out = json.loads(response.content)
         themes = out["themes"]
         if not isinstance(out, dict) or set(out) != {"themes"} or not isinstance(themes, list) or len(themes) > MAX_THEMES:
             raise PlanError("AI output does not match schema")

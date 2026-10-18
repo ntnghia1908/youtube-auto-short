@@ -360,7 +360,8 @@ def build_index(config: Config, playlist_id: str, *, client: ChatClient | None =
             continue
         # source_status depends on whether files still exist, so it is not part of the fingerprint
         fp = _sha({"input": {k: v for k, v in record.items() if k != "source_status"}, "provenance": provenance})
-        record.update(input_fingerprint=fp, provenance=provenance)
+        # Actual attempt settings are provenance only, preserving existing cache keys.
+        record.update(input_fingerprint=fp, provenance={**provenance, "think_used": cfg.think})
         hit = next((c for c in cached if isinstance(c, dict) and c.get("input_fingerprint") == fp
                     and c.get("status") == "indexed"), None)
         if hit:
@@ -371,15 +372,24 @@ def build_index(config: Config, playlist_id: str, *, client: ChatClient | None =
             except IndexError:
                 hit = None
         if hit:
+            record["provenance"]["think_used"] = hit.get("provenance", {}).get("think_used", cfg.think)
             record.update(status="indexed", metadata=deepcopy(metadata), indexed_at=hit["indexed_at"], cached=True)
             continue
         try:
             active = client or OllamaClient(resolve_host(cfg.ollama_host), cfg.timeout)
-            response = active.chat(model=cfg.model, messages=[{"role": "system", "content": SYSTEM},
+            messages = [{"role": "system", "content": SYSTEM},
                 {"role": "user", "content": json.dumps({"evidence": record["evidence"],
-                    "uncertainty": record["uncertainty"]}, ensure_ascii=False)}], format=SCHEMA,
-                options=options, think=cfg.think)
-            metadata = validate_metadata(json.loads(response.content), record["evidence"])
+                    "uncertainty": record["uncertainty"]}, ensure_ascii=False)}]
+            response = active.chat(model=cfg.model, messages=messages, format=SCHEMA,
+                                   options=options, think=cfg.think)
+            try:
+                output = json.loads(response.content)
+            except json.JSONDecodeError:
+                record["provenance"]["think_used"] = False
+                response = active.chat(model=cfg.model, messages=messages, format=SCHEMA,
+                                       options=options, think=False)
+                output = json.loads(response.content)
+            metadata = validate_metadata(output, record["evidence"])
         except (ChatError, ValueError, TypeError) as exc:
             record.update(status="ai_error", reason=str(exc))
         else:

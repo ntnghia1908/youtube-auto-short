@@ -11,7 +11,7 @@ from auto_short import hashing, khaithi
 from auto_short import theme_index as tc1
 from auto_short.compilation import store
 from auto_short.review import logic
-from auto_short.selection.client import ChatResult
+from auto_short.selection.client import ChatError, ChatResult
 from auto_short.theme_index import audit_playlist, build_index, validate_metadata, IndexError
 from auto_short.workspace import Workspace, atomic_write_json
 
@@ -365,6 +365,54 @@ def test_malformed_json(episode):
         def chat(self, **kwargs):
             return ChatResult('not json')
     assert build_index(episode[0], 'PLtest', client=Malformed())['records'][0]['status'] == 'ai_error'
+
+
+@pytest.mark.parametrize('raw', ['', 'not json'])
+def test_parse_failure_retries_without_thinking_and_keeps_cache_key(episode, raw):
+    cfg, _, folder, _ = episode
+    cfg = replace(cfg, selection=replace(cfg.selection, think=True))
+    baseline = build_index(cfg, 'PLtest', client=Fake(), write=False)['records'][0]
+
+    class Retry(Fake):
+        def chat(self, **kwargs):
+            result = super().chat(**kwargs)
+            return ChatResult(raw) if len(self.calls) == 1 else result
+
+    fake = Retry()
+    record = build_index(cfg, 'PLtest', client=fake)['records'][0]
+    assert record['status'] == 'indexed' and len(fake.calls) == 2
+    assert fake.calls[0]['think'] is True and fake.calls[1] == {**fake.calls[0], 'think': False}
+    assert baseline['provenance']['think_used'] is True
+    assert record['provenance']['think_used'] is False
+    assert record['input_fingerprint'] == baseline['input_fingerprint']
+    cached = build_index(cfg, 'PLtest', client=fake)['records'][0]
+    assert cached['cached'] and cached['provenance']['think_used'] is False and len(fake.calls) == 2
+    # Legacy records without think_used retain their cache keys as well.
+    change(folder / 'theme_index.json', lambda d: d['records'][0]['provenance'].pop('think_used'))
+    legacy = build_index(cfg, 'PLtest', client=fake)['records'][0]
+    assert legacy['cached'] and legacy['provenance']['think_used'] is True and len(fake.calls) == 2
+
+
+@pytest.mark.parametrize('outputs,calls', [(['', ''], 2), (['', ChatError('refused')], 2),
+                                        ([ChatError('refused')], 1), (['{"extra": 1}'], 1)])
+def test_failed_index_attempts_are_bounded(episode, outputs, calls):
+    class Failed:
+        def __init__(self):
+            self.calls = []
+
+        def chat(self, **kwargs):
+            self.calls.append(kwargs)
+            output = outputs[len(self.calls) - 1]
+            if isinstance(output, Exception):
+                raise output
+            return ChatResult(output)
+
+    fake = Failed()
+    record = build_index(episode[0], 'PLtest', client=fake)['records'][0]
+    assert record['status'] == 'ai_error' and len(fake.calls) == calls
+    if calls == 2:
+        assert fake.calls[1] == {**fake.calls[0], 'think': False}
+        assert record['provenance']['think_used'] is False
 
 
 def test_uncertainty_cannot_carry_fabricated_speech(episode):

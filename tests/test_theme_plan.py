@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -119,6 +120,56 @@ def test_malformed_output_is_ai_error_and_not_written(multi, raw):
     doc = tp.propose(cfg, 'PLtest', client=Planner(raw=raw))
     assert doc['ai_error'] and doc['proposals'] == []
     assert not (tp._folder(cfg, 'PLtest') / 'theme_proposals.json').exists()
+
+
+class SequencePlanner(Planner):
+    def __init__(self, outputs):
+        super().__init__()
+        self.outputs = outputs
+
+    def chat(self, **kwargs):
+        result = super().chat(**kwargs)
+        if 'clips' in json.loads(kwargs['messages'][1]['content']):
+            output = self.outputs[len(self.plan_calls) - 1]
+            if isinstance(output, Exception):
+                raise output
+            return result if output is None else ChatResult(output)
+        return result
+
+
+@pytest.mark.parametrize('raw', ['', 'not json'])
+def test_propose_parse_failure_retries_without_thinking(multi, raw):
+    cfg, *_ = multi
+    cfg = replace(cfg, selection=replace(cfg.selection, think=True))
+    fake = SequencePlanner([raw, None])
+    doc = tp.propose(cfg, 'PLtest', client=fake)
+    assert 'ai_error' not in doc and doc['proposals']
+    assert len(fake.plan_calls) == 2
+    assert fake.plan_calls[0]['think'] is True
+    assert fake.plan_calls[1] == {**fake.plan_calls[0], 'think': False}
+    assert doc['provenance']['think_used'] is False
+    assert tp.read_proposals(cfg, 'PLtest')['provenance']['think_used'] is False
+
+
+@pytest.mark.parametrize('outputs,calls', [(['', ''], 2), (['{"themes": [], "extra": 1}'], 1)])
+def test_failed_propose_attempts_are_bounded(multi, outputs, calls):
+    cfg, *_ = multi
+    fake = SequencePlanner(outputs)
+    doc = tp.propose(cfg, 'PLtest', client=fake)
+    assert doc['ai_error'] and doc['proposals'] == [] and len(fake.plan_calls) == calls
+    assert tp.read_proposals(cfg, 'PLtest') is None
+    if calls == 2:
+        assert fake.plan_calls[1] == {**fake.plan_calls[0], 'think': False}
+        assert doc['provenance']['think_used'] is False
+
+
+@pytest.mark.parametrize('outputs,calls', [([ChatError('refused')], 1), (['', ChatError('refused')], 2)])
+def test_propose_chat_error_does_not_retry(multi, outputs, calls):
+    cfg, *_ = multi
+    fake = SequencePlanner(outputs)
+    with pytest.raises(ChatError, match='refused'):
+        tp.propose(cfg, 'PLtest', client=fake)
+    assert len(fake.plan_calls) == calls and tp.read_proposals(cfg, 'PLtest') is None
 
 
 def test_all_themes_invalid_is_ai_error(multi):
