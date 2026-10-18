@@ -48,7 +48,9 @@ Ctrl-C server lúc đang có job chạy: không job mới nào bắt đầu sau 
 
 Không chạm public API, database, security model.
 
-- [ ] 8080 đang render (vd bản dọc): Ctrl-C → server thoát; `ps` không còn ffmpeg nào của server cũ; khởi động lại → job quay lại hàng đợi, chạy lại một lần (không trùng).
+- [x] 8080 đang render (vd bản dọc): Ctrl-C → server thoát; `ps` không còn ffmpeg nào của server cũ; khởi động lại → job quay lại hàng đợi, chạy lại một lần (không trùng).
+
+HUMAN LEAD 2026-10-18: "đạt" (manual test qua 8080 ghim bản gộp thử `5d408a7` = main + #89 + CP8.35 + CP8.36 + FIX-runner-stop).
 
 ## Result
 
