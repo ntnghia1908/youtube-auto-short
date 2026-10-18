@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: IN_PROGRESS (full suite: 2 lỗi có sẵn trên base e7a9d05, xem Result)
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -72,6 +72,7 @@ Chạm public API (field mới ở `POST /api/episodes`, cùng auth); không ch�
 
 - Main changes: `POST /api/episodes` / `resume-prepared` nhận `vertical: bool`; ý muốn lưu `<workspace>/.web_auto_vertical.json` (module `web/auto_vertical.py`, như `.web_priority.json`, không nằm trong thư mục tập nên không tạo "tập mồ côi"); `_auto_vertical_check` chạy từ `runner.on_finished` (hook gộp `_on_episode_finished` = `_auto_post` rồi bản dọc, lỗi hook này không chặn hook kia) và từ `_hd_ready`; `jobs.py` không đổi. UI: ô "Bản dọc" ở `playlist.html` (`#pl-vertical-box`, khóa `vertical` trong `autoShort.plKinds`, thiếu = tick) và `index.html` (`#idx-vertical`, khóa mới `autoShort.idxVertical`); Xử lý / Xử lý lại / Chạy tiếp / Chạy tiếp cả bộ gửi `vertical`; entry bộ kinh có `vertical.auto_waiting` + dòng "bản dọc: sẽ tạo khi có HD".
 - Tests: `tests/test_web_auto_vertical_cp835.py` (AC 1–6); AC7 = toàn suite.
+- Verification: `pytest -q -n auto` = 1899 passed, 1 skipped, 2 failed — cả 2 lỗi cũng xảy ra trên base `e7a9d05` (không do CP8.35): `test_web_downloads_cp834::test_keep_awake_fallback_video_and_warning` (`static/keepawake.mp4` bị `.gitignore` `*.mp4`, không có trong worktree / clone sạch) và `test_web_vertical_cp832::test_ac8_cancel_whole_bo_waiting_fetching_encoding` (timing, lỗi khi chạy cả suite song song, PASS riêng). Test CP8.35: 12 passed. `node scripts/framework-check.mjs` PASS.
 - Review:
 - Important findings / decisions: ý muốn lưu ở file trung tâm trong workspace dir thay vì trong thư mục video (thư mục chỉ chứa file này sẽ hiện là tập mồ côi ở danh sách dung lượng và chưa tồn tại lúc gửi video mới). Bản dọc chỉ xếp khi không còn job `pipeline` / `render` / `add` active của hai phần (Short, `.kt`) và đã có Short render; "enhance đang đợi HD" = `enhance.json` `wanted` + `pending` / `assembling` của Short hoặc `.kt`. Enhance `failed` thì không coi là đợi: dùng nguồn hiệu lực hiện có (gốc ≥ min_height) hoặc bỏ ý muốn.
 - Known limitations: ý muốn chỉ được kiểm tra khi job render kết thúc hoặc `_hd_ready`; HD ghép xong trong lúc server tắt thì ý muốn chờ tới sự kiện kế (render lại / bấm "Tạo bản dọc"). "Chạy tiếp" từng tập cũng gửi `vertical` theo ô (ngoài danh sách D2 nhưng cùng ý nghĩa). Không có bản dọc nếu HD tới sau bản dọc từ gốc (ngoài scope).
