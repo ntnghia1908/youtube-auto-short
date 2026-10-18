@@ -36,7 +36,9 @@ const Favorites = (() => {
     if (!res.ok) {
       let msg = body && body.detail;
       if (Array.isArray(msg)) msg = msg.map((d) => d.msg).join("; ");
-      throw new Error(msg || `HTTP ${res.status}`);
+      const error = new Error(msg || `HTTP ${res.status}`);
+      error.status = res.status;
+      throw error;
     }
     return body;
   }
@@ -94,6 +96,7 @@ const Favorites = (() => {
       await post(`/api/playlists/${encodeURIComponent(pid)}/favorites`, { episode_id: f.episode_id, clip: f.clip, favorite: false });
       ticked.delete(keyOf(f));
       await load();
+      window.dispatchEvent(new Event("favorites-changed"));
     } catch (e) { say(e.message, "error"); }
   }
 
@@ -248,5 +251,5 @@ const Favorites = (() => {
     load();
   }
 
-  return { init };
+  return { init, el, api, fmtDur, copyText };
 })();

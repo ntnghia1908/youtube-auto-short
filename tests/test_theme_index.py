@@ -1,14 +1,29 @@
 import json
+import os
+import time
+from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from dataclasses import replace
 
 import pytest
 
 from auto_short import hashing, khaithi
+from auto_short import theme_index as tc1
 from auto_short.compilation import store
 from auto_short.review import logic
 from auto_short.selection.client import ChatResult
 from auto_short.theme_index import audit_playlist, build_index, validate_metadata, IndexError
 from auto_short.workspace import Workspace, atomic_write_json
+
+
+@pytest.fixture
+def memo_cache():
+    caches = (tc1._cached_json, tc1._file_digest, tc1._json_digest)
+    for cache in caches:
+        cache.cache_clear()
+    yield caches
+    for cache in caches:
+        cache.cache_clear()
 
 
 class Fake:
@@ -334,3 +349,121 @@ def test_hd_present_but_changed_is_stale(episode):
     change(out / 'render_manifest.json', lambda d: d.update(source_sha256=hd_sha))
     hd.write_bytes(b'tampered-hd-different-size')
     assert audit_playlist(cfg, 'PLtest')[0]['status'] == 'ineligible'
+
+
+def test_warm_audit_reuses_hash_json_and_derived_digests(episode, memo_cache, monkeypatch):
+    cfg, ws, _, _ = episode
+    before = audit_playlist(cfg, 'PLtest')
+    cached_docs = {p: deepcopy(tc1._read(p)) for p in
+                   (ws.dir / 'clips.json', ws.dir / 'candidates.json', ws.dir / 'transcript.json')}
+    stats = [cache.cache_info() for cache in memo_cache]
+    monkeypatch.setattr(hashing, 'sha256_file', lambda p: pytest.fail('warm audit hashed an unchanged file'))
+    warm = audit_playlist(cfg, 'PLtest')
+    assert warm == before
+    assert all(cache.cache_info().hits > old.hits for cache, old in zip(memo_cache, stats))
+    assert all(cache.cache_info().misses == old.misses for cache, old in zip(memo_cache, stats))
+    assert {p: tc1._read(p) for p in cached_docs} == cached_docs  # render_targets did not mutate inputs
+
+
+@pytest.mark.parametrize('mode', ['write', 'same-size-restored-mtime', 'atomic-replace', 'remove'])
+def test_stat_changes_invalidate_sha_json_and_derived_digest(tmp_path, memo_cache, mode):
+    path = tmp_path / 'artifact.json'
+    path.write_text('{"value":"old"}')
+    before = path.stat()
+    doc, key = tc1._read_snapshot(path)
+    old_digest, old_sha = tc1._json_digest(key), tc1._file(path)
+    assert doc == {'value': 'old'}
+    if mode == 'remove':
+        path.unlink()
+        with pytest.raises(OSError):
+            tc1._file(path)
+        with pytest.raises(IndexError):
+            tc1._read(path)
+        return
+    if mode == 'atomic-replace':
+        replacement = tmp_path / 'new.json'
+        replacement.write_text('{"value":"new"}')
+        os.utime(replacement, ns=(before.st_atime_ns, before.st_mtime_ns))
+        replacement.replace(path)
+        assert path.stat().st_ino != before.st_ino
+    else:
+        if mode == 'same-size-restored-mtime':
+            # Linux can give two immediate writes the same timestamp tick.
+            # This case specifically exercises a *changed ctime* with mtime restored.
+            time.sleep(.02)
+        path.write_text('{"value":"new"}' if mode != 'write' else '{"value":"new and longer"}')
+        if mode == 'same-size-restored-mtime':
+            os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+            assert path.stat().st_size == before.st_size and path.stat().st_mtime_ns == before.st_mtime_ns
+            assert path.stat().st_ctime_ns != before.st_ctime_ns
+    current, new_key = tc1._read_snapshot(path)
+    assert new_key != key and current['value'].startswith('new')
+    assert tc1._json_digest(new_key) != old_digest
+    assert tc1._json_digest(new_key) == hashing.config_hash(current)
+    with pytest.raises(IndexError, match='stale content'):
+        tc1._file(path, old_sha)
+
+
+def test_modified_file_still_invalidates_warm_index(episode, memo_cache):
+    cfg, ws, _, out = episode
+    fake = Fake()
+    first = build_index(cfg, 'PLtest', client=fake)
+    record = build_index(cfg, 'PLtest', client=fake, write=False)['records'][0]
+    assert record['cached'] and record['input_fingerprint'] == first['records'][0]['input_fingerprint']
+    # Same length and restored mtime: ctime must still invalidate the media hash.
+    video = out / 'shorts' / 'k01.mp4'
+    st = video.stat()
+    time.sleep(.02)  # ensure this test changes ctime even on a coarse timestamp tick
+    video.write_bytes(b'changed!')
+    os.utime(video, ns=(st.st_atime_ns, st.st_mtime_ns))
+    after = build_index(cfg, 'PLtest', client=fake, write=False)['records'][0]
+    assert after['status'] == 'ineligible' and 'stale content' in after['reason']
+    assert len(fake.calls) == 1
+
+
+def test_returned_index_does_not_expose_mutable_cache(episode, memo_cache):
+    cfg, *_ = episode
+    fake = Fake()
+    build_index(cfg, 'PLtest', client=fake)
+    original = build_index(cfg, 'PLtest', client=fake, write=False)['records']
+    mutated = build_index(cfg, 'PLtest', client=fake, write=False)['records']
+    mutated[0]['favorite']['episode_id'] = 'other.kt'
+    mutated[0]['inputs']['favorite']['clip'] = 'other'
+    mutated[0]['metadata']['synopsis']['text'] = 'invented'
+    assert build_index(cfg, 'PLtest', client=fake, write=False)['records'] == original
+    assert len(fake.calls) == 1
+
+
+def test_concurrent_audits_are_equal_and_json_lru_is_bounded(episode, tmp_path, memo_cache):
+    cfg, *_ = episode
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        records = list(pool.map(lambda _: audit_playlist(cfg, 'PLtest'), range(16)))
+    assert all(r == records[0] for r in records) and records[0][0]['status'] == 'eligible'
+    for cache in memo_cache:
+        assert 0 < cache.cache_info().maxsize < 10000
+    # Exercise real eviction rather than relying on the declared limit alone.
+    first = tmp_path / 'lru-0.json'
+    for n in range(tc1._cached_json.cache_info().maxsize + 1):
+        path = tmp_path / f'lru-{n}.json'
+        path.write_text('{"value":1}')
+        tc1._read(path)
+    stats = tc1._cached_json.cache_info()
+    assert stats.currsize == stats.maxsize
+    assert tc1._read(first) == {'value': 1}
+    assert tc1._cached_json.cache_info().misses == stats.misses + 1
+
+
+def test_change_during_hash_is_not_cached(tmp_path, memo_cache, monkeypatch):
+    path = tmp_path / 'clip.mp4'
+    path.write_bytes(b'old')
+    original = hashing.sha256_file
+    def changing(p):
+        digest = original(p)
+        p.write_bytes(b'new content')  # size change is deterministic even within one timestamp tick
+        return digest
+    monkeypatch.setattr(hashing, 'sha256_file', changing)
+    with pytest.raises(IndexError, match='changed during audit'):
+        tc1._file(path)
+    assert tc1._file_digest.cache_info().currsize == 0
+    monkeypatch.setattr(hashing, 'sha256_file', original)
+    assert tc1._file(path) == original(path)

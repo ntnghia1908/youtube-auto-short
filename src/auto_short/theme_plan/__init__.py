@@ -293,17 +293,25 @@ def _check(plan: dict, pid: str, current: dict[str, dict] | None, error: str | N
     return {"state": "draft", "problems": ["approval no longer matches the plan content"]}
 
 
-def _audit(config: Config, pid: str) -> tuple[dict[str, dict] | None, str | None]:
+def _audit(config: Config, pid: str, index: dict | None = None) -> tuple[dict[str, dict] | None, str | None]:
     try:
+        if index is not None:
+            if index.get("playlist_id") != pid:
+                return None, "playlist_id mismatch in supplied index"
+            return _indexed(index), None
         return _current(config, pid), None
     except (theme_index.IndexError, OSError) as exc:
         return None, str(exc)
 
 
-def check_plan(config: Config, playlist_id: str, plan: dict) -> dict:
-    """Re-audit the plan against the current TC1 index. No AI, no writes."""
+def check_plan(config: Config, playlist_id: str, plan: dict, *, index: dict | None = None) -> dict:
+    """Check against TC1, optionally reusing this request's read-only build_index result.
+
+    A supplied index must belong to this playlist and have been freshly audited
+    by the caller; omitted = re-audit as before. No AI, no writes.
+    """
     _folder(config, playlist_id)
-    current, error = _audit(config, playlist_id)
+    current, error = _audit(config, playlist_id, index)
     return _check(plan, playlist_id, current, error)
 
 
@@ -376,12 +384,15 @@ def delete_plan(config: Config, playlist_id: str, plan_id: str) -> None:
         path.unlink()
 
 
-def list_plans(config: Config, playlist_id: str) -> list[dict]:
-    """Every plan file with its check result under ``check``; corrupt files are listed as invalid, never dropped."""
+def list_plans(config: Config, playlist_id: str, *, index: dict | None = None) -> list[dict]:
+    """Every plan with ``check``; corrupt files remain listed as invalid.
+
+    ``index`` has the same request-scoped contract as check_plan(index=...).
+    """
     folder = _folder(config, playlist_id) / PLANS_DIR
     if not folder.is_dir():
         return []
-    current, error = _audit(config, playlist_id)
+    current, error = _audit(config, playlist_id, index)
     out = []
     for path in sorted(folder.glob("*.json")):
         try:

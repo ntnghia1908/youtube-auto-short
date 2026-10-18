@@ -296,3 +296,30 @@ def test_check_and_list_never_call_ai_or_write(multi):
     change(folder / 'theme_index.json', lambda d: d['records'][0].update(input_fingerprint='x'))
     # a changed cache must make the clip not indexed (no AI call to repair it), and still write nothing
     assert tp.check_plan(cfg, 'PLtest', plan)['state'] == 'stale'
+
+
+def test_check_and_list_can_share_a_fresh_index(multi, monkeypatch):
+    from copy import deepcopy
+    cfg, *_ = multi
+    plan = make_plan(cfg)
+    index = tp.theme_index.build_index(cfg, 'PLtest', write=False, client=tp._RefusingClient())
+    before = deepcopy(index)
+    expected_check = tp.check_plan(cfg, 'PLtest', plan)
+    expected_list = tp.list_plans(cfg, 'PLtest')
+    monkeypatch.setattr(tp.theme_index, 'build_index', lambda *a, **kw: pytest.fail('re-audited shared index'))
+    assert tp.check_plan(cfg, 'PLtest', plan, index=index) == expected_check
+    assert tp.list_plans(cfg, 'PLtest', index=index) == expected_list
+    assert index == before
+
+
+def test_shared_index_stale_and_wrong_playlist_fail_closed(multi, monkeypatch):
+    cfg, ws, folder, out = multi
+    plan = make_plan(cfg)
+    _break(cfg, ws, folder, out, 'transcript')
+    index = tp.theme_index.build_index(cfg, 'PLtest', write=False, client=tp._RefusingClient())
+    monkeypatch.setattr(tp.theme_index, 'build_index', lambda *a, **kw: pytest.fail('unexpected second audit'))
+    assert tp.check_plan(cfg, 'PLtest', plan, index=index)['state'] == 'stale'
+    assert tp.list_plans(cfg, 'PLtest', index=index)[0]['check']['state'] == 'stale'
+    wrong = {**index, 'playlist_id': 'PLother'}
+    assert tp.check_plan(cfg, 'PLtest', plan, index=wrong)['state'] == 'stale'
+    assert 'mismatch' in tp.list_plans(cfg, 'PLtest', index=wrong)[0]['check']['problems'][0]

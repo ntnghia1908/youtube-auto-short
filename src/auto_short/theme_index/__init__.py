@@ -3,12 +3,18 @@
 ``build_index(config, playlist_id, client=...)`` reads the stored playlist and hearts.
 ``audit_playlist`` performs the same eligibility checks without AI or writes.
 Cache: output/_compilations/<playlist_id>/theme_index.json, replaced atomically.
+Bounded, thread-safe stat-keyed memos in this process reuse file SHA256, parsed
+JSON (read-only internally), and derived JSON digests. Keys include resolved path,
+device, inode, size, mtime_ns and ctime_ns; changed files are read/hashed again.
+TC3 still hashes the reference Short independently when rendering.
 """
 from __future__ import annotations
 
 import json
 import math
 import re
+from copy import deepcopy
+from functools import lru_cache
 from pathlib import Path
 
 from .. import hashing, khaithi
@@ -41,22 +47,67 @@ class IndexError(ValueError):
     """Invalid input artifact or ungrounded structured output."""
 
 
-def _read(path: Path) -> dict:
+# functools.lru_cache protects its bookkeeping without holding a global lock
+# during I/O or hashing. Concurrent cold misses may compute the same value twice.
+_JSON_CACHE_SIZE, _HASH_CACHE_SIZE = 1024, 2048
+
+
+def _stat_key(path: Path) -> tuple:
+    resolved = path.resolve()
+    st = resolved.stat()
+    return (resolved, st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+
+
+def _unchanged(key: tuple) -> None:
+    if _stat_key(key[0]) != key:
+        raise IndexError(f"artifact changed during audit: {key[0].name}")
+
+
+@lru_cache(maxsize=_JSON_CACHE_SIZE)
+def _cached_json(key: tuple):
+    doc = json.loads(key[0].read_text(encoding="utf-8"))
+    _unchanged(key)  # never publish a cache entry for a file changed while reading
+    return doc
+
+
+def _read_snapshot(path: Path) -> tuple[dict, tuple]:
+    """Cached documents are read-only. Keep their stat key with any derived digest."""
     try:
-        doc = json.loads(path.read_text(encoding="utf-8"))
+        key = _stat_key(path)
+        doc = _cached_json(key)
+    except IndexError:
+        raise
     except (OSError, ValueError) as exc:
         raise IndexError(f"cannot read {path.name}: {exc}") from exc
     if not isinstance(doc, dict):
         raise IndexError(f"{path.name}: expected object")
-    return doc
+    return doc, key
+
+
+def _read(path: Path) -> dict:
+    return _read_snapshot(path)[0]
 
 
 def _sha(doc: object) -> str:
     return hashing.config_hash(doc)
 
 
+@lru_cache(maxsize=_HASH_CACHE_SIZE)
+def _json_digest(key: tuple, field: str | None = None) -> str:
+    # Use exactly the parsed version validated by the caller, not a later read.
+    doc = _cached_json(key)
+    return _sha(doc if field is None else doc[field])
+
+
+@lru_cache(maxsize=_HASH_CACHE_SIZE)
+def _file_digest(key: tuple) -> str:
+    digest = hashing.sha256_file(key[0])
+    _unchanged(key)
+    return digest
+
+
 def _file(path: Path, expected: str | None = None) -> str:
-    actual = hashing.sha256_file(path)
+    actual = _file_digest(_stat_key(path))
     if expected is not None and actual != expected:
         raise IndexError(f"stale content: {path.name}")
     return actual
@@ -99,7 +150,7 @@ def _evidence(transcript: dict, ranges: list[list[float]]) -> tuple[list[dict], 
     return out, missing
 
 
-def _prepare(config: Config, playlist: dict, raw: object) -> dict:
+def _prepare(config: Config, playlist: dict, raw: object, playlist_digest: str) -> dict:
     item = item_from_json(raw)
     validate_episode_id(item.episode_id)
     if not re.fullmatch(r"[A-Za-z0-9_-]+", item.clip):
@@ -116,7 +167,8 @@ def _prepare(config: Config, playlist: dict, raw: object) -> dict:
     review = logic.read_review(ws.dir / logic.REVIEW_NAME, item.episode_id)
     if any(e["clip_id"] == item.clip for e in review.get("rejected", [])):
         raise IndexError("rejected")
-    clips, candidates = _read(ws.dir / "clips.json"), _read(ws.dir / "candidates.json")
+    clips, clips_key = _read_snapshot(ws.dir / "clips.json")
+    candidates, candidates_key = _read_snapshot(ws.dir / "candidates.json")
     targets, warnings = render.render_targets(clips, review, candidates, lambda: render.load_silences(ws, candidates))
     if warnings:
         raise IndexError("unresolved manual cuts: " + "; ".join(warnings))
@@ -128,13 +180,14 @@ def _prepare(config: Config, playlist: dict, raw: object) -> dict:
     if not MIN_DURATION <= duration <= MAX_DURATION:
         raise IndexError(f"duration outside {MIN_DURATION}-{MAX_DURATION} seconds")
     folder = Path(config.render.output_dir) / item.episode_id
-    rendered = _read(folder / "render_manifest.json")
+    rendered, rendered_key = _read_snapshot(folder / "render_manifest.json")
     short = next((s for s in rendered["shorts"] if s["clip_id"] == item.clip), None)
     if rendered.get("episode_id") != item.episode_id or short is None or short.get("status") != "rendered":
         raise IndexError("not rendered")
-    for key, current in (("clips_sha256", clips), ("candidates_sha256", candidates),
-                         ("titles_sha256", _read(ws.dir / "titles.json"))):
-        if rendered.get(key) != _sha(current):
+    _, titles_key = _read_snapshot(ws.dir / "titles.json")
+    for key, source_key in (("clips_sha256", clips_key), ("candidates_sha256", candidates_key),
+                            ("titles_sha256", titles_key)):
+        if rendered.get(key) != _json_digest(source_key):
             raise IndexError(f"stale render: {key}")
     for key in ("source_start", "source_end", "candidate_id", "cut", "origin", "duration"):
         if short.get(key) != target[key]:
@@ -168,10 +221,10 @@ def _prepare(config: Config, playlist: dict, raw: object) -> dict:
         media, source_sha, present = original, original_sha, original.is_file()
     if source_sha != rendered_sha:
         raise IndexError("stale render: source")
-    transcript = _read(ws.dir / "transcript.json")
+    transcript, transcript_key = _read_snapshot(ws.dir / "transcript.json")
     if transcript.get("media_sha256") != original_sha:
         raise IndexError("stale transcript source")
-    digest = _sha(transcript["segments"])
+    digest = _json_digest(transcript_key, "segments")
     if transcript.get("transcript_sha256") != digest or candidates.get("transcript_sha256") != digest:
         raise IndexError("stale transcript/candidates linkage")
     evidence, uncertainty = _evidence(transcript, ranges)
@@ -183,22 +236,24 @@ def _prepare(config: Config, playlist: dict, raw: object) -> dict:
             "source_status": "present" if present else "missing",
             "final_segments": ranges, "source_reference": {"path": str(media.resolve()), "sha256": source_sha,
             "original_sha256": original_sha}, "evidence": evidence, "uncertainty": uncertainty,
-            "inputs": {"files": files, "render_manifest": _sha(rendered), "render_sha256": video_sha,
-                       "favorite": raw, "playlist": _sha(playlist)}}
+            "inputs": {"files": files, "render_manifest": _json_digest(rendered_key), "render_sha256": video_sha,
+                       "favorite": raw, "playlist": playlist_digest}}
 
 
 def audit_playlist(config: Config, playlist_id: str) -> list[dict]:
     """Read-only: every favorite yields eligible/ineligible; malformed favorites are never dropped."""
     playlist = _playlist(config, playlist_id)
+    playlist_digest = _sha(playlist)  # once per audit, shared by every favorite
     path = store.directory(config.render.output_dir, playlist_id) / store.FAVORITES_NAME
     favorites = _read(path) if path.exists() else {"schema_version": 1, "items": []}
     if favorites.get("schema_version") != 1 or not isinstance(favorites.get("items"), list):
         raise IndexError("invalid favorites artifact")
     records = []
     for position, raw in enumerate(favorites["items"]):
+        raw = deepcopy(raw)  # public records must not expose mutable cached JSON
         record = {"favorite_position": position, "favorite": raw, "status": "ineligible"}
         try:
-            prepared = _prepare(config, playlist, raw)
+            prepared = _prepare(config, playlist, raw, playlist_digest)
         except (IndexError, CompilationError, WorkspaceError, khaithi.KhaithiError, logic.ReviewError,
                 render.RenderError, plan.PlanError, OSError, KeyError, TypeError, ValueError) as exc:
             record["reason"] = str(exc)
@@ -273,7 +328,7 @@ def build_index(config: Config, playlist_id: str, *, client: ChatClient | None =
             except IndexError:
                 hit = None
         if hit:
-            record.update(status="indexed", metadata=metadata, indexed_at=hit["indexed_at"], cached=True)
+            record.update(status="indexed", metadata=deepcopy(metadata), indexed_at=hit["indexed_at"], cached=True)
             continue
         try:
             active = client or OllamaClient(resolve_host(cfg.ollama_host), cfg.timeout)

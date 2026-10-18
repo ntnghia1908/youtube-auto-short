@@ -74,6 +74,7 @@ from . import compilations as comp_web
 from . import downloads as dl_mod
 from . import monitor as monitor_mod
 from . import theme_index as theme_index_web
+from . import theme_plan as theme_plan_web
 from .auth import COOKIE_NAME, SessionSigner, load_or_create_secret
 from .storage import BLOCK_MESSAGE, StorageCache, auto_archive_plan, episode_sizes, video_id
 from .jobs import (EPISODE_KINDS, KIND_ADD, KIND_COMPILATION, KIND_ENHANCE, KIND_IMAGE_SEARCH, KIND_PIPELINE, KIND_POST, KIND_POST_SEARCH, KIND_RENDER, KIND_VERTICAL,
@@ -547,6 +548,8 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             return image_search_target(config, url, search=post_search) if isinstance(url, str) and url else None
         if kind == KIND_COMPILATION:  # CP8.33 G5: the key is ``compilation:<playlist_id>:<cid>``, not an episode
             return compilations.rebuild(eid, spec)
+        if kind in (theme_plan_web.KIND_GENERATE, theme_plan_web.KIND_THEME_RENDER):
+            return None  # TC2: restart requires a fresh user request and plan audit
         if not ep.valid_episode_id(eid) or (is_archived(ws / eid) and kind != KIND_VERTICAL):
             return None
         if kind == KIND_PIPELINE:
@@ -594,6 +597,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     app_sweep = _sweep_refetched
 
     compilations = comp_web.Compilations(config, playlists, runner, lambda doc: _playlist_docx_series(doc))
+    theme_plans = theme_plan_web.ThemePlans(config, playlists, runner, preflight=preflight)
     runner.configure_persistence(Path(config.workspace.dir) / QUEUE_FILE, _rebuild_job)
     runner.priority.attach(Path(config.workspace.dir) / PRIORITY_FILE)  # CP8.26 P1
     auto_vertical.attach(Path(config.workspace.dir) / WISH_FILE)  # CP8.35 D3
@@ -625,6 +629,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     app.state.sweep_refetched = _sweep_refetched
     app.state.playlists = playlists
     app.state.compilations = compilations
+    app.state.theme_plans = theme_plans
     app.state.signer = signer
     download_table = dl_mod.DownloadTable()  # CP8.34 D3: progress of ``?dl=<token>`` downloads (memory only)
     app.state.downloads = download_table
@@ -2929,5 +2934,6 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         return FileResponse(path, media_type="video/mp4", headers=headers)
 
     theme_index_web.register(app, config, playlists, STATIC_DIR)  # TC-WEB1: GET-only TC1 preview
+    theme_plan_web.register(app, theme_plans)  # TC2 phase C: planner and TC3 landscape jobs
 
     return app

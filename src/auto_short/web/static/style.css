@@ -331,6 +331,11 @@ body.modal-open { overflow: hidden; }
 .heart.on { color: #d6336c; border-color: #d6336c; }
 .kept-note { font-size: .8rem; color: var(--muted); }
 
+/* TC2: thematic planner inside Yêu thích */
+.tp-plan { border-top: 1px solid var(--border); margin-top: .75rem; padding-top: .5rem; overflow-wrap: anywhere; }
+.tp-plan input[type="text"] { width: 100%; box-sizing: border-box; padding: .5rem; margin-bottom: .5rem; font-size: 1rem; }
+.tp-plan select { flex: 1 1 12rem; min-width: 0; max-width: 100%; padding: .5rem; font-size: 1rem; }
+
 /* CP8.34: sequential download queue on the bộ kinh page */
 .dq-check, .dq-check-slot { flex: 0 0 1.4rem; width: 1.4rem; height: 1.4rem; margin: .15rem 0 0; }
 .dq-controls label.inline { display: inline-flex; gap: .4rem; align-items: center; }
