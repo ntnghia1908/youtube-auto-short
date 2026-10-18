@@ -187,6 +187,7 @@ def test_ac5_false_after_true_clears_the_wish(tcfg):
     assert c.app.state.auto_vertical.wanted(VID)
     submit(c, vertical=False)
     assert not c.app.state.auto_vertical.wanted(VID)
+    idle(c)  # never stop the server under a running job (JobRunner.stop interrupts it asynchronously)
     c.__exit__(None, None, None)
 
 
