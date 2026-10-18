@@ -2,15 +2,15 @@
 
 ## Status / Approval
 
-- Status: DRAFT
+- Status: APPROVED
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
 - Execution profile: dual-agent
 - Implementer: `.claude/agents/implementer` (Sonnet) — mặc định dual-agent của project.
 - Base commit / branch: `e7a9d05` (`main`, sau #88 CP8.34) / `feature/cp8.35-auto-vertical` (worktree `../youtube-auto-short-cp835`).
-- Human Lead approval: pending
-- Implementation authorized: NO
+- Human Lead approval: APPROVED D1–D6 (2026-10-18)
+- Implementation authorized: YES
 
 Lifecycle: `DRAFT → APPROVED → IN_PROGRESS → READY`. DONE suy ra từ Git sau khi merge.
 
