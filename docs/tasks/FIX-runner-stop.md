@@ -62,4 +62,4 @@ HUMAN LEAD 2026-10-18: "đạt" (manual test qua 8080 ghim bản gộp thử `5d
 - Review: ORCHESTRATOR 2026-10-18 ACCEPTED — đọc `_RunnerLock` (RLock C + Condition trên chính nó; `wait` lấy lại khóa khi bị cắt), `_descendants` / subreaper / thang tín hiệu SIGINT → SIGTERM → SIGKILL trong `stop()`, `begin_stop()` nối vào `uvicorn.Server.handle_exit` (`server.py`, ngoài chữ Scope nhưng cần để đóng khe Ctrl-C — chấp nhận). Ghi chú: `wait` bị cắt chỉ lấy lại khóa một mức (không khôi phục số lần lồng) — chỉ xảy ra lúc dừng, chấp nhận.
 - Important findings / decisions: Giả thuyết (1) suy ra từ code + log HUMAN LEAD, không có log chi tiết của job 19 để kiểm. Test cũ không sửa. Ctrl-C vẫn đến ffmpeg qua process group (không đổi); `begin_stop` làm điều đó vô hại.
 - Known limitations: tiến trình đã mồ côi *trước* khi `stop()` bắt đầu (re-parent về init) không tìm lại được; `stop()` giờ SIGINT/SIGTERM/SIGKILL mọi tiến trình con của server (không chỉ của job), chấp nhận khi thoát. Một job nuốt ngắt mãi vẫn là thread daemon sống tới khi process thoát (con của nó đã bị giết).
-- PR:
+- PR: #90
