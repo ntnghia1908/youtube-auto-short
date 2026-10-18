@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "1",
+  "id": "codex",
+  "displayName": "Codex CLI",
+  "roles": ["orchestrator", "implementer"],
+  "execution": ["local", "interactive"],
+  "capabilities": {
+    "readRepository": true,
+    "writeRepository": true,
+    "shell": true,
+    "git": true,
+    "pullRequest": false
+  }
+}

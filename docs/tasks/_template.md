@@ -9,13 +9,19 @@
 - Change class: S1 | S2
 - Owner: <người chịu trách nhiệm — không ghi model/tool>
 - Execution profile: dual-agent | single-agent
+- Orchestrator: <tùy chọn: claude-code | codex — CLI đang điều phối task>
 - Implementer: <chỉ dual-agent: adapter trong Danh sách IMPLEMENTER của docs/ai/project-profile.md §7 — lý do một dòng>
 - Human Lead: <nếu khác Owner>
+- Authorization mode: task | boundary
+- Authorization source: <approved boundary / decision / task approval reference>
+- Parallel group: <P0 / P1 / —>
+- Owned paths: <disjoint file/subsystem boundary>
+- Dependencies: <task IDs / none>
 - Base commit / branch: <SHA / branch>
-- Human Lead approval: <pending / accepted>
+- Human Lead approval: <pending / accepted / inherited from boundary>
 - Implementation authorized: NO
 
-Lifecycle: `DRAFT → APPROVED → IN_PROGRESS → READY`. DONE suy ra từ Git sau khi merge.
+Lifecycle: `task` mode = `DRAFT → APPROVED → IN_PROGRESS → READY`; `boundary` mode = `DRAFT → IN_PROGRESS → READY`. DONE suy ra từ Git sau khi merge.
 
 ## Goal
 
@@ -49,6 +55,15 @@ Tất cả required verification phải chạy và PASS trước READY.
 Ghi rõ task có chạm database, security model hoặc public API contract hay không. Nếu có, manual test là gate trước integration; nếu không, manual test sau automated verification là điểm danh.
 
 - [ ] ...
+
+## Handoff
+
+Tùy chọn; chỉ dùng khi chuyển ORCHESTRATOR giữa chừng task (cần HUMAN LEAD duyệt). Dùng handoff prompt ở `docs/ai/workflow.md` §9, không tạo protocol riêng.
+
+- Outgoing / incoming ORCHESTRATOR:
+- Nguồn duyệt chuyển giao:
+- Phase / blocker / next action:
+- HEAD + working tree lúc bàn giao:
 
 ## Result
 

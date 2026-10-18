@@ -22,6 +22,7 @@ Framework changes after adoption are recorded in `docs/ai/framework-history.md`.
 - READY and HUMAN LEAD integration gate.
 - Three-layer architecture: Framework Core → Project Layer → Tool Adapter.
 - Canonical-owner principle for normative rules.
+- v4.4 (AS-FW-UPGRADE-01, kit `aa9688d`): Core workflow/execution-profiles v4.4, agent adapter contract + descriptor schema, adaptive native dual-agent, `governance.taskAuthorization=boundary` / `maxParallelImplementers=3`, adapter descriptors for claude-code, copilot, codex.
 - Greenfield adoption order from the handbook: Core → Project Layer → module rules as needed → execution profile → adapter → integration mechanism → checker → pilot.
 
 ## Adapted
@@ -31,6 +32,7 @@ Framework changes after adoption are recorded in `docs/ai/framework-history.md`.
 - `framework-check.mjs` is rewritten for this repository instead of copied from `dang-vu-spring`, because the reference checker contains project-specific paths/assumptions.
 - Integration mechanism is branch → commit → push → PR → HUMAN LEAD merge.
 - Claude adapter points to this repository's current-state and task structure.
+- v4.4: shared checker adds `legacyTasks` (83 frozen v4.2 task contracts validated with v4.2 rules) and requires an explicit `Authorization mode: task|boundary` on new tasks; see `docs/ai/framework-migration-notes.md`. Operational write concurrency stays 1.
 - Project currently allows both `single-agent` and `dual-agent`; each task must select its profile.
 
 ## Not adopted
@@ -42,6 +44,7 @@ Framework changes after adoption are recorded in `docs/ai/framework-history.md`.
 - `dang-vu-spring` business scope, glossary and deployment assumptions.
 - `dang-vu-spring` model/vendor-specific assumptions in the framework core.
 - `youtube-vietnamese-dubber` as runtime dependency or source of truth.
+- v4.4: ChatGPT product agent / Product Layer, `.codex/*.toml`, multi-writer parallel implementation, Claude Code adapter workflows/REQUIREMENT_HANDOFF.
 
 ## CP0 boundary
 

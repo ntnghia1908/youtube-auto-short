@@ -77,6 +77,9 @@ HUMAN LEAD giữ scope, architecture, dependency, project-wide conventions, inte
 
 - Được phép: `single-agent`, `dual-agent`.
 - Profile của từng task là source of truth; không suy đoán profile từ tool/model.
+- Tuỳ chọn `dual-agent` mặc định (adaptive, không có orchestrator cố định): Claude Code native (session chính Opus = ORCHESTRATOR, `.claude/agents/implementer` Sonnet = IMPLEMENTER) và Codex native worker (chỉ có tài liệu, chưa chạy thử runtime, không hard-code model ID). Copilot vẫn là tuỳ chọn IMPLEMENTER; `single-agent` vẫn được phép.
+- Governance `boundary/3`: task mới vẫn cần Implementation Authorization Boundary đã được HUMAN LEAD duyệt và ghi trong task contract; số writer thực tế là 1 cho tới khi có pilot worktree-isolation được duyệt riêng.
+- Profile và Implementer của task đã có không bị đổi hồi tố. Validate task legacy và ghi chú migration: `docs/ai/framework-migration-notes.md` (canonical owner).
 
 ## 8. Setup / tools
 
