@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: DRAFT
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -124,4 +124,10 @@ Task thêm public HTTP API (G3) → manual test là gate trước integration.
 - Phase C (2026-10-18, IMPLEMENTER Codex `gpt-6.1-sol` high, sandbox `workspace-write`): `src/auto_short/web/theme_plan.py` (service `ThemePlans`, job `theme_plan` làn ai với preflight / chờ GPU, job `theme_render` làn render gọi TC3, 8 route G3 + route tải `/files/playlists/{pid}/theme/<plan>-r<rev>.mp4`, redaction TC-WEB1), wiring `web/app.py` (job theme không khôi phục sau restart), `static/theme_plan.js` + mục trong `favorites.html|js`, `style.css`; `tests/test_web_theme_plan.py`. Vòng sửa 1 (finding ORCHESTRATOR F1 blocking — GET audit TC1 21–27 s trên bộ 104 favorites, chạy 2 lần mỗi GET, poll 5 s, giữ lock toàn cục): TC1 memo stat-key (path, dev, inode, size, mtime_ns, ctime_ns) cho sha256 / JSON / digest, `list_plans` / `check_plan` nhận `index=`, GET / download không giữ lock; đo read-only 11,07 s → 0,24 s lần 2. Codex: phase C 159 199 tokens; vòng 1 235 790 tokens (resume cùng phiên); quota cửa sổ 5 giờ 79 % → 84 %.
 - Tests phase C (ORCHESTRATOR ngoài sandbox, sandbox Codex chặn loopback): 4 file web 92 passed; sau vòng 1 `-m pytest -q -n auto` 2105 passed, 1 skipped, exit 0; framework-check PASS; `git diff --check` exit 0.
 - Review phase C: vòng 1 F1 (blocking, hiệu năng) → đã sửa; ACCEPTED. Notes: memo JSON tối đa 1024 file trong tiến trình web (transcript lớn → vài trăm MB RAM tệ nhất); job theme mất khi restart (bấm lại).
+- Chạy thật trên bản sao dữ liệu (ORCHESTRATOR, 2026-10-18, `~/.cache/auto-short-tc23-test/`, output hard link, workspace thật chỉ đọc, Ollama thật `qwen3:30b`):
+  - Vòng 1–2: timeout 600 s ×5 (GPU chia với enhance; client hết hạn nhưng Ollama vẫn chạy → dồn hàng nhiều giờ). Vòng 3: 5/5 `ai_error` do validation quá chặt (null subtopic, trích dẫn lệch chữ) → sửa `40768ac` (AI chỉ trả evidence_id, code điền nguyên văn; tự `missing_metadata`; nhãn tiếng Việt; `num_predict` 8192). Vòng 4: 4/5 indexed, 1 rỗng do thinking hết token → sửa `511312d` (thử lại một lần `think=False`).
+  - Bộ `…BdXCp…` (5 khai thị, nguồn đã xóa): render bị YouTube chặn "Sign in to confirm you're not a bot" (cả khi có node) → `SourceBlocked` đúng thiết kế; dừng thử lại để không làm nặng chặn IP production.
+  - Bộ Địa Tạng (bản sao, ♥ 13 khai thị còn nguồn): 13/13 indexed (2 nhờ retry), 4 chủ đề; "Khái niệm Phật giáo cốt lõi" 6 clip 32,1 phút `ok`; duyệt; render 629 s → MP4 1920×1080 h264 / aac 1927,6 s, 6 / 6 clip audio corr 1,0 lag 0, chapters + mô tả đúng mốc. Mẫu đã gửi HUMAN LEAD.
+  - Chất lượng còn hạn chế: synopsis đôi khi là mẩu ngắn ("Bất sanh", "Mở"); 2 clip null topic (retry không thinking); chủ đề có xu hướng gom theo tập. Semantic cần HUMAN LEAD review.
+- Manual gate còn lại: test web trên 8080 (ghim branch, cần HUMAN LEAD cho restart) + đọc semantic chủ đề.
 - PR: chưa (cần HUMAN LEAD cho phép).
