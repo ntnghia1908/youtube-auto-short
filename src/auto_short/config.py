@@ -231,10 +231,10 @@ class WebConfig:
     youtube_retry_max_minutes: int = 120
     # CP8.29 P1: jobs the ``prepare`` lane (ingest -> transcript -> analysis) runs at once; 1 = as before
     prepare_workers: int = 1
-    # CP8.36 D1 / D2: jobs the ``render`` lane runs at once; the extra slots start a job only while the 1-minute load
-    # average is below ``render_max_load`` x CPU count (the first slot always runs); 1 = as before
+    # CP8.36 D1 / A1: jobs the ``render`` lane runs at once; the extra slots start a job only while the CPU busy
+    # fraction (average of ~60 s, /proc/stat) is below ``render_max_cpu`` (the first slot always runs); 1 = as before
     render_workers: int = 2
-    render_max_load: float = 0.6
+    render_max_cpu: float = 0.6
     # CP8.29 A1: heavy lanes (prepare, render) run at this ``nice`` (CPU and I/O priority lowered per worker thread;
     # child processes and Whisper threads inherit it) so the web server stays responsive; 0 = unchanged
     worker_nice: int = 10
@@ -399,10 +399,10 @@ def _number(section: dict, key: str, default: float, where: str, *, lo: float, h
     return float(value)
 
 
-def _positive(section: dict, key: str, default: float, where: str) -> float:
-    value = _number(section, key, default, where, lo=0.0)
+def _unit_fraction(section: dict, key: str, default: float, where: str) -> float:
+    value = _number(section, key, default, where, lo=0.0, hi=1.0)
     if value <= 0:
-        raise ConfigError(f"{where}.{key} must be a number > 0")
+        raise ConfigError(f"{where}.{key} must be a number > 0 and <= 1")
     return value
 
 
@@ -662,6 +662,9 @@ def _render(data: dict) -> RenderConfig:
 def _web(data: dict) -> WebConfig:
     we = _section(data, "web")
     d, w = WebConfig(), "web"
+    if "render_max_load" in we:  # CP8.36 A1: replaced before release; a stale key must not be silently ignored
+        raise ConfigError("web.render_max_load was replaced by web.render_max_cpu (CPU busy fraction 0-1, "
+                          "default 0.6); remove render_max_load")
     return WebConfig(
         host=_str(we, "host", d.host, w),
         port=_int(we, "port", d.port, w, lo=1, hi=65535),
@@ -674,7 +677,7 @@ def _web(data: dict) -> WebConfig:
                                        hi=1440),
         prepare_workers=_int(we, "prepare_workers", d.prepare_workers, w, lo=1, hi=8),
         render_workers=_int(we, "render_workers", d.render_workers, w, lo=1, hi=4),
-        render_max_load=_positive(we, "render_max_load", d.render_max_load, w),
+        render_max_cpu=_unit_fraction(we, "render_max_cpu", d.render_max_cpu, w),
         worker_nice=_int(we, "worker_nice", d.worker_nice, w, lo=0, hi=19),
     )
 

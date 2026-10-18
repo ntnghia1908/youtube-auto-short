@@ -65,6 +65,40 @@ KIND_POST = "post"  # CP8.15 P1: compose / recompose community post text (lane a
 KIND_POST_SEARCH = "post_search"  # CP8.15 P5b: find images from a link (lane prepare; no Ollama)
 KIND_IMAGE_SEARCH = "image_search"  # CP8.30 P5c: find images by keyword -> candidates (lane prepare; no Ollama)
 LOAD_CHECK_SECONDS = 30.0  # CP8.36 D2: an extra render slot held back by the CPU load re-checks this often
+CPU_SAMPLE_SECONDS, CPU_WINDOW_SECONDS = 5.0, 60.0  # CP8.36 A1: /proc/stat sampling period / averaging window
+
+
+class CpuAverage:
+    """CP8.36 A1: CPU busy fraction averaged over a sliding window of ``/proc/stat`` samples (same formula as the
+    CP8.28 monitor: (total - idle - iowait) / total over all cores). ``value()`` is None until the window holds
+    samples spanning at least half of it, or when ``/proc/stat`` is unreadable."""
+
+    def __init__(self, proc: Path = Path("/proc"), *, window: float = CPU_WINDOW_SECONDS,
+                 clock: Callable[[], float] = time.monotonic) -> None:
+        self.proc, self.window, self._clock = proc, window, clock
+        self._samples: "deque[tuple[float, int, int]]" = deque()
+        self._lock = threading.Lock()
+
+    def sample(self) -> None:
+        from .monitor import read_cpu_times
+        times = read_cpu_times(self.proc)
+        now = self._clock()
+        with self._lock:
+            if times is None:
+                self._samples.clear()
+                return
+            self._samples.append((now, times[0][0], times[0][1]))
+            while len(self._samples) > 2 and now - self._samples[1][0] >= self.window:
+                self._samples.popleft()
+
+    def value(self) -> float | None:
+        with self._lock:
+            if len(self._samples) < 2:
+                return None
+            (t0, tot0, idle0), (t1, tot1, idle1) = self._samples[0], self._samples[-1]
+            if t1 - t0 < self.window / 2 or tot1 <= tot0:
+                return None
+            return max(0.0, min(1.0, 1.0 - (idle1 - idle0) / (tot1 - tot0)))
 KIND_ENHANCE = "enhance"  # CP13.1b: assemble ``source_hd.mp4`` from the received segments (lane render; runs under enhance_key)
 KIND_VERTICAL = "vertical"  # CP8.27 H4: vertical full-episode video from ``source_hd.mp4`` (lane render; runs under vertical_key)
 KIND_COMPILATION = "compilation"  # CP8.33 G5: khai thị compilation (lane render; key ``compilation:<playlist_id>:<cid>``)
@@ -297,8 +331,8 @@ class JobRunner:
                  youtube_retry_seconds: float = YT_RETRY_SECONDS, youtube_retry_max_seconds: float = YT_RETRY_MAX_SECONDS,
                  monotonic: Callable[[], float] = time.monotonic, wall: Callable[[], float] = time.time,
                  priority: Priority | None = None, prepare_workers: int = 1,
-                 worker_nice: int = 0, render_workers: int = 1, render_max_load: float = 0.6,
-                 load_source: Callable[[], float] | None = None, cpu_count: int | None = None,
+                 worker_nice: int = 0, render_workers: int = 1, render_max_cpu: float = 0.6,
+                 cpu_source: Callable[[], float | None] | None = None,
                  load_check_seconds: float = LOAD_CHECK_SECONDS) -> None:
         if mode not in (MODE_LANES, MODE_SERIAL):
             raise ValueError(f"unknown queue mode {mode!r}")
@@ -318,11 +352,12 @@ class JobRunner:
         self.worker_nice = worker_nice
         self.prepare_workers = sum(1 for lane in self._slot_lane.values() if lane == PREPARE)
         self.render_workers = sum(1 for lane in self._slot_lane.values() if lane == RENDER)
-        # CP8.36 D2: an extra render slot starts a job only while the 1-minute load average is below
-        # ``render_max_load`` x CPU count; the load source is injectable (tests)
-        self.render_max_load = render_max_load
-        self._load_source = load_source if load_source is not None else (lambda: os.getloadavg()[0])
-        self._cpu_count = cpu_count if cpu_count else (os.cpu_count() or 1)
+        # CP8.36 A1: an extra render slot starts a job only while the CPU busy fraction (average of ~60 s of
+        # ``/proc/stat`` samples) is below ``render_max_cpu``; ``cpu_source() -> fraction | None`` is injectable (tests)
+        self.render_max_cpu = render_max_cpu
+        self._cpu_meter = None if cpu_source is not None or self.render_workers < 2 else CpuAverage()
+        self._cpu_source = cpu_source if cpu_source is not None else \
+            (self._cpu_meter.value if self._cpu_meter is not None else (lambda: None))
         self.load_check_seconds = load_check_seconds
         self._lock = threading.Condition()
         self._queues: dict[str, deque[Job]] = {lane: deque() for lane in self._lane_names}
@@ -370,11 +405,27 @@ class JobRunner:
             log.setLevel(logging.INFO)
         log.addHandler(self._handler)
         self._stopping = False
+        if self._cpu_meter is not None:
+            threading.Thread(target=self._sample_cpu, name="auto-short-cpu", daemon=True).start()
         for slot in self._slot_lane:
             name = "auto-short-jobs" if slot == _SERIAL else f"auto-short-{slot}"
             thread = threading.Thread(target=self._work, args=(slot,), name=name, daemon=True)
             self._threads[slot] = thread
             thread.start()
+
+    def _sample_cpu(self) -> None:
+        """CP8.36 A1: feed the CPU average; wake the waiting render slots after each sample."""
+        meter = self._cpu_meter
+        while True:
+            meter.sample()
+            with self._lock:
+                if self._stopping:
+                    return
+                if self._queues[RENDER]:
+                    self._lock.notify_all()
+                self._lock.wait(CPU_SAMPLE_SECONDS)
+                if self._stopping:
+                    return
 
     def stop(self, timeout: float = 30.0) -> None:
         """Stop every lane. Each running job gets KeyboardInterrupt on its lane thread (the stage records
@@ -752,10 +803,11 @@ class JobRunner:
     # --- workers -------------------------------------------------------------------------------
 
     def _cpu_idle(self) -> bool:
-        """CP8.36 D2: is the CPU load below the limit that lets an extra render slot start a job?"""
+        """CP8.36 A1: is the CPU busy fraction below the limit that lets an extra render slot start a job?"""
         try:
-            return float(self._load_source()) < self.render_max_load * self._cpu_count
-        except Exception:  # unreadable load: behave as one slot
+            busy = self._cpu_source()
+            return busy is not None and float(busy) < self.render_max_cpu
+        except Exception:  # unreadable CPU: behave as one slot
             return False
 
     def _render_pick_locked(self, queue: "deque[Job]", extra: bool) -> tuple[Job | None, bool]:

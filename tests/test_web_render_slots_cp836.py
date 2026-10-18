@@ -53,7 +53,6 @@ def mk():
 
     def factory(**kw):
         kw.setdefault("render_workers", 2)
-        kw.setdefault("cpu_count", 10)  # limit = 0.6 x 10 = 6.0
         kw.setdefault("load_check_seconds", 0.05)
         r = JobRunner(**kw)
         r.start()
@@ -76,8 +75,8 @@ def release(g):
 
 
 def test_two_videos_render_at_once_when_idle(mk):  # AC1
-    load = Load(1.0)
-    r = mk(load_source=load)
+    load = Load(0.1)
+    r = mk(cpu_source=load)
     log, g = gates("a", "b", "c")
     for n in "abc":
         r.submit(n, KIND_RENDER, g[n])
@@ -94,17 +93,17 @@ def test_two_videos_render_at_once_when_idle(mk):  # AC1
 
 
 def test_busy_cpu_holds_back_the_extra_slot_only(mk):  # AC2
-    load = Load(9.0)
-    r = mk(load_source=load)
+    load = Load(0.9)
+    r = mk(cpu_source=load)
     log, g = gates("a", "b")
     r.submit("a", KIND_RENDER, g["a"])
     r.submit("b", KIND_RENDER, g["b"])
     wait_for(lambda: log == ["a"])
     settle()
     assert log == ["a"] and list(r.running_slots()) == ["render"]
-    load.value = 5.9
+    load.value = 0.59
     wait_for(lambda: log == ["a", "b"])  # re-checked without any new job
-    load.value = 20.0  # a running job is never stopped
+    load.value = 1.0  # a running job is never stopped
     settle()
     assert len(r.running_slots()) == 2
     release(g)
@@ -112,7 +111,7 @@ def test_busy_cpu_holds_back_the_extra_slot_only(mk):  # AC2
 
 
 def test_busy_cpu_first_slot_still_takes_the_next_job(mk):
-    r = mk(load_source=Load(30.0))
+    r = mk(cpu_source=Load(1.0))
     log, g = gates("a", "b")
     r.submit("a", KIND_RENDER, g["a"])
     r.submit("b", KIND_RENDER, g["b"])
@@ -130,7 +129,7 @@ def test_busy_cpu_first_slot_still_takes_the_next_job(mk):
     (KIND_ENHANCE, KIND_RENDER, "v", "v.kt"),
 ])
 def test_same_video_never_overlaps(mk, first, second, fid, sid):  # AC3
-    r = mk(load_source=Load(0.0))
+    r = mk(cpu_source=Load(0.0))
     log, g = gates("x", "y", "z")
     r.submit(fid, first, g["x"])
     r.submit(sid, second, g["y"])
@@ -145,7 +144,7 @@ def test_same_video_never_overlaps(mk, first, second, fid, sid):  # AC3
 
 
 def test_compilation_runs_alone_both_ways(mk):  # AC4
-    r = mk(load_source=Load(0.0))
+    r = mk(cpu_source=Load(0.0))
     key = compilation_key("pl", "c1")
     # compilation first: nothing starts next to it
     log, g = gates("c", "a", "b")
@@ -173,7 +172,7 @@ def test_compilation_runs_alone_both_ways(mk):  # AC4
 
 
 def test_one_worker_is_the_old_behaviour(mk):  # AC5
-    r = mk(render_workers=1, load_source=Load(0.0))
+    r = mk(render_workers=1, cpu_source=Load(0.0))
     log, g = gates("a", "b")
     r.submit("a", KIND_RENDER, g["a"])
     r.submit("b", KIND_RENDER, g["b"])
@@ -188,7 +187,7 @@ def test_one_worker_is_the_old_behaviour(mk):  # AC5
 
 
 def test_order_priority_and_pause_with_two_slots(mk):  # AC6
-    r = mk(load_source=Load(0.0))
+    r = mk(cpu_source=Load(0.0))
     log, g = gates("a", "b", "v", "c", "d")
     r.submit("a", KIND_RENDER, g["a"])
     r.submit("b", KIND_RENDER, g["b"])
@@ -210,7 +209,7 @@ def test_order_priority_and_pause_with_two_slots(mk):  # AC6
 
 
 def test_vertical_is_last_even_with_a_free_slot(mk):
-    r = mk(load_source=Load(0.0))
+    r = mk(cpu_source=Load(0.0))
     log, g = gates("v", "a", "b")
     r.submit("v", KIND_VERTICAL, g["v"])
     r.submit("a", KIND_RENDER, g["a"])
@@ -225,7 +224,7 @@ def test_vertical_is_last_even_with_a_free_slot(mk):
 def test_saved_queue_keeps_both_running_jobs_first(mk, tmp_path):  # AC6 / D6
     path = tmp_path / "queue.json"
     log, g = gates("a", "b", "c")
-    r = mk(load_source=Load(0.0))
+    r = mk(cpu_source=Load(0.0))
     r.configure_persistence(path, lambda kind, eid, spec, clips: g[spec["name"]])
     for n in "abc":
         r.submit(n, KIND_RENDER, g[n])
@@ -239,12 +238,43 @@ def test_saved_queue_keeps_both_running_jobs_first(mk, tmp_path):  # AC6 / D6
     assert r2.queue_state()["pending"] == 3
 
 
+def test_unreadable_or_unsampled_cpu_counts_as_busy(mk):
+    r = mk(cpu_source=Load(None))
+    log, g = gates("a", "b")
+    r.submit("a", KIND_RENDER, g["a"])
+    r.submit("b", KIND_RENDER, g["b"])
+    wait_for(lambda: log == ["a"])
+    settle()
+    assert log == ["a"]
+    release(g)
+    assert r.wait_idle(10)
+
+
+def test_cpu_average_uses_proc_stat_over_the_window(tmp_path):
+    from auto_short.web.jobs import CpuAverage
+    t = [0.0]
+    m = CpuAverage(tmp_path, window=60.0, clock=lambda: t[0])
+    assert m.value() is None  # unreadable
+    m.sample()
+    assert m.value() is None
+
+    def stat(total_idle):
+        (tmp_path / "stat").write_text("cpu  %d 0 0 %d 0 0 0 0 0 0\n" % total_idle, encoding="utf-8")
+    stat((0, 0)); m.sample()
+    assert m.value() is None  # not enough span yet
+    t[0] = 40.0; stat((60, 40)); m.sample()  # 60 busy, 40 idle ticks
+    assert m.value() == pytest.approx(0.6)
+    t[0] = 100.0; stat((60, 140)); m.sample()  # window slides: first sample dropped, 0 busy of last 100
+    assert m.value() == pytest.approx(0.0)
+
+
 def test_config_values():  # AC7
-    cfg = from_dict({"web": {"render_workers": 3, "render_max_load": 0.8}})
-    assert cfg.web.render_workers == 3 and cfg.web.render_max_load == 0.8
-    assert Config().web.render_workers == 2 and Config().web.render_max_load == 0.6
+    cfg = from_dict({"web": {"render_workers": 3, "render_max_cpu": 0.8}})
+    assert cfg.web.render_workers == 3 and cfg.web.render_max_cpu == 0.8
+    assert Config().web.render_workers == 2 and Config().web.render_max_cpu == 0.6
     for bad in ({"render_workers": 0}, {"render_workers": 5}, {"render_workers": True}, {"render_workers": 1.5},
-                {"render_max_load": 0}, {"render_max_load": -1}, {"render_max_load": "x"}):
+                {"render_max_cpu": 0}, {"render_max_cpu": -1}, {"render_max_cpu": 1.5}, {"render_max_cpu": "x"},
+                {"render_max_load": 6}):
         with pytest.raises(ConfigError, match="web.render_"):
             from_dict({"web": bad})
 
@@ -260,10 +290,10 @@ def test_app_passes_config_to_the_runner(tmp_path):
         return orig(*a, **kw)
 
     cfg = Config(workspace=WorkspaceConfig(dir=tmp_path / "w"), render=RenderConfig(output_dir=tmp_path / "o"),
-                 web=WebConfig(render_workers=3, render_max_load=0.7))
+                 web=WebConfig(render_workers=3, render_max_cpu=0.7))
     app_mod.JobRunner = spy
     try:
         app_mod.create_app(cfg, "pw")
     finally:
         app_mod.JobRunner = orig
-    assert seen["render_workers"] == 3 and seen["render_max_load"] == 0.7
+    assert seen["render_workers"] == 3 and seen["render_max_cpu"] == 0.7

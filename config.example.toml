@@ -174,10 +174,10 @@ youtube_retry_max_minutes = 120
 # CP8.29: jobs the prepare lane (ingest -> transcript -> analysis) runs at the same time (1-8; 1 = one at a time).
 prepare_workers = 1
 # CP8.36: jobs the render lane runs at the same time (1-4; 1 = one at a time). The first slot always runs; an extra
-# slot starts a job only while the 1-minute load average is below render_max_load x CPU count (already running jobs
-# are never stopped). Jobs of the same video, and khai thi compilations, never overlap another render job.
+# slot starts a job only while the CPU busy fraction (average of the last ~60 s, as in the Theo doi tab) is below
+# render_max_cpu (0-1); already running jobs are never stopped. Jobs of the same video, and khai thi compilations, never overlap another render job.
 render_workers = 2
-render_max_load = 0.6
+render_max_cpu = 0.6
 # CP8.29: the heavy lanes (prepare, render) run at this nice level (CPU + I/O priority lowered per worker thread; their
 # ffmpeg / yt-dlp children and Whisper threads inherit it) so web pages and downloads stay fast while the CPU is
 # saturated. 0 = leave the priority alone (1-19 = lower; 19 = lowest).

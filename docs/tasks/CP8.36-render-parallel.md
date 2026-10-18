@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS (Amendment A1)
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -81,3 +81,9 @@ Không chạm public API, database, security model; đổi mô hình hàng đợ
 - Important findings / decisions: `JobRunner()` constructor default `render_workers=1` (as `prepare_workers`); the config default 2 applies through `create_app`. The "drain" rule for a compilation at the head of the queue is an IMPLEMENTER choice (avoids starvation by a steady stream of jobs).
 - Known limitations: unreadable load counts as busy (extra slot idle); load is not re-evaluated for running jobs.
 - PR:
+
+### Result — Amendment A1
+
+- Main changes: the load-average gate is replaced by CPU busy fraction. `web/jobs.py` — `CpuAverage` (sliding ~60 s window of `/proc/stat` samples, formula of the CP8.28 monitor via `monitor.read_cpu_times`; `None` until the samples span >= 30 s or when unreadable = busy); a daemon thread `auto-short-cpu` samples every 5 s (only when `render_workers` > 1 and no injected source) and wakes the render slots; `JobRunner(render_max_cpu, cpu_source)` replaces `render_max_load` / `load_source` / `cpu_count`; extra slot starts only while `cpu_source() < render_max_cpu`. `config.py` — `[web] render_max_cpu` (0 < x <= 1, default 0.6); a leftover `render_max_load` key raises `ConfigError` ("replaced by web.render_max_cpu") — chosen over a warning so a stale setting is never silently ignored. README, `config.example.toml`, CP8.3 W5 / config table updated. `stop()` untouched.
+- Tests: `tests/test_web_render_slots_cp836.py` 16 tests (AC 2 on the CPU fraction, unreadable = busy, `CpuAverage` over fake `/proc/stat`, config validation incl. the old key). Full-suite numbers: see the READY report.
+
