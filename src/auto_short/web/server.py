@@ -19,4 +19,12 @@ def serve(config: Config, *, host: str, port: int) -> None:
     app = create_app(config, password_from_env())
     log.info("web: listening on http://%s:%d (workspace %s, output %s)", host, port, config.workspace.dir,
              config.render.output_dir)
-    uvicorn.run(app, host=host, port=port, log_level="info", access_log=False, timeout_graceful_shutdown=5)
+    runner = app.state.runner
+
+    class _Server(uvicorn.Server):
+        def handle_exit(self, sig, frame) -> None:
+            runner.begin_stop()  # FIX-runner-stop: before the lanes can take another job while the server winds down
+            super().handle_exit(sig, frame)
+
+    _Server(uvicorn.Config(app, host=host, port=port, log_level="info", access_log=False,
+                           timeout_graceful_shutdown=5)).run()
