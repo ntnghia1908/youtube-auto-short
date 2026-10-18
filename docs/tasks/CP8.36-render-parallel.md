@@ -69,9 +69,11 @@ Tất cả required verification phải chạy và PASS trước READY.
 
 Không chạm public API, database, security model; đổi mô hình hàng đợi. Manual test qua 8080 (ghim commit nhánh) sau automated verification.
 
-- [ ] Lúc làn prepare vắng: hai việc render (vd hai bản dọc) chạy cùng lúc, tab Theo dõi hiện cả hai; web vẫn mượt.
-- [ ] Lúc CPU bận (prepare 4 việc): chỉ một việc render chạy.
-- [ ] Khởi động lại server khi đang chạy 2 việc render → cả hai quay lại hàng đợi, chạy tiếp.
+- [x] Lúc làn prepare vắng: hai việc render (vd hai bản dọc) chạy cùng lúc, tab Theo dõi hiện cả hai; web vẫn mượt.
+- [x] Lúc CPU bận (prepare 4 việc): chỉ một việc render chạy.
+- [x] Khởi động lại server khi đang chạy 2 việc render → cả hai quay lại hàng đợi, chạy tiếp.
+
+HUMAN LEAD 2026-10-18: "đạt" (manual test qua 8080 ghim bản gộp thử `5d408a7` = main + #89 + CP8.35 + CP8.36 + FIX-runner-stop).
 
 ## Result
 
