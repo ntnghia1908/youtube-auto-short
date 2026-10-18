@@ -9,6 +9,8 @@ Entry point cho mọi agent làm việc trong repository này.
 | Project này là gì, authority, module, policy, integration | `docs/ai/project-profile.md` |
 | Focus, blocker, open decision, next action | `docs/workflow/current-state.md` |
 | Task contract S1/S2 | `docs/tasks/_template.md` |
+| Hợp đồng adapter / agent descriptor | `docs/ai/agent-adapter-contract.md` |
+| Chính sách validate task legacy (v4.2) và migration | `docs/ai/framework-migration-notes.md` |
 | Lịch sử thay đổi framework sau adoption | `docs/ai/framework-history.md` |
 
 ## Bootstrap
@@ -23,6 +25,10 @@ Entry point cho mọi agent làm việc trong repository này.
 6. authority, source và tests liên quan.
 
 Không preload toàn bộ tài liệu. Session mới bootstrap từ repository, không dựa vào transcript chat.
+
+## Native dual-agent
+
+Claude Code hoặc Codex đều có thể bootstrap từ file này; CLI đang mở chỉ đóng ORCHESTRATOR và giao cho subagent native của chính nó khi adapter được bật, task cho phép và không có binding cố định mâu thuẫn. Chi tiết: `docs/ai/project-profile.md` §7.
 
 ## Invariants
 

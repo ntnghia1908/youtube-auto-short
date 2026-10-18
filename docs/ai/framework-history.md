@@ -56,3 +56,11 @@ File này chỉ ghi lịch sử; rule hiện hành nằm ở canonical owner c�
 - Lý do: dùng lại framework cho project khác; HUMAN LEAD 2026-09-29.
 - Task: `docs/tasks/FW-starter-kit.md`
 - PR: #34; kit ntnghia1908/ai-dev-framework#1
+
+## v4.4 — AS-FW-UPGRADE-01: adaptive native dual-agent
+
+- Ngày: 2026-10-18
+- Thay đổi: nâng Core lên v4.4 từ kit `ntnghia1908/ai-dev-framework` SHA `aa9688d1b987aae6dc58f7c518f3b6cac7965930` (ADR-001, ADR-002, ADR-003): `workflow.md`, `execution-profiles.md`, `agent-adapter-contract.md`, `adapter-descriptor.schema.json`, `_template.md`, `.claude/rules/execution.md`, adapter descriptor claude-code / copilot / codex; `framework.config.json` bật `codex`, `governance` = `boundary/3`, không có `agents` cố định. Checker = kit v4.4 + `legacyTasks` + sửa mâu thuẫn explicit `task` mode. Chính sách task legacy: `docs/ai/framework-migration-notes.md`.
+- Lý do: HUMAN LEAD duyệt 2026-10-18 (task + compatibility option A); mở project bằng Claude Code hoặc Codex.
+- Giới hạn: Codex native worker, cross-agent review, handoff, multi-writer chưa chạy thử runtime; write concurrency thực tế = 1; không thêm `.codex/*.toml`.
+- Task: `docs/tasks/AS-FW-UPGRADE-01.md`

@@ -10,8 +10,8 @@
 - Execution profile: dual-agent
 - Orchestrator: claude-code — main session (Opus preferred if available)
 - Implementer: claude-code — native `.claude/agents/implementer` (Sonnet), one writer
-- Authorization mode: task (the current Auto Short v4.2 workflow governs this migration task)
-- Authorization source: HUMAN LEAD approved `AS-FW-UPGRADE-01` on 2026-10-18 in conversation
+- Authorization mode: task
+- Authorization source: HUMAN LEAD approved `AS-FW-UPGRADE-01` on 2026-10-18 in conversation (the current Auto Short v4.2 workflow governs this migration task)
 - Base commit / branch: `6f796c068aaad03852aacc2fb962062fc5e23d79` / `feature/as-fw-upgrade-01`
 - Framework source: `ntnghia1908/ai-dev-framework` main `aa9688d1b987aae6dc58f7c518f3b6cac7965930` (merged PR #8)
 - Human Lead approval: APPROVED for the bounded migration task; separate documentation-only setup commit/push authorized
@@ -64,7 +64,8 @@ Paths are allowed **only** for changes required by the stated acceptance criteri
 4. Preserve the repository's project-specific authority order, tests, integration policy (branch → local commit after authorization → push/PR after separate HUMAN LEAD approval → HUMAN LEAD merge), existing feature worktrees, untracked files, and real application code.
 5. The kit's checker v4.4 validates new authorization metadata. Auto Short contains approximately **84 historical task contracts** from v4.2. **Do not fabricate approvals, add blanket `Authorization mode: boundary` to old tasks, rewrite accepted decisions, move old tasks to hide them from validation, disable checks silently or claim PASS without running the actual checker.**
 6. **Compatibility/decision gate:** perform a read-only checker migration impact test as the **first technical step**. If v4.4 checker rejects legacy tasks or other historical records, present precise failure counts, representative samples and a **minimal, honest backwards-compatibility plan** (e.g. a documented, bounded legacy validation policy). STOP for HUMAN LEAD approval before implementing any new checker exception, changing `taskDir`, rewriting history or weakening active-task authorization. Do not let this known issue trigger an 84-file rewrite.
-7. Main implementation agent is Claude Code Opus→Sonnet, independently reviewed. Codex native worker is **not yet runtime-piloted**; do not claim that it is.
+7. HUMAN LEAD approved compatibility option A on 2026-10-18 in conversation: a bounded, frozen `legacyTasks` list in `framework.config.json` (83 task files at base `6f796c0`) validated with v4.2 rules, a minimal checker change plus an explicit-mode fix for the kit contradiction, no rewrite of historical tasks. Canonical policy: `docs/ai/framework-migration-notes.md`.
+8. Main implementation agent is Claude Code Opus→Sonnet, independently reviewed. Codex native worker is **not yet runtime-piloted**; do not claim that it is.
 
 ## Implementation approach (short)
 
@@ -108,12 +109,13 @@ Paths are allowed **only** for changes required by the stated acceptance criteri
 
 ## Result
 
-- Main changes: PENDING IMPLEMENTATION
-- Tests / checker: NOT RUN for migration yet
-- Review: PENDING
-- Important findings / decisions: v4.4 checker compatibility with v4.2 historical task schema is a pre-implementation decision gate
-- Known limitations: Codex native worker, cross-agent review, handoff and multiwriter parallelism require future runtime pilots
-- PR: Not authorized yet; no PR created
+- Main changes: Core v4.4 files (`workflow.md`, `execution-profiles.md`, `agent-adapter-contract.md`, `adapter-descriptor.schema.json`), `_template.md`, `.claude/rules/execution.md` and `adapters/{claude-code,copilot,codex}/{adapter.json,README.md}` copied verbatim from kit `aa9688d`; `framework.config.json` (4.4, three adapters, `boundary/3`, no `agents` block, `legacyTasks`); `scripts/framework-check.mjs` = kit v4.4 checker + `legacyTasks` validation + explicit-mode fix; new `docs/ai/framework-migration-notes.md`; targeted edits to `project-profile.md` §7, `AGENTS.md`, `framework-history.md` (`## v4.4`), `FRAMEWORK_ADOPTION.md`; new `tests/framework-migration.test.mjs`.
+- Tests / checker: IMPLEMENTER and ORCHESTRATOR (independent re-run, 2026-10-18) — `node scripts/framework-check.mjs` rc=0 (`PASS: framework structure`, 83 legacy tasks under v4.2 rules); `node --test tests/framework-migration.test.mjs` 6/6 pass; `git diff --check` clean; no diff under `src/`, existing `tests/`, `tools/`, `config.toml`, `pyproject.toml`, `docs/decisions/`, `CLAUDE.md`; in `docs/tasks/` only this file and `_template.md` changed; copied Core/adapter files byte-identical to kit `aa9688d`.
+- Review: ORCHESTRATOR reviewed diff — no blocking findings; legacy branch reuses the v4.2 field/section rules unchanged.
+- Important findings / decisions: kit v4.4 checker gave 163 FAIL on legacy tasks and contradicts its own comment (explicit `task` mode rejected under boundary); resolved by HUMAN LEAD option A (see Authority 7).
+- Known limitations: Codex native worker, cross-agent review, handoff and multi-writer parallelism are not runtime-piloted; operational write concurrency stays 1.
+- Integration: HUMAN LEAD approved implementation commit + push + PR (no merge) on 2026-10-18 in conversation; checker and migration tests re-run before commit (rc=0, 6/6).
+- PR: opened for HUMAN LEAD review; merge by HUMAN LEAD only
 
 ## Handoff
 
