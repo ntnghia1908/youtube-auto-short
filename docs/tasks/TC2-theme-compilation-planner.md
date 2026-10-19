@@ -131,3 +131,9 @@ Task thêm public HTTP API (G3) → manual test là gate trước integration.
   - Chất lượng còn hạn chế: synopsis đôi khi là mẩu ngắn ("Bất sanh", "Mở"); 2 clip null topic (retry không thinking); chủ đề có xu hướng gom theo tập. Semantic cần HUMAN LEAD review.
 - Manual gate còn lại: test web trên 8080 (ghim branch, cần HUMAN LEAD cho restart) + đọc semantic chủ đề.
 - PR: chưa (cần HUMAN LEAD cho phép).
+
+## TC2.2 — Tiêu đề YouTube (HUMAN LEAD 2026-10-19)
+
+- Authorization: boundary TC1–TC3 + HUMAN LEAD duyệt plan `/home/ntnghia/.claude/plans/t-t-ang-th-xu-t-curious-peach.md` (trộn kiểu A "<Người giảng> - <ý dạy>" / B "<câu hỏi>? | <Người giảng>", AI chọn mặc định + 2 gợi ý, không ghi thời lượng). Implementer: codex (quota 5 giờ < 85 %).
+- Owned paths: `src/auto_short/theme_plan/__init__.py`, `src/auto_short/web/static/theme_plan.js`, `src/auto_short/web/theme_plan.py` (chỉ truyền dữ liệu view), `src/auto_short/theme_render/__init__.py` (mô tả), `tests/test_theme_plan.py`, `tests/test_theme_render.py`, `tests/test_web_theme_plan.py`, mục này.
+- AC: 3 phương án / theme từ cùng lời gọi AI (`tc2-v3`), mặc định kiểu A, có kiểu B; người giảng do code ghép từ `titles.json` `header.fields.speaker` ("HT." → "Hòa Thượng" kiểu A, "HT" kiểu B); vi phạm luật (quá 80 ký tự phần AI, ký tự cấm, từ giật tít, thời lượng) bị loại, thiếu → fallback "<Người giảng> - <label>"; plan lưu `title_options`, plan cũ vẫn đọc; UI hiện 2 gợi ý còn lại, bấm để điền; mô tả = tiêu đề / người giảng · bộ kinh / chapters / hashtag bộ kinh.
