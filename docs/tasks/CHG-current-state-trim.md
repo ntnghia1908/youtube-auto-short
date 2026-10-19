@@ -53,4 +53,4 @@ Không chạm database, security model hay public API contract.
 - Chuyển sang `docs/workflow/ops-notes.md`: khởi động lại sau reboot, Wake Lock, backup chuyển thư mục, bundle CL1, vị trí dữ liệu ngoài git, IP / GPU worker / enhance, tuning `config.toml`, ghi nhận Địa Tạng 2026-10-04.
 - Bỏ hẳn (suy ra được từ Git / contract hoặc đã hết hiệu lực): danh sách PR đã merge theo ngày; SR1 / SR2, `pypdf` (decision + Git); preview TC-WEB1 (tmux `tc-web1-preview` và scratch không còn, kiểm 2026-10-19; evidence ở `docs/tasks/TC-WEB1-theme-index-preview.md`); 9 parked-HD jobs, hàng đợi 7 việc, 13 video lỗi bot 2026-10-03 (trạng thái tạm thời đã qua).
 - `node scripts/framework-check.mjs`: PASS (exit 0) — AC3.
-- PR:
+- PR: #110
