@@ -19,6 +19,22 @@ Adapter riêng cho Claude Code. Shared workflow nằm ở `AGENTS.md` và `docs/
 
 Task `dual-agent` do Claude làm ORCHESTRATOR: ORCHESTRATOR chọn IMPLEMENTER theo Danh sách IMPLEMENTER ở `docs/ai/project-profile.md` §7 lúc viết contract và ghi vào field `Implementer`. Gọi adapter tương ứng: subagent `implementer` (Claude Code), hoặc CLI của adapter khác theo README của adapter đó (`adapters/<tool>/README.md` trong kit). Chỉ gọi IMPLEMENTER ghi trong contract.
 
+Codex CLI làm IMPLEMENTER / reviewer (phân vai: project-profile §7; cài đặt: §8). Mỗi lần giao:
+
+1. Quota: `python3 scripts/codex-usage.py`. Cửa sổ 5 giờ ≥ 85 % hoặc tuần ≥ 80 % → giao subagent `implementer` (Sonnet). Codex hết quota giữa chừng → ORCHESTRATOR kiểm diff dở rồi giao tiếp cho Sonnet, ghi vào Result.
+2. Chạy nền trong worktree của task, prompt từ file:
+
+   ```text
+   codex exec -C <worktree> -s workspace-write -m gpt-6.1-sol -c model_reasoning_effort='"high"' -o <tmp>/codex.out - < <prompt.md> > <tmp>/codex.log 2>&1
+   ```
+
+   Effort: `high` cho module / tính năng mới, `medium` cho fix nhỏ (mặc định của Codex trên VM là `none` — không dùng). Không `danger-full-access`.
+3. Prompt (mẫu delegation): contract + mục / plan cụ thể (đường dẫn tuyệt đối), branch / HEAD, Owned paths, bằng chứng (log / số đo thật) nếu là vòng sửa, gợi ý hàm / file để tái dùng, “không commit / push / PR / gọi agent khác / gọi mạng thật”, lệnh verification targeted với đúng env, READY report ngắn.
+4. Giới hạn sandbox: không mạng (Ollama / YouTube), **không socket loopback** → test HTTP / web (TestClient + server) và full suite có thể treo trong sandbox. Codex chỉ chạy test targeted không cần socket và phải ghi rõ lệnh nào không chạy được; ORCHESTRATOR chạy test web, full suite và mọi lần chạy thật ngoài sandbox trước READY.
+5. Sau khi chạy: đọc `<tmp>/codex.out`, `tokens used` trong log; `git status` / `git diff --stat` (không commit lạ, inventory ⊆ Owned paths); review như mọi IMPLEMENTER; ghi thời gian / tokens / vòng sửa vào Result.
+6. Vòng sửa cùng context: `codex exec resume <session id> -c sandbox_mode='"workspace-write"' -c model_reasoning_effort='"high"' -o … - < <finding.md>` (session id ở dòng `session id:` đầu log).
+7. Reviewer thứ hai (read-only): `codex exec review --commit <sha> -c sandbox_mode='"read-only"' -m gpt-6.1-sol -c model_reasoning_effort='"high"' -o <tmp>/review.out` (lệnh `review` không nhận `-s`; dùng `--uncommitted` cho diff chưa commit). Finding của reviewer là thông tin để ORCHESTRATOR kiểm, không tự động là blocking.
+
 ## Delegation
 
 Áp dụng khi Claude là ORCHESTRATOR; khi là IMPLEMENTER cho Codex thì không delegate tiếp. Giao task cho implementer kèm task contract, base commit, `Implementation authorized: YES` và plan ngắn.

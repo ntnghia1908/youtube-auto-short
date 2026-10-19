@@ -64,3 +64,10 @@ File này chỉ ghi lịch sử; rule hiện hành nằm ở canonical owner c�
 - Lý do: HUMAN LEAD duyệt 2026-10-18 (task + compatibility option A); mở project bằng Claude Code hoặc Codex.
 - Giới hạn: Codex native worker, cross-agent review, handoff, multi-writer chưa chạy thử runtime; write concurrency thực tế = 1; không thêm `.codex/*.toml`.
 - Task: `docs/tasks/AS-FW-UPGRADE-01.md`
+
+### v4.4 project amendment — Codex CLI IMPLEMENTER cho Claude ORCHESTRATOR
+
+- Ngày: 2026-10-18
+- Thay đổi: thêm Codex CLI (`codex exec`, sandbox `workspace-write`) vào danh sách IMPLEMENTER khi Claude Code là ORCHESTRATOR (`docs/ai/project-profile.md` §7), yêu cầu cài đặt VM (§8), cách gọi trong `.claude/rules/execution.md`. Không đổi Core / adapter descriptor / `framework.config.json` (`codex` đã bật, role `implementer` đã khai).
+- Lý do: HUMAN LEAD 2026-10-18 muốn dùng Codex trên máy làm worker để tăng hiệu suất và tiết kiệm token ORCHESTRATOR; sandbox Codex trước đó lỗi do AppArmor userns, HUMAN LEAD đã cài bubblewrap + profile.
+- Giới hạn: write concurrency vẫn 1. Pilot thật 2026-10-18 (TC3, TC2 phase C + 3 vòng sửa, review FIX-enhance-cuda-fatal) → phân vai trong project-profile §7; thêm quy tắc quota.

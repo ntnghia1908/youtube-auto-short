@@ -78,6 +78,12 @@ HUMAN LEAD giữ scope, architecture, dependency, project-wide conventions, inte
 - Được phép: `single-agent`, `dual-agent`.
 - Profile của từng task là source of truth; không suy đoán profile từ tool/model.
 - Tuỳ chọn `dual-agent` mặc định (adaptive, không có orchestrator cố định): Claude Code native (session chính Opus = ORCHESTRATOR, `.claude/agents/implementer` Sonnet = IMPLEMENTER) và Codex native worker (chỉ có tài liệu, chưa chạy thử runtime, không hard-code model ID). Copilot vẫn là tuỳ chọn IMPLEMENTER; `single-agent` vẫn được phép.
+- Danh sách IMPLEMENTER khi Claude Code là ORCHESTRATOR (HUMAN LEAD 2026-10-18): (1) `.claude/agents/implementer` (Sonnet); (2) **Codex CLI** `codex exec` chạy local trong worktree của task (adapter `codex`, vai trò `implementer`; cách gọi ở `.claude/rules/execution.md`). ORCHESTRATOR chọn một trong hai lúc viết contract, ghi `Implementer: <adapter> — <lý do>`; vẫn một writer mỗi lúc. Phân vai (đánh giá 2026-10-18, TC2 / TC3 / FIX, dữ liệu ở `docs/tasks/TC2-*.md`, `TC3-*.md`, `FIX-*.md`):
+  - **Codex = IMPLEMENTER mặc định** cho phần việc tự chứa, spec / bằng chứng rõ (module mới, sửa prompt / validation, fix nhỏ) khi quota còn (quy tắc quota ở `.claude/rules/execution.md`): dùng gói Codex thay token Claude. Đo: TC3 12,7 phút / 147k tokens / 0 blocking; phase C web 159k + 1 vòng fix hiệu năng 236k; fix nhỏ 2–3 phút / 47–95k. Báo cáo trung thực (tự báo BLOCKED khi sandbox không chạy được full suite).
+  - **Codex = reviewer độc lập thứ hai** (`codex exec review --commit <sha>`, read-only) cho thay đổi S2 / rủi ro: ≈ 1 phút, ≈ 2 % cửa sổ 5 giờ.
+  - **Sonnet (`.claude/agents/implementer`) = dự phòng / bổ sung**: khi Codex gần hết quota, hoặc việc cần vòng lặp test web / socket (sandbox Codex chặn loopback) hoặc bám nhiều quy ước repo. Đo: TC2 phase A 6 phút / 78k, FIX 6,6–8,8 phút / 33–43k, 0 blocking.
+  - **Claude main session = ORCHESTRATOR**: contract, review, chạy full suite (thay Codex), chạy thật trên bản sao dữ liệu, quyết định gate.
+  - Giới hạn Codex: cửa sổ 5 giờ ≈ 3 lượt implement lớn; sandbox không mạng / không loopback; `codex exec` mặc định effort `none`.
 - Governance `boundary/3`: task mới vẫn cần Implementation Authorization Boundary đã được HUMAN LEAD duyệt và ghi trong task contract; số writer thực tế là 1 cho tới khi có pilot worktree-isolation được duyệt riêng.
 - Profile và Implementer của task đã có không bị đổi hồi tố. Validate task legacy và ghi chú migration: `docs/ai/framework-migration-notes.md` (canonical owner).
 
@@ -88,6 +94,8 @@ Runtime, packaging, dependency được duyệt và giả định GPU/Ollama: xe
 Cài đặt môi trường (conda env `auto-short`, `pip install -e ".[dev]"`, `config.toml`, `ffmpeg`) và cách chạy CLI: xem `README.md` (Setup / Usage).
 
 Framework checker: `node scripts/framework-check.mjs`.
+
+Codex CLI (IMPLEMENTER): sandbox `workspace-write` cần `bubblewrap` hệ thống + AppArmor profile `/etc/apparmor.d/bwrap` cho phép `userns` (Ubuntu 24.04 bật `kernel.apparmor_restrict_unprivileged_userns`; bwrap đóng gói của Codex báo `RTM_NEWADDR` / `uid map` lỗi). Đã cài trên VM 2026-10-18 (sudo, HUMAN LEAD). Kiểm: `codex exec --skip-git-repo-check -s workspace-write "echo sandbox-ok"`. Không chạy Codex với `danger-full-access`. Quota: `scripts/codex-usage.py`.
 
 ### Test policy
 
