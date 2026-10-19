@@ -6,42 +6,49 @@ import json
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from .. import khaithi
 from ..config import Config
+from ..enhance import state as enh_state
 from ..enhance.service import EnhanceService
+from ..enhance.state import EnhanceError
 from ..post import images as post_images
 from ..post import logic as post_logic
 from ..post import source as post_source
 from ..post import stage as post_stage
 from ..post import store as post_store
 from ..post import validate as post_validate
-from ..review import ReviewError, mark_downloaded, list_titles
+from ..review import ArchivedError, ReviewError, is_archived, mark_downloaded, list_titles
 from ..review.names import hashtags as review_hashtags
 from ..review.names import posts_docx_name
 from ..titling.playlist import stored_series as playlist_series
+from ..workspace import WorkspaceError, validate_episode_id
 from . import compilations as comp_web
 from . import downloads as dl_mod
 from . import episodes as ep
 from . import monitor as monitor_mod
 from .auth import SessionSigner
-from .jobs import JobRunner
+from .auto_vertical import AutoVertical
+from .jobs import KIND_PIPELINE, JobRunner, pipeline_target, vertical_target
 from .playlists import PlaylistError, PlaylistStore
-from .storage import StorageCache
-from .urls import valid_playlist_id
+from .storage import BLOCK_MESSAGE, StorageCache
+from .urls import canonical_url, valid_playlist_id
 
 log = logging.getLogger("auto_short")
 
 SOURCE_TYPES = {".mp4": "video/mp4", ".m4v": "video/mp4", ".webm": "video/webm", ".mkv": "video/x-matroska",
                 ".mov": "video/quicktime"}
+KIND_RESTORE_SOURCE = "restore_source"  # Uses the owner's episode key and a single prepare step; no jobs.py change.
+KINDS = ("short", "khaithi")  # CP8.9 A1.1, in job order
 RANGE_SIZE = 10  # CP8.31 A1: episodes per posts file
 
 
 @dataclass
 class WebContext:
-    """State needed by the extracted P5.1 routes and their shared helpers."""
+    """State needed by the route factories and their shared helpers."""
 
     config: Config
     runner: JobRunner
@@ -57,6 +64,17 @@ class WebContext:
     compilations: comp_web.Compilations
     download_table: dl_mod.DownloadTable
     static_dir: Path
+    submit_lock: Any
+    auto_vertical: AutoVertical
+    pipeline: Callable
+    preflight: Callable | None
+    vertical: Callable | None
+    vertical_downloader: Callable | None
+    post_compose: Callable | None
+    post_preflight: Callable | None
+    post_search: Callable | None
+    keyword_search: Callable | None
+    doc_prepare: Callable | None
 
     def tracked(self, dl: str | None, response: Any) -> Any:
         """CP8.34: a download with a valid ``?dl=<token>`` reports its progress to the table; without one (or with a
@@ -246,3 +264,92 @@ class WebContext:
             return error_response({"detail": f"cần from, to (to ≥ from, tối đa {RANGE_SIZE} tập)"}, status_code=422)
         return [e for e in entries if self.is_numbered(e) and range_from <= int(e["episode"]) <= range_to], \
             f"{range_from}-{range_to}"
+
+    def vertical_target(self, owner: str):
+        """CP8.32: the vertical job target of a video (an archived original is downloaded again in the prepare lane)."""
+        return vertical_target(self.config, vertical=self.vertical, episode_id=owner, downloader=self.vertical_downloader,
+                               disk_blocked=self.storage.block_message)
+
+    def restore_job(self, eid: str):
+        job = self.runner.latest(ep.hd_owner(eid))
+        return job if job is not None and job.kind == KIND_RESTORE_SOURCE else None
+
+    def auto_vertical_waiting(self, vid: str) -> bool:
+        """CP8.35 D6: the video has the wish and its vertical job waits for the HD source (enhance on, HD not done)."""
+        if not self.auto_vertical.wanted(vid):
+            return False
+        return any(enh_state.is_pending(enh_state.read(Path(self.config.workspace.dir) / p)) for p in (vid, vid + khaithi.SUFFIX))
+
+    def job_view(self, job, *, logs: bool = True) -> dict | None:
+        if job is None:
+            return None
+        out = job.to_dict(logs=logs)
+        out["queue_position"] = self.runner.queue_position(job)  # CP8.10: in the queue of the lane it waits for
+        return out
+
+    def queue_video(self, video_id: str, kinds: list[str], lo, hi, series: str | None, episode: str | None, *,
+                     prepare_only: bool = False, vertical_wish: bool | None = None) -> list[dict]:
+        """Queue the pipeline job of each of ``kinds`` for a video (W4 per kind on its own episode: duplicate job,
+        archived, low disk) and return one item per kind: ``{kind, episode_id, created, job}`` or
+        ``{kind, episode_id, error, status}``. ``prepare_only`` (CP13.2 H1, Short only): the "Chuẩn bị + HD" job."""
+        url = canonical_url(video_id)
+
+        # W4 per kind on its own episode (A1.1): duplicate job, archived (CP8.6 S3), low disk (CP8.6 S4)
+        items: list[dict] = []
+        for kind in kinds:
+            try:  # FIX-youtube-id-dash I4: a bad id is a 4xx, never a 500
+                eid = validate_episode_id(video_id) if kind == "short" else khaithi.episode_id_for(video_id)
+            except WorkspaceError:
+                items.append({"kind": kind, "episode_id": video_id, "status": 422,
+                              "error": f"id video không hợp lệ: {video_id!r}"})
+                continue
+            except khaithi.KhaithiError as exc:
+                items.append({"kind": kind, "episode_id": video_id, "status": 422, "error": exc.vi})
+                continue
+            item: dict = {"kind": kind, "episode_id": eid}
+            current = self.runner.latest(eid)
+            if current is not None and current.active:
+                item.update(created=False, job=current)
+            elif is_archived(Path(self.config.workspace.dir) / eid):
+                item.update(error=str(ArchivedError(eid)), status=409)
+            elif self.storage.status()["block"]:
+                item.update(error=BLOCK_MESSAGE, status=507)
+            items.append(item)
+        todo = [i for i in items if "job" not in i and "error" not in i]
+        previous = self.auto_vertical.wanted(video_id)
+        if vertical_wish is not None and any("error" not in i for i in items):
+            self.auto_vertical.set(video_id, vertical_wish)  # CP8.35 D3: before the jobs, so a fast job still sees it
+        # FIX-ollama-wait O4: no Ollama preflight here - the ai lane checks it and waits for the GPU
+        with self.submit_lock:
+            for i in todo:  # Short first, then khai thị (K5 reuses the Short's source + transcript)
+                current = self.runner.latest(i["episode_id"])
+                if current is not None and current.active:
+                    i.update(created=False, job=current)
+                    continue
+                if i["kind"] == khaithi.KIND:
+                    try:  # written just before its job is queued; changed minutes -> re-run from analysis
+                        _, changed = khaithi.prepare(self.config, video_id, lo, hi)
+                    except khaithi.KhaithiError as exc:
+                        i.update(error=exc.vi, status=409)
+                        continue
+                    log.info("web: khai thi %s %d-%d minutes (%s)", i["episode_id"], lo, hi,
+                             "parameters changed" if changed else "parameters unchanged")
+                job, created = self.runner.submit(
+                    i["episode_id"], KIND_PIPELINE,
+                    pipeline_target(url, self.config, series=series, episode=episode, pipeline=self.pipeline,
+                                    preflight=self.preflight,
+                                    episode_id=i["episode_id"] if i["kind"] == khaithi.KIND else None,
+                                    disk_blocked=self.storage.block_message, enhance=self.svc,
+                                    prepare_only=prepare_only))
+                i.update(created=created, job=job)
+        if vertical_wish and all("error" in i for i in items):
+            self.auto_vertical.set(video_id, previous)  # nothing was queued: keep the earlier wish
+        self.playlists.invalidate(video_id)
+        self.storage.invalidate()
+        return items
+
+    def post_now(self) -> str:
+        return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def enh_error(self, exc: EnhanceError, *, error_response: Callable) -> Any:
+        return error_response({"detail": str(exc)}, status_code=exc.status)

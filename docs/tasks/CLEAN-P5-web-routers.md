@@ -167,3 +167,14 @@ Diff: vòng sửa này riêng app.py **+6 / −67**, test **+0 / −0**, contrac
 - Helper mới: không (helper closure chuyển nguyên thân vào `WebContext` / router).
 - IMPLEMENTER: Codex (`gpt-6.1-sol`, high), 2 vòng (≈ 166k + 218k tokens). Review vòng 1: F1 cắt router theo chỉ số → include nguyên khối; F2 PYTHONPATH (test vòng đầu chạy nhầm code checkout chính).
 - Manual smoke 8080 (gate P5.1): chờ HUMAN LEAD.
+
+### P5.2 — 2026-10-19 (branch `refactor/p5-2-routers`, base `9df942e`)
+
+- Router mới: `routes/playlists.py` (20 route `/api/playlists*`, gồm vertical / favorites / compilations / enhance-redo), `routes/enhance.py` (7 route `/api/enhance/*` + `enhance-pause`, `Depends(_worker)`), `routes/post_images.py` (9 `/api/post-images*` + `/files/post-images/{name}` + `/files/post-image-candidates/…`), `routes/post_corrections.py` (4), `routes/models.py` (`PublishedIn`, dùng bởi playlists + app.py). Include nối vào khối liền nhau của P5.1; catch-all vẫn cuối. Route `/api/episodes/{id}/enhance*`, `/posts*` ở lại cho P5.3.
+- `WebContext`: thêm 11 field inject (`submit_lock`, `auto_vertical`, `pipeline`, `preflight`, `vertical*`, `post_*`, `keyword_search`, `doc_prepare`) và 7 helper dùng ≥ 2 nhóm chuyển nguyên thân (`vertical_target`, `restore_job`, `auto_vertical_waiting`, `job_view`, `queue_video`, `post_now`, `enh_error` nhận `error_response` để context không import FastAPI); hằng `KINDS`, `KIND_RESTORE_SOURCE` chuyển sang `context.py`, app.py vẫn import lại (test `test_restore_source_cp837` import từ `web.app`). Helper mới: không.
+- AC1: app.py **2418 → 1464** dòng. AC2: 127 route, 3 cặp chồng, cùng quan hệ BEFORE; diff thô chỉ khác thứ tự liệt kê dòng cặp `/files/post-images/{name} BEFORE catch-all` (script in cặp theo vị trí route trước), `diff <(sort base) <(sort after)` **rỗng**. AC3 rỗng; AC4 chỉ `web/` + `sutra/web.py`; `git diff --check` sạch.
+- AC5: full suite ngoài sandbox (`pytest -o pythonpath=src`, đã xác nhận import `routes/enhance.py` của worktree): **2185 passed, 13 skipped** (641 s); collect 2198. Test **+0 / −0**.
+- F5: `vulture` (≥ 60 %) `web/` trước / sau 128 = 128, không khác. `jscpd` thêm 1 clone 5 dòng trong `routes/post_images.py` (409 "đang tìm ảnh" của `search` và `find`) — trùng có sẵn trong app.py gốc, vượt ngưỡng token do tiền tố `ctx.`; không gom (ngoài scope).
+- Diff: app.py **+135 / −1089**, `context.py` **+112 / −5**, `routes/` mới **+1022**; test 0. Codex trong sandbox: 64 test targeted PASS, `test_enhance_api.py` treo ở `TestClient.__enter__` (đã chạy trong full suite ngoài sandbox).
+- IMPLEMENTER: Codex (`gpt-6.1-sol`, high), 1 vòng, ≈ 9 phút, 165k tokens; không vòng sửa.
+- Manual smoke 8080 (điểm danh P5.2): chờ HUMAN LEAD.
