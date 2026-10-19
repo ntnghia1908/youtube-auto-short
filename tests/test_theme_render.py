@@ -118,6 +118,10 @@ def media(episode, synthetic_source, monkeypatch):
                                                               for k in ('k02', 'k01')]))
     # TC1's production minimum is minutes. Only shorten eligibility in this synthetic test workspace.
     monkeypatch.setattr(theme_index, 'MIN_DURATION', 1)
+    # Persistent source cache uses the original video's ingest artifacts.
+    owner = cfg.workspace.dir / 'lecture'
+    atomic_write_json(owner / 'manifest.json', json.loads((ws.dir / 'manifest.json').read_text()))
+    atomic_write_json(owner / 'metadata.json', dict(duration=7, height=720))
     doc = make_plan(cfg)
     return cfg, ws, folder, out, doc
 
@@ -180,7 +184,7 @@ def test_real_missing_source_download_once_and_cleanup(media, synthetic_source):
 
     def downloader(uri, dest, ingest):
         calls.append((uri, dest, ingest))
-        assert dest.is_relative_to(folder / 'theme' / '.fetch')
+        assert dest.is_relative_to(cfg.workspace.dir / '_theme_sources')
         target = dest / 'source.mp4'
         shutil.copyfile(synthetic_source, target)
         # Different container bytes, identical decoded content: warn, then rely on the speech gate.
@@ -193,6 +197,7 @@ def test_real_missing_source_download_once_and_cleanup(media, synthetic_source):
     assert all(c['source'] == 'refetched' for c in result.metadata['clips'])
     assert all(c['warning'] for c in result.metadata['clips'])
     assert not calls[0][1].exists() and not (ws.dir / 'source.mp4').exists()
+    assert (cfg.workspace.dir / '_theme_sources' / 'lecture' / 'source.mp4').is_file()
     assert {p: p.read_bytes() for p in ws.dir.rglob('*') if p.is_file()} == before
     assert_clean(folder)
 

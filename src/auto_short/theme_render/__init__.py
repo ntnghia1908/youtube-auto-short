@@ -121,32 +121,25 @@ def _verify(path: Path, expected: float, tolerance: float, runner, *, fps: Fract
     return info
 
 
-def _source(config: Config, record: dict, fetch_root: Path, stack: ExitStack, fetched: dict, downloader):
+def _source(config: Config, record: dict, fetched: dict, downloader):
+    from . import sources
+
     ref = record["source_reference"]
     src = Path(ref["path"])
     if record["source_status"] == "present":
         if not src.is_file() or hashing.sha256_file(src) != ref["sha256"]:
             raise RenderError("video nguồn đã thay đổi hoặc bị xóa sau khi audit")
         return src, "present", None
-    ws = Path(config.workspace.dir) / record["identity"]["episode_id"]
-    manifest = _read(ws / "manifest.json")
-    uri = (manifest.get("source") or {}).get("uri")
-    if not isinstance(uri, str) or not uri:
-        raise RenderError("manifest không có URI để tải lại video nguồn")
-    if uri not in fetched:
-        fetch_root.mkdir(parents=True, exist_ok=True)
-        dest = Path(stack.enter_context(tempfile.TemporaryDirectory(dir=fetch_root, prefix="source-")))
+    video_id = sources._owner(record["identity"]["episode_id"])
+    if video_id not in fetched:
         try:
-            got = downloader(uri, dest, config.ingest)
+            src = sources.cached_source(config, video_id)
+            if src is None:
+                src = sources.fetch_to_cache(config, video_id, downloader)
         except YoutubeBlocked as exc:
             raise SourceBlocked(str(exc)) from exc
-        except DownloadError as exc:
-            raise RenderError(f"tải lại video nguồn lỗi: {exc}") from exc
-        src = Path(got.path).resolve()
-        if not src.is_relative_to(dest.resolve()) or not src.is_file():
-            raise RenderError("downloader không trả file trong thư mục tải tạm")
-        fetched[uri] = (src, hashing.sha256_file(src))
-    src, sha = fetched[uri]
+        fetched[video_id] = (src, hashing.sha256_file(src))
+    src, sha = fetched[video_id]
     warning = "video tải lại khác sha256 nguồn đã render; đã kiểm lại audio từng clip" if sha != ref["sha256"] else None
     return src, "refetched", warning
 
@@ -200,7 +193,7 @@ def render_landscape(config: Config, playlist_id: str, plan_id: str, *, runner=_
             fetched, paths, clips, tolerances = {}, [], [], []
             for n, (snap, record, (reference, title)) in enumerate(zip(approved["clips"], records, references)):
                 try:
-                    source, status, warning = _source(config, record, fetch_root, stack, fetched, downloader)
+                    source, status, warning = _source(config, record, fetched, downloader)
                     info = probe_media(source, runner)
                     if info["video"] is None or info["audio"] is None:
                         raise RenderError("video nguồn thiếu video / audio")

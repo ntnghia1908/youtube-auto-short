@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: FEATURE
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -46,7 +46,7 @@ Video gốc của mọi video có khai thị / Short yêu thích (♥, mọi b�
 
 ## Result
 
-- Main changes:
-- Tests:
-- Review:
+- Main changes (Codex, 2026-10-19, ≈ 6 phút, 73k tokens): `theme_render/sources.py` (kho `work/_theme_sources/<video>/`, `favorite_videos`, `cached_source` kiểm sha / kích thước / ingest / thời lượng, `fetch_to_cache` tạm → rename, vòng tải gap ngẫu nhiên + backoff khi bị chặn + Ctrl-C an toàn, CLI `--dry-run`); TC3 `_source` dùng kho và giữ nguồn tải mới.
+- Tests: Codex 106 passed (TC3.1 + TC3 + TC2); ORCHESTRATOR `-m pytest -q -n auto` 2184 passed, 1 skipped; dry-run thật: 13 video pending.
+- Review: ORCHESTRATOR ACCEPTED, không blocking.
 - PR: chưa.
