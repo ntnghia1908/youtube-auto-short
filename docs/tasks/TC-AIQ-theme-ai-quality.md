@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: DRAFT
+- Status: IN_PROGRESS
 - Type: CHANGE
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -14,9 +14,9 @@
 - Parallel group: —
 - Owned paths: `src/auto_short/theme_index/__init__.py`, `src/auto_short/theme_plan/__init__.py`, `src/auto_short/web/static/theme_index.js` (chỉ hàm `ref` / nhãn tóm tắt), `tests/test_theme_index.py`, `tests/test_theme_plan.py`, `tests/test_web_theme_index.py`, file này
 - Dependencies: TC1 (#96), TC2 / TC2.3 (đã merge)
-- Base commit / branch: `4cc0ed3` (origin/main) / `docs/task-tc-ai-quality` (contract); implementation trên branch `feature/tc-aiq` từ cùng base
-- Human Lead approval: inherited from boundary; D1 chờ HUMAN LEAD (sau khi chốt, ORCHESTRATOR đặt authorized YES)
-- Implementation authorized: NO
+- Base commit / branch: `4cc0ed3` (origin/main) / `feature/tc-aiq` (contract từ `docs/task-tc-ai-quality`)
+- Human Lead approval: inherited from boundary; D1 accepted 2026-10-19 (chat "Chốt D1")
+- Implementation authorized: YES
 
 Lifecycle: `boundary` mode = `DRAFT → IN_PROGRESS → READY`. DONE suy ra từ Git sau khi merge.
 
@@ -47,7 +47,7 @@ Re-index playlist thật cho synopsis là một **trích đoạn liền mạch �
 
 - Boundary TC1–TC3 §2–§4; `docs/tasks/TC1-theme-index.md` (extractive, fail closed, cache invalidation), `docs/tasks/TC2-theme-compilation-planner.md`.
 - Local S1: synopsis lưu dạng `{"evidence_id": <id đầu>, "evidence_ids": [...], "text": <nối nguyên văn>}` — consumer hiện tại (`theme_plan._snapshot`, `propose`, `theme_index.js`) chỉ đọc `evidence_id` / `text` nên vẫn chạy; ngưỡng từ là hằng số trong module (đề xuất min 20, max 80; IMPLEMENTER chỉnh nếu test dữ liệu thật cho thấy cần).
-- **D1 (HUMAN LEAD):** bump prompt version đổi `input_fingerprint` của mọi clip → 2 plan đã duyệt (`d6a874b50e91` "Từ bi là nền tảng của nhân quả", `bddcede7d89d` "Tu hành không phải là hình thức") hiện **stale** trên UI, cần duyệt lại nếu muốn render lại; MP4 đã render giữ nguyên. Re-index thật ≈ 37 clip × 1–2 phút ≈ 40–70 phút GPU Ollama. Đề xuất: chấp nhận.
+- **D1 (HUMAN LEAD — ACCEPTED 2026-10-19):** bump prompt version đổi `input_fingerprint` của mọi clip → 2 plan đã duyệt (`d6a874b50e91` "Từ bi là nền tảng của nhân quả", `bddcede7d89d` "Tu hành không phải là hình thức") hiện **stale** trên UI, cần duyệt lại nếu muốn render lại; MP4 đã render giữ nguyên. Re-index thật ≈ 37 clip × 1–2 phút ≈ 40–70 phút GPU Ollama. Đề xuất: chấp nhận.
 
 ## Implementation approach
 
