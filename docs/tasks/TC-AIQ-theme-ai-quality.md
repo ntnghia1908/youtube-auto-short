@@ -15,8 +15,8 @@
 - Owned paths: `src/auto_short/theme_index/__init__.py`, `src/auto_short/theme_plan/__init__.py`, `src/auto_short/web/static/theme_index.js` (chỉ hàm `ref` / nhãn tóm tắt), `tests/test_theme_index.py`, `tests/test_theme_plan.py`, `tests/test_web_theme_index.py`, file này
 - Dependencies: TC1 (#96), TC2 / TC2.3 (đã merge)
 - Base commit / branch: `4cc0ed3` (origin/main) / `docs/task-tc-ai-quality` (contract); implementation trên branch `feature/tc-aiq` từ cùng base
-- Human Lead approval: inherited from boundary; D1 chờ HUMAN LEAD
-- Implementation authorized: NO — chờ HUMAN LEAD chốt D1 rồi ORCHESTRATOR đặt YES
+- Human Lead approval: inherited from boundary; D1 chờ HUMAN LEAD (sau khi chốt, ORCHESTRATOR đặt authorized YES)
+- Implementation authorized: NO
 
 Lifecycle: `boundary` mode = `DRAFT → IN_PROGRESS → READY`. DONE suy ra từ Git sau khi merge.
 
