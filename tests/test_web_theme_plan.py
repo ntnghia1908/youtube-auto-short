@@ -403,75 +403,315 @@ def test_render_target_passes_playlist_hashtags_without_http(monkeypatch):
 
 
 NODE = r"""
-const fs = require('fs'), vm = require('vm');
+const fs = require('fs'), vm = require('vm'), assert = require('assert/strict');
 class El {
-  constructor(tag) { this.tagName = tag.toUpperCase(); this.children = []; this.listeners = {}; this.value = ''; this.type = ''; this._text = ''; }
+  constructor(tag) { this.tagName = tag.toUpperCase(); this.children = []; this.listeners = {}; this.value = ''; this.type = ''; this._text = ''; this.disabled = false; }
   set textContent(v) { this._text = String(v); this.children = []; }
   get textContent() { return this._text + this.children.map(c => typeof c === 'string' ? c : c.textContent).join(''); }
   append(...cs) { this.children.push(...cs); }
   replaceChildren(...cs) { this.children = cs; this._text = ''; }
   addEventListener(k, f) { this.listeners[k] = f; }
   setAttribute(k, v) { this[k] = v; }
-  contains() { return false; }
+  contains(node) { return this === node || this.children.some(c => typeof c !== 'string' && c.contains(node)); }
 }
-const els = {}, timers = [], events = {}, requests = [];
-const document = { getElementById: id => els[id] ||= new El('div'), createElement: tag => new El(tag) };
-const fixture = {index_summary: {usable: 1, unusable: 2, source_missing: 1, common_reasons: []},
- generate_job: {active: true, status: 'queued', gpu_wait: true},
- clips_available: [{id: 'ep/k1', label: '<script>x</script> · Tập 1', duration: 350}],
- proposals: {ai_error: 'lỗi AI', shortfall: 'thiếu clip', rejected_themes: [{position: 0, reason: 'bịa'}],
- proposals: [{proposal_id: 'p1', label: 'Tu học', titles: ['HT A - Chuyên tâm tu học'], rationale: 'Cùng chủ đề', clips: [{id: 'ep/k1', duration: 350}],
- total_duration: 350, shortfall_seconds: 1450, dropped_for_length: 1}]},
- plans: [{plan_id: '12345678', revision: 1, title: 'Kế hoạch', title_options: ['Kế hoạch', 'Vì sao tu học? | HT A', '<script>gợi ý</script>'], clips: [{id:'ep/k1', duration:350}],
- check: {state:'draft', problems:[]}, render_job: null}]};
-let body = fixture;
-function el(tag, attrs = {}, ...children) { const n = document.createElement(tag); for (const [k,v] of Object.entries(attrs)) {
- if (k === 'text') n.textContent = v; else n.setAttribute(k,v); } n.append(...children); return n; }
-const tick = () => new Promise(r => setTimeout(r, 10));
-const ctx = { Favorites: {el, api: async (path, opts) => {requests.push({path,opts}); return body;}, fmtDur: x => x + ' s', copyText: async () => true},
- document, window: {addEventListener: (k,f) => events[k] = f}, location: {pathname:'/playlists/PLeligible/favorites'},
- setTimeout: (f, ms) => {timers.push({f,ms}); return timers.length;}, clearTimeout: () => {}, confirm: () => true };
+const all = n => [n,...n.children.filter(c=>typeof c!=='string').flatMap(all)];
+const clone = x => JSON.parse(JSON.stringify(x));
+const clips = [{id:'ep/k1', label:'<script>x</script> · Tập 1', duration:350},
+ {id:'ep/k2', label:'Tập 2', duration:350}, {id:'ep/k3', label:'Tập 3', duration:350}];
+const p = {proposal_id:'p1', label:'Tu học', titles:['HT A - Chuyên tâm tu học', 'Vì sao tu học? | HT A', '<script>gợi ý</script>'],
+ rationale:'Cùng chủ đề', clips:clips.slice(0,2), total_duration:700, shortfall_seconds:1100, dropped_for_length:1};
+const fixture = {index_summary:{usable:3, unusable:2, source_missing:1, common_reasons:[]},
+ generate_job:{active:true, status:'queued', gpu_wait:true}, clips_available:clips,
+ proposals:{ai_error:'lỗi AI', shortfall:'thiếu clip', rejected_themes:[{position:0, reason:'bịa'}], proposals:[p]}, plans:[]};
+let requests = [], fail = null, lostResponse = false, hold = null, copies = [];
+const mutations = () => requests.filter(r=>r.method !== 'GET');
+async function api(path, opts = {}) {
+ const method = opts.method || 'GET', body = opts.body && JSON.parse(opts.body);
+ requests.push({path, method, body});
+ if (hold) { const wait = hold; hold = null; await wait; }
+ if (fail && method === fail.method && path.endsWith(fail.suffix)) {
+  fail = null; throw Object.assign(Error('fixture failure'), {status:409});
+ }
+ if (method === 'GET') return clone(fixture);
+ if (path.endsWith('/generate')) { fixture.generate_job = {active:true,status:'queued'}; return {}; }
+ if (method === 'POST' && path.endsWith('/theme-plans')) {
+  const plan = {plan_id:'12345678', revision:1, title:p.titles[0], title_options:p.titles, clips:clone(p.clips),
+   total_duration:p.total_duration, proposal:{proposal_id:'p1'}, check:{state:'draft',problems:[]}, render_job:null};
+  fixture.plans.push(plan);
+  if (lostResponse) { lostResponse = false; throw Error('response lost'); }
+  const response = clone(plan); delete response.check; return response;
+ }
+ const plan = fixture.plans[0];
+ if (method === 'PUT') {
+  assert.equal(body.revision, plan.revision);
+  plan.revision++; plan.title = body.title; plan.clips = body.clip_ids.map(id=>clone(clips.find(c=>c.id===id)));
+  plan.check.state = 'draft'; plan.output = null;
+ } else if (path.endsWith('/approve')) {
+  assert.equal(body.revision, plan.revision); assert.equal(body.duration_override, true);
+  plan.check.state = 'approved';
+ } else if (path.endsWith('/render')) {
+  assert.equal(plan.check.state, 'approved'); plan.render_job = {active:true,status:'queued'};
+  return {job:clone(plan.render_job),created:true};
+ } else if (method === 'DELETE') { fixture.plans = []; return {}; }
+ const response = clone(plan); delete response.check; return response;
+}
+function boot() {
+ const els = {}, timers = [], events = {};
+ const document = {getElementById:id=>els[id] ||= new El('div'), createElement:tag=>new El(tag), activeElement:null};
+ function el(tag, attrs = {}, ...children) { const n = document.createElement(tag); for (const [k,v] of Object.entries(attrs)) {
+  if (k === 'text') n.textContent = v; else n.setAttribute(k,v); } n.append(...children); return n; }
+ const ctx = {Favorites:{el, api, fmtDur:x=>x+' s', copyText:async text=>{copies.push(text);return true;}},
+  document, window:{addEventListener:(k,f)=>events[k]=f}, location:{pathname:'/playlists/PLeligible/favorites'},
+  setTimeout:(f,ms)=>{timers.push({f,ms});return timers.length;}, clearTimeout:()=>{}, confirm:()=>true};
+ vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8')+'\nThemePlan.init();', ctx);
+ return {els,timers,events,document};
+}
+const tick = () => new Promise(r=>setImmediate(r));
+let app;
+const nodes = id => all(app.els[id]);
+const btn = (id,text) => {const n=nodes(id).find(n=>n.tagName==='BUTTON' && n.textContent===text);assert.ok(n, text);return n;};
+const click = (id,text) => btn(id,text).listeners.click();
+const refresh = () => app.els['tp-refresh'].listeners.click();
+const input = id => nodes(id).find(n=>n.type==='text');
+function setTitle(id, text) {const n=input(id);n.value=text;n.listeners.input();}
+function ready() {fixture.plans[0].render_job = {active:false,status:'done'};}
+async function made() {await click('tp-proposals','Ghép video');ready();await refresh();}
 (async () => {
- vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8') + '\nThemePlan.init();', ctx);
- await tick();
- if (!els['tp-summary'].textContent.includes('1 clip') || !els['tp-job'].textContent.includes('Ollama')) throw Error('summary/job');
- if (!els['tp-proposals'].textContent.includes('thiếu') || !els['tp-proposals'].textContent.includes('<script>x</script>')) throw Error('proposal text');
- if (!timers.some(t => t.ms === 5000)) throw Error('active polling');
- const all = n => [n,...n.children.filter(c=>typeof c!=='string').flatMap(all)];
- if (all(els['tp-proposals']).find(n=>n.tagName==='H4').textContent !== 'HT A - Chuyên tâm tu học') throw Error('default proposal title');
- if (!els['tp-proposals'].textContent.includes('Tu học · Cùng chủ đề')) throw Error('label/rationale');
- let nodes = all(els['tp-plans']);
- let suggestions = nodes.filter(n=>n.tagName==='BUTTON' && n.textContent.startsWith('Gợi ý: '));
- if (suggestions.length !== 2 || !suggestions.some(n=>n.textContent.includes('<script>gợi ý</script>'))) throw Error('title suggestions/text only');
- const approve = nodes.find(n=>n.tagName==='BUTTON' && n.textContent==='Duyệt');
- if (!approve.disabled) throw Error('override required');
- const checkbox = nodes.find(n=>n.type==='checkbox'); checkbox.checked = true; checkbox.listeners.change();
- if (approve.disabled) throw Error('override approval');
- const firstInput = nodes.find(n=>n.type==='text');
- suggestions[0].listeners.click();
- if (firstInput.value !== 'Vì sao tu học? | HT A' || !els['tp-plans'].textContent.includes('chưa lưu') || !approve.disabled) throw Error('suggestion fills dirty draft');
- if (requests.some(r=>r.opts && r.opts.method==='PUT')) throw Error('suggestion must await save');
- const title = nodes.find(n=>n.type==='text'); title.value = 'Sửa chưa lưu'; title.listeners.input();
- const refresh = els['tp-refresh'].listeners.click; fixture.generate_job.active = false; await refresh();
- nodes = all(els['tp-plans']);
- if (nodes.find(n=>n.type==='text').value !== 'Sửa chưa lưu') throw Error('lost draft on poll');
- await nodes.find(n=>n.tagName==='BUTTON' && n.textContent==='Lưu sửa').listeners.click(); await tick();
- const req = requests.find(r=>r.opts && r.opts.method==='PUT');
- if (!req || JSON.parse(req.opts.body).title !== 'Sửa chưa lưu') throw Error('save revision');
- const nTimers = timers.filter(t=>t.ms===5000).length; await refresh();
- if (timers.filter(t=>t.ms===5000).length !== nTimers) throw Error('idle polling');
+ app = boot(); await tick();
+ const scenario = process.argv[2];
+ if (scenario === 'display') {
+  assert.ok(app.els['tp-summary'].textContent.includes('3 clip'));
+  assert.ok(app.els['tp-job'].textContent.includes('Ollama'));
+  assert.ok(app.els['tp-proposals'].textContent.includes('thiếu'));
+  assert.ok(app.els['tp-proposals'].textContent.includes('<script>x</script>'));
+  assert.ok(app.els['tp-proposals'].textContent.includes('Tu học · Cùng chủ đề'));
+  assert.ok(app.els['tp-proposals'].textContent.includes('ngắn hơn 30 phút'));
+  assert.ok(app.timers.some(t=>t.ms===5000));
+  const ns=nodes('tp-proposals'), radios=ns.filter(n=>n.type==='radio');
+  assert.equal(ns.find(n=>n.tagName==='H4').textContent,p.titles[0]);
+  assert.equal(radios.length,3);assert.equal(radios[0].checked,true);
+  assert.ok(ns.find(n=>n.tagName==='LABEL').textContent.startsWith('★ '));
+  assert.ok(ns.filter(n=>n.tagName==='DETAILS').every(n=>!n.open));
+  assert.ok(!ns.some(n=>n.type==='checkbox' || n.tagName==='SCRIPT'));
+  assert.equal(btn('tp-proposals','Ghép video').disabled,false);
+ } else if (scenario === 'one-click' || scenario === 'radio' || scenario === 'custom') {
+  if (scenario === 'radio') nodes('tp-proposals').filter(n=>n.type==='radio')[1].listeners.change();
+  if (scenario === 'custom') setTitle('tp-proposals','Tựa tự sửa');
+  await click('tp-proposals','Ghép video');
+  assert.deepEqual(mutations().map(r=>r.method),scenario==='one-click'?['POST','POST','POST']:['POST','PUT','POST','POST']);
+  const create=mutations()[0], approve=mutations().find(r=>r.path.endsWith('/approve'));
+  assert.deepEqual(create.body,{proposal_id:'p1'});
+  assert.deepEqual(approve.body,{revision:scenario==='one-click'?1:2,duration_override:true});
+  assert.equal(fixture.plans[0].title,scenario==='radio'?p.titles[1]:scenario==='custom'?'Tựa tự sửa':p.titles[0]);
+  assert.ok(app.els['tp-plans'].textContent.includes('đang chờ'));
+  assert.equal(btn('tp-proposals','Ghép video').disabled,true);
+  assert.equal(btn('tp-plans','Xóa').disabled,true);
+  const count=mutations().length;await click('tp-proposals','Ghép video');await click('tp-plans','Ghép lại');assert.equal(mutations().length,count);
+  fixture.plans[0].render_job={active:true,status:'running',stage:'theme_render'};await refresh();
+  assert.ok(app.els['tp-plans'].textContent.includes('đang ghép'));
+  assert.ok(!app.els['tp-plans'].textContent.includes('theme_render'));
+  ready();fixture.plans[0].output={download_url:'/files/ready.mp4',download_name:'ready.mp4',description:'00:00 Tu học'};await refresh();
+  assert.ok(nodes('tp-plans').some(n=>n.tagName==='A' && n.href==='/files/ready.mp4'));
+  await click('tp-plans','Copy mô tả');assert.deepEqual(copies,['00:00 Tu học']);
+  assert.ok(!nodes('tp-plans').some(n=>n.type==='checkbox'));
+  fixture.generate_job.active=false;
+  const before=app.timers.length;await refresh();assert.equal(app.timers.length,before);
+ } else if (scenario === 'double-reload') {
+  let release;hold=new Promise(r=>release=r);
+  const first=click('tp-proposals','Ghép video'), second=click('tp-proposals','Ghép video');
+  assert.equal(btn('tp-proposals','Ghép video').disabled,true);
+  release();await Promise.all([first,second]);assert.equal(fixture.plans.length,1);
+  ready(); app=boot();await tick();
+  await click('tp-proposals','Ghép video');assert.equal(fixture.plans.length,1);
+  assert.equal(mutations().filter(r=>r.path.endsWith('/theme-plans')).length,1);
+ } else if (scenario.startsWith('failure-')) {
+  const stage=scenario.slice(8);
+  const failures={create:['POST','/theme-plans','Tạo video từ chủ đề'],edit:['PUT','/12345678','Lưu tiêu đề và danh sách clip'],
+   approve:['POST','/approve','Duyệt video'],render:['POST','/render','Xếp hàng ghép video']};
+  const [method,suffix,label]=failures[stage];fail={method,suffix};
+  if(stage==='edit')setTitle('tp-proposals','Sửa tựa');
+  await click('tp-proposals','Ghép video');assert.ok(app.els['tp-msg'].textContent.startsWith(label+':'),app.els['tp-msg'].textContent);
+  assert.ok(app.els['tp-msg'].textContent.includes('fixture failure'));
+  assert.equal(btn('tp-proposals','Ghép video').disabled,false);
+  await click('tp-proposals','Ghép video');assert.equal(fixture.plans.length,1);
+  assert.equal(fixture.plans[0].render_job.status,'queued');
+  assert.equal(mutations().filter(r=>r.path.endsWith('/theme-plans')).length,stage==='create'?2:1);
+ } else if (scenario === 'lost-create-response') {
+  lostResponse=true;await click('tp-proposals','Ghép video');
+  assert.ok(app.els['tp-msg'].textContent.includes('response lost'));
+  app=boot();await tick();await click('tp-proposals','Ghép video');
+  assert.equal(mutations().filter(r=>r.path.endsWith('/theme-plans')).length,1);
+  assert.equal(fixture.plans[0].render_job.status,'queued');
+ } else if (scenario === 'edit-clips') {
+  await made();
+  const detail=nodes('tp-plans').find(n=>n.tagName==='DETAILS');detail.open=true;detail.listeners.toggle();
+  await click('tp-plans','↓');await click('tp-plans','✕');
+  const select=nodes('tp-plans').find(n=>n.tagName==='SELECT');select.value='ep/k3';await click('tp-plans','Thêm clip');
+  setTitle('tp-plans','Sửa chưa lưu');await refresh();
+  assert.equal(input('tp-plans').value,'Sửa chưa lưu');assert.equal(nodes('tp-plans').find(n=>n.tagName==='DETAILS').open,true);
+  assert.ok(app.els['tp-plans'].textContent.includes('chưa lưu'));
+  await click('tp-plans','Ghép lại');
+  const put=mutations().find(r=>r.method==='PUT');assert.deepEqual(put.body,{revision:1,title:'Sửa chưa lưu',clip_ids:['ep/k1','ep/k3']});
+  assert.equal(mutations().at(-2).body.revision,2);
+ } else if (scenario === 'edit-retry-failure') {
+  await made();setTitle('tp-plans','Sửa rồi thử lại');fail={method:'POST',suffix:'/approve'};
+  await click('tp-plans','Ghép lại');
+  assert.ok(app.els['tp-msg'].textContent.startsWith('Duyệt video:'));
+  assert.equal(btn('tp-plans','Ghép lại').disabled,false);
+  await click('tp-plans','Ghép lại');
+  assert.equal(fixture.plans[0].render_job.status,'queued');
+  assert.equal(mutations().filter(r=>r.method==='PUT').length,1);
+  assert.equal(mutations().filter(r=>r.path.endsWith('/theme-plans')).length,1);
+ } else if (scenario === 'failed-job') {
+  await made();fixture.plans[0].render_job={active:false,status:'failed',error:'không đọc được nguồn'};await refresh();
+  assert.ok(app.els['tp-plans'].textContent.includes('lỗi: không đọc được nguồn'));
+  assert.equal(btn('tp-plans','Ghép lại').disabled,false);
+  const approvals=mutations().filter(r=>r.path.endsWith('/approve')).length;
+  await click('tp-plans','Ghép lại');
+  assert.equal(mutations().filter(r=>r.path.endsWith('/approve')).length,approvals);
+  assert.equal(fixture.plans[0].render_job.status,'queued');
+ } else if (scenario === 'read-failure') {
+  fail={method:'GET',suffix:'/theme-plan'};
+  await click('tp-proposals','Ghép video');
+  assert.ok(app.els['tp-msg'].textContent.startsWith('Tải trạng thái:'));
+  assert.equal(mutations().length,0);
+  await click('tp-proposals','Ghép video');assert.equal(fixture.plans.length,1);
+ } else if (scenario === 'conflict') {
+  await made();setTitle('tp-plans','Sửa chưa lưu');fixture.plans[0].revision++;
+  await click('tp-plans','Ghép lại');assert.ok(app.els['tp-msg'].textContent.includes('đã có thay đổi khác'));
+  assert.ok(!mutations().some(r=>r.method==='PUT'));
+  assert.equal(input('tp-plans').value,'Sửa chưa lưu');
+  await click('tp-plans','Tải lại bản đã lưu');assert.equal(input('tp-plans').value,p.titles[0]);
+ } else if (scenario === 'stale') {
+  await made();fixture.plans[0].check={state:'stale',problems:['input changed']};await refresh();
+  assert.ok(app.els['tp-plans'].textContent.includes('Nội dung clip đã đổi'));
+  assert.ok(!nodes('tp-plans').some(n=>n.textContent==='Ghép lại'));
+  const before=mutations().length;await click('tp-proposals','Ghép video');assert.equal(mutations().length,before);
+  assert.ok(app.els['tp-msg'].textContent.includes('Gợi ý lại'));
+  fixture.generate_job.active=false;await refresh();await click('tp-plans','Gợi ý lại');
+  assert.ok(mutations().at(-1).path.endsWith('/generate'));
+  await click('tp-plans','Xóa');assert.equal(fixture.plans.length,0);
+ } else if (scenario === 'focus-long') {
+  p.total_duration=2600;await refresh();assert.ok(app.els['tp-proposals'].textContent.includes('dài hơn 40 phút'));
+  setTitle('tp-proposals','Giữ con trỏ');const old=input('tp-proposals');app.document.activeElement=old;
+  await refresh();assert.equal(input('tp-proposals'),old);
+  app.document.activeElement=null;await refresh();assert.equal(input('tp-proposals').value,'Giữ con trỏ');
+  await click('tp-proposals','Ghép video');assert.equal(fixture.plans[0].render_job.status,'queued');
+ } else {throw Error('unknown scenario '+scenario);}
  console.log('ok');
-})().catch(e => {console.error(e);process.exitCode=1;});
+})().catch(e=>{console.error(e);process.exitCode=1;});
 """
 
 
-def test_js_smoke_and_text_only():
+@pytest.mark.parametrize("scenario", [
+    "display", "one-click", "radio", "custom", "double-reload",
+    "failure-create", "failure-edit", "failure-approve", "failure-render",
+    "lost-create-response", "edit-clips", "edit-retry-failure", "failed-job", "read-failure",
+    "conflict", "stale", "focus-long",
+])
+def test_js_smoke_and_text_only(scenario):
     if shutil.which("node") is None:
         pytest.skip("node unavailable")
     js = STATIC / "theme_plan.js"
     text = js.read_text()
     assert "innerHTML" not in text and "insertAdjacentHTML" not in text
+    assert 'type: "checkbox"' not in text
     assert "theme_plan.js" in (STATIC / "favorites.html").read_text()
-    result = subprocess.run(["node", "-e", NODE, str(js)], capture_output=True, text=True, timeout=20)
+    result = subprocess.run(["node", "-e", NODE, str(js), scenario], capture_output=True, text=True, timeout=20)
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "ok"
+
+
+NODE_TABS = r"""
+const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
+class El {
+ constructor(tag='div') {this.tagName=tag.toUpperCase();this.children=[];this.listeners={};this.dataset={};this.classes=new Set();this.classList={toggle:(c,on)=>on?this.classes.add(c):this.classes.delete(c)};}
+ setAttribute(k,v) {this[k]=v;}
+ append(...nodes) {this.children.push(...nodes);}
+ replaceChildren(...nodes) {this.children=nodes;}
+ addEventListener(k,f) {this.listeners[k]=f;}
+ focus() {this.focused=true;}
+}
+const mode=process.argv[2],els={},values=new Map(),calls=[];
+if(mode==='saved')values.set('autoShort.fvTab','manual');
+if(mode==='invalid')values.set('autoShort.fvTab','unknown');
+const get=id=>els[id] ||= new El();
+const tabs=['ai','manual'].map(name=>{const n=get('fv-tab-'+name);n.dataset.fvTab=name;return n;});
+const filters=['all','short','khaithi'].map(kind=>{const n=new El('button');n.dataset.kind=kind;return n;});
+get('fv-auto-min').value='60';
+const favorites=[{episode_id:'ep1',clip:'k1',code:'KT01',kind:'khaithi',usable:true,duration:350},
+ {episode_id:'ep2',clip:'s1',code:'S01',kind:'short',usable:true,duration:50}];
+const document={querySelector:s=>get(s.slice(1)),getElementById:get,createElement:tag=>new El(tag),
+ querySelectorAll:s=>s==='[data-fv-tab]'?tabs:filters,activeElement:null};
+const ctx={document,location:{pathname:'/playlists/PLeligible/favorites'},localStorage:{getItem:k=>{if(mode==='blocked')throw Error('denied');return values.get(k);},setItem:(k,v)=>{if(mode==='blocked')throw Error('denied');values.set(k,v);}},
+ fetch:async(path,opts)=>{calls.push({path,opts});return {ok:true,status:200,json:async()=>opts.method==='POST'?{created:true}:{series:'Bộ kinh',max_minutes:720,favorites,compilations:[]}};},
+ window:{dispatchEvent:()=>{}},setTimeout:()=>1,clearTimeout:()=>{},confirm:()=>true};
+const tick=()=>new Promise(r=>setImmediate(r));
+(async()=>{
+ vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8')+'\nFavorites.init();',ctx);await tick();
+ assert.equal(get('fv-pane-ai').hidden,mode==='saved');
+ assert.equal(get('fv-pane-manual').hidden,mode!=='saved');
+ assert.equal(tabs[mode==='saved'?1:0]['aria-selected'],'true');
+ tabs[1].listeners.click();assert.equal(get('fv-pane-manual').hidden,false);
+ if(mode!=='blocked')assert.equal(values.get('autoShort.fvTab'),'manual');
+ let prevented=false;tabs[1].listeners.keydown({key:'ArrowRight',preventDefault:()=>prevented=true});
+ assert.ok(prevented);assert.equal(get('fv-pane-ai').hidden,false);assert.ok(tabs[0].focused);
+ assert.equal(get('fv-count').textContent,2);
+ // Existing manual concat and duration-based creation still use their CP8.33 payloads.
+ get('fv-all').listeners.change({target:{checked:true}});
+ get('fv-concat').listeners.click({target:get('fv-concat')});await tick();
+ const concat=calls.find(c=>c.opts.method==='POST');
+ assert.deepEqual(JSON.parse(concat.opts.body),{mode:'concat',items:[{episode_id:'ep1',clip:'k1'},{episode_id:'ep2',clip:'s1'}]});
+ filters[2].listeners.click();get('fv-auto').listeners.click({target:get('fv-auto')});await tick();
+ assert.deepEqual(JSON.parse(calls.filter(c=>c.opts.method==='POST').at(-1).opts.body),{mode:'auto',minutes:60,kinds:['khaithi']});
+ const all=n=>[n,...n.children.filter(c=>typeof c!=='string').flatMap(all)];
+ await all(get('fv-list')).find(n=>n.textContent==='Lặp').listeners.click();
+ const loop=all(get('fv-list')).find(n=>n.type==='number');loop.value='30';
+ all(get('fv-list')).find(n=>n.textContent==='Tạo').listeners.click();await tick();
+ assert.deepEqual(JSON.parse(calls.filter(c=>c.opts.method==='POST').at(-1).opts.body),{mode:'loop',item:{episode_id:'ep1',clip:'k1'},minutes:30});
+ console.log('ok');
+})().catch(e=>{console.error(e);process.exitCode=1;});
+"""
+
+
+@pytest.mark.parametrize("storage", ["default", "saved", "invalid", "blocked"])
+def test_js_favorites_tabs_and_manual_compilation(storage):
+    if shutil.which("node") is None:
+        pytest.skip("node unavailable")
+    result = subprocess.run(["node", "-e", NODE_TABS, str(STATIC / "favorites.js"), storage],
+                            capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "ok"
+
+
+def test_favorites_tab_panel_ownership():
+    from html.parser import HTMLParser
+
+    class Panels(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.stack = []
+            self.nodes = {}
+
+        def handle_starttag(self, tag, attrs):
+            attrs = dict(attrs)
+            if "id" in attrs:
+                self.nodes[attrs["id"]] = (attrs, [node.get("id") for node in self.stack])
+            if tag not in {"meta", "link", "input", "br"}:
+                self.stack.append(attrs)
+
+        def handle_endtag(self, tag):
+            self.stack.pop()
+
+    html = (STATIC / "favorites.html").read_text()
+    parser = Panels()
+    parser.feed(html)
+    nodes = parser.nodes
+    assert "hidden" not in nodes["fv-pane-ai"][0]
+    assert "hidden" in nodes["fv-pane-manual"][0]
+    assert nodes["fv-tab-ai"][0]["aria-selected"] == "true"
+    assert html.index('id="fv-pane-ai"') < html.index('id="fv-pane-manual"')
+    for name in ("tp-generate", "tp-proposals", "tp-plans"):
+        assert "fv-pane-ai" in nodes[name][1]
+    for name in ("fv-list", "fv-filters", "fv-concat", "fv-all", "fv-auto", "fv-comps", "fv-max"):
+        assert "fv-pane-manual" in nodes[name][1]

@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: CHANGE
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -56,7 +56,13 @@ Từ trang Yêu thích, trên điện thoại: mở trang là thấy ngay “Gh�
 
 ## Result
 
-- Main changes:
+- Main changes: AI là tab mặc định; nhớ tab cuối bằng localStorage có try/catch và hỗ trợ phím mũi tên/Home/End. CP8.33 nằm nguyên trong tab ghép tay. Thẻ chủ đề có radio tiêu đề (★ mặc định), ô sửa, thông tin thời lượng và danh sách khai thị thu gọn. Một nút Ghép video gọi create → PUT nếu đổi tiêu đề → approve (`duration_override: true`) → render, dùng revision trả về từng bước; không checkbox thời lượng. GET mới trước khi tạo để dùng tiếp plan theo `proposal.proposal_id`, khóa thao tác khi gửi và báo rõ bước lỗi. Video đã ghép hiển thị job/status, Tải về/Copy mô tả, Ghép lại, Xóa và Gợi ý lại cho stale/invalid; editor clip thu gọn giữ sửa/thêm/xóa/thứ tự, draft và trạng thái mở khi polling. CSS mới giới hạn trong trang Yêu thích, nút ≥44 px ở ≤640 px.
 - Tests:
-- Review:
+  - PASS: `node --check src/auto_short/web/static/favorites.js`; `node --check src/auto_short/web/static/theme_plan.js`.
+  - PASS: `env PYTHONPATH=/home/ntnghia/youtube-auto-short-tc23/src /home/ntnghia/miniconda3/envs/auto-short/bin/python -m pytest -q tests/test_web_theme_plan.py -k 'js or tab_panel or without_http' -x --tb=short` — 23 passed, 24 deselected. Bao gồm luồng mặc định/chọn/sửa tiêu đề, không checkbox, override, revision, lỗi từng bước và thử lại, mất phản hồi create, bấm kép/reload, polling/focus/draft, sửa clip + retry sau PUT, stale, output/copy, tab/storage và payload concat/auto/loop CP8.33. Không thay đổi các HTTP tests hiện có.
+  - PASS: `node scripts/framework-check.mjs`; `git diff --check`.
+  - Chưa PASS trong sandbox: lệnh user yêu cầu `env PYTHONPATH=/home/ntnghia/youtube-auto-short-tc23/src /home/ntnghia/miniconda3/envs/auto-short/bin/python -m pytest -q tests/test_web_theme_plan.py -x --tb=short` treo tại TestClient, đã ngắt (exit 130). Chạy lại required web command với `timeout 40s` và `-o faulthandler_timeout=20`: `tests/test_web_theme_plan.py tests/test_web_compilation.py -x --tb=short` timeout (exit 124); stack tại login fixture `tests/test_web_theme_plan.py:34` / AnyIO portal. Probe tạo socket loopback riêng nhận `PermissionError: [Errno 1] Operation not permitted`.
+  - Full suite: `timeout 60s env PYTHONPATH=/home/ntnghia/youtube-auto-short-tc23/src /home/ntnghia/miniconda3/envs/auto-short/bin/python -m pytest -q -n auto -x --tb=short` timeout (exit 124), có failure/error trước khi timeout nhưng không có final summary/chi tiết; không claim full suite PASS. Log tạm `/tmp/tc23-full-suite.log`. ORCHESTRATOR cần chạy lại required web command và full suite ngoài sandbox.
+  - Manual 375 px/điện thoại: chưa chạy; HUMAN LEAD thực hiện theo Required verification. Không restart production.
+- Review: ORCHESTRATOR ACCEPTED 2026-10-19 (Codex ≈ 117k tokens); `-m pytest -q -n auto` ngoài sandbox 2260 passed, 1 skipped. Manual test điện thoại: HUMAN LEAD.
 - PR: chưa.

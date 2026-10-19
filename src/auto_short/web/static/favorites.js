@@ -228,7 +228,33 @@ const Favorites = (() => {
     if (data && data.compilations.some((c) => c.state === "queued" || c.state === "running")) timer = setTimeout(load, POLL_MS);
   }
 
+  function initTabs() {
+    const tabs = [...document.querySelectorAll("[data-fv-tab]")];
+    function show(name, focus = false) {
+      for (const tab of tabs) {
+        const selected = tab.dataset.fvTab === name;
+        tab.classList.toggle("active", selected);
+        tab.setAttribute("aria-selected", String(selected));
+        tab.setAttribute("tabindex", selected ? "0" : "-1");
+        document.getElementById("fv-pane-" + tab.dataset.fvTab).hidden = !selected;
+        if (selected && focus) tab.focus();
+      }
+      store("autoShort.fvTab", name);
+    }
+    for (const [i, tab] of tabs.entries()) {
+      tab.addEventListener("click", () => show(tab.dataset.fvTab));
+      tab.addEventListener("keydown", (event) => {
+        const keys = { ArrowRight: (i + 1) % tabs.length, ArrowLeft: (i + tabs.length - 1) % tabs.length, Home: 0, End: tabs.length - 1 };
+        if (keys[event.key] === undefined) return;
+        event.preventDefault();
+        show(tabs[keys[event.key]].dataset.fvTab, true);
+      });
+    }
+    show(store("autoShort.fvTab") === "manual" ? "manual" : "ai");
+  }
+
   function init() {
+    initTabs();
     pid = decodeURIComponent(location.pathname.split("/").filter(Boolean)[1] || "");
     const saved = store("autoShort.fvKind");
     if (KINDS.includes(saved)) kindFilter = saved;
