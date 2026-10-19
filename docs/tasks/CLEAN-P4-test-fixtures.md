@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: DRAFT
+- Status: APPROVED
 - Type: CHANGE
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -15,8 +15,8 @@
 - Owned paths: `tests/conftest.py`, `tests/web_helpers.py`, `tests/wait_helpers.py` (mới), 13 file có `wait_for` (`test_hd_first_cp132`, `test_enhance_api`, `test_enhance_pipeline`, `test_enhance_worker`, `test_monitor_cp828`, `test_web_queue_cp822`, `test_web_render_slots_cp836`, `test_prepare_parallel_cp829`, `test_ollama_wait_runner`, `test_priority_cp826`, `test_youtube_wait`, `test_web_stop_fix`, `test_web_lanes_cp810`), 15 file có `tcfg` cơ sở (`test_ollama_wait_runner`, `test_playlist_cp87`, `test_priority_cp826`, `test_web_cp817`, `test_web_cp821`, `test_web_cp85`, `test_web_episode_ui_cp812`, `test_web_khaithi_cp89`, `test_web_lanes_cp810`, `test_web_playlist_groups_cp813`, `test_web_queue_cp822`, `test_web_sutra_sr11`, `test_web_sutra_sr12`, `test_web_titles`, `test_youtube_wait`), 26 file có `client` / `make_client` / `login` / `_login` (danh sách ở Scope), `test_web_series_cp811.py` (`tcfg`), file này. Tất cả dưới `tests/`, không chạm `src/`.
 - Dependencies: CLEAN-P2P3 (#117, đã merge)
 - Base commit / branch: `46fad94` (origin/main) / `chore/p4-test-fixtures`
-- Human Lead approval: pending
-- Implementation authorized: NO
+- Human Lead approval: accepted 2026-10-19 (chat; đồng ý D1, D2)
+- Implementation authorized: YES
 
 Lifecycle: `task` mode = `DRAFT → APPROVED → IN_PROGRESS → READY`. DONE suy ra từ Git sau khi merge.
 
