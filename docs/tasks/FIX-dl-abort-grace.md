@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: BUG
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -106,7 +106,8 @@ Không chạm database, security model, public API contract (chỉ logic trang).
   | 4 | review diff + `node --check`; manual test |
   | 5 | `tests/test_web_downloads_cp834.py` (không sửa) + full suite |
 
-  ORCHESTRATOR 2026-10-19 (ngoài sandbox): `test_dlqueue_cp834.py` + `test_web_downloads_cp834.py` 42 passed; `pytest -q -n auto` 2189 passed, 1 skipped; `node --check app.js` OK; `node scripts/framework-check.mjs` FAIL chỉ vì `docs/tasks/CLEAN-P5-web-routers.md` (`Change class: S2 (…)`, có sẵn trên `main` `79436e8`, ngoài owned paths) — file này hợp lệ.
+  ORCHESTRATOR 2026-10-19 (ngoài sandbox): `test_dlqueue_cp834.py` + `test_web_downloads_cp834.py` 42 passed; `pytest -q -n auto` 2189 passed, 1 skipped; `node --check app.js` OK; `node scripts/framework-check.mjs` lần đầu FAIL chỉ vì `docs/tasks/CLEAN-P5-web-routers.md` (`Change class: S2 (…)`, có sẵn trên `main` `79436e8`); HUMAN LEAD cho sửa S0 (`0b34b32`, lý do xuống dòng `S2 vì:`) → PASS.
+- Manual test: chưa chạy. 8080 đã ghim `0b34b32` và restart (2026-10-19); HUMAN LEAD 2026-10-19: "chưa có thời gian để thử, cho pass luôn" (manual test là điểm danh, không phải gate). Checklist trên để thử sau.
 - Diff + / − (app, test): app +12 / −7 (`dlqueue.js` +11 / −6, `app.js` +1 / −1); test +76 / −0.
 - Helper mới (đã tìm, lý do không tái dùng): không có (Codex: `rg -n 'function fail|function dqStatusText|def run_js|…|abortedAt|abortGraceMs'`; dùng lại `fail`, `run_js` / `specs` / `tok`).
 - Review: ORCHESTRATOR 2026-10-19 ACCEPTED — đọc diff `report` / `step` / `retry` / `dqStatusText` và test mới; inventory ⊆ Owned paths, không commit lạ. Non-blocking: parametrize theo loại file ở AC1 thừa (logic không phụ thuộc `kind`).
