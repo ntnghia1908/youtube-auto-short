@@ -6,6 +6,8 @@
 
 Chỉ ghi operational state không suy ra được từ Git, task contract hoặc accepted decisions. PR đã merge: xem `git log`. Chi tiết vận hành ít dùng (backup, GPU worker, IP, tuning): `docs/workflow/ops-notes.md` — chỉ đọc khi cần.
 
+Ngân sách token của file: xem `docs/ai/workflow.md` §10.
+
 ## Current focus
 
 Cập nhật 2026-10-19.

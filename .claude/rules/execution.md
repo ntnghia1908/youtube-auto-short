@@ -29,7 +29,7 @@ Codex CLI làm IMPLEMENTER / reviewer (phân vai: project-profile §7; cài đ�
    ```
 
    Effort: `high` cho module / tính năng mới, `medium` cho fix nhỏ (mặc định của Codex trên VM là `none` — không dùng). Không `danger-full-access`.
-3. Prompt (mẫu delegation): contract + mục / plan cụ thể (đường dẫn tuyệt đối), branch / HEAD, Owned paths, bằng chứng (log / số đo thật) nếu là vòng sửa, gợi ý hàm / file để tái dùng, “không commit / push / PR / gọi agent khác / gọi mạng thật”, lệnh verification targeted với đúng env, READY report ngắn.
+3. Prompt (mẫu delegation): contract + mục / plan cụ thể (đường dẫn tuyệt đối), branch / HEAD, Owned paths, bằng chứng (log / số đo thật) nếu là vòng sửa, helper / module có sẵn để tái dùng và mục "Code bị thay / xóa" của contract (`docs/ai/workflow.md` §5), “không commit / push / PR / gọi agent khác / gọi mạng thật”, lệnh verification targeted với đúng env, READY report ngắn có helper mới, AC → test, dòng + / − (`docs/ai/workflow.md` §7).
 4. Giới hạn sandbox: không mạng (Ollama / YouTube), **không socket loopback** → test HTTP / web (TestClient + server) và full suite có thể treo trong sandbox. Codex chỉ chạy test targeted không cần socket và phải ghi rõ lệnh nào không chạy được; ORCHESTRATOR chạy test web, full suite và mọi lần chạy thật ngoài sandbox trước READY.
 5. Sau khi chạy: đọc `<tmp>/codex.out`, `tokens used` trong log; `git status` / `git diff --stat` (không commit lạ, inventory ⊆ Owned paths); review như mọi IMPLEMENTER; ghi thời gian / tokens / vòng sửa vào Result.
 6. Vòng sửa cùng context: `codex exec resume <session id> -c sandbox_mode='"workspace-write"' -c model_reasoning_effort='"high"' -o … - < <finding.md>` (session id ở dòng `session id:` đầu log).
@@ -38,7 +38,17 @@ Codex CLI làm IMPLEMENTER / reviewer (phân vai: project-profile §7; cài đ�
 ## Delegation
 
 Áp dụng khi Claude là ORCHESTRATOR; khi là IMPLEMENTER cho Codex thì không delegate tiếp. Giao task cho implementer kèm task contract, base commit, `Implementation authorized: YES` và plan ngắn.
-Cùng task thì resume đúng context; task mới dùng context mới.
+Resume cùng task theo `docs/ai/workflow.md` §9; task mới dùng context mới.
+
+Mẫu delegation prompt:
+
+```text
+Contract: <path>; base commit: <SHA>; Implementation authorized: YES.
+Plan: <ngắn, trong owned paths>.
+Giới hạn chờ lệnh: xem docs/ai/workflow.md §5 (Claude Code subagent: 5 phút).
+Tái dùng: <helper / module có sẵn>; code bị thay: <mục Code bị thay / xóa của contract>.
+READY report theo docs/ai/workflow.md §5 / §7 (helper mới, AC → test, dòng + / −).
+```
 
 ## Session
 
