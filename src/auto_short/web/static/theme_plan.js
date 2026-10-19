@@ -1,171 +1,252 @@
-/* TC2 phase C: the thematic planner card on Yêu thích. */
+/* TC2.3: one-click thematic compilations on Yêu thích. */
 "use strict";
 const ThemePlan = (() => {
   const { el, api, fmtDur, copyText } = Favorites;
   const $ = (id) => document.getElementById(id);
-  const states = { draft: "nháp", approved: "đã duyệt", stale: "cần xem lại", invalid: "hỏng" };
-  const jobs = { queued: "đang chờ", running: "đang chạy", done: "xong", failed: "lỗi", interrupted: "bị ngắt" };
-  const drafts = new Map();
+  const jobs = { queued: "đang chờ", running: "đang ghép", done: "xong", failed: "lỗi", interrupted: "bị ngắt" };
+  const drafts = new Map(), choices = new Map(), opened = new Map(), inputs = new Set();
   let base = "", data = null, timer = null, loading = false, pending = false, refreshAgain = false;
   const active = (job) => !!(job && job.active);
-  const jobText = (job) => job ? `${job.gpu_wait ? "đang chờ GPU / Ollama" : jobs[job.status] || job.status}${job.error ? ": " + job.error : ""}` : "";
+  const jobText = (job) => job ? `${job.gpu_wait ? "đang chờ GPU / Ollama" : jobs[job.status] || job.status}${job.summary ? " · " + job.summary : ""}${job.error ? ": " + job.error : ""}` : "";
   function say(text, error = false) {
     $("tp-msg").textContent = text;
     $("tp-msg").className = "small" + (error ? " error" : "");
   }
-  const minutes = (seconds) => `${(seconds / 60).toFixed(1)} phút`;
-  const outside = (total) => total < 1800 || total > 2400;
-  function warning(total) {
-    return outside(total) ? ` · ngoài 30–40 phút${total < 1800 ? ", thiếu " + minutes(1800 - total) : ""}` : "";
-  }
+  const minutes = (seconds) => `${(seconds / 60).toFixed(1).replace(".", ",")} phút`;
+  const duration = (total) => minutes(total) + (total < 1800 ? " — ngắn hơn 30 phút" : total > 2400 ? " — dài hơn 40 phút" : "");
+  function control(node) { inputs.add(node); return node; }
   function button(text, fn, disabled = false) {
-    const b = el("button", { class: "btn small", type: "button", text });
+    const b = control(el("button", { class: "btn small", type: "button", text }));
     b.disabled = disabled;
-    b.addEventListener("click", fn);
+    b.addEventListener("click", () => { if (!pending && !b.disabled) return fn(); });
     return b;
   }
-  async function change(path, method, body, done) {
+  function details(key, label, ...children) {
+    const node = el("details", { class: "tp-details" }, el("summary", { text: label }), ...children);
+    node.open = !!opened.get(key);
+    node.addEventListener("toggle", () => opened.set(key, node.open));
+    return node;
+  }
+  const request = (path, method, body) => api(base + path, { method, headers: { "Content-Type": "application/json" },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  async function perform(work) {
     if (pending) return;
     pending = true;
+    clearTimeout(timer);
+    const locked = new Map([...inputs, $("tp-generate")].map((node) => [node, node.disabled]));
+    for (const node of locked.keys()) node.disabled = true;
     say("");
-    try {
-      await api(base + path, { method, headers: { "Content-Type": "application/json" },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-      if (done) done();
-      say("Đã cập nhật.");
+    let step = "Tải trạng thái";
+    const at = (name) => { step = name; say(name + "…"); };
+    try { await work(at); }
+    catch (e) { say(`${step}: ${e.status === 409 ? "đã có thay đổi khác, tải lại. " : ""}${e.message}`, true); }
+    finally {
+      // Refresh partial successes too, so retries resume the saved plan/revision.
       await load();
-    } catch (e) {
-      say(e.status === 409 ? "đã có thay đổi khác, tải lại. " + e.message : e.message, true);
-    } finally { pending = false; }
+      for (const [node, disabled] of locked) node.disabled = disabled;
+      pending = false;
+      if (data) renderData();
+    }
   }
   function clipLabel(clip) {
     const found = (data.clips_available || []).find((c) => c.id === clip.id);
     return `${found ? found.label : (clip.episode_id || clip.id) + " · " + (clip.clip || "")} · ${fmtDur(clip.duration)}`;
   }
+  function remember(plan) {
+    const i = data.plans.findIndex((p) => p.plan_id === plan.plan_id);
+    if (i < 0) data.plans.push(plan);
+    else data.plans[i] = plan;
+    return plan;
+  }
+  function merge(proposed, chosenTitle, planId = null, edit = null) {
+    return perform(async (at) => {
+      // Read persisted provenance before creating: repeat clicks and reloads reuse the plan.
+      at("Tải trạng thái");
+      data = await api(base + "/theme-plan");
+      let plan = planId ? data.plans.find((p) => p.plan_id === planId)
+        : data.plans.find((p) => p.proposal && p.proposal.proposal_id === proposed.proposal_id);
+      if (planId && !plan) throw new Error("Video này đã bị xóa. Tải lại trạng thái.");
+      if (plan && ["stale", "invalid"].includes((plan.check || {}).state)) {
+        throw new Error("Nội dung clip đã đổi hoặc không dùng được. Bấm Gợi ý lại rồi chọn chủ đề mới.");
+      }
+      if (plan && active(plan.render_job)) { say("Video đang trong hàng đợi ghép."); return; }
+      if (!plan) {
+        at("Tạo video từ chủ đề");
+        plan = remember(await request("/theme-plans", "POST", { proposal_id: proposed.proposal_id }));
+      }
+      const path = "/theme-plans/" + encodeURIComponent(plan.plan_id);
+      const title = edit ? edit.title : (planId ? plan.title : chosenTitle);
+      const clips = edit ? edit.clips : plan.clips;
+      if (edit && edit.revision !== plan.revision) throw new Error("đã có thay đổi khác, tải lại bản đã lưu trước khi ghép.");
+      const changed = title !== plan.title || clips.map((c) => c.id).join("|") !== plan.clips.map((c) => c.id).join("|");
+      if (changed) {
+        at("Lưu tiêu đề và danh sách clip");
+        plan = remember(await request(path, "PUT", { revision: plan.revision, title, clip_ids: clips.map((c) => c.id) }));
+        if (edit) Object.assign(edit, { revision: plan.revision, title: plan.title,
+          clips: plan.clips.map((c) => ({ ...c })), dirty: false });
+      }
+      if (changed || !plan.check || plan.check.state !== "approved") {
+        at("Duyệt video");
+        plan = remember(await request(path + "/approve", "POST", { revision: plan.revision, duration_override: true }));
+      }
+      at("Xếp hàng ghép video");
+      await request(path + "/render", "POST");
+      drafts.delete(plan.plan_id);
+      say("Đã xếp vào hàng đợi ghép. Xem tiến độ ở Video đã ghép.");
+    });
+  }
   function proposal(p) {
-    const clips = el("ol");
+    const existing = data.plans.find((plan) => plan.proposal && plan.proposal.proposal_id === p.proposal_id);
+    let choice = choices.get(p.proposal_id);
+    if (!choice) { choice = { title: existing ? existing.title : (p.titles || [])[0] || p.label }; choices.set(p.proposal_id, choice); }
+    const title = control(el("input", { type: "text", maxlength: "120", value: choice.title, "aria-label": "Sửa tiêu đề video" }));
+    const options = el("div", { class: "tp-titles", role: "group", "aria-label": "Chọn tiêu đề video" });
+    const radios = [];
+    for (const [i, text] of (p.titles || []).entries()) {
+      const radio = control(el("input", { type: "radio", name: "tp-title-" + p.proposal_id, value: text }));
+      radio.checked = choice.title === text;
+      radios.push(radio);
+      radio.addEventListener("change", () => { choice.title = text; title.value = text; drawActions(); });
+      options.append(el("label", { class: "tp-title-option" }, radio, el("span", { text: (i === 0 ? "★ " : "") + text })));
+    }
+    title.addEventListener("input", () => { choice.title = title.value; for (const radio of radios) radio.checked = radio.value === title.value; drawActions(); });
+    const clips = el("ol", { class: "tp-clip-preview" });
     for (const c of p.clips) clips.append(el("li", { text: clipLabel(c) }));
-    return el("article", { class: "tp-plan" }, el("h4", { text: (p.titles || [])[0] || p.label }),
-      el("p", { class: "small", text: `${p.label} · ${p.rationale}` }), clips,
-      el("p", { class: "small", text: `${minutes(p.total_duration)}${p.shortfall_seconds ? " · thiếu " + minutes(p.shortfall_seconds) : ""}${p.dropped_for_length ? " · đã cắt bớt " + p.dropped_for_length + " clip" : ""}` }),
-      button("Dùng chủ đề này", () => change("/theme-plans", "POST", { proposal_id: p.proposal_id })));
+    const actions = el("div", { class: "actions" });
+    function drawActions() {
+      for (const node of actions.children) inputs.delete(node);
+      actions.replaceChildren();
+      const job = existing && existing.render_job;
+      const busy = active(job);
+      const failed = job && ["failed", "interrupted"].includes(job.status);
+      const done = existing && existing.check && existing.check.state === "approved" && existing.output && existing.output.download_url;
+      if (done && !busy && !failed) {
+        actions.append(el("span", { class: "small", role: "status", text: "✓ Đã ghép · " + minutes(existing.total_duration) }));
+        appendOutput(actions, existing.output);
+        if (choice.title === existing.title) return;
+      }
+      if (failed && !busy) actions.append(el("span", { class: "small error", role: "status", text: jobText(job) }));
+      const go = button(busy ? "Đang ghép…" : failed ? "Ghép lại" : done ? "Ghép lại với tiêu đề này" : "Ghép video", () => {
+        go.textContent = "Đang ghép…";
+        return merge(p, choice.title);
+      }, busy);
+      go.className += " primary";
+      actions.append(go);
+    }
+    drawActions();
+    return el("article", { class: "tp-plan" }, el("h4", { text: (p.titles || [])[0] || p.label }), options, title,
+      el("p", { class: "small muted", text: `${p.clips.length} clip · ${duration(p.total_duration)} · ${p.label} · ${p.rationale}${p.dropped_for_length ? " · đã bớt " + p.dropped_for_length + " clip cho vừa thời lượng" : ""}` }),
+      details("proposal-" + p.proposal_id, `Xem ${p.clips.length} khai thị`, clips), actions);
+  }
+  function appendOutput(actions, output) {
+    const player = el("div", { class: "tp-player" });
+    const watch = button("Xem", () => {
+      if (player.children.length) {
+        player.replaceChildren();
+        watch.textContent = "Xem";
+      } else {
+        player.append(el("video", { controls: "", playsinline: "", preload: "metadata",
+          src: output.download_url + "?inline=1" }));
+        watch.textContent = "Ẩn video";
+      }
+    });
+    actions.append(watch);
+    actions.append(el("a", { class: "btn small", href: output.download_url, download: output.download_name || "", text: "Tải về" }),
+      button("Copy mô tả", async () => say(await copyText(output.description || "") ? "Đã copy mô tả." : "Không copy được.")), player);
   }
   function planRow(plan) {
     const check = plan.check || { state: "invalid", problems: [] };
-    const box = el("article", { class: "tp-plan" });
-    const busy = active(plan.render_job);
-    box.append(el("h4", { text: `${plan.title || plan.plan_id} · ${states[check.state] || check.state}` }));
-    for (const why of check.problems || []) box.append(el("p", { class: "error small", text: why }));
+    const busy = active(plan.render_job), broken = ["stale", "invalid"].includes(check.state);
     const path = "/theme-plans/" + encodeURIComponent(plan.plan_id);
-    const remove = button("Xóa kế hoạch", () => {
-      if (confirm("Xóa kế hoạch này?")) change(path, "DELETE", undefined, () => drafts.delete(plan.plan_id));
-    }, busy);
-    if (check.state === "invalid") { box.append(remove); return box; }
-
-    let draft = drafts.get(plan.plan_id);
-    if (!draft || (!draft.dirty && draft.revision !== plan.revision)) {
-      draft = { revision: plan.revision, title: plan.title, clips: plan.clips.map((c) => ({ ...c })), dirty: false };
-      drafts.set(plan.plan_id, draft);
-    }
-    if (draft.revision !== plan.revision) box.append(el("p", { class: "error small", text: "đã có thay đổi khác, tải lại trước khi lưu" }));
-    const title = el("input", { type: "text", maxlength: "120", value: draft.title, "aria-label": "Tiêu đề kế hoạch" });
-    title.disabled = busy;
-    const rows = el("ol", { class: "fv-list" });
-    const totalText = el("p", { class: "small" });
-    const override = el("input", { type: "checkbox" });
-    const overrideLabel = el("label", { class: "inline small" }, override, " Tôi xác nhận thời lượng ngoài 30–40 phút");
-    const select = el("select", { "aria-label": "Thêm clip đã index" });
-    const save = button("Lưu sửa", () => change(path, "PUT", {
-      revision: draft.revision, title: draft.title, clip_ids: draft.clips.map((c) => c.id)
-    }, () => drafts.delete(plan.plan_id)), busy);
-    const approve = button("Duyệt", () => change(path + "/approve", "POST", {
-      revision: plan.revision, duration_override: override.checked
-    }, () => drafts.delete(plan.plan_id)));
-    const render = button("Xuất video ngang", () => change(path + "/render", "POST"));
-    function controls() {
-      const total = draft.clips.reduce((a, c) => a + c.duration, 0);
-      totalText.textContent = `${minutes(total)}${warning(total)}${draft.dirty ? " · chưa lưu" : ""}`;
-      overrideLabel.hidden = !outside(total);
-      approve.disabled = busy || draft.dirty || check.state !== "draft" || (outside(total) && !override.checked);
-      render.disabled = busy || draft.dirty || check.state !== "approved";
-      save.disabled = busy || !draft.clips.length;
-    }
-    function edit() { draft.dirty = true; override.checked = false; controls(); }
-    const suggestions = el("div", { class: "actions" });
-    function drawSuggestions() {
-      suggestions.replaceChildren();
-      for (const option of new Set(plan.title_options || [])) if (typeof option === "string" && option !== draft.title) {
-        suggestions.append(button(`Gợi ý: ${option}`, () => {
-          title.value = option; draft.title = option; edit(); drawSuggestions();
-        }, busy));
+    const box = el("article", { class: "tp-plan" }, el("h4", { text: plan.title || plan.plan_id }));
+    const status = broken ? "Nội dung clip đã đổi hoặc không dùng được — hãy Gợi ý lại."
+      : jobText(plan.render_job) || (plan.output ? "xong" : "Chưa ghép — bấm Ghép lại để tiếp tục.");
+    box.append(el("p", { class: "small" + (broken || (plan.render_job && plan.render_job.error) ? " error" : ""), role: "status", text: status }));
+    for (const why of check.problems || []) box.append(el("p", { class: "error small", text: why }));
+    const actions = el("div", { class: "actions" });
+    if (broken) actions.append(button("Gợi ý lại", generate, busy || active(data.generate_job)));
+    else {
+      let draft = drafts.get(plan.plan_id);
+      if (!draft || (!draft.dirty && draft.revision !== plan.revision)) {
+        draft = { revision: plan.revision, title: plan.title, clips: plan.clips.map((c) => ({ ...c })), dirty: false };
+        drafts.set(plan.plan_id, draft);
       }
-    }
-    function drawClips() {
-      rows.replaceChildren();
-      draft.clips.forEach((c, i) => {
-        const row = el("li", { class: "fv-row" }, el("span", { class: "fv-main", text: `${i + 1}. ${clipLabel(c)}` }));
-        const actions = el("span", { class: "fv-actions" });
-        for (const [text, label, offset] of [["↑", "Đưa clip lên", -1], ["↓", "Đưa clip xuống", 1], ["✕", "Bỏ clip", 0]]) {
-          const b = button(text, () => {
-            if (offset) [draft.clips[i], draft.clips[i + offset]] = [draft.clips[i + offset], draft.clips[i]];
-            else draft.clips.splice(i, 1);
-            edit(); drawClips();
-          }, busy || (offset < 0 && i === 0) || (offset > 0 && i === draft.clips.length - 1));
-          b.setAttribute("aria-label", label + " " + (i + 1));
-          actions.append(b);
+      const title = control(el("input", { type: "text", maxlength: "120", value: draft.title, "aria-label": "Tiêu đề video đã ghép" }));
+      title.disabled = busy;
+      const rows = el("ol", { class: "fv-list" }), total = el("p", { class: "small" });
+      const select = control(el("select", { "aria-label": "Thêm clip đã index" }));
+      select.disabled = busy;
+      const retry = button("Ghép lại", () => merge(null, null, plan.plan_id, draft), busy);
+      function update() {
+        total.textContent = `${draft.clips.length} clip · ${duration(draft.clips.reduce((a, c) => a + c.duration, 0))}${draft.dirty ? " · chưa lưu" : ""}${draft.revision !== plan.revision ? " · đã có thay đổi khác, tải lại bản đã lưu" : ""}`;
+        retry.disabled = busy || !draft.clips.length || !draft.title.trim() || draft.revision !== plan.revision;
+      }
+      function edit() { draft.dirty = true; update(); }
+      function drawClips() {
+        rows.replaceChildren();
+        draft.clips.forEach((c, i) => {
+          const row = el("li", { class: "fv-row" }, el("span", { class: "fv-main", text: clipLabel(c) }));
+          const moves = el("span", { class: "fv-actions" });
+          for (const [text, label, offset] of [["↑", "Đưa clip lên", -1], ["↓", "Đưa clip xuống", 1], ["✕", "Bỏ clip", 0]]) {
+            const b = button(text, () => {
+              if (offset) [draft.clips[i], draft.clips[i + offset]] = [draft.clips[i + offset], draft.clips[i]];
+              else draft.clips.splice(i, 1);
+              edit(); drawClips();
+            }, busy || (offset < 0 && i === 0) || (offset > 0 && i === draft.clips.length - 1));
+            b.setAttribute("aria-label", label + " " + (i + 1));
+            moves.append(b);
+          }
+          row.append(moves); rows.append(row);
+        });
+        select.replaceChildren(el("option", { value: "", text: "Chọn clip đã index…" }));
+        for (const c of data.clips_available || []) if (!draft.clips.some((x) => x.id === c.id)) {
+          select.append(el("option", { value: c.id, text: `${c.label} · ${fmtDur(c.duration)}` }));
         }
-        row.append(actions); rows.append(row);
-      });
-      select.replaceChildren(el("option", { value: "", text: "Chọn clip đã index…" }));
-      for (const c of data.clips_available || []) if (!draft.clips.some((x) => x.id === c.id)) {
-        select.append(el("option", { value: c.id, text: `${c.label} · ${fmtDur(c.duration)}` }));
+        update();
       }
-      controls();
+      title.addEventListener("input", () => { draft.title = title.value; edit(); });
+      const add = button("Thêm clip", () => {
+        const clip = (data.clips_available || []).find((c) => c.id === select.value);
+        if (clip) { draft.clips.push({ ...clip }); edit(); drawClips(); }
+      }, busy);
+      const reset = button("Tải lại bản đã lưu", () => { drafts.delete(plan.plan_id); renderData(); }, busy);
+      box.append(details("plan-" + plan.plan_id, "Sửa danh sách clip", title, rows,
+        el("div", { class: "actions" }, select, add), total, el("div", { class: "actions" }, reset)));
+      actions.append(retry);
+      if (plan.output && plan.output.download_url) {
+        appendOutput(actions, plan.output);
+      }
+      drawClips();
     }
-    title.addEventListener("input", () => { draft.title = title.value; edit(); drawSuggestions(); });
-    override.addEventListener("change", controls);
-    const add = button("Thêm clip", () => {
-      const clip = (data.clips_available || []).find((c) => c.id === select.value);
-      if (clip) { draft.clips.push({ ...clip }); edit(); drawClips(); }
-    }, busy);
-    select.disabled = busy;
-    const reset = button("Tải lại bản đã lưu", () => { drafts.delete(plan.plan_id); renderPlans(); });
-    box.append(title, suggestions, rows, el("div", { class: "actions" }, select, add), totalText, overrideLabel,
-      el("div", { class: "actions" }, save, reset, approve, render, remove),
-      el("p", { class: "small" + (plan.render_job && plan.render_job.error ? " error" : ""), text: jobText(plan.render_job) }));
-    if (plan.output) {
-      const output = plan.output;
-      const copy = button("Copy mô tả", async () => say(await copyText(output.description) ? "Đã copy mô tả." : "Không copy được.", false));
-      box.append(el("div", { class: "actions" },
-        el("a", { class: "btn small", href: output.download_url, download: output.download_name, text: "Tải về" }), copy,
-        el("span", { class: "small", text: fmtDur(output.duration) })));
-    }
-    drawSuggestions(); drawClips();
+    actions.append(button("Xóa", () => {
+      if (!confirm("Xóa video ghép này?")) return;
+      return perform(async (at) => { at("Xóa video"); await request(path, "DELETE"); drafts.delete(plan.plan_id); say("Đã xóa."); });
+    }, busy));
+    box.append(actions);
     return box;
-  }
-  function renderPlans() {
-    // Keep focus/caret and the current editor while a status request finishes.
-    const focused = document.activeElement;
-    if ($("tp-plans").contains(focused) && focused.tagName === "INPUT" && focused.type === "text") return;
-    $("tp-plans").replaceChildren(...data.plans.map(planRow));
   }
   function renderData() {
     const s = data.index_summary;
     $("tp-summary").textContent = `${s.usable} clip khai thị dùng được / ${s.unusable} không dùng được · ${s.source_missing} clip phải tải lại nguồn${s.common_reasons.length ? ". Lý do: " + s.common_reasons.map((r) => `${r.count} × ${r.reason}`).join("; ") : ""}`;
     $("tp-job").textContent = jobText(data.generate_job);
     $("tp-generate").disabled = active(data.generate_job);
+    // Preserve focus/caret; draft values and expanded details also survive later polls.
+    const focused = document.activeElement;
+    if (focused && focused.tagName === "INPUT" && focused.type === "text" &&
+      ($("tp-plans").contains(focused) || $("tp-proposals").contains(focused))) return;
+    inputs.clear();
     $("tp-proposals").replaceChildren();
     const doc = data.proposals;
     if (doc) {
       for (const key of ["ai_error", "shortfall"]) if (doc[key]) $("tp-proposals").append(el("p", { class: "error small", text: doc[key] }));
       for (const p of doc.proposals || []) $("tp-proposals").append(proposal(p));
       if ((doc.rejected_themes || []).length) {
-        const details = el("details", {}, el("summary", { text: `Chủ đề bị loại (${doc.rejected_themes.length})` }));
-        for (const r of doc.rejected_themes) details.append(el("p", { class: "small", text: `#${r.position + 1}: ${r.reason}` }));
-        $("tp-proposals").append(details);
+        const rejected = details("rejected", `Chủ đề bị loại (${doc.rejected_themes.length})`);
+        for (const r of doc.rejected_themes) rejected.append(el("p", { class: "small", text: `#${r.position + 1}: ${r.reason}` }));
+        $("tp-proposals").append(rejected);
       }
     }
-    renderPlans();
+    $("tp-plans").replaceChildren(...(data.plans.length ? data.plans.map(planRow) : [el("p", { class: "muted small", text: "Chưa có video ghép theo chủ đề." })]));
   }
   async function load() {
     if (loading) { refreshAgain = true; return; }
@@ -173,9 +254,9 @@ const ThemePlan = (() => {
     clearTimeout(timer);
     try {
       data = await api(base + "/theme-plan");
-      renderData();
+      if (!pending) renderData();
     } catch (e) {
-      say(e.message, true);
+      if (!pending) say(e.message, true);
       $("tp-summary").textContent = "Không tải được trạng thái mới. Bấm Tải lại trạng thái.";
       $("tp-generate").disabled = false;
     } finally {
@@ -184,12 +265,15 @@ const ThemePlan = (() => {
       else if (data && (active(data.generate_job) || data.plans.some((p) => active(p.render_job)))) timer = setTimeout(load, 5000);
     }
   }
+  function generate() {
+    return perform(async (at) => { at("AI gợi ý chủ đề"); await request("/theme-plan/generate", "POST"); say("Đã yêu cầu AI gợi ý chủ đề."); });
+  }
   function init() {
     const pid = decodeURIComponent(location.pathname.split("/").filter(Boolean)[1] || "");
     base = "/api/playlists/" + encodeURIComponent(pid);
-    $("tp-generate").addEventListener("click", () => change("/theme-plan/generate", "POST"));
+    $("tp-generate").addEventListener("click", generate);
     $("tp-refresh").addEventListener("click", load);
-    $("tp-plans").addEventListener("focusout", () => setTimeout(() => { if (data) renderPlans(); }, 0));
+    for (const id of ["tp-plans", "tp-proposals"]) $(id).addEventListener("focusout", () => setTimeout(() => { if (data && !pending) renderData(); }, 0));
     window.addEventListener("favorites-changed", load);
     load();
   }

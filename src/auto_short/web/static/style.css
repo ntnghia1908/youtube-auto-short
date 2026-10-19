@@ -333,6 +333,9 @@ body.modal-open { overflow: hidden; }
 
 /* TC2: thematic planner inside Yêu thích */
 .tp-plan { border-top: 1px solid var(--border); margin-top: .75rem; padding-top: .5rem; overflow-wrap: anywhere; }
+.tp-player { flex-basis: 100%; width: 100%; min-width: 0; }
+.tp-player:empty { display: none; }
+.tp-player video { display: block; width: 100%; max-width: 100%; background: #000; }
 .tp-plan input[type="text"] { width: 100%; box-sizing: border-box; padding: .5rem; margin-bottom: .5rem; font-size: 1rem; }
 .tp-plan select { flex: 1 1 12rem; min-width: 0; max-width: 100%; padding: .5rem; font-size: 1rem; }
 
@@ -353,3 +356,25 @@ body.modal-open { overflow: hidden; }
 }
 .dq-awake { display: block; width: 48px; height: 48px; margin: .4rem 0; border: 1px solid var(--border); opacity: .7; }
 .dq-awake[hidden] { display: none; }
+
+/* TC2.3: favorites tabs and phone-sized thematic cards. */
+.fv-page { min-width: 0; }
+.fv-pane { display: grid; gap: .75rem; min-width: 0; }
+.fv-pane[hidden] { display: none; }
+.fv-tabs { padding: 0 0 .5rem; min-width: 0; }
+.fv-tabs .tab { white-space: normal; overflow-wrap: anywhere; }
+.fv-page .card, .fv-page .fv-main { min-width: 0; overflow-wrap: anywhere; }
+.tp-titles { display: grid; gap: .35rem; margin-bottom: .5rem; }
+.tp-title-option { display: flex; align-items: center; gap: .6rem; margin: 0; padding: .4rem; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
+.tp-title-option input { flex: 0 0 auto; width: 1.2rem; height: 1.2rem; margin: 0; }
+.tp-title-option span { min-width: 0; }
+.tp-details { margin: .5rem 0; }
+.tp-details summary { cursor: pointer; padding: .5rem 0; }
+.tp-clip-preview { padding-left: 1.5rem; }
+@media (max-width: 640px) {
+  .fv-page .btn, .fv-page select, .fv-page input[type="text"], .fv-page input[type="number"], .tp-details summary, .tp-title-option { min-height: 44px; }
+  .fv-page .fv-actions { width: 100%; }
+  .fv-page .fv-actions .btn { flex: 1; text-align: center; }
+  .fv-page .fv-main { flex-basis: 100%; }
+  .fv-page .actions > select { flex-basis: 100%; width: 100%; }
+}
