@@ -29,7 +29,7 @@ Các boundary dưới đây là **planned module boundaries**, chưa phải impl
 
 | Path | Stage / vai trò | Rule riêng |
 |---|---|---|
-| `src/auto_short/` (`workspace.py`, `hashing.py`, `config.py`, `cli.py`) | stage framework dùng chung, config, CLI — *implemented* (CP2) | `docs/decisions/CP2-workspace-contract.md` |
+| `src/auto_short/` (`workspace.py`, `youtube_url.py`, `hashing.py`, `config.py`, `cli.py`) | stage framework dùng chung, config, CLI — *implemented* (CP2) | `docs/decisions/CP2-workspace-contract.md` |
 | `src/auto_short/khaithi.py` | tập khai thị: `khaithi.json` + tham số hiệu lực analysis / selection, dùng chung stage, CLI, web — *implemented* (CP8.9) | `docs/decisions/CP8.9-khai-thi-contract.md` |
 | `src/auto_short/post/` | bài đăng cộng đồng của một Short: text nguồn, AI thêm dấu câu / chia đoạn (Ollama) + validate, `posts.json` / `post_log.json`, thư viện ảnh + tìm ảnh từ link — *implemented* (CP8.15); từ điển sửa lỗi học từ bản sửa tay (`corrections.py`) — *implemented* (CP8.18); bài lấy từ văn bản gốc bài giảng `ph.tinhtong.vn` (`doc.py`) — *implemented* (CP8.19); web chỉ gọi | `docs/decisions/CP8.15-community-post-contract.md` |
 | `src/auto_short/enhance/` | enhance video nguồn độ phân giải thấp bằng worker GPU ngoài: `enhance.json` + quyết định sau ingest, lease / đoạn / ghép `source_hd.mp4`, token worker — *implemented* (CP13.1b; worker Windows `tools/enhance_worker/` CP13.1a, ngoài package) | `docs/decisions/CP13.1-enhance-worker-contract.md` |

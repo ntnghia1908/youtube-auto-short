@@ -68,7 +68,7 @@ from ..review.archive import restore_parts, restore_source
 from ..review.names import hashtags as review_hashtags
 from ..review.names import posts_docx_name
 from ..titling.playlist import stored_series as playlist_series
-from ..workspace import WorkspaceError, iter_manifests, validate_episode_id
+from ..workspace import WorkspaceError, iter_manifests, read_json_dict, validate_episode_id
 from . import episodes as ep
 from . import reading
 from . import compilations as comp_web
@@ -514,7 +514,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                         or any((j := runner.latest_vertical(ep.hd_owner(eid))) is not None and j.active for eid in parts):
                     continue  # CP8.32: a queued vertical job still needs the original
                 # A restore may have finished since the rows were measured. Recheck its grace under the same lock.
-                restored_times = [parse_time((ep._read_json(Path(config.workspace.dir) / eid / "restored.json")
+                restored_times = [parse_time((read_json_dict(Path(config.workspace.dir) / eid / "restored.json")
                                               or {}).get("restored_at")) for eid in parts]
                 if any(t is not None and clock() - t < config.storage.auto_archive_grace_minutes * 60
                        for t in restored_times):

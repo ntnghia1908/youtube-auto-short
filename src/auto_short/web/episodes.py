@@ -6,7 +6,6 @@ The web never writes stage artifacts; the only files it serves are the Shorts li
 
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
 
@@ -19,7 +18,7 @@ from ..review import (ReviewError, download_name, episode_complete, episode_labe
                       read_archive, zip_name)
 from ..review.publish import PUBLISH_NAME, read_publish
 from ..review.watched import WATCHED_NAME, read_watched, watched_status
-from ..workspace import DONE, PENDING, Workspace, WorkspaceError, iter_manifests, validate_episode_id
+from ..workspace import DONE, PENDING, Workspace, WorkspaceError, iter_manifests, read_json_dict, validate_episode_id
 from .urls import UrlError, parse_youtube_url
 
 RENDER_MANIFEST = "render_manifest.json"
@@ -36,14 +35,6 @@ def valid_episode_id(episode_id: str) -> bool:
 
 def valid_clip_id(clip_id: str) -> bool:
     return bool(_CLIP_ID_RE.match(clip_id))
-
-
-def _read_json(path: Path) -> dict | None:
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    return data if isinstance(data, dict) else None
 
 
 def _output_dir(config: Config, episode_id: str) -> Path:
@@ -63,7 +54,7 @@ def _render_manifest(config: Config, episode_id: str) -> dict | None:
     """The episode's last committed render manifest, whatever the render stage status is now: a render run stages
     new Shorts as ``.part`` files and only replaces files + manifest at its commit, and a failed / interrupted run
     leaves the previous render intact (CP8.2 T5), so the listed files always exist and match."""
-    doc = _read_json(_output_dir(config, episode_id) / RENDER_MANIFEST)
+    doc = read_json_dict(_output_dir(config, episode_id) / RENDER_MANIFEST)
     if doc is None or doc.get("episode_id") != episode_id or not isinstance(doc.get("shorts"), list):
         return None
     return doc
@@ -89,7 +80,7 @@ def _copy(title: str | None, series: str | None, tags: tuple[str, ...], prefix: 
 
 def _series(config: Config, episode_id: str) -> str | None:
     """titles.json ``header.fields.series`` (for the ``#<series>`` hashtag)."""
-    doc = _read_json(Path(config.workspace.dir) / episode_id / "titles.json") or {}
+    doc = read_json_dict(Path(config.workspace.dir) / episode_id / "titles.json") or {}
     fields = (doc.get("header") or {}).get("fields") or {}
     value = fields.get("series") if isinstance(fields, dict) else None
     return value if isinstance(value, str) else None
@@ -119,7 +110,7 @@ def _label(config: Config, episode_id: str, kf: dict | None = None) -> str:
     """``<episode>`` of the download names: titles.json ``header.fields.episode``, else the episode id (X1); for a
     khai thị episode the base episode id, without ``.kt`` (CP8.9 K8)."""
     kf = kf or kind_fields(config, episode_id)
-    doc = _read_json(Path(config.workspace.dir) / episode_id / "titles.json") or {}
+    doc = read_json_dict(Path(config.workspace.dir) / episode_id / "titles.json") or {}
     fields = (doc.get("header") or {}).get("fields") or {}
     value = fields.get("episode") if isinstance(fields, dict) else None
     return episode_label(value if isinstance(value, str) else None, kf["base_episode_id"] or episode_id)
@@ -244,7 +235,7 @@ def episode_view(config: Config, episode_id: str, *, hashtags: list[str] | None 
         return None
     if manifest is None:
         return None
-    meta = _read_json(ws.dir / "metadata.json") or {}
+    meta = read_json_dict(ws.dir / "metadata.json") or {}
     stages = _stages(manifest)
     doc = _render_manifest(config, episode_id)
     titles, ignored, titles_error = _titles(config, episode_id) if doc else ({}, [], None)
@@ -301,7 +292,7 @@ def list_episodes(config: Config) -> list[dict]:
     """Summary per episode workspace, newest manifest first."""
     items = []
     for ws, manifest in iter_manifests(Path(config.workspace.dir)):
-        meta = _read_json(ws.dir / "metadata.json") or {}
+        meta = read_json_dict(ws.dir / "metadata.json") or {}
         stages = _stages(manifest)
         doc = _render_manifest(config, ws.episode_id)
         pub = _publish(config, ws.episode_id, doc)[0] if doc else {}
@@ -440,7 +431,7 @@ def video_download_name(config: Config, episode_id: str, suffix: str) -> str:
     """CP8.27: ``[<series>_]Tập<N>_HD.mp4`` (landscape) / ``…_Doc.mp4`` (vertical); no episode number ->
     ``<video id>_<suffix>.mp4``. Series / episode come from the video's own titles.json (CP8.17 D4)."""
     owner = hd_owner(episode_id)
-    doc = _read_json(Path(config.workspace.dir) / owner / "titles.json") or {}
+    doc = read_json_dict(Path(config.workspace.dir) / owner / "titles.json") or {}
     fields = (doc.get("header") or {}).get("fields") or {}
     episode = fields.get("episode") if isinstance(fields, dict) else None
     return video_name(episode if isinstance(episode, str) else None, owner, suffix,

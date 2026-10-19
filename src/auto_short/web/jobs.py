@@ -47,7 +47,7 @@ from ..post import imgsearch as post_imgsearch
 from ..post import stage as post_stage
 from ..render import RenderError, run_render
 from ..render import full as full_mod
-from ..workspace import atomic_write_json
+from ..workspace import atomic_write_json, utc_now
 from . import prepared
 from .priority import Priority
 from ..selection.client import ChatUnavailable
@@ -141,10 +141,6 @@ _ISO = "%Y-%m-%dT%H:%M:%SZ"
 _SERIAL = "serial"  # internal lane of queue_mode "serial" (reported as lane null)
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
 class JobFailed(Exception):
     """Raised by a job target to finish the job as ``failed`` with this message."""
 
@@ -195,7 +191,7 @@ class Job:
     kind: str
     target: Callable[["Job"], None] = field(repr=False)
     status: str = QUEUED
-    created_at: str = field(default_factory=_now)
+    created_at: str = field(default_factory=utc_now)
     started_at: str | None = None
     finished_at: str | None = None
     stage: str | None = None  # stage currently running (set by the target), or the next one while waiting
@@ -566,7 +562,7 @@ class JobRunner:
                             job.error = "interrupted while waiting for GPU" if job.gpu_wait \
                                 else "interrupted while waiting for YouTube" if job.yt_wait \
                                 else f"interrupted while waiting for {job.lane}"
-                            job.finished_at, job.waiting, job.gpu_wait, job.yt_wait = _now(), False, False, False
+                            job.finished_at, job.waiting, job.gpu_wait, job.yt_wait = utc_now(), False, False, False
                 self._save_locked()  # jobs cut by the stop come back first; those that finished meanwhile are gone
                 self._lock.notify_all()
             else:
@@ -647,12 +643,6 @@ class JobRunner:
         with self._lock:
             return self._latest.get(vertical_key(episode_id))
 
-    def active_vertical(self, episode_ids=None) -> list[Job]:
-        """Queued / running vertical jobs (of these video ids; None = all)."""
-        with self._lock:
-            return [j for j in self._jobs.values() if j.kind == KIND_VERTICAL and j.active and not j.cancel_requested
-                    and (episode_ids is None or j.episode_id in episode_ids)]
-
     def cancel_vertical(self, episode_ids=None) -> list[Job]:
         """CP8.32 V4: cancel the active vertical jobs of these video ids (None = all); no other kind is ever touched.
         A waiting job leaves its lane queue at once; a running one gets the stop mechanism (KeyboardInterrupt on its lane
@@ -675,7 +665,7 @@ class JobRunner:
                 for queue in self._queues.values():
                     if job in queue:
                         queue.remove(job)
-                job.status, job.error, job.finished_at = CANCELLED, None, _now()
+                job.status, job.error, job.finished_at = CANCELLED, None, utc_now()
                 job.lane, job.waiting, job.yt_wait, job.gpu_wait = None, False, False, False
                 done.append(job)
             self._save_locked()
@@ -845,7 +835,7 @@ class JobRunner:
 
     def _set_gpu_down_locked(self, error: str) -> None:
         if not self._gpu_down():
-            self._gpu["since"] = _now()
+            self._gpu["since"] = utc_now()
             log.warning("web: ollama unavailable (%s); ai lane waits for the GPU, re-checking every %g s", error,
                         self.gpu_retry_seconds)
         self._gpu["state"], self._gpu["error"] = GPU_DOWN, error
@@ -1045,12 +1035,12 @@ class JobRunner:
                 self._in_step[slot] = job
                 first = job.status == QUEUED
                 if first:
-                    job.status, job.started_at, job.t0 = RUNNING, _now(), time.monotonic()
+                    job.status, job.started_at, job.t0 = RUNNING, utc_now(), time.monotonic()
                 job.lane = None if lane == _SERIAL else lane
                 job.waiting, job.gpu_wait, job.yt_wait = False, False, False
                 job._reachable = self._gpu_reachable if lane == AI else None
                 job._yt_ok = self._youtube_ok if lane == PREPARE else None
-                job.step_t0, job.step_started_at = time.monotonic(), _now()
+                job.step_t0, job.step_started_at = time.monotonic(), utc_now()
                 self._current[slot] = job
                 self._lock.notify_all()  # a shorter ai queue may let the prepare lane start (Q2)
             try:
@@ -1194,7 +1184,7 @@ class JobRunner:
         with self._lock:
             self._release_locked(job)
             if last:
-                job.finished_at, job.lane, job.waiting = _now(), None, False
+                job.finished_at, job.lane, job.waiting = utc_now(), None, False
                 if job.again and job.kind == KIND_POST and job.status != INTERRUPTED and not self._stopping:
                     follow = getattr(job.target, "followup", None)
                     follow = follow() if follow is not None else None
@@ -1248,7 +1238,7 @@ class JobRunner:
             job = self._parked.pop(episode_id, None)
             if job is None:
                 return False
-            job.status, job.error, job.finished_at = INTERRUPTED, "hủy khi đợi HD", _now()
+            job.status, job.error, job.finished_at = INTERRUPTED, "hủy khi đợi HD", utc_now()
             job.hd_wait, job.waiting, job.lane = False, False, None
             self._save_locked()
             self._lock.notify_all()
@@ -1497,7 +1487,7 @@ class JobRunner:
                     or job.steps[step].lane != RENDER:
                 raise ValueError("a parked job must be a pipeline job waiting for its render step")
             job.step = step
-            job.status, job.started_at, job.t0 = RUNNING, _now(), time.monotonic()
+            job.status, job.started_at, job.t0 = RUNNING, utc_now(), time.monotonic()
             job.lane, job.waiting, job.hd_wait, job.stage = None, True, True, LANE_STAGES[RENDER][0]
             self._jobs[job.id] = job
             self._latest[key] = job
@@ -1507,7 +1497,7 @@ class JobRunner:
             step = 0
         job.step = step
         if step > 0:  # finished its earlier lanes: waiting for this one
-            job.status, job.started_at, job.t0 = RUNNING, _now(), time.monotonic()
+            job.status, job.started_at, job.t0 = RUNNING, utc_now(), time.monotonic()
             job.lane, job.waiting, job.stage = job.steps[step].lane, True, LANE_STAGES.get(job.steps[step].lane, (None,))[0]
         self._jobs[job.id] = job
         self._latest[key] = job

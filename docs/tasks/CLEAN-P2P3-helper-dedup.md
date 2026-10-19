@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: CHANGE
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -12,7 +12,7 @@
 - Authorization mode: task
 - Authorization source: `docs/audit/code-growth-report.md` §5.2 mục P2, P3; HUMAN LEAD chọn P2 + P3 ngày 2026-10-19
 - Parallel group: —
-- Owned paths: `src/auto_short/workspace.py`, `src/auto_short/youtube_url.py` (mới), `src/auto_short/web/{urls,jobs,playlists,episodes}.py`, `src/auto_short/post/{logic,stage,doc}.py`, `src/auto_short/review/{archive,publish,watched,tombstone,logic}.py`, `src/auto_short/titling/{added,stage}.py`, `src/auto_short/{analysis,selection,render}/stage.py`, `src/auto_short/enhance/state.py`, `src/auto_short/compilation/store.py`, `src/auto_short/selection/logic.py`, `src/auto_short/render/plan.py`, `src/auto_short/web/static/{app,favorites}.js`, `src/auto_short/web/static/favorites.html`, `tools/enhance_worker/worker.py`, `tests/test_review_cp9.py`, `tests/test_render_plan.py`, test mới cho helper `workspace` / `youtube_url` (trong file test sẵn có của module), `docs/ai/project-profile.md` (§3 dòng đầu), file này
+- Owned paths: `src/auto_short/workspace.py`, `src/auto_short/youtube_url.py` (mới), `src/auto_short/web/{urls,jobs,playlists,episodes}.py`, `src/auto_short/post/{logic,stage,doc}.py`, `src/auto_short/review/{archive,publish,watched,tombstone,logic}.py`, `src/auto_short/titling/{added,stage}.py`, `src/auto_short/{analysis,selection,render}/stage.py`, `src/auto_short/enhance/state.py`, `src/auto_short/compilation/store.py`, `src/auto_short/selection/logic.py`, `src/auto_short/render/plan.py`, `src/auto_short/web/static/{app,favorites}.js`, `src/auto_short/web/static/favorites.html`, `tools/enhance_worker/worker.py`, caller gọi `_read_json` private chéo module (bổ sung khi review vòng 1, chỉ đổi lời gọi): `src/auto_short/enhance/service.py`, `src/auto_short/web/{app,storage}.py`, `src/auto_short/render/full.py`, `tests/test_review_cp9.py`, `tests/test_render_plan.py`, test mới cho helper `workspace` / `youtube_url` (trong file test sẵn có của module), `docs/ai/project-profile.md` (§3 dòng đầu), file này
 - Dependencies: none
 - Base commit / branch: `e709e23` (origin/main) / `chore/p2p3-helper-dedup`
 - Human Lead approval: accepted 2026-10-19 (chat; đồng ý cả 2 quyết định cục bộ)
@@ -105,11 +105,22 @@ Không chạm database, security model hay public API contract (route / schema g
 
 ## Result
 
-- Main changes:
+- Main changes: P2a–P2e + P3 theo Scope. Helper mới trong `workspace.py`: `read_json_dict`, `read_stage_json`. Module core mới `youtube_url.py` (parser chuyển nguyên văn từ `web/urls.py`, `web/urls` import lại). Review vòng 1: bỏ alias `_read_json` / `partial`; caller private chéo module (`enhance/service`, `web/{app,storage}`, `render/full`) gọi thẳng helper `workspace` (Owned paths bổ sung).
 - Tests:
-- Diff + / − (app, test):
-- Helper mới (đã tìm, lý do không tái dùng):
-- Review:
-- Important findings / decisions:
-- Known limitations:
-- PR:
+
+| AC | Test / lệnh |
+|---|---|
+| 1, 5 | grep trong AC: chỉ còn `workspace.utc_now`, `sutra/store._now`; reader và 8 tên P3 rỗng |
+| 2 | `test_workspace.py::test_read_json_dict`, `test_read_stage_json_error` (4 class × 2), `test_read_stage_json_valid` |
+| 3 | `test_post_backend.py` (P6 link), `test_web_urls.py`, `test_playlist_cp87.py` không sửa |
+| 4 | `node --check`; `test_web_theme_plan.py::test_js_favorites_tabs_and_manual_compilation` (harness Node nạp `app.js` trước `favorites.js` như trang) |
+| 6 | `python -m pytest -q -n auto` → 2180 passed, 1 skipped; `-m slow` → 5 passed, 12 skipped (thiếu env `enhance-bench`) |
+
+  Chạy với `PYTHONPATH=<worktree>/src` (editable install trỏ checkout chính). `node scripts/framework-check.mjs` PASS.
+- Diff + / − (app, test): app +168 / −333 (gồm `youtube_url.py` 60 dòng mới); test +43 / −8.
+- Helper mới (đã tìm, lý do không tái dùng): `read_json_dict`, `read_stage_json` — `workspace.py` chưa có reader; chuyển thân bản cũ, không thêm policy đọc mới.
+- Review: ORCHESTRATOR vòng 1 (alias / import order). Harness JS `test_web_theme_plan.py` do ORCHESTRATOR sửa (test nạp riêng `favorites.js`, thiếu `AutoShort`).
+- Implementer: Codex `gpt-6.1-sol` effort medium, 2 lượt, 80k + 101k tokens, 0 blocking.
+- Important findings / decisions: 2 quyết định cục bộ đã duyệt (câu lỗi link bài đăng theo W3; thanh hàng đợi trên trang Yêu thích).
+- Known limitations: chưa manual test trên 8080.
+- PR: chưa tạo (chờ HUMAN LEAD).

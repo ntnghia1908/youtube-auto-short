@@ -499,7 +499,3 @@ def ffmpeg_command(*, ffmpeg: str, source: Path, output: Path, graph_script: Pat
 
 def planned_frames(segments: list[tuple[int, int]], fps: Fraction) -> int:
     return sum(n for _, n in frame_plan(segments, fps))
-
-
-def planned_video_seconds(segments: list[tuple[int, int]], fps: Fraction) -> float:
-    return planned_frames(segments, fps) / float(fps)

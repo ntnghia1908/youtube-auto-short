@@ -23,7 +23,7 @@ from ..post.store import POSTS_NAME, read_posts_quiet
 from ..review.publish import PUBLISH_NAME, read_publish
 from ..khaithi import SUFFIX as KT_SUFFIX
 from ..enhance import state as enhance_state
-from ..workspace import DONE, iter_manifests
+from ..workspace import DONE, iter_manifests, read_json_dict
 from . import episodes as ep
 
 GB = 1_000_000_000
@@ -196,7 +196,7 @@ def episode_sizes(config: Config, active: set[str] | None = None) -> list[dict]:
         if complete:
             ticks = [t for t in (parse_time(e.get("at")) for e in (pub.get("published") or [])) if t is not None]
             finished = parse_time((stages.get("render") or {}).get("finished_at"))
-            restored = parse_time((ep._read_json(ws.dir / "restored.json") or {}).get("restored_at"))
+            restored = parse_time((read_json_dict(ws.dir / "restored.json") or {}).get("restored_at"))
             complete_since = max([*ticks, *([restored] if restored is not None else []), _mtime(ws.dir / PUBLISH_NAME),
                                   _mtime(out_root / eid / ep.RENDER_MANIFEST),
                                   *([finished] if finished is not None else [])])
@@ -214,7 +214,7 @@ def episode_sizes(config: Config, active: set[str] | None = None) -> list[dict]:
             mtime = ws.manifest_path.stat().st_mtime
         except OSError:
             mtime = 0.0
-        meta = ep._read_json(ws.dir / "metadata.json") or {}
+        meta = read_json_dict(ws.dir / "metadata.json") or {}
         rows.append({
             "id": eid, "title": meta.get("title"), "state": state,
             "source_kind": (manifest.get("source") or {}).get("kind"),

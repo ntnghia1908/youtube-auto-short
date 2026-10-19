@@ -29,6 +29,7 @@ from ..workspace import (
     Workspace,
     WorkspaceError,
     atomic_write_json,
+    read_stage_json,
     record_failure,
     run_stage,
     validate_episode_id,
@@ -122,13 +123,6 @@ def used_config(cfg: RenderConfig, font_sha256: str, khaithi: bool = False) -> d
 
 def _sha(doc: dict) -> str:
     return hashlib.sha256(hashing.canonical_json(doc).encode("utf-8")).hexdigest()
-
-
-def _read_json(path: Path, what: str) -> dict:
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        raise RenderError(f"cannot read {path}: {exc}; re-run 'auto-short {what}'") from exc
 
 
 def _last_line(text: str) -> str:
@@ -242,7 +236,7 @@ def check_inputs(clips_doc: dict, titles_doc: dict, cand_doc: dict) -> None:
 def load_silences(ws: Workspace, cand_doc: dict) -> list[tuple[float, float]]:
     """CP9 C5: ``silences.json`` for the trims of manual ranges; it must be the one candidates.json was built
     from (``silences_sha256``, like CP5 B8)."""
-    doc = _read_json(ws.dir / SILENCES_NAME, "analysis")
+    doc = read_stage_json(ws.dir / SILENCES_NAME, "analysis", RenderError)
     if cand_doc.get("silences_sha256") != _sha(doc):
         raise RenderError("silences.json does not match candidates.json (silences_sha256); "
                           "re-run 'auto-short analysis'")
@@ -595,9 +589,9 @@ def run_render(episode_id: str, config: Config, *, force: bool = False, run: Run
 def _render_all(ws: Workspace, cfg: RenderConfig, fpath: Path, font_sha: str, media: Path, source_sha: str,
                 cfg_hash: str, paths: dict[str, Path], review_path: Path, out_dir: Path, run: Runner, *,
                 force: bool, old_outputs: list[Path], files: _RunFiles) -> dict:
-    clips_doc = _read_json(paths[CLIPS_NAME], "selection")
-    titles_doc = _read_json(paths[TITLES_NAME], "titling")
-    cand_doc = _read_json(paths[CANDIDATES_NAME], "analysis")
+    clips_doc = read_stage_json(paths[CLIPS_NAME], "selection", RenderError)
+    titles_doc = read_stage_json(paths[TITLES_NAME], "titling", RenderError)
+    cand_doc = read_stage_json(paths[CANDIDATES_NAME], "analysis", RenderError)
     check_inputs(clips_doc, titles_doc, cand_doc)
     try:
         review = review_logic.read_review(review_path, ws.episode_id)

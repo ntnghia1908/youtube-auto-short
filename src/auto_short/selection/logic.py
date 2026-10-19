@@ -22,7 +22,6 @@ VALID, REJECTED, INELIGIBLE, SELECTED, OVERLAPPED, OVER_LIMIT = (
 PROPOSAL_KEYS = ("first_unit", "last_unit", "topic", "reason", "start_complete", "end_complete", "score")
 CLIP_COPY_KEYS = ("source_start", "source_end", "source_duration", "duration", "in_target", "unit_ids",
                   "segment_ids")
-TIME_KEYS = ("source_start", "source_duration", "duration", "in_target")  # recomputed after a head cut
 
 
 class SelectionError(Exception):

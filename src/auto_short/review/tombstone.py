@@ -9,27 +9,16 @@ Canonical contract: docs/decisions/CP8.3-web-contract.md W8 / W10.
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 
 from ..config import Config
-from ..workspace import Workspace, WorkspaceError, atomic_write_json, validate_episode_id
+from ..workspace import Workspace, WorkspaceError, atomic_write_json, read_json_dict, validate_episode_id
 from .logic import ReviewError
 from .publish import PUBLISH_NAME, episode_complete, publish_status, read_publish
 
 DELETED_DIR = "_deleted"
 SCHEMA_VERSION = 1
-KEYS = ("schema_version", "episode_id", "title", "source_url", "deleted_at", "shorts", "published", "complete",
-        "header")
-
-
-def _read_json(path: Path) -> dict | None:
-    try:
-        doc = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    return doc if isinstance(doc, dict) else None
 
 
 def tombstone_dir(config: Config) -> Path:
@@ -49,10 +38,10 @@ def build_tombstone(episode_id: str, config: Config, *, now: str | None = None) 
         manifest = None
     if manifest is None:
         return None
-    meta = _read_json(ws.dir / "metadata.json") or {}
-    titles = _read_json(ws.dir / "titles.json") or {}
+    meta = read_json_dict(ws.dir / "metadata.json") or {}
+    titles = read_json_dict(ws.dir / "titles.json") or {}
     fields = (titles.get("header") or {}).get("fields") or {}
-    rm = _read_json(Path(config.render.output_dir) / ws.episode_id / "render_manifest.json")
+    rm = read_json_dict(Path(config.render.output_dir) / ws.episode_id / "render_manifest.json")
     shorts = rm.get("shorts", []) if rm and rm.get("episode_id") == ws.episode_id else []
     shorts = [s for s in shorts if isinstance(s, dict)]
     rendered = [s for s in shorts if s.get("status") == "rendered"]
@@ -92,7 +81,7 @@ def read_tombstone(config: Config, episode_id: str) -> dict | None:
         path = tombstone_path(config, episode_id)
     except WorkspaceError:
         return None
-    doc = _read_json(path)
+    doc = read_json_dict(path)
     return doc if doc is not None and doc.get("episode_id") == episode_id else None
 
 

@@ -7,13 +7,9 @@ Canonical contract: docs/decisions/CP8.15-community-post-contract.md P3, P4, P6.
 from __future__ import annotations
 
 import re
-from urllib.parse import parse_qs, urlsplit
+from ..youtube_url import UrlError, parse_youtube_url
 
-_VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
-_WATCH_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com"}
-_SHORT_HOST = "youtu.be"
 _SPEAKER_DOT_RE = re.compile(r"\.(?=[^\W\d_])")
-MAX_LINK_LENGTH = 2000
 
 
 class LinkError(ValueError):
@@ -27,31 +23,11 @@ def normalize_link(raw: str | None) -> str | None:
     text = (raw or "").strip()
     if not text:
         return None
-    if len(text) > MAX_LINK_LENGTH or any(c.isspace() for c in text):
-        raise LinkError("link không hợp lệ")
-    full = text if "://" in text else "https://" + text
     try:
-        u = urlsplit(full)
-        host = (u.hostname or "").lower()
-    except ValueError as exc:
-        raise LinkError("link không hợp lệ") from exc
-    if u.scheme.lower() not in ("http", "https") or u.username or u.password or u.port is not None:
-        raise LinkError("chỉ nhận link http(s) của YouTube")
-    path = u.path
-    candidate = None
-    if host == _SHORT_HOST:
-        parts = [p for p in path.split("/") if p]
-        candidate = parts[0] if len(parts) == 1 else None
-    elif host in _WATCH_HOSTS:
-        if path.rstrip("/") == "/watch":
-            values = parse_qs(u.query).get("v") or []
-            candidate = values[0] if len(values) == 1 else None
-        elif path.startswith("/shorts/"):
-            parts = [p for p in path[len("/shorts/"):].split("/") if p]
-            candidate = parts[0] if len(parts) == 1 else None
-    if candidate is None or not _VIDEO_ID_RE.match(candidate):
-        raise LinkError('link phải là youtube.com/shorts/…, youtu.be/… hoặc youtube.com/watch?v=…')
-    return f"https://youtube.com/shorts/{candidate}"
+        vid, _ = parse_youtube_url(text)
+    except UrlError as exc:
+        raise LinkError(str(exc)) from exc
+    return f"https://youtube.com/shorts/{vid}"
 
 
 def chunk_lines(lines: list[str], max_words: int) -> list[list[str]]:

@@ -11,7 +11,7 @@ from auto_short.review import (ArchivedError, ReviewError, list_titles, reject_c
 from auto_short.review import cuts as C
 from auto_short.review import shorts as S
 from auto_short.review.logic import (added_entries, added_origin, check_review, empty_review, next_added_id,
-                                     resolve_cuts, resolve_titles, with_added, with_cut, without_added, without_cut)
+                                     resolve_cuts, resolve_titles, with_added, with_cut, without_cut)
 from cp9_helpers import CONTENT, EID, PARAMS, make_cp9_episode, seg, timeline
 
 ORDER = ["k01", "k02"]
@@ -62,21 +62,20 @@ def test_check_review_rejects_bad_cuts_added(extra, msg):
 
 
 def test_cut_and_added_round_trip_byte_identical():
-    """AC1: removing the last cut / added Short gives back the file of before (CP8.2 shape)."""
+    """AC1: cut round-trip preserves bytes; added Shorts keep their order."""
     before = empty_review(EID)
     doc = with_cut(before, ORDER, clip_id="k02", candidate_id="c2", start=1.0, end=40.0)
     doc = with_cut(doc, ORDER, clip_id="k01", candidate_id="c1", start=2.0, end=30.0)
     assert list(doc) == ["schema_version", "episode_id", "titles", "cuts"]
     assert [e["clip_id"] for e in doc["cuts"]] == ["k01", "k02"]
+    cuts_only = doc
     doc = with_added(doc, ORDER + ["m02"], _added(clip="m02"))
     doc = with_added(doc, ORDER + ["m01", "m02"], _added(clip="m01"))
     assert list(doc)[-1] == "added" and [e["clip_id"] for e in doc["added"]] == ["m01", "m02"]
     doc = with_cut(doc, ORDER + ["m01", "m02"], clip_id="m02", candidate_id="manual", start=3.0, end=45.0)
     assert [e["clip_id"] for e in doc["cuts"]] == ["k01", "k02", "m02"]
     check_review(doc, EID)
-    for cid in ("m01", "m02"):
-        doc, removed = without_added(doc, ORDER, cid)
-        assert removed
+    doc = cuts_only
     for cid in ("k01", "k02"):
         doc, removed = without_cut(doc, ORDER, cid)
         assert removed

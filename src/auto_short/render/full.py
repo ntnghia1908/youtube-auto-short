@@ -28,9 +28,16 @@ from ..config import Config
 from ..enhance import state as enhance_state
 from ..ingest import probe as probe_mod
 from ..ingest.youtube import DownloadError, YoutubeBlocked, ytdlp_download
-from ..workspace import Workspace, is_episode_id, WorkspaceError, atomic_write_json, validate_episode_id
+from ..workspace import (
+    Workspace,
+    WorkspaceError,
+    atomic_write_json,
+    is_episode_id,
+    read_stage_json,
+    validate_episode_id,
+)
 from . import plan
-from .stage import (RenderError, _last_line, _read_json, _run, _sha, _write_lines, font_path, probe_media, used_config,
+from .stage import (RenderError, _last_line, _run, _sha, _write_lines, font_path, probe_media, used_config,
                     _rate)
 from .text import Font, TextError, baselines, fit_header, nfc
 
@@ -121,8 +128,8 @@ def fetch_original(episode_id: str, config: Config, *, downloader=ytdlp_download
     if src.path is not None:
         return FetchResult(src.path, False, None)
     d = Path(config.workspace.dir) / owner
-    manifest = _read_json(d / "manifest.json", "ingest") or {}
-    meta = _read_json(d / "metadata.json", "ingest") or {}
+    manifest = read_stage_json(d / "manifest.json", "ingest", RenderError) or {}
+    meta = read_stage_json(d / "metadata.json", "ingest", RenderError) or {}
     source = manifest.get("source") or {}
     uri = source.get("uri")
     if not isinstance(uri, str) or not uri:
@@ -328,7 +335,7 @@ def _run_vertical(episode_id: str, config: Config, *, run, force: bool, note: st
     titles_path = ws.dir / "titles.json"
     if not titles_path.is_file():
         raise RenderError(f"chưa có tiêu đề (titles.json) của {owner!r}; chạy xử lý tập trước")
-    titles = _read_json(titles_path, "titling")
+    titles = read_stage_json(titles_path, "titling", RenderError)
     lines = [nfc(x) for x in ((titles.get("header") or {}).get("lines") or []) if isinstance(x, str)]
     if not lines:
         raise RenderError(f"titles.json của {owner!r} không có header")

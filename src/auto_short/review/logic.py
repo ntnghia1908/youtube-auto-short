@@ -275,10 +275,6 @@ def without_rejected(review: dict, clip_order: list[str], clip_id: str) -> tuple
 
 # --- CP9: manual cut points (``cuts``) and Shorts added by hand (``added``) ----------------------------------
 
-def added_ids(review: dict) -> list[str]:
-    return [e["clip_id"] for e in review.get(ADDED_KEY, [])]
-
-
 def added_origin(entry: dict) -> str | None:
     """Title origin of an added Short (C1: ``title`` = title in use, origin as CP8.2): None when untitled, ``ai``
     when it is the AI title, ``alternative`` when it is one of the AI alternatives, else ``manual``."""
@@ -338,18 +334,6 @@ def with_added(review: dict, clip_order: list[str], entry: dict) -> dict:
         raise ReviewError(f"added entry must have keys {list(ADDED_KEYS)}")
     rest = [e for e in review.get(ADDED_KEY, []) if e["clip_id"] != entry["clip_id"]]
     return _order({**review, ADDED_KEY: rest + [entry]}, clip_order)
-
-
-def without_added(review: dict, clip_order: list[str], clip_id: str) -> tuple[dict, bool]:
-    """New document without the added Short ``clip_id`` (and its cut / deletion); the flag tells whether it
-    existed. Not reachable from the web (a Short is deleted with ``rejected``); kept for tests and tools."""
-    old = review.get(ADDED_KEY, [])
-    rest = [e for e in old if e["clip_id"] != clip_id]
-    doc = {**review, ADDED_KEY: rest,
-           CUTS_KEY: [e for e in review.get(CUTS_KEY, []) if e["clip_id"] != clip_id],
-           REJECTED_KEY: [e for e in review.get(REJECTED_KEY, []) if e["clip_id"] != clip_id],
-           "titles": [e for e in review["titles"] if e["clip_id"] != clip_id]}
-    return _order(doc, clip_order), len(rest) != len(old)
 
 
 def next_added_id(used: set[str] | list[str]) -> str:

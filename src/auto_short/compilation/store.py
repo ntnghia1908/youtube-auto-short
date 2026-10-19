@@ -6,11 +6,10 @@ cleaning a source never touches it.
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ..workspace import atomic_write_json
+from ..workspace import atomic_write_json, read_json_dict
 from .spec import CID_RE, CompilationError, Item, item_from_json
 
 SCHEMA_VERSION = 1
@@ -36,18 +35,10 @@ def doc_path(folder: Path, cid: str) -> Path:
     return folder / f"{cid}.json"
 
 
-def _read(path: Path) -> dict | None:
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    return data if isinstance(data, dict) else None
-
-
 def read_doc(folder: Path, cid: str) -> dict | None:
     if not CID_RE.match(cid):
         return None
-    doc = _read(doc_path(folder, cid))
+    doc = read_json_dict(doc_path(folder, cid))
     return doc if doc is not None and doc.get("cid") == cid else None
 
 
@@ -91,7 +82,7 @@ def read_favorites(folder: Path) -> list[Item]:
     path = folder / FAVORITES_NAME
     if not path.is_file():
         return []
-    data = _read(path)
+    data = read_json_dict(path)
     if data is None or not isinstance(data.get("items"), list):
         raise CompilationError(f"{FAVORITES_NAME} không đọc được")
     out: list[Item] = []

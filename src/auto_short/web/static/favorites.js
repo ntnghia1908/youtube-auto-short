@@ -2,6 +2,7 @@
 "use strict";
 
 const Favorites = (() => {
+  const { el, api, copyText } = AutoShort;
   const POLL_MS = 3000;
   const STATE = { queued: "đang chờ", running: "đang ghép", done: "xong", failed: "lỗi" };
   const MODE = { concat: "ghép", loop: "lặp", auto: "tự ghép" };
@@ -16,32 +17,6 @@ const Favorites = (() => {
     return null;
   }
 
-  function el(tag, attrs = {}, ...children) {
-    const node = document.createElement(tag);
-    for (const [k, v] of Object.entries(attrs)) {
-      if (v === null || v === undefined || v === false) continue;
-      if (k === "class") node.className = v;
-      else if (k === "text") node.textContent = v;
-      else node.setAttribute(k, v === true ? "" : v);
-    }
-    for (const c of children) if (c !== null && c !== undefined) node.append(c);
-    return node;
-  }
-
-  async function api(path, options = {}) {
-    const res = await fetch(path, { credentials: "same-origin", ...options });
-    if (res.status === 401) { location.href = "/login?next=" + encodeURIComponent(location.pathname); throw new Error("chưa đăng nhập"); }
-    let body = null;
-    try { body = await res.json(); } catch (_) { /* empty */ }
-    if (!res.ok) {
-      let msg = body && body.detail;
-      if (Array.isArray(msg)) msg = msg.map((d) => d.msg).join("; ");
-      const error = new Error(msg || `HTTP ${res.status}`);
-      error.status = res.status;
-      throw error;
-    }
-    return body;
-  }
   const post = (path, obj) => api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(obj) });
 
   function say(text, cls) {
@@ -60,25 +35,6 @@ const Favorites = (() => {
   const shown = (f) => kindFilter === "all" || f.kind === kindFilter;
   const usable = () => (data ? data.favorites.filter((f) => f.usable && shown(f)) : []);
   const kindsOfFilter = () => (kindFilter === "all" ? ["short", "khaithi"] : [kindFilter]);
-
-  function legacyCopy(text) {
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.setAttribute("readonly", "");
-    ta.contentEditable = "true";
-    ta.style.cssText = "position:fixed;top:0;left:-9999px;font-size:16px";
-    document.body.append(ta);
-    let ok = false;
-    try { ta.focus(); ta.select(); ta.setSelectionRange(0, text.length); ok = document.execCommand("copy"); } catch (_) { ok = false; }
-    ta.remove();
-    return ok;
-  }
-  async function copyText(text) {
-    if (window.isSecureContext && navigator.clipboard && navigator.clipboard.writeText) {
-      try { await navigator.clipboard.writeText(text); return true; } catch (_) { /* fall back */ }
-    }
-    return legacyCopy(text);
-  }
 
   // G10 preview (same rule as the server): usable favourites in order, wrap around, stop at >= T.
   function autoPreview(minutes) {
