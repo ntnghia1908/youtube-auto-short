@@ -24,14 +24,14 @@ Cập nhật 2026-10-19.
 1. HUMAN LEAD cập nhật `tools/enhance_worker/worker.py` trên máy 3090 + 3050 (bản #100: thoát mã 4 khi lỗi CUDA); ORCHESTRATOR kiểm log server sau đó.
 2. Manual test HUMAN LEAD trên điện thoại: ghép theo chủ đề (TC2.3) và "Khôi phục nguồn" (CP8.37) trên tập đã dọn; chấm tiêu đề AI (TC2.2).
 3. Chất lượng AI TC1 / TC2: synopsis đôi khi là mẩu ngắn, chủ đề có xu hướng gom theo tập; qwen3:30b `think=true` ≈ 1–2 phút / clip.
-4. Audit dọn code §5.2 còn P5: tách `web/app.py` (S2, cần decision trước khi viết contract).
+4. CLEAN-P5 tách `web/app.py` thành router (HUMAN LEAD chọn hướng 2026-10-19): contract DRAFT `docs/tasks/CLEAN-P5-web-routers.md`, chờ APPROVE.
 5. Cũ, vẫn mở: CP8.34 tránh tải lại khi token `aborted`; HTTPS cho 8080; FIX `setup-enhance-worker.ps1` (S1); CP14 Whisper GPU tạm gác.
 
 Đây là PROPOSED, không authorize implementation tiếp theo.
 
 ## Open decisions
 
-- Không.
+- CLEAN-P5 D1–D4 (rule W1 CP8.3 mới, `WebContext`, chia 3 PR, thứ tự route): chờ HUMAN LEAD duyệt.
 
 ## Blockers
 
