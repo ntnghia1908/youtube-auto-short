@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: FEATURE
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -60,7 +60,13 @@ Thêm route HTTP (trong phạm vi HUMAN LEAD duyệt) → manual test là gate t
 
 ## Result
 
-- Main changes:
-- Tests:
-- Review:
-- PR: chưa.
+- Main changes: `restore_source` kiểm size + sha256 theo từng manifest trước khi ghi; cache TC3.1 hard link, thiếu cache thì downloader inject vào thư mục tạm; khôi phục mọi phần archived, dùng chung inode khi cùng nguồn. Đặt nguồn → `restored.json` tại lúc hoàn tất → bỏ cờ archive trong `submit_lock`, rollback khi ghi lỗi. Không đổi manifest / artifact pipeline. `complete_since` tính cả `restored_at`; auto-archive kiểm lại mốc dưới lock, sweep / callback dọn bản dọc tôn trọng job restore. Route + job prepare (duplicate giữa hai phần, YouTube wait, disk check, persistence/rebuild), nút / polling / trạng thái trên trang tập; cập nhật W7 / W9 và thông báo archived.
+- Scope: xác nhận lúc bắt đầu branch `feature/cp8.37-restore-source`, HEAD `f4755a5`, tree sạch. Chỉ Owned paths; **không sửa `jobs.py`** (kind `restore_source` định nghĩa trong `web/app.py`, target tự khai báo `lane_steps`). Không thêm dependency, không mạng thật, không commit / push.
+- Tests (2026-10-19, conda env `auto-short`, `PYTHONPATH=/home/ntnghia/youtube-auto-short-restore/src`):
+  - PASS: 55 tests restore / storage, 10 HTTP cases deselected, 8.71 s. Lệnh: `/home/ntnghia/miniconda3/envs/auto-short/bin/python -m pytest -q tests/test_restore_source_cp837.py tests/test_storage_suggest.py tests/test_storage_cp86.py -k 'not http and not storage_api and not auto_archive_after_grace and not old_render_recommended and not disk_status_and_submit_block and not archive_route_and_archived_episode_rules and not archive_refused_while_job_active' -x --tb=short`. Có test ffmpeg thật: restore → khôi phục Short / sửa title → render; kiểm mismatch không đổi workspace, hai phần, rollback, ân hạn sau tải dài, stale auto-archive snapshot, route status qua endpoint trực tiếp, restart và YouTube wait/retry.
+  - PASS: 7 regression vertical, 18 deselected, 4.35 s: `tests/test_web_vertical_cp832.py -k 'effective_source_rules or run_vertical_from_original_real_encode_and_reuse or refetch_wrong_video_is_refused_and_cleaned or refetch_different_bytes_warns_but_is_used or auto_archive_waits_for_a_vertical_job or ac5_short_jobs_start_before_queued_verticals or vertical_fetch_prefetch_is_bounded' -x --tb=short` (cùng Python / PYTHONPATH trên).
+  - PASS: chạy lại 2 test `publication_uses_submit_lock` / `route_statuses_duplicate` sau bổ sung kiểm callback dọn cũ + chặn bản dọc khi đang restore.
+  - PASS: `node --check src/auto_short/web/static/app.js`, `node scripts/framework-check.mjs`, `git diff --check`.
+  - **Chưa PASS HTTP / full suite**: lệnh required không lọc (`tests/test_restore_source_cp837.py tests/test_storage_suggest.py tests/test_storage_cp86.py -x --tb=short`) timeout 45 s (exit 124) khi tới TestClient HTTP trong sandbox. Full suite `python -m pytest -q -n auto -x --tb=short` cũng timeout 45 s; log `/tmp/cp837-full-suite.log` có F/E trước timeout, không có traceback cuối để phân loại, không suy ra tất cả chỉ do sandbox. ORCHESTRATOR cần chạy HTTP / full suite ngoài sandbox và xử lý findings; không claim AC6 PASS.
+- Review: implementation hoàn tất để ORCHESTRATOR review; task giữ IN_PROGRESS vì required verification / manual test trên 8080 chưa hoàn tất. Manual restore dữ liệu thật, sửa title và render do ORCHESTRATOR thực hiện theo authorization ở trên.
+- PR: chưa; không commit / push.

@@ -189,7 +189,7 @@ def test_archive_source_and_guards(tcfg, episode, tmp_path):
     assert episode.manifest_path.read_bytes() == manifest_before
     for fn in (lambda: set_title(EID, tcfg, "k01", "Tiêu đề mới"), lambda: set_alternative(EID, tcfg, "k01", 1),
                lambda: reset_title(EID, tcfg, "k01"), lambda: restore_clip(EID, tcfg, "k01")):
-        with pytest.raises(ArchivedError, match="đã dọn video nguồn; muốn sửa thì xóa tập rồi chạy lại"):
+        with pytest.raises(ArchivedError, match="đã dọn video nguồn; bấm Khôi phục nguồn để sửa"):
             fn()
     with pytest.raises(RenderError, match="archived"):
         run_render(EID, tcfg)
@@ -316,7 +316,7 @@ def test_archive_route_and_archived_episode_rules(tcfg, episode):
         assert c.get(k02["download_url"]).status_code == 200
         assert c.post(f"{BASE}/k02/published", json={"value": True}).json()["published"] is True
         # refused with the contract message: title edit, restore, resubmit
-        msg = "đã dọn video nguồn; muốn sửa thì xóa tập rồi chạy lại"
+        msg = "đã dọn video nguồn; bấm Khôi phục nguồn để sửa"
         for resp in (c.post(f"{BASE}/k01/title", json={"set": "Tiêu đề mới"}),
                      c.post(f"{BASE}/k01/title", json={"reset": True}),
                      c.post(f"{BASE}/k01/restore"),

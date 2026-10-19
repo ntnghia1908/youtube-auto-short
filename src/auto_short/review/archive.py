@@ -4,8 +4,8 @@
 is never touched) and writes the flag ``work/<id>/archive.json``. An archived episode can still be listed,
 played, downloaded, ticked "Đã đăng" and have Shorts deleted (:func:`reject_archived_clip`, no render), but
 nothing that needs the source runs again: title edit, restoring a deleted Short, resubmitting the URL, ingest,
-render (they raise :class:`ArchivedError` / refuse) — re-downloading may give other bytes, so the whole pipeline
-would re-run and the AI could choose other clips / titles (CP5/CP6 are not deterministic).
+render (they raise :class:`ArchivedError` / refuse). CP8.37 permits restoring only the exact ingest bytes,
+without rerunning any pipeline stage.
 Canonical contract: docs/decisions/CP8.3-web-contract.md W9.
 """
 
@@ -13,11 +13,17 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import re
+import tempfile
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 from ..config import Config
+from ..hashing import sha256_file
+from ..khaithi import SUFFIX
 from ..workspace import DONE, Workspace, WorkspaceError, atomic_write_json, validate_episode_id
 from .logic import ReviewError
 
@@ -26,7 +32,9 @@ log = logging.getLogger("auto_short")
 ARCHIVE_NAME = "archive.json"
 SCHEMA_VERSION = 1
 RENDER_MANIFEST = "render_manifest.json"
-ARCHIVED_MESSAGE = "đã dọn video nguồn; muốn sửa thì xóa tập rồi chạy lại"
+ARCHIVED_MESSAGE = "đã dọn video nguồn; bấm Khôi phục nguồn để sửa"
+RESTORED_NAME = "restored.json"
+MISMATCH_MESSAGE = "video tải lại khác bản gốc; không khôi phục được (xóa tập rồi chạy lại)"
 
 
 class ArchivedError(ReviewError):
@@ -114,6 +122,132 @@ def archive_source(episode_id: str, config: Config, *, now: str | None = None, a
     log.info("review: archived %s: removed %s (%d bytes)", ws.episode_id, ", ".join(p.name for p in files) or "-",
              freed)
     return ArchiveResult(ws.episode_id, True, freed, [p.name for p in files])
+
+
+@dataclass(frozen=True)
+class RestoreResult:
+    episodes: list[str]
+    downloaded: bool
+
+
+def restore_parts(episode_id: str, config: Config) -> list[tuple[Workspace, dict]]:
+    """Validate every archived part before fetching anything. No writes; also used by the HTTP route."""
+    try:
+        eid = validate_episode_id(episode_id)
+        root = Path(config.workspace.dir)
+        if not is_archived(root / eid):
+            raise ReviewError(f"tập {eid} chưa dọn video nguồn")
+        owner = eid[:-len(SUFFIX)] if eid.endswith(SUFFIX) else eid
+        parts = []
+        for part in (owner, owner + SUFFIX):
+            ws = Workspace(root, part)
+            if not is_archived(ws.dir):
+                continue
+            manifest = ws.load_manifest()
+            source = (manifest or {}).get("source") or {}
+            if not isinstance(source, dict):
+                raise ReviewError("manifest không có thông tin nguồn hợp lệ")
+            name, sha, size, uri = (source.get(k) for k in ("path", "sha256", "size", "uri"))
+            if source.get("kind") != "youtube":
+                raise ReviewError("nguồn là file local: không khôi phục video nguồn")
+            if not isinstance(name, str) or not re.fullmatch(r"source\.[A-Za-z0-9]+", name) \
+                    or ws.dir.is_symlink() or (ws.dir / name).is_symlink() \
+                    or not ws.dir.resolve().is_relative_to(root.resolve()):
+                raise ReviewError("manifest không có đường dẫn video nguồn an toàn trong workspace")
+            if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{64}", sha) \
+                    or not isinstance(size, int) or isinstance(size, bool) or size <= 0 \
+                    or not isinstance(uri, str) or not uri:
+                raise ReviewError("manifest thiếu URL / sha256 / kích thước nguồn để khôi phục")
+            parts.append((ws, source))
+        return parts
+    except WorkspaceError as exc:
+        raise ReviewError(str(exc)) from exc
+
+
+def restore_source(episode_id: str, config: Config, *, downloader=None,
+                   lock=None, now: str | None = None, clock=None) -> RestoreResult:
+    """CP8.37: verify all parts against ingest, then install sources and clear archive flags under ``lock``.
+
+    A cache hit uses hard links; downloads live only in a private temporary workspace directory until verified.
+    A mismatch changes no persistent file. ``YoutubeBlocked`` propagates for the prepare lane to wait/retry.
+    The caller reserves the video in the runner while fetching; ``lock`` is the app's submit/sweep lock.
+    """
+    # Lazy imports: ingest / render also import archive guards during package initialization.
+    from ..ingest.youtube import DownloadError, YoutubeBlocked, ytdlp_download
+    from ..theme_render.sources import cached_source
+
+    downloader = downloader or ytdlp_download
+    parts = restore_parts(episode_id, config)
+    cached = cached_source(config, episode_id)
+    with tempfile.TemporaryDirectory(prefix=".restore-source-", dir=parts[0][0].dir) as tmpname:
+        tmp = Path(tmpname)
+        verified = {}
+        downloaded = False
+        for ws, source in parts:
+            key = (source["sha256"], source["size"])
+            if key in verified:
+                continue
+            path = cached
+            if path is None:
+                dest = tmp / str(len(verified))
+                dest.mkdir()
+                try:
+                    path = Path(downloader(source["uri"], dest, config.ingest).path)
+                except YoutubeBlocked:
+                    raise
+                except DownloadError as exc:
+                    raise ReviewError(f"tải lại video nguồn lỗi: {exc}") from exc
+                if not path.resolve().is_relative_to(dest.resolve()) or not path.is_file():
+                    raise ReviewError("downloader không trả file trong thư mục tải tạm")
+                downloaded = True
+            if path.stat().st_size != source["size"] or sha256_file(path) != source["sha256"]:
+                raise ReviewError(MISMATCH_MESSAGE)
+            verified[key] = path
+
+        with lock if lock is not None else nullcontext():
+            if restore_parts(episode_id, config) != parts:
+                raise ReviewError("trạng thái tập đã đổi trong lúc khôi phục; thử lại")
+            # Prepare every link first. If installation fails, keep the archive guards and roll back files.
+            originals = {}
+            installed = []
+            try:
+                staged = []
+                for i, (ws, source) in enumerate(parts):
+                    final = ws.dir / source["path"]
+                    link = tmp / f"install-{i}"
+                    os.link(verified[(source["sha256"], source["size"])], link)
+                    staged.append((link, final))
+                    for path in (final, ws.dir / RESTORED_NAME, archive_path(ws.dir)):
+                        backup = tmp / f"backup-{len(originals)}"
+                        if path.exists():
+                            os.link(path, backup)
+                            originals[path] = backup
+                        else:
+                            originals[path] = None
+                stamp = now or (datetime.fromtimestamp(clock(), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                                if clock is not None else _now())
+                for link, final in staged:
+                    link.replace(final)
+                    installed.append(final)
+                for ws, _ in parts:
+                    marker = ws.dir / RESTORED_NAME
+                    installed.append(marker)
+                    atomic_write_json(marker, {"restored_at": stamp})
+                for ws, _ in parts:
+                    flag = archive_path(ws.dir)
+                    installed.append(flag)
+                    flag.unlink()
+            except BaseException:
+                for path in reversed(installed):
+                    backup = originals[path]
+                    if backup is None:
+                        path.unlink(missing_ok=True)
+                    else:
+                        backup.replace(path)
+                raise
+    episodes = [ws.episode_id for ws, _ in parts]
+    log.info("review: restored source %s (%s)", ", ".join(episodes), "download" if downloaded else "cache")
+    return RestoreResult(episodes, downloaded)
 
 
 def reject_archived_clip(episode_id: str, config: Config, clip_id: str) -> bool:
