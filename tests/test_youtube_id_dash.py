@@ -27,7 +27,8 @@ def wcfg(tmp_path) -> Config:
 
 @pytest.fixture(autouse=True)
 def _fast_login_delay(monkeypatch):
-    monkeypatch.setattr(app_mod, "LOGIN_DELAY", 0.05)
+    from auto_short.web.routes import auth as auth_routes
+    monkeypatch.setattr(auth_routes, "LOGIN_DELAY", 0.05)
 
 
 def make_client(cfg, calls=None):

@@ -4,37 +4,29 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import html
-import io
 import json
 import logging
 import mimetypes
-import os
 import re
 import shutil
-import tempfile
 import threading
 import time
-import zipfile
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import parse_qs, quote
+from urllib.parse import quote
 
-from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response,
-                               StreamingResponse)
+from fastapi import Body, Depends, FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
-from starlette.background import BackgroundTask
 from pydantic import BaseModel, Field, StrictBool
 
 from .. import khaithi
 from ..compilation import CID_RE as CID_RE
 from ..compilation import CompilationError, Item
-from ..compilation import store as comp_store
 from ..config import Config, whisper_threads_per_job
 from ..enhance import state as enh_state
 from ..enhance.service import EnhanceService
@@ -45,9 +37,7 @@ from ..pipeline import PIPELINE_STAGES, PreflightError, ollama_preflight, run_pi
 from ..sutra import web as sutra_web
 from ..sutra.store import SutraStore
 from ..post import corrections as post_corrections
-from ..post import export as post_export
 from ..post import doc as post_doc
-from ..post import fetch as post_fetch
 from ..post import images as post_images
 from ..post import imgsearch as post_imgsearch
 from ..post import redistribute as post_redistribute
@@ -55,22 +45,20 @@ from ..post import logic as post_logic
 from ..post import source as post_source
 from ..post import stage as post_stage
 from ..post import store as post_store
-from ..post import validate as post_validate
 from ..render import run_render
 from ..render import full as render_full
 from ..selection.client import resolve_host
 from ..review import (ArchivedError, EpisodeNotFound, ReviewError, TitlePreview, archive_source, content_disposition,
-                      list_tombstones, mark_downloaded, remove_tombstone,
                       delete_episode, is_archived, list_titles, preview_title, reject_archived_clip, reject_clip,
                       reset_title, restore_clip, set_alternative, set_published, set_title, set_watched)
 from ..review import shorts as review_shorts
 from ..review.archive import restore_parts, restore_source
 from ..review.names import hashtags as review_hashtags
 from ..review.names import posts_docx_name
-from ..titling.playlist import stored_series as playlist_series
-from ..workspace import WorkspaceError, iter_manifests, read_json_dict, validate_episode_id
+from ..workspace import WorkspaceError, read_json_dict, validate_episode_id
+from .context import WebContext, RANGE_SIZE, SOURCE_TYPES
+from .routes import auth, pages, status, reading_api, files, files_catchall
 from . import episodes as ep
-from . import reading
 from . import compilations as comp_web
 from . import downloads as dl_mod
 from . import monitor as monitor_mod
@@ -133,11 +121,9 @@ class RestoreSourceTarget:
         return {"episode_id": self.episode_id}
 
 STATIC_DIR = Path(__file__).parent / "static"
-LOGIN_DELAY = 1.0  # seconds to wait after a wrong password
 # Reachable without a session: the login page and its stylesheet only.
 PUBLIC_PATHS = {"/login", "/static/style.css"}
 MAX_FIELD = 100
-ZIP_CHUNK = 1 << 20
 AUTO_ARCHIVE_INTERVAL = 300.0  # seconds between auto clean-up passes (W9 S5)
 QUEUE_FILE = ".web_queue.json"  # CP8.22 Q2: saved job queue, in the workspace dir next to ``.web_secret``
 KINDS = ("short", "khaithi")  # CP8.9 A1.1, in job order
@@ -192,10 +178,6 @@ class EnhancePauseIn(BaseModel):
     paused: StrictBool
 
 
-class QueuePauseIn(BaseModel):
-    mode: Literal["now", "after"] = "after"  # CP8.22 Q1
-
-
 class PreviewIn(BaseModel):
     text: str = Field(max_length=1000)
 
@@ -232,9 +214,6 @@ class TitleIn(BaseModel):
 
 
 SEGMENT_ID = Field(default=None, max_length=32)
-DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-SOURCE_TYPES = {".mp4": "video/mp4", ".m4v": "video/mp4", ".webm": "video/webm", ".mkv": "video/x-matroska",
-                ".mov": "video/quicktime"}
 
 
 class CutPreviewIn(BaseModel):
@@ -328,59 +307,6 @@ def _clean(value: str | None) -> str | None:
     return value or None
 
 
-def _safe_next(value: str | None) -> str:
-    """Only same-site absolute paths (no ``//host`` or backslash tricks)."""
-    if not value or not value.startswith("/") or value.startswith("//") or "\\" in value \
-            or any(ord(c) < 32 for c in value):
-        return "/"
-    return value
-
-
-def _login_page(days: int, error: str | None = None, next_path: str = "/", status: int = 200) -> HTMLResponse:
-    page = (STATIC_DIR / "login.html").read_text(encoding="utf-8").replace("{{days}}", str(days))
-    page = page.replace("{{next}}", html.escape(next_path, quote=True))
-    page = page.replace("{{error}}", f'<p class="error">{html.escape(error)}</p>' if error else "")
-    return HTMLResponse(page, status_code=status)
-
-
-class _ZipSink(io.RawIOBase):
-    """Write-only, non-seekable buffer: ``zipfile`` then writes data descriptors and we stream as we go."""
-
-    def __init__(self) -> None:
-        self._buf = bytearray()
-        self._pos = 0
-
-    def writable(self) -> bool:
-        return True
-
-    def write(self, b) -> int:
-        self._buf += b
-        self._pos += len(b)
-        return len(b)
-
-    def tell(self) -> int:
-        return self._pos
-
-    def drain(self) -> bytes:
-        data, self._buf = bytes(self._buf), bytearray()
-        return data
-
-
-def _zip_stream(files: list[tuple[str, Path, str]]):
-    """Entries named like the single downloads (X1); non-ASCII names get the zip UTF-8 flag (bit 11)."""
-    sink = _ZipSink()
-    with zipfile.ZipFile(sink, "w", compression=zipfile.ZIP_STORED) as zf:
-        for _clip_id, path, name in files:
-            info = zipfile.ZipInfo.from_file(path, name)
-            info.compress_type = zipfile.ZIP_STORED
-            with path.open("rb") as src, zf.open(info, "w") as dst:
-                while chunk := src.read(ZIP_CHUNK):
-                    dst.write(chunk)
-                    yield sink.drain()
-            yield sink.drain()
-    yield sink.drain()
-
-
 def create_app(config: Config, password: str, *, runner: JobRunner | None = None,
                preflight: Callable[[Config], None] | None = ollama_preflight,
                pipeline: Callable = run_pipeline, render: Callable = run_render,
@@ -463,7 +389,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         """Is any rendered Short of the episode ticked "Đã đăng" for its current file? (then no auto re-render)"""
         if rm is None:
             return False
-        return any(v.get("published") and not v.get("stale") for v in ep._publish(config, eid, rm)[0].values())
+        return any(v.get("published") and not v.get("stale") for v in ep.publish(config, eid, rm)[0].values())
 
     def _release_hd(eid: str, *, force_render: bool = False) -> str:
         """Let ``eid`` carry on without waiting: unpark its job (render queue); no job + it was waiting -> a render job;
@@ -478,7 +404,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             current = runner.latest(eid)
             if current is not None and current.active:
                 return "busy"  # its own render step will read the HD source
-            rm = ep._render_manifest(config, eid)
+            rm = ep.render_manifest(config, eid)
             hd = doc.get("source_hd_sha256") if doc and doc.get("state") == enh_state.DONE else None
             if not waiting and not force_render:
                 if rm is None or hd is None or rm.get("source_sha256") == hd:
@@ -676,7 +602,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
 
     app_sweep = _sweep_refetched
 
-    compilations = comp_web.Compilations(config, playlists, runner, lambda doc: _playlist_docx_series(doc))
+    compilations = comp_web.Compilations(config, playlists, runner, lambda doc: ctx.playlist_docx_series(doc))
     theme_plans = theme_plan_web.ThemePlans(config, playlists, runner, preflight=preflight)
     runner.configure_persistence(Path(config.workspace.dir) / QUEUE_FILE, _rebuild_job)
     runner.priority.attach(Path(config.workspace.dir) / PRIORITY_FILE)  # CP8.26 P1
@@ -714,16 +640,22 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     download_table = dl_mod.DownloadTable()  # CP8.34 D3: progress of ``?dl=<token>`` downloads (memory only)
     app.state.downloads = download_table
 
-    def _tracked(dl: str | None, response: Response) -> Response:
-        """CP8.34: a download with a valid ``?dl=<token>`` reports its progress to the table; without one (or with a
-        malformed token) the response is returned untouched. An error response ends the token as ``aborted``."""
-        if dl is None or not dl_mod.TOKEN_RE.match(dl):
-            return response
-        if response.status_code >= 400:
-            download_table.fail(dl)
-            return response
-        return dl_mod.TrackedResponse(response, download_table, dl)
-
+    ctx = WebContext(
+        config=config,
+        runner=runner,
+        tokens=tokens,
+        storage=storage,
+        playlists=playlists,
+        publish_lock=publish_lock,
+        post_lock=post_lock,
+        signer=signer,
+        svc=svc,
+        sampler=sampler,
+        ollama_view=ollama_view,
+        compilations=compilations,
+        download_table=download_table,
+        static_dir=STATIC_DIR,
+    )
     @app.middleware("http")
     async def auth_middleware(request: Request, call_next):
         path = request.url.path
@@ -748,67 +680,6 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             # an old layout; no-cache = revalidate with the ETag (304, cheap)
             response.headers.setdefault("Cache-Control", "no-cache")
         return response
-
-    # --- auth --------------------------------------------------------------------------------------
-
-    @app.get("/login")
-    async def login_form(request: Request, next: str = "/"):
-        if signer.verify(request.cookies.get(COOKIE_NAME)):
-            return RedirectResponse(_safe_next(next), status_code=303)
-        return _login_page(config.web.session_days, next_path=_safe_next(next))
-
-    @app.post("/login")
-    async def login(request: Request):
-        body = await request.body()
-        if len(body) > 4096:
-            return JSONResponse({"detail": "request too large"}, status_code=413)
-        is_json = request.headers.get("content-type", "").startswith("application/json")
-        try:
-            if is_json:
-                data = json.loads(body or b"{}")
-                password, next_path = str(data.get("password", "")), data.get("next")
-            else:
-                form = parse_qs(body.decode("utf-8"), keep_blank_values=True)
-                password, next_path = (form.get("password") or [""])[0], (form.get("next") or [None])[0]
-        except (ValueError, AttributeError):
-            password, next_path = "", None
-        next_path = _safe_next(next_path)
-        if not signer.check_password(password):
-            await asyncio.sleep(LOGIN_DELAY)
-            log.warning("web: failed login from %s", request.client.host if request.client else "?")
-            if is_json:
-                return JSONResponse({"detail": "sai mật khẩu"}, status_code=401)
-            return _login_page(config.web.session_days, "Sai mật khẩu.", next_path, status=401)
-        response = (JSONResponse({"ok": True}) if is_json else RedirectResponse(next_path, status_code=303))
-        response.set_cookie(COOKIE_NAME, signer.issue(), max_age=signer.max_age, httponly=True, samesite="lax",
-                            path="/")
-        log.info("web: login from %s", request.client.host if request.client else "?")
-        return response
-
-    @app.post("/logout")
-    async def logout():
-        response = RedirectResponse("/login", status_code=303)
-        response.delete_cookie(COOKIE_NAME, path="/", httponly=True, samesite="lax")
-        return response
-
-    # --- pages -------------------------------------------------------------------------------------
-
-    @app.get("/")
-    async def index():
-        return FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"})
-
-    @app.get("/episodes/{episode_id}")
-    async def episode_page(episode_id: str):
-        if not ep.valid_episode_id(episode_id):
-            return JSONResponse({"detail": "không có episode này"}, status_code=404)
-        return FileResponse(STATIC_DIR / "episode.html", headers={"Cache-Control": "no-cache"})
-
-    @app.get("/episodes/{episode_id}/posts")
-    async def episode_posts_page(episode_id: str):
-        """CP8.16 R1: tab "Bài đăng" of a video (same HTML for the Short episode and its khai thị episode)."""
-        if not ep.valid_episode_id(episode_id):
-            return JSONResponse({"detail": "không có episode này"}, status_code=404)
-        return FileResponse(STATIC_DIR / "posts.html", headers={"Cache-Control": "no-cache"})
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -978,65 +849,10 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                 out[job.episode_id] = _job_view(job, logs=False)
         return out
 
-    def _playlist_or_404(playlist_id: str):
-        if not valid_playlist_id(playlist_id):
-            return None
-        try:
-            return playlists.load(playlist_id)
-        except PlaylistError:
-            return None
-
-    @app.get("/api/deleted")
-    def api_deleted():
-        """Tombstones of deleted single episodes (not in a stored bộ kinh, no workspace now)."""
-        in_playlists = playlists.video_ids()
-        return {"episodes": [d for d in list_tombstones(config) if d["episode_id"] not in in_playlists]}
-
-    @app.delete("/api/deleted/{episode_id}")
-    def api_deleted_remove(episode_id: str):
-        """"Xóa khỏi lịch sử": removes the tombstone only."""
-        if not ep.valid_episode_id(episode_id) or not remove_tombstone(config, episode_id):
-            return JSONResponse({"detail": "không có trong lịch sử"}, status_code=404)
-        playlists.invalidate(episode_id)
-        return {"removed": episode_id}
-
-    @app.get("/playlists/{playlist_id}")
-    async def playlist_page(playlist_id: str):
-        if not valid_playlist_id(playlist_id):
-            return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
-        return FileResponse(STATIC_DIR / "playlist.html", headers={"Cache-Control": "no-cache"})
-
     @app.get("/api/playlists")
     def api_playlists():
         jobs = _jobs_by_episode()
         return {"playlists": [playlists.summary(d, jobs) for d in playlists.all()]}
-
-    def _playlist_docx_series(doc: dict) -> str | None:
-        """CP8.31 P16: stored bộ kinh series, else the ``series`` of the first episode (by episode number) whose
-        titles.json has one; None -> the file name falls back to the playlist id."""
-        stored = playlist_series(doc)
-        if stored:
-            return stored
-        for e in _by_episode_order([e for e in doc["entries"] if e.get("video_id") and e.get("available")]):
-            for eid in (e["video_id"], e["video_id"] + khaithi.SUFFIX):
-                series = (_post_header_fields(eid) or {}).get("series")
-                if isinstance(series, str) and series.strip():
-                    return series
-        return None
-
-    def _post_stats(episode_id: str) -> tuple[int, int, int]:
-        """Cheap numbers for the playlist page (one ``posts.json`` read): ``(posts, posted, rendered)`` = stored posts
-        whose Short is still rendered, how many of them are ticked "Đã đăng bài", rendered Shorts (CP8.31 A2)."""
-        order = [cid for cid, _ in post_stage.rendered_clip_ids(config, episode_id)]
-        if not order or not _posts_path(episode_id).is_file():
-            return 0, 0, len(order)
-        with post_lock:
-            try:
-                entries = post_store.read_posts(_posts_path(episode_id), episode_id)["posts"]
-            except post_store.PostsError:
-                return 0, 0, len(order)
-        live = [e for e in entries if e["clip_id"] in set(order)]
-        return len(live), sum(1 for e in live if e["posted_at"] is not None), len(order)
 
     def _download_fields(e: dict) -> None:
         """CP8.31 D3: zip (``all.zip`` with both Shorts and khai thị, else the ``shorts.zip`` of the kind present) and
@@ -1055,13 +871,13 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             e["zip_url"], e["zip_name"] = f"/files/{vid}/shorts.zip", ep.zip_download_name(config, vid)
         elif kts:
             e["zip_url"], e["zip_name"] = f"/files/{kid}/shorts.zip", ep.zip_download_name(config, kid)
-        stats = [_post_stats(x) for x in (vid, kid) if x is not None]
+        stats = [ctx.post_stats(x) for x in (vid, kid) if x is not None]
         e["posts_count"] = sum(n for n, _, _ in stats)
         e["posts_posted"] = sum(x for _, x, _ in stats)
         e["posts_total"] = sum(r for _, _, r in stats)
         if e["posts_count"]:
             e["posts_docx_url"] = f"/files/{vid}/posts.docx"
-            e["posts_docx_name"] = _docx_name_of(vid)
+            e["posts_docx_name"] = ctx.docx_name_of(vid)
 
     def _vertical_status(vid: str, e: dict) -> tuple[str, str | None]:
         """CP8.32 V3: ``("todo", None)`` when "Tạo bản dọc cả bộ" would queue this entry, else ``("skip", reason)``."""
@@ -1098,8 +914,6 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                          "url": f"/api/episodes/{vid}/vertical" if ready is not None else None,
                          "name": ep.video_download_name(config, vid, "Doc") if ready is not None else None}
 
-    RANGE_SIZE = 10  # CP8.31 A1: episodes per posts file
-
     def _posts_ranges(playlist_id: str, entries: list[dict]) -> list[dict]:
         """CP8.31 A1: fixed ranges of ``RANGE_SIZE`` episode numbers (1-10, 11-20, ...) that hold at least one post,
         plus "Tập chưa rõ số" for unnumbered episodes."""
@@ -1123,7 +937,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
 
     @app.get("/api/playlists/{playlist_id}")
     def api_playlist(playlist_id: str):
-        doc = _playlist_or_404(playlist_id)
+        doc = ctx.playlist_or_404(playlist_id)
         if doc is None:
             return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
         view = playlists.view(doc, _jobs_by_episode())
@@ -1148,10 +962,6 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
 
     # --- CP13.2: "Chuẩn bị + HD" and "Chạy tiếp cả bộ" -----------------------------------------------------------
 
-    def _by_episode_order(entries: list[dict]) -> list[dict]:
-        """H2: episode number order (the numbered first), then playlist order."""
-        return comp_web.by_episode_order(entries)
-
     def _bulk_result(playlist_id: str, items: list[dict], episodes: int) -> dict:
         errors = [{"episode_id": i["episode_id"], "detail": i["error"]} for i in items if "error" in i]
         return {"playlist_id": playlist_id, "episodes": episodes,
@@ -1161,11 +971,11 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     def api_playlist_prepare(playlist_id: str):
         """H2 "Chuẩn bị + HD": a prepare-only job (:class:`PipelineTarget` ``prepare_only``) for every not yet processed
         entry, in episode order. No khai thị job, no AI / render; the video asks for HD after its download."""
-        doc = _playlist_or_404(playlist_id)
+        doc = ctx.playlist_or_404(playlist_id)
         if doc is None:
             return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
         view = playlists.view(doc, _jobs_by_episode())
-        todo = _by_episode_order([e for e in view["entries"] if e["state"] == playlists_mod.NEW and e.get("video_id")])
+        todo = ctx.by_episode_order([e for e in view["entries"] if e["state"] == playlists_mod.NEW and e.get("video_id")])
         items: list[dict] = []
         for e in todo:
             items += _queue_video(e["video_id"], ["short"], None, None, None, None, prepare_only=True)
@@ -1177,7 +987,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     @app.post("/api/playlists/{playlist_id}/resume-prepared")
     def api_playlist_resume_prepared(playlist_id: str, body: ResumeAllIn | None = None):
         """H2 "Chạy tiếp cả bộ": every prepared entry (episode order) runs AI → render for the Short and the khai thị."""
-        doc = _playlist_or_404(playlist_id)
+        doc = ctx.playlist_or_404(playlist_id)
         if doc is None:
             return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
         body = body or ResumeAllIn()
@@ -1189,7 +999,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         except khaithi.KhaithiError as exc:
             return JSONResponse({"detail": exc.vi}, status_code=422)
         view = playlists.view(doc, _jobs_by_episode())
-        todo = _by_episode_order([e for e in view["entries"] if e["state"] == playlists_mod.PREPARED])
+        todo = ctx.by_episode_order([e for e in view["entries"] if e["state"] == playlists_mod.PREPARED])
         items: list[dict] = []
         for e in todo:
             kinds = [k for k in KINDS if k in (e.get("resume_kinds") or ["short"])]
@@ -1205,13 +1015,13 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     def api_playlist_priority(playlist_id: str, body: PublishedIn):
         """CP8.26 P1 "Ưu tiên cả bộ" / "Bỏ ưu tiên cả bộ": mark (episode order) / unmark every video of the bộ kinh that
         still has work to do (not unavailable, deleted or complete); unmark clears all of its videos."""
-        doc = _playlist_or_404(playlist_id)
+        doc = ctx.playlist_or_404(playlist_id)
         if doc is None:
             return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
         view = playlists.view(doc, _jobs_by_episode())
         entries = [e for e in view["entries"] if e.get("video_id")]
         if body.value:
-            todo = _by_episode_order([e for e in entries if e["state"] not in (
+            todo = ctx.by_episode_order([e for e in entries if e["state"] not in (
                 playlists_mod.UNAVAILABLE, playlists_mod.DELETED) and not e.get("complete")])
             changed = runner.priority.mark([e["video_id"] for e in todo])
         else:
@@ -1221,7 +1031,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
 
     @app.post("/api/playlists/{playlist_id}/refresh")
     def api_playlist_refresh(playlist_id: str):
-        if _playlist_or_404(playlist_id) is None:
+        if ctx.playlist_or_404(playlist_id) is None:
             return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
         try:
             doc, added = playlists.refresh(playlist_id)
@@ -1234,7 +1044,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     @app.put("/api/playlists/{playlist_id}/hashtags")
     def api_playlist_hashtags(playlist_id: str, body: HashtagsIn):
         """Per-bộ kinh hashtags (full ordered list); no job, allowed while jobs run."""
-        if _playlist_or_404(playlist_id) is None:
+        if ctx.playlist_or_404(playlist_id) is None:
             return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
         try:
             doc = playlists.set_hashtags(playlist_id, body.hashtags)
@@ -1247,7 +1057,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
 
     @app.delete("/api/playlists/{playlist_id}/hashtags")
     def api_playlist_hashtags_reset(playlist_id: str):
-        if _playlist_or_404(playlist_id) is None:
+        if ctx.playlist_or_404(playlist_id) is None:
             return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
         try:
             doc = playlists.set_hashtags(playlist_id, None)
@@ -1257,7 +1067,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         return {"playlist_id": playlist_id, "hashtags": tags, "hashtags_custom": custom}
 
     def _series_response(playlist_id: str, value) -> JSONResponse | dict:
-        if _playlist_or_404(playlist_id) is None:
+        if ctx.playlist_or_404(playlist_id) is None:
             return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
         try:
             doc = playlists.set_series(playlist_id, value)
@@ -1320,12 +1130,12 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             except khaithi.KhaithiError:
                 pass
             for eid in ids:
-                if not _posts_path(eid).is_file():
+                if not ctx.posts_path(eid).is_file():
                     continue
                 order = {cid for cid, _ in post_stage.rendered_clip_ids(config, eid)}
                 with post_lock:
                     try:
-                        posts = post_store.read_posts(_posts_path(eid), eid)["posts"]
+                        posts = post_store.read_posts(ctx.posts_path(eid), eid)["posts"]
                     except post_store.PostsError:
                         continue
                 clips = [p["clip_id"] for p in posts if p["origin"] in (post_store.AI, post_store.RAW)
@@ -1347,7 +1157,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         """CP8.19 D1: link of the bộ kinh's lecture document (``{"url": link | null}``); 422 for a link that is not
         ``https://ph.tinhtong.vn/Home/<Code>?d=<Code>_<n>.html``. A new link downloads one episode to report
         ``check`` and queues the recompose of unposted ``ai`` / ``raw`` posts (D7: ``queued`` episodes)."""
-        if _playlist_or_404(playlist_id) is None:
+        if ctx.playlist_or_404(playlist_id) is None:
             return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
         if "url" not in body.model_fields_set:
             return JSONResponse({"detail": "thiếu url (link hoặc null để xóa)"}, status_code=422)
@@ -1369,7 +1179,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     @app.post("/api/playlists/{playlist_id}/hashtags/preview")
     def api_playlist_hashtags_preview(playlist_id: str, body: HashtagsIn):
         """Copy text of the playlist's longest processed title (or a 60-char sample) with these tags."""
-        doc = _playlist_or_404(playlist_id)
+        doc = ctx.playlist_or_404(playlist_id)
         if doc is None:
             return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
         try:
@@ -1384,11 +1194,6 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
         log.info("web: playlist %s removed (episodes kept)", playlist_id)
         return {"deleted": playlist_id}
-
-    @app.get("/api/ui")
-    def api_ui():
-        """CP8.21 D5: UI flags (``[web] show_advanced``: "Sửa đầu/cuối" and "Từ điển sửa lỗi" buttons)."""
-        return {"advanced": bool(config.web.show_advanced)}
 
     @app.get("/api/episodes/{episode_id}")
     def api_episode(episode_id: str):
@@ -1697,7 +1502,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         try:
             ep_src = post_source.load(eid, config)
             with post_lock:
-                doc = post_store.read_posts(_posts_path(eid), eid)
+                doc = post_store.read_posts(ctx.posts_path(eid), eid)
         except (post_source.PostSourceError, post_store.PostsError):
             return
         if not post_stage.auto_clips(ep_src, doc, order):
@@ -1722,27 +1527,6 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     def _post_now() -> str:
         return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    def _posts_path(episode_id: str) -> Path:
-        return Path(config.workspace.dir) / episode_id / post_store.POSTS_NAME
-
-    def _post_header_fields(episode_id: str) -> dict | None:
-        try:
-            doc = json.loads((Path(config.workspace.dir) / episode_id / "titles.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return None
-        fields = (doc.get("header") or {}).get("fields")
-        return fields if isinstance(fields, dict) else None
-
-    def _post_series_and_tags(episode_id: str) -> tuple[str | None, tuple[str, ...]]:
-        """Like ``episode_view``'s per-Short hashtags (CP8.7/CP8.8): custom bộ kinh hashtags, else ``#<series>`` +
-        ``[web] hashtags``."""
-        kf = ep.kind_fields(config, episode_id)
-        custom = playlists.hashtags_for(kf["base_episode_id"] or episode_id)
-        if custom is not None:
-            return None, tuple(custom)
-        fields = _post_header_fields(episode_id)
-        return (fields.get("series") if fields else None), tuple(config.web.hashtags)
-
     def _post_image_sources() -> dict[str, str]:
         try:
             lines = (config.post.image_dir / "sources.tsv").read_text(encoding="utf-8").splitlines()
@@ -1755,22 +1539,6 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                 out[name] = url
         return out
 
-    def _post_entry_view(entry: dict, *, ep_src, title: str | None, header_fields: dict | None,
-                         hashtags_list: list[str]) -> dict:
-        stale = post_stage.compute_stale(ep_src, entry) if ep_src is not None else True
-        image = entry["image"]
-        image_missing = image is not None and post_images.resolve(config.post.image_dir, image) is None
-        text = post_logic.compose_copy_text(title=title, paragraphs=entry["paragraphs"], header_fields=header_fields,
-                                            link=entry["link"], hashtags=hashtags_list)
-        # P3 amendment: "ít dấu câu" label (Q4) — an "ai" post whose punctuation is too sparse to be useful,
-        # even though the projection matched the source words well enough to not fall back to "raw".
-        low_punctuation = entry["origin"] == post_store.AI \
-            and post_validate.marks_per_100_words(entry["paragraphs"]) < 4
-        return {"clip_id": entry["clip_id"], "paragraphs": list(entry["paragraphs"]), "origin": entry["origin"],
-                "stale": stale, "image": image, "image_missing": image_missing, "link": entry["link"],
-                "posted": entry["posted_at"] is not None, "posted_at": entry["posted_at"], "text": text,
-                "chars": len(text), "low_punctuation": low_punctuation}
-
     @app.get("/api/episodes/{episode_id}/posts")
     def api_posts(episode_id: str):
         """P7/P9: every stored post of the episode (read-only, allowed while a job runs); ``post_error`` when
@@ -1779,7 +1547,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             return bad
         with post_lock:
             try:
-                doc = post_store.read_posts(_posts_path(episode_id), episode_id)
+                doc = post_store.read_posts(ctx.posts_path(episode_id), episode_id)
                 post_error = None
             except post_store.PostsError as exc:
                 doc, post_error = post_store.empty_posts(episode_id), str(exc)
@@ -1792,10 +1560,10 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             titles_by_clip = {c["clip_id"]: c["title"] for c in list_titles(episode_id, config)["clips"]}
         except ReviewError:
             pass
-        header_fields = _post_header_fields(episode_id)
-        series, tags = _post_series_and_tags(episode_id)
+        header_fields = ctx.post_header_fields(episode_id)
+        series, tags = ctx.post_series_and_tags(episode_id)
         hashtags_list = review_hashtags(series, tags)
-        posts = [_post_entry_view(e, ep_src=ep_src, title=titles_by_clip.get(e["clip_id"]),
+        posts = [ctx.post_entry_view(e, ep_src=ep_src, title=titles_by_clip.get(e["clip_id"]),
                                   header_fields=header_fields, hashtags_list=hashtags_list) for e in doc["posts"]]
         return {"posts": posts, "post_error": post_error}
 
@@ -1877,13 +1645,13 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         proposed: int | None = None
         with post_lock:
             try:
-                doc = post_store.read_posts(_posts_path(episode_id), episode_id)
+                doc = post_store.read_posts(ctx.posts_path(episode_id), episode_id)
                 old_paragraphs = post_store.find(doc, clip)["paragraphs"] if post_store.find(doc, clip) else None
                 now = _post_now()
                 doc = post_store.with_fields(doc, order, clip, changes, now=now)
             except post_store.PostsError as exc:
                 return JSONResponse({"detail": str(exc)}, status_code=422)
-            post_store.write(_posts_path(episode_id), doc)
+            post_store.write(ctx.posts_path(episode_id), doc)
             if "paragraphs" in given and old_paragraphs is not None:
                 proposed = _learn_corrections(episode_id, clip, old_paragraphs, changes["paragraphs"], now)
         entry = post_store.find(doc, clip)
@@ -1896,10 +1664,10 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             title = next((c["title"] for c in list_titles(episode_id, config)["clips"] if c["clip_id"] == clip), None)
         except ReviewError:
             pass
-        header_fields = _post_header_fields(episode_id)
-        series, tags = _post_series_and_tags(episode_id)
+        header_fields = ctx.post_header_fields(episode_id)
+        series, tags = ctx.post_series_and_tags(episode_id)
         log.info("web: post %s [%s] sửa %s", clip, episode_id, ", ".join(sorted(given)))
-        view = _post_entry_view(entry, ep_src=ep_src, title=title, header_fields=header_fields,
+        view = ctx.post_entry_view(entry, ep_src=ep_src, title=title, header_fields=header_fields,
                                 hashtags_list=review_hashtags(series, tags))
         if "paragraphs" in given:
             view["proposed"] = proposed  # CP8.18 D5 (null: the dictionary failed, the post was still saved)
@@ -1914,11 +1682,11 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         order = [cid for cid, _ in post_stage.rendered_clip_ids(config, episode_id)]
         with post_lock:
             try:
-                doc = post_store.read_posts(_posts_path(episode_id), episode_id)
+                doc = post_store.read_posts(ctx.posts_path(episode_id), episode_id)
                 doc = post_store.with_posted(doc, order, clip, body.value, now=_post_now())
             except post_store.PostsError as exc:
                 return JSONResponse({"detail": str(exc)}, status_code=422)
-            post_store.write(_posts_path(episode_id), doc)
+            post_store.write(ctx.posts_path(episode_id), doc)
         entry = post_store.find(doc, clip)
         log.info("web: post %s [%s] %s \"Đã đăng bài\"", clip, episode_id, "tick" if body.value else "untick")
         return {"clip_id": clip, "posted": entry["posted_at"] is not None, "posted_at": entry["posted_at"]}
@@ -2311,7 +2079,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     def _enhance_view(episode_id: str) -> dict:
         view = svc.episode_view(episode_id)
         if view.get("exists"):
-            rm = ep._render_manifest(config, episode_id)
+            rm = ep.render_manifest(config, episode_id)
             doc = enh_state.read(Path(config.workspace.dir) / episode_id) or {}
             view["rendered"] = rm is not None
             view["rendered_from_hd"] = bool(rm and doc.get("source_hd_sha256")
@@ -2388,11 +2156,11 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     def api_playlist_enhance_redo(playlist_id: str):
         """CP13.4 G3 "Enhance lại cả bộ": every video of the bộ kinh whose HD source was made with another configuration
         is queued again (episode order); the others are skipped."""
-        doc = _playlist_or_404(playlist_id)
+        doc = ctx.playlist_or_404(playlist_id)
         if doc is None:
             return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
         view = playlists.view(doc, _jobs_by_episode())
-        todo = _by_episode_order([e for e in view["entries"] if e.get("video_id") and (e.get("hd") or {}).get("old_config")
+        todo = ctx.by_episode_order([e for e in view["entries"] if e.get("video_id") and (e.get("hd") or {}).get("old_config")
                                   and e["hd"]["state"] == "done"])
         redone, errors = 0, []
         for e in todo:
@@ -2409,11 +2177,11 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         """CP8.32 V3 "Tạo bản dọc cả bộ": a vertical job (episode order) for every episode whose Shorts are done, that has
         an effective HD source (V1 / V2) and no current vertical file or pending vertical job; the others are skipped
         with a reason. The vertical jobs start after every other job of their lane (JobRunner order)."""
-        doc = _playlist_or_404(playlist_id)
+        doc = ctx.playlist_or_404(playlist_id)
         if doc is None:
             return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
         view = playlists.view(doc, _jobs_by_episode())
-        entries = _by_episode_order([e for e in view["entries"] if e.get("video_id")])
+        entries = ctx.by_episode_order([e for e in view["entries"] if e.get("video_id")])
         queued, skipped, errors = [], [], []
         for e in entries:
             vid = e["video_id"]
@@ -2442,7 +2210,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     def api_playlist_vertical_cancel(playlist_id: str):
         """CP8.32 V4 "Hủy bản dọc cả bộ": cancel every queued / running vertical job of the bộ kinh's videos (and only
         those); 409 when there is none."""
-        doc = _playlist_or_404(playlist_id)
+        doc = ctx.playlist_or_404(playlist_id)
         if doc is None:
             return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
         ids = {e["video_id"] for e in doc["entries"] if e.get("video_id")}
@@ -2493,22 +2261,14 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             return None, JSONResponse({"detail": "chưa có bản HD của video này"}, status_code=404)
         return src.path, None
 
-    @app.get("/api/downloads/{token}")
-    def api_download_progress(token: str):
-        """CP8.34 D3: ``{state: sending | done | aborted, bytes_sent, bytes_total}`` of a ``?dl=<token>`` download."""
-        found = download_table.get(token) if dl_mod.TOKEN_RE.match(token) else None
-        if found is None:
-            return JSONResponse({"detail": "không có lượt tải này"}, status_code=404)
-        return JSONResponse(found, headers={"Cache-Control": "no-store"})
-
     @app.get("/api/episodes/{episode_id}/source-hd")
     def api_episode_source_hd(episode_id: str, dl: str | None = None):
         """H1: the landscape HD video (``source_hd.mp4``, no banner); Range supported (FileResponse). A download never
         ticks "Đã đăng" / "Đã xem" (H3)."""
         hd, bad = _hd_or_404(episode_id)
         if bad is not None:
-            return _tracked(dl, bad)
-        return _tracked(dl, FileResponse(hd, media_type=mimetypes.guess_type(hd.name)[0] or "video/mp4", headers={
+            return ctx.tracked(dl, bad)
+        return ctx.tracked(dl, FileResponse(hd, media_type=mimetypes.guess_type(hd.name)[0] or "video/mp4", headers={
             "Content-Disposition": content_disposition(ep.hd_download_name(config, episode_id)),
             "Cache-Control": "private, no-cache"}))
 
@@ -2517,12 +2277,12 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         """H4: the vertical full-episode file, once made from the current HD source."""
         _hd, bad = _hd_or_404(episode_id, archived_ok=True)
         if bad is not None:
-            return _tracked(dl, bad)
+            return ctx.tracked(dl, bad)
         owner = ep.hd_owner(episode_id)
         path = render_full.ready_file(config, owner) if render_full.current(config, owner) else None
         if path is None:
-            return _tracked(dl, JSONResponse({"detail": "chưa có bản dọc (bấm \"Tạo bản dọc\")"}, status_code=404))
-        return _tracked(dl, FileResponse(path, media_type="video/mp4", headers={
+            return ctx.tracked(dl, JSONResponse({"detail": "chưa có bản dọc (bấm \"Tạo bản dọc\")"}, status_code=404))
+        return ctx.tracked(dl, FileResponse(path, media_type="video/mp4", headers={
             "Content-Disposition": content_disposition(ep.video_download_name(config, episode_id, "Doc")),
             "Cache-Control": "private, no-cache"}))
 
@@ -2546,100 +2306,9 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
 
     # --- storage (CP8.6) ---------------------------------------------------------------------------
 
-    # --- SR2 K3: page of the Khai thị reading library (before the sutra router: `/sutras/{slug}/edit` would match) ---
-
-    @app.get("/sutras/khaithi/{playlist_id}")
-    async def khaithi_reader_page(playlist_id: str):
-        if playlist_id != reading.SINGLE_ID and (not valid_playlist_id(playlist_id) or _playlist_or_404(playlist_id) is None):
-            return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
-        return FileResponse(STATIC_DIR / "sutra.html", headers={"Cache-Control": "no-cache"})
-
     # --- Đọc Kinh (SR1): router of the sutra application, protected by the auth middleware above ---
 
     app.include_router(sutra_web.router(SutraStore(Path(config.workspace.dir) / "_sutras"), STATIC_DIR))
-
-    @app.get("/storage")
-    async def storage_page():
-        return FileResponse(STATIC_DIR / "storage.html", headers={"Cache-Control": "no-cache"})
-
-    @app.get("/api/queue")
-    def api_queue():
-        """CP8.22 Q1: ``{paused, mode, running, pending}`` of the job queue (top bar of every page)."""
-        return runner.queue_state()
-
-    @app.post("/api/queue/pause")
-    def api_queue_pause(body: QueuePauseIn):
-        return runner.pause(body.mode)
-
-    @app.post("/api/queue/resume")
-    def api_queue_resume():
-        return runner.resume()
-
-    # --- monitor tab (CP8.28) ----------------------------------------------------------------------
-
-    @app.get("/monitor")
-    async def monitor_page():
-        return FileResponse(STATIC_DIR / "monitor.html", headers={"Cache-Control": "no-cache"})
-
-    @app.get("/api/monitor/queue")
-    def api_monitor_queue(limit: int = 20):
-        """M1: running job per lane (episode, step, elapsed, progress), jobs waiting for HD / GPU / YouTube, and the
-        pending jobs of every lane in the order they will start (first ``limit`` per lane, default 20)."""
-        limit = max(1, min(limit, 500))
-        data = runner.monitor_queue(limit)
-        labels: dict[str, dict] = {}
-
-        def decorate(entry: dict, job=None) -> dict:
-            eid = entry["episode_id"]
-            entry["episode"] = labels.setdefault(eid, monitor_mod.episode_label(config, eid))
-            if job is not None and entry.get("stage") == "render":
-                entry["progress"] = monitor_mod.render_progress(config, job.logs, eid)
-            return entry
-
-        for lane, info in data["lanes"].items():
-            for run in info["running_all"]:  # CP8.29: the prepare lane may run several (``running`` = the first)
-                decorate(run, runner.job(run["id"]))
-            for e in info["pending"]:
-                decorate(e)
-        for e in data["waiting"]:
-            decorate(e)
-        return data
-
-    @app.get("/api/monitor/system")
-    def api_monitor_system():
-        """M2: CPU % (total + per core), load, RAM, disk of ``work/``, top processes (with the job they belong to
-        when known), about one hour of history (``[t, cpu %, ram %, load1]``)."""
-        return sampler.snapshot()
-
-    @app.get("/api/monitor/ollama")
-    def api_monitor_ollama():
-        """M3: models Ollama has loaded (``/api/ps``), connection state, the job of the ``ai`` lane."""
-        out = ollama_view.get()
-        out["gpu"] = runner.gpu_status()
-        ai = runner.running().get("ai")
-        out["job"] = {"id": ai.id, "kind": ai.kind, "stage": ai.stage,
-                      "episode": monitor_mod.episode_label(config, ai.episode_id)} if ai is not None else None
-        return out
-
-    @app.get("/api/monitor/gpu")
-    def api_monitor_gpu():
-        """M4: the enhance workers' GPU numbers (None = "chưa có số liệu GPU") and what each one is enhancing."""
-        st = svc.status()
-        now = svc.clock()  # the same clock the worker registry stamps last_seen with
-        return {"enabled": st["enabled"], "paused": st["paused"], "now": now,
-                "workers": monitor_mod.gpu_workers(st["workers"], sorted(tokens), now,
-                                                   lambda eid: monitor_mod.episode_label(config, eid))}
-
-    @app.get("/api/storage")
-    def api_storage():
-        """S1 + S2 + S4: disks, episode sizes, caches, recommendations, warning (cached up to 30 s)."""
-        active = {j.episode_id for j in runner.jobs() if j.active}
-        return storage.report(active)
-
-    @app.get("/api/storage/status")
-    def api_storage_status():
-        """S4 banner on every page: free space, ``warn``, ``block`` (not cached)."""
-        return storage.status()
 
     @app.post("/api/episodes/{episode_id}/restore-source")
     def api_restore_source(episode_id: str):
@@ -2685,263 +2354,11 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                     result.freed)
         return {"archived": episode_id, "changed": result.changed, "freed": result.freed, "removed": result.removed}
 
-    def _mark_downloaded(episode_id: str, clip_ids: list[str]) -> None:
-        """CP8.7 (bổ sung HUMAN LEAD 2026-09-27): a download ticks "Đã đăng" (current file); never blocks it."""
-        with publish_lock:
-            try:
-                changed = mark_downloaded(episode_id, config, clip_ids)
-            except (ReviewError, OSError) as exc:
-                log.warning("web: download of %s [%s]: not marked as published: %s", ",".join(clip_ids),
-                            episode_id, exc)
-                return
-        if changed:
-            playlists.invalidate(episode_id)
-            storage.invalidate()
-            log.info("web: download marked %s [%s] as published", ",".join(changed), episode_id)
-
-    # --- files -------------------------------------------------------------------------------------
-
-    # --- CP8.31 P16: community posts as Word (.docx) ---------------------------------------------------------
-
-    def _export_items(episode_id: str, views: bool = False) -> list[dict]:
-        """Posts of one episode that still have a rendered Short, in render-manifest order; [] when none. Each item:
-        ``clip_id, head (title upper-case), paras, source, image`` and, with ``views`` (SR2 K2), ``episode_id, code,
-        copy_text, posted, stale`` (the fields of the Posts tab). ``name`` is only for the caller's group label."""
-        order = [cid for cid, _ in post_stage.rendered_clip_ids(config, episode_id)]
-        if not order or not (Path(config.workspace.dir) / episode_id).is_dir():
-            return []
-        with post_lock:
-            try:
-                doc = post_store.read_posts(_posts_path(episode_id), episode_id)
-            except post_store.PostsError:
-                return []
-        titles_by_clip: dict[str, str | None] = {}
-        tab_titles = True  # the Posts tab (api_posts) only knows the titling titles, not the rendered-file fallback
-        try:
-            titles_by_clip = {c["clip_id"]: c["title"] for c in list_titles(episode_id, config)["clips"]}
-        except ReviewError:  # titling not readable: the title burnt into the rendered file
-            tab_titles = False
-            rendered = ep._render_manifest(config, episode_id) or {}
-            titles_by_clip = {sh.get("clip_id"): sh.get("title") for sh in rendered.get("shorts", [])
-                              if isinstance(sh, dict)}
-        fields = _post_header_fields(episode_id)
-        by_clip = {e["clip_id"]: e for e in doc["posts"]}
-        if views:
-            try:
-                ep_src = post_source.load(episode_id, config)
-            except post_source.PostSourceError:
-                ep_src = None
-            series, tags = _post_series_and_tags(episode_id)
-            hashtags_list = review_hashtags(series, tags)
-            prefixes = ep._copy_prefixes(config, episode_id, ep._render_manifest(config, episode_id) or {})
-        items = []
-        for cid in order:
-            entry = by_clip.get(cid)
-            if entry is None:
-                continue
-            head, paras, source = post_logic.text_parts(title=titles_by_clip.get(cid), paragraphs=entry["paragraphs"],
-                                                        header_fields=fields)
-            item = {"clip_id": cid, "head": head, "paras": paras, "source": source, "image": entry["image"]}
-            if views:
-                view = _post_entry_view(entry, ep_src=ep_src, title=titles_by_clip.get(cid) if tab_titles else None,
-                                        header_fields=fields,
-                                        hashtags_list=hashtags_list)
-                item.update(episode_id=episode_id, code=prefixes.get(cid, "").rstrip("_"), copy_text=view["text"],
-                            posted=view["posted"], stale=view["stale"])
-            items.append(item)
-        return items
-
-    def _export_data(video_id: str, views: bool = False) -> tuple[str, list[tuple[str, list[dict]]]] | None:
-        """Heading + groups "Shorts" then "Khai thị" (name, items) of ``video_id`` (a Short episode); None when it
-        has no post."""
-        groups = [(n, items) for n, eid in (("Shorts", video_id), ("Khai thị", video_id + khaithi.SUFFIX))
-                  if (items := _export_items(eid, views))]
-        if not groups:
-            return None
-        fields = _post_header_fields(video_id) or _post_header_fields(video_id + khaithi.SUFFIX) or {}
-        series, number = fields.get("series"), fields.get("episode") or video_id
-        heading = f"{series} tập {number}" if series else f"Tập {number}"
-        try:
-            meta = json.loads((Path(config.workspace.dir) / video_id / "metadata.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            meta = {}
-        vtitle = meta.get("title") if isinstance(meta, dict) else None
-        if isinstance(vtitle, str) and vtitle.strip() and not (series and str(series).casefold() in vtitle.casefold()):
-            heading += f" — {vtitle.strip()}"  # not when the video title already carries the series name
-        return heading, groups
-
-    def _export_episode(video_id: str) -> post_export.ExportEpisode | None:
-        """Heading + groups "Shorts" then "Khai thị" of ``video_id`` (a Short episode); None when it has no post."""
-        data = _export_data(video_id)
-        if data is None:
-            return None
-        heading, groups = data
-        return post_export.ExportEpisode(heading=heading, groups=[
-            post_export.ExportGroup(name=n, posts=[post_export.ExportPost(title=i["head"], paragraphs=i["paras"],
-                                                                         source=i["source"], image=i["image"])
-                                                   for i in items]) for n, items in groups])
-
-    def _docx_name_of(video_id: str, images: bool = True) -> str:
-        kf = ep.kind_fields(config, video_id)
-        return posts_docx_name(ep._label(config, video_id, kf), series=ep._zip_series(config, video_id, kf),
-                               images=images)
-
-    def _images_flag(images: str) -> bool | None:
-        return {"1": True, "0": False}.get(images)
-
-    def _docx_response(title: str, episodes: list[post_export.ExportEpisode], name: str,
-                       images: bool = True) -> FileResponse:
-        fd, tmp = tempfile.mkstemp(prefix="posts-", suffix=".docx")
-        os.close(fd)
-        try:
-            post_export.build_docx(Path(tmp), title, episodes, config.post.image_dir, images=images)
-        except BaseException:
-            os.unlink(tmp)
-            raise
-        return FileResponse(tmp, media_type=DOCX_TYPE, background=BackgroundTask(os.unlink, tmp),
-                            headers={"Content-Disposition": content_disposition(name), "Cache-Control": "no-store"})
-
-    def _is_numbered(e: dict) -> bool:
-        return isinstance(e.get("episode"), str) and e["episode"].isdigit() and int(e["episode"]) >= 1
-
-    def _pick_range(doc: dict, range_from: int | None, range_to: int | None,
-                    other: str | None) -> "tuple[list[dict], str] | JSONResponse":
-        """CP8.31 A1 (shared with SR2 K2): the available entries of a bộ kinh in episode order within ``from``..``to``
-        (at most ``RANGE_SIZE`` numbers) or the unnumbered ones (``other=1``) + the file-name span; 422 otherwise."""
-        entries = _by_episode_order([e for e in doc["entries"] if e.get("video_id") and e.get("available")])
-        if other is not None:
-            if other != "1" or range_from is not None or range_to is not None:
-                return JSONResponse({"detail": "dùng other=1 một mình hoặc from + to"}, status_code=422)
-            return [e for e in entries if not _is_numbered(e)], "chưa rõ"
-        if range_from is None or range_to is None or range_to < range_from or range_to - range_from >= RANGE_SIZE:
-            return JSONResponse({"detail": f"cần from, to (to ≥ from, tối đa {RANGE_SIZE} tập)"}, status_code=422)
-        return [e for e in entries if _is_numbered(e) and range_from <= int(e["episode"]) <= range_to], \
-            f"{range_from}-{range_to}"
-
-    # sync handlers: FastAPI runs them in its worker thread pool, so building the file never blocks the event loop
-    @app.get("/files/{episode_id}/posts.docx")
-    def posts_docx(episode_id: str, images: str = "1"):
-        if not ep.valid_episode_id(episode_id):
-            return JSONResponse({"detail": "không có file này"}, status_code=404)
-        if (with_images := _images_flag(images)) is None:
-            return JSONResponse({"detail": "images phải là 0 hoặc 1"}, status_code=422)
-        video_id = ep.hd_owner(episode_id)
-        episode = _export_episode(video_id)
-        if episode is None:
-            return JSONResponse({"detail": "chưa có bài đăng nào"}, status_code=404)
-        return _docx_response(episode.heading, [episode], _docx_name_of(video_id, with_images), with_images)
-
-    @app.get("/files/playlists/{playlist_id}/posts.docx")
-    def playlist_posts_docx(playlist_id: str, range_from: int | None = Query(None, alias="from", ge=0),
-                            range_to: int | None = Query(None, alias="to", ge=0), other: str | None = None,
-                            images: str = "1"):
-        """CP8.31 A1: posts of at most ``RANGE_SIZE`` episodes by episode number (``from``..``to``), or the
-        unnumbered ones (``other=1``); no whole-bộ file."""
-        doc = _playlist_or_404(playlist_id)
-        if doc is None:
-            return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
-        if (with_images := _images_flag(images)) is None:
-            return JSONResponse({"detail": "images phải là 0 hoặc 1"}, status_code=422)
-        picked = _pick_range(doc, range_from, range_to, other)
-        if isinstance(picked, JSONResponse):
-            return picked
-        chosen, span = picked
-        episodes = [x for e in chosen if (x := _export_episode(e["video_id"])) is not None]
-        if not episodes:
-            return JSONResponse({"detail": "chưa có bài đăng nào"}, status_code=404)
-        return _docx_response(playlist_series(doc) or doc.get("title") or playlist_id, episodes,
-                              posts_docx_name(None, series=_playlist_docx_series(doc), fallback=playlist_id,
-                                              span=span, images=with_images), with_images)
-
-    # --- SR2 K2: posts of a bộ kinh / group of 10 episodes as a reading book (read-only) -----------------------------
-
-    def _post_count(video_id: str) -> int:
-        """Posts (still rendered) of a Short episode and of its khai thị episode."""
-        return _post_stats(video_id)[0] + _post_stats(video_id + khaithi.SUFFIX)[0]
-
-    def _single_episodes() -> list[str]:
-        """Short episodes of no bộ kinh that hold at least one post, by creation date (first stage start), newest first."""
-        in_playlists = playlists.video_ids()
-        found: list[tuple[str, str]] = []
-        for ws, manifest in iter_manifests(Path(config.workspace.dir)):
-            eid = ws.episode_id
-            if eid in in_playlists or eid.endswith(khaithi.SUFFIX) or _post_count(eid) <= 0:
-                continue
-            starts = [st.get("started_at") for st in (manifest.get("stages") or {}).values()
-                      if isinstance(st, dict) and isinstance(st.get("started_at"), str)]
-            try:
-                stamp = min(starts) if starts else datetime.fromtimestamp(ws.manifest_path.stat().st_mtime,
-                                                                          timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-            except OSError:
-                stamp = ""
-            found.append((stamp, eid))
-        found.sort(reverse=True)
-        return [eid for _, eid in found]
-
-    @app.get("/api/reading/khaithi")
-    def api_reading_khaithi():
-        """K2: bộ kinh with at least one post -> ranges of 10 episodes + posts; then "Video lẻ" (``_single``)."""
-        out = []
-        for doc in playlists.all():
-            entries = [e for e in doc["entries"] if e.get("video_id") and e.get("available")]
-            counts = [(int(e["episode"]) if _is_numbered(e) else None, _post_count(e["video_id"])) for e in entries]
-            ranges, other = reading.ranges_of(counts, RANGE_SIZE)
-            if ranges or other:
-                out.append({"playlist_id": doc["playlist_id"],
-                            "title": playlist_series(doc) or doc.get("title") or doc["playlist_id"],
-                            "ranges": ranges, "other": other})
-        out.sort(key=lambda b: reading.sort_key(b["title"]))
-        singles = _single_episodes()
-        if singles:
-            out.append({"playlist_id": reading.SINGLE_ID, "title": reading.SINGLE_TITLE,
-                        "ranges": reading.single_ranges(len(singles), RANGE_SIZE, [_post_count(e) for e in singles]),
-                        "other": None})
-        return out
-
-    @app.get("/api/reading/khaithi/{playlist_id}")
-    def api_reading_khaithi_book(playlist_id: str, range_from: int | None = Query(None, alias="from", ge=0),
-                                 range_to: int | None = Query(None, alias="to", ge=0), other: str | None = None):
-        """K2: one "book" (S3 + ``episode_id, clip_id, copy_text, posted, stale`` per section); episodes and posts in
-        the order of the ``.docx`` export; 404 unknown bộ / no post; 422 bad range (at most ``RANGE_SIZE`` episodes)."""
-        single = playlist_id == reading.SINGLE_ID
-        doc = None if single else _playlist_or_404(playlist_id)
-        if doc is None and not single:
-            return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
-        if single:
-            if other is not None:
-                if other != "1" or range_from is not None or range_to is not None:
-                    return JSONResponse({"detail": "dùng other=1 một mình hoặc from + to"}, status_code=422)
-                return JSONResponse({"detail": "Video lẻ không có nhóm chưa rõ số"}, status_code=404)
-            if range_from is None or range_to is None or range_to < range_from or range_to - range_from >= RANGE_SIZE:
-                return JSONResponse({"detail": f"cần from, to (to ≥ from, tối đa {RANGE_SIZE} tập)"}, status_code=422)
-            singles = _single_episodes()
-            chosen_ids = [e for pos, e in enumerate(singles, 1) if range_from <= pos <= range_to]
-            title, span = reading.SINGLE_TITLE, reading.range_label(range_from, range_to)
-        else:
-            picked = _pick_range(doc, range_from, range_to, other)
-            if isinstance(picked, JSONResponse):
-                return picked
-            chosen, _ = picked
-            chosen_ids = [e["video_id"] for e in chosen]
-            title = playlist_series(doc) or doc.get("title") or playlist_id
-            span = reading.range_label(range_from, range_to) if other is None else "Tập chưa rõ số"
-        episodes = [(d[0], [i for _, items in d[1] for i in items]) for vid in chosen_ids
-                    if (d := _export_data(vid, views=True)) is not None]
-        if not episodes:
-            return JSONResponse({"detail": "chưa có bài đăng nào"}, status_code=404)
-        return reading.book(f"{title} · {span}", episodes)
-
     # --- CP8.33: favourites + compilations ---------------------------------------------------------------------
 
     def _compilation_playlist(playlist_id: str):
-        doc = _playlist_or_404(playlist_id)
+        doc = ctx.playlist_or_404(playlist_id)
         return doc if doc is not None else JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
-
-    @app.get("/playlists/{playlist_id}/favorites")
-    async def favorites_page(playlist_id: str):
-        if not valid_playlist_id(playlist_id):
-            return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
-        return FileResponse(STATIC_DIR / "favorites.html", headers={"Cache-Control": "no-cache"})
 
     @app.post("/api/playlists/{playlist_id}/favorites")
     def api_favorite(playlist_id: str, body: FavoriteIn):
@@ -2978,7 +2395,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
 
     @app.delete("/api/playlists/{playlist_id}/compilations/{cid}")
     def api_compilation_delete(playlist_id: str, cid: str):
-        if _playlist_or_404(playlist_id) is None or not CID_RE.match(cid):
+        if ctx.playlist_or_404(playlist_id) is None or not CID_RE.match(cid):
             return JSONResponse({"detail": "không có video ghép này"}, status_code=404)
         result = compilations.delete(playlist_id, cid)
         if result == "busy":
@@ -2987,68 +2404,15 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             return JSONResponse({"detail": "không có video ghép này"}, status_code=404)
         return {"deleted": cid}
 
-    @app.get("/files/playlists/{playlist_id}/compilations/{name}")
-    def compilation_file(playlist_id: str, name: str):
-        cid = name[:-4] if name.endswith(".mp4") else ""
-        if not valid_playlist_id(playlist_id) or not CID_RE.match(cid):
-            return JSONResponse({"detail": "không có file này"}, status_code=404)
-        path = compilations.video_file(playlist_id, cid)
-        stored = comp_store.read_doc(compilations.folder(playlist_id), cid)
-        if path is None or stored is None:
-            return JSONResponse({"detail": "không có file này"}, status_code=404)
-        return FileResponse(path, media_type="video/mp4", headers={
-            "Content-Disposition": content_disposition(stored.get("download_name") or f"{cid}.mp4"),
-            "Cache-Control": "private, no-cache"})
-
-    @app.get("/files/{episode_id}/{name}")
-    def files(episode_id: str, name: str, download: str | None = None, dl: str | None = None):
-        return _tracked(dl, _files_response(episode_id, name, download))
-
-    def _files_response(episode_id: str, name: str, download: str | None) -> Response:
-        if not ep.valid_episode_id(episode_id):
-            return JSONResponse({"detail": "không có file này"}, status_code=404)
-        if name == "shorts.zip":
-            items = ep.short_files(config, episode_id)
-            if not items:
-                return JSONResponse({"detail": "chưa có Short nào"}, status_code=404)
-            # CP8.31 D1 (reverses CP8.17 D3): a zip ticks "Đã đăng" for every Short it contains (current file)
-            _mark_downloaded(episode_id, [cid for cid, _, _ in items])
-            return StreamingResponse(
-                _zip_stream(items), media_type="application/zip",
-                headers={"Content-Disposition": content_disposition(ep.zip_download_name(config, episode_id)),
-                         "Cache-Control": "no-store"})
-        if name == "all.zip":  # CP8.17 D5: Shorts/ + KhaiThị/ of one video in a single zip (CP8.31 D1: ticks both)
-            both = ep.all_zip(config, episode_id)
-            if both is None:
-                return JSONResponse({"detail": "cần có cả Short và khai thị đã dựng"}, status_code=404)
-            items, zip_file_name = both
-            vid = ep.hd_owner(episode_id)  # the Short episode; its khai thị is ``<vid>.kt``
-            _mark_downloaded(vid, [cid for cid, _, n in items if n.startswith("Shorts/")])
-            _mark_downloaded(vid + khaithi.SUFFIX, [cid for cid, _, n in items if n.startswith("KhaiThị/")])
-            return StreamingResponse(
-                _zip_stream(items), media_type="application/zip",
-                headers={"Content-Disposition": content_disposition(zip_file_name), "Cache-Control": "no-store"})
-        if name == "source.mp4":  # CP9 C7: "Nghe thử" around a cut point (Range; never ticks, never a download)
-            found_src = ep.source_file(config, episode_id)
-            if found_src is None:
-                return JSONResponse({"detail": "không có video nguồn"}, status_code=404)
-            return FileResponse(found_src, media_type=SOURCE_TYPES.get(found_src.suffix.lower(),
-                                                                       "application/octet-stream"),
-                                headers={"Cache-Control": "private, no-cache"})
-        clip_id = name[:-4] if name.endswith(".mp4") else ""
-        if not ep.valid_clip_id(clip_id):
-            return JSONResponse({"detail": "không có file này"}, status_code=404)
-        found = ep.short_file(config, episode_id, clip_id)
-        if found is None:
-            return JSONResponse({"detail": "không có file này"}, status_code=404)
-        path, download_name = found
-        headers = {"Cache-Control": "private, no-cache"}
-        if download is not None:
-            headers["Content-Disposition"] = content_disposition(download_name)
-            _mark_downloaded(episode_id, [clip_id])  # plain playback (no download=1) never ticks
-        return FileResponse(path, media_type="video/mp4", headers=headers)
+    app.include_router(auth.build(ctx))
+    app.include_router(pages.build(ctx))
+    app.include_router(status.build(ctx))
+    app.include_router(reading_api.build(ctx))
+    app.include_router(files.build(ctx))
 
     theme_index_web.register(app, config, playlists, STATIC_DIR)  # TC-WEB1: GET-only TC1 preview
     theme_plan_web.register(app, theme_plans)  # TC2 phase C: planner and TC3 landscape jobs
+
+    app.include_router(files_catchall.build(ctx))  # D4: catch-all is always registered last.
 
     return app

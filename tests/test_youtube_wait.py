@@ -332,7 +332,8 @@ def test_api_youtube_status_and_banner(tmp_path, monkeypatch):
                  web=WebConfig(session_days=30))
     clock, net = Clock(), Net(blocked_error())
     runner = JobRunner(youtube_retry_seconds=15 * MIN, monotonic=clock.mono, wall=clock.wall)
-    monkeypatch.setattr(app_mod, "LOGIN_DELAY", 0.01)
+    from auto_short.web.routes import auth as auth_routes
+    monkeypatch.setattr(auth_routes, "LOGIN_DELAY", 0.01)
     app = app_mod.create_app(cfg, "pw", runner=runner, preflight=lambda c: None, post_preflight=lambda c: None,
                              pipeline=net)
     with TestClient(app, follow_redirects=False) as c:

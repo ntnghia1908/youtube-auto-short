@@ -50,7 +50,7 @@ def _stages(manifest: dict) -> list[dict]:
     return out
 
 
-def _render_manifest(config: Config, episode_id: str) -> dict | None:
+def render_manifest(config: Config, episode_id: str) -> dict | None:
     """The episode's last committed render manifest, whatever the render stage status is now: a render run stages
     new Shorts as ``.part`` files and only replaces files + manifest at its commit, and a failed / interrupted run
     leaves the previous render intact (CP8.2 T5), so the listed files always exist and match."""
@@ -78,7 +78,7 @@ def _copy(title: str | None, series: str | None, tags: tuple[str, ...], prefix: 
     return {"copy_text": text, "hashtags": kept}
 
 
-def _series(config: Config, episode_id: str) -> str | None:
+def series(config: Config, episode_id: str) -> str | None:
     """titles.json ``header.fields.series`` (for the ``#<series>`` hashtag)."""
     doc = read_json_dict(Path(config.workspace.dir) / episode_id / "titles.json") or {}
     fields = (doc.get("header") or {}).get("fields") or {}
@@ -106,7 +106,7 @@ def kind_fields(config: Config, episode_id: str) -> dict:
             "khaithi_episode_id": other}
 
 
-def _label(config: Config, episode_id: str, kf: dict | None = None) -> str:
+def label(config: Config, episode_id: str, kf: dict | None = None) -> str:
     """``<episode>`` of the download names: titles.json ``header.fields.episode``, else the episode id (X1); for a
     khai thị episode the base episode id, without ``.kt`` (CP8.9 K8)."""
     kf = kf or kind_fields(config, episode_id)
@@ -120,22 +120,22 @@ def _names(config: Config, episode_id: str, doc: dict) -> dict[str, str]:
     """Download name of every Short of the render manifest: number = position in the manifest (= clips.json
     order, CP7 R9, deleted Shorts included so the numbers never shift), title = the title in the file."""
     kf = kind_fields(config, episode_id)
-    label, shorts = _label(config, episode_id, kf), doc.get("shorts") or []
+    episode_number, shorts = label(config, episode_id, kf), doc.get("shorts") or []
     kt = kf["kind"] == khaithi.KIND
-    return {s["clip_id"]: download_name(label, n, len(shorts), s.get("title"), khaithi=kt)
+    return {s["clip_id"]: download_name(episode_number, n, len(shorts), s.get("title"), khaithi=kt)
             for n, s in enumerate(shorts, 1) if isinstance(s, dict) and isinstance(s.get("clip_id"), str)}
 
 
-def _copy_prefixes(config: Config, episode_id: str, doc: dict) -> dict[str, str]:
+def copy_prefixes(config: Config, episode_id: str, doc: dict) -> dict[str, str]:
     """Start of the copy text of every Short (CP8.21 D3): same number / width as the download name."""
     kf = kind_fields(config, episode_id)
-    label, shorts = _label(config, episode_id, kf), doc.get("shorts") or []
+    episode_number, shorts = label(config, episode_id, kf), doc.get("shorts") or []
     kt = kf["kind"] == khaithi.KIND
-    return {s["clip_id"]: copy_prefix(label, n, len(shorts), khaithi=kt)
+    return {s["clip_id"]: copy_prefix(episode_number, n, len(shorts), khaithi=kt)
             for n, s in enumerate(shorts, 1) if isinstance(s, dict) and isinstance(s.get("clip_id"), str)}
 
 
-def _publish(config: Config, episode_id: str, doc: dict) -> tuple[dict[str, dict], str | None]:
+def publish(config: Config, episode_id: str, doc: dict) -> tuple[dict[str, dict], str | None]:
     """X4 status per clip (``publish.json``) + an error message when the file is broken."""
     try:
         pub = read_publish(Path(config.workspace.dir) / episode_id / PUBLISH_NAME, episode_id)
@@ -237,18 +237,18 @@ def episode_view(config: Config, episode_id: str, *, hashtags: list[str] | None 
         return None
     meta = read_json_dict(ws.dir / "metadata.json") or {}
     stages = _stages(manifest)
-    doc = _render_manifest(config, episode_id)
+    doc = render_manifest(config, episode_id)
     titles, ignored, titles_error = _titles(config, episode_id) if doc else ({}, [], None)
     names = _names(config, episode_id, doc) if doc else {}
-    prefixes = _copy_prefixes(config, episode_id, doc) if doc else {}
-    published, publish_error = _publish(config, episode_id, doc) if doc else ({}, None)
+    prefixes = copy_prefixes(config, episode_id, doc) if doc else {}
+    published, publish_error = publish(config, episode_id, doc) if doc else ({}, None)
     watched = _watched(config, episode_id, doc) if doc else {}
     # hashtags: the full list of the episode's bộ kinh (custom), else #<series> + [web] hashtags
-    series, tags = (None, tuple(hashtags)) if hashtags is not None else \
-        (_series(config, episode_id), tuple(config.web.hashtags))
+    series_name, tags = (None, tuple(hashtags)) if hashtags is not None else \
+        (series(config, episode_id), tuple(config.web.hashtags))
     shorts = [v for v in (_short_view(episode_id, s, titles.get(s.get("clip_id")) if not titles_error else None,
                                       name=names.get(s.get("clip_id")), published=published.get(s.get("clip_id")),
-                                      watched=watched.get(s.get("clip_id")), series=series, tags=tags, prefix=prefixes.get(s.get("clip_id"), ""))
+                                      watched=watched.get(s.get("clip_id")), series=series_name, tags=tags, prefix=prefixes.get(s.get("clip_id"), ""))
                           for s in (doc or {}).get("shorts", []) if isinstance(s, dict)) if v]
     rendered = sum(1 for s in shorts if s["status"] == "rendered")
     kf = kind_fields(config, episode_id)
@@ -294,8 +294,8 @@ def list_episodes(config: Config) -> list[dict]:
     for ws, manifest in iter_manifests(Path(config.workspace.dir)):
         meta = read_json_dict(ws.dir / "metadata.json") or {}
         stages = _stages(manifest)
-        doc = _render_manifest(config, ws.episode_id)
-        pub = _publish(config, ws.episode_id, doc)[0] if doc else {}
+        doc = render_manifest(config, ws.episode_id)
+        pub = publish(config, ws.episode_id, doc)[0] if doc else {}
         try:
             mtime = ws.manifest_path.stat().st_mtime
         except OSError:
@@ -331,7 +331,7 @@ def short_files(config: Config, episode_id: str) -> list[tuple[str, Path, str]] 
         return None
     if manifest is None:
         return None
-    doc = _render_manifest(config, episode_id)
+    doc = render_manifest(config, episode_id)
     if doc is None:
         return None
     out_dir = _output_dir(config, episode_id)
@@ -383,17 +383,17 @@ def source_file(config: Config, episode_id: str) -> Path | None:
 def zip_download_name(config: Config, episode_id: str) -> str:
     """CP8.17 D4: ``[<series>_]Tập<episode>_Shorts.zip`` / ``…_KhaiThị.zip``."""
     kf = kind_fields(config, episode_id)
-    return zip_name(_label(config, episode_id, kf), khaithi=kf["kind"] == khaithi.KIND,
-                    series=_zip_series(config, episode_id, kf))
+    return zip_name(label(config, episode_id, kf), khaithi=kf["kind"] == khaithi.KIND,
+                    series=zip_series(config, episode_id, kf))
 
 
-def _zip_series(config: Config, episode_id: str, kf: dict) -> str | None:
+def zip_series(config: Config, episode_id: str, kf: dict) -> str | None:
     """Series of the zip name: this episode's titles.json; a khai thị episode without one falls back to its
     base Short episode's (CP8.17 D4)."""
-    series = _series(config, episode_id)
-    if not (series or "").strip() and kf["base_episode_id"]:
-        series = _series(config, kf["base_episode_id"])
-    return series
+    series_name = series(config, episode_id)
+    if not (series_name or "").strip() and kf["base_episode_id"]:
+        series_name = series(config, kf["base_episode_id"])
+    return series_name
 
 
 def hd_owner(episode_id: str) -> str:
@@ -435,7 +435,7 @@ def video_download_name(config: Config, episode_id: str, suffix: str) -> str:
     fields = (doc.get("header") or {}).get("fields") or {}
     episode = fields.get("episode") if isinstance(fields, dict) else None
     return video_name(episode if isinstance(episode, str) else None, owner, suffix,
-                      series=_series(config, owner))
+                      series=series(config, owner))
 
 
 def all_zip(config: Config, episode_id: str) -> tuple[list[tuple[str, Path, str]], str] | None:
@@ -456,7 +456,7 @@ def all_zip(config: Config, episode_id: str) -> tuple[list[tuple[str, Path, str]
     files = [(cid, path, f"Shorts/{name}") for cid, path, name in shorts] + \
             [(cid, path, f"KhaiThị/{name}") for cid, path, name in kts]
     vid_kf = kind_fields(config, vid)
-    name = zip_name(_label(config, vid, vid_kf), series=_zip_series(config, vid, vid_kf), both=True)
+    name = zip_name(label(config, vid, vid_kf), series=zip_series(config, vid, vid_kf), both=True)
     return files, name
 
 

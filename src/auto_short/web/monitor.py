@@ -387,7 +387,7 @@ def _compute_label(config: Config, base: str) -> dict:
         kf = ep.kind_fields(config, base)
         kind = kf["kind"]
         plain = kf["base_episode_id"] or base
-        series, number = ep._series(config, base), ep._label(config, base, kf)
+        series, number = ep.series(config, base), ep.label(config, base, kf)
     except Exception:
         pass
     if base.endswith(khaithi.SUFFIX):  # a khai thị job that has not been ingested yet has no khaithi.json

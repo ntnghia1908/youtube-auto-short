@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: IN_PROGRESS
 - Type: CHANGE
 - Change class: S2 (sửa rule W1 của `docs/decisions/CP8.3-web-contract.md`)
 - Owner: HUMAN LEAD
@@ -12,7 +12,7 @@
 - Authorization mode: task
 - Authorization source: `docs/audit/code-growth-report.md` §5.2 mục P5; HUMAN LEAD chọn hướng "Tách router" 2026-10-19 (chat)
 - Parallel group: —
-- Owned paths: `src/auto_short/web/app.py`, `src/auto_short/web/context.py` (mới), `src/auto_short/web/routes/` (mới), `src/auto_short/web/episodes.py` (chỉ đổi tên hàm private bị gọi chéo), test có `monkeypatch.setattr(app_mod, …)` (chỉ đích patch), `docs/decisions/CP8.3-web-contract.md` (W1 + dòng Accepted by), `docs/ai/project-profile.md` (dòng module `web/`), file này
+- Owned paths: `src/auto_short/web/app.py`, `src/auto_short/web/context.py` (mới), `src/auto_short/web/routes/` (mới), `src/auto_short/web/episodes.py` (chỉ đổi tên hàm private bị gọi chéo và biến local che tên public), `src/auto_short/web/monitor.py`, `src/auto_short/web/playlists.py`, `src/auto_short/web/storage.py`, `src/auto_short/web/compilations.py` (A1: chỉ sửa caller cơ học), test có `monkeypatch.setattr(app_mod, …)` (chỉ đích patch), `docs/decisions/CP8.3-web-contract.md` (W1 + dòng Accepted by), `docs/ai/project-profile.md` (dòng module `web/`), file này
 - Dependencies: CLEAN-P4 (#118, đã merge)
 - Base commit / branch: `95c213f` (origin/main) / mỗi phase một branch `refactor/p5-<n>-…`
 - Human Lead approval: accepted 2026-10-19 (chat "APPROVE CLEAN-P5": D1–D4)
@@ -39,8 +39,8 @@ Lifecycle: `task` mode = `DRAFT → APPROVED → IN_PROGRESS → READY`. DONE su
 - In scope:
   - `web/context.py`: `WebContext` (dataclass) giữ state + callable inject + helper dùng chung ≥ 2 nhóm route. Không import FastAPI.
   - `web/routes/<nhóm>.py`: mỗi file có `def build(ctx: WebContext) -> APIRouter`, route giữ nguyên thân, đọc state qua `ctx`. Helper closure chỉ một nhóm dùng thì chuyển theo nhóm đó.
-  - `create_app`: giữ nguyên chữ ký và docstring, dựng `WebContext`, lifespan, middleware, `StaticFiles`, `include_router` theo đúng thứ tự đăng ký cũ.
-  - Đổi 5 hàm `ep._*` bị gọi chéo thành tên public (bỏ `_`), sửa mọi nơi gọi.
+  - `create_app`: giữ nguyên chữ ký và docstring, dựng `WebContext`, lifespan, middleware, `StaticFiles`, `include_router` mỗi router nguyên khối đúng một lần; giữ thứ tự khớp của các cặp route chồng pattern (review P5.1 F1).
+  - Đổi 6 hàm `ep._*` bị gọi chéo thành tên public (bỏ `_`), sửa mọi nơi gọi (A1 bổ sung `_series`).
   - Test: đổi đích `monkeypatch.setattr` sang module đang dùng tên đó. Không đổi assert.
   - Sửa đổi CP8.3 W1 (D1) và dòng module `web/` trong project-profile.
 - Out of scope:
@@ -60,7 +60,13 @@ Lifecycle: `task` mode = `DRAFT → APPROVED → IN_PROGRESS → READY`. DONE su
     - **P5.1** hạ tầng (`context.py`, `routes/`), trang + auth, `files`, `monitor`, `queue`, `storage`, `deleted`, `downloads`, `ui`, `reading`, `sutras`; đổi tên `ep._*`; sửa CP8.3 W1 + project-profile. ≈ 500 dòng di chuyển.
     - **P5.2** `playlists`, `enhance` (+ `enhance-pause`), `post-images`, `post-corrections`. ≈ 820 dòng.
     - **P5.3** `/api/episodes` thành hai file (`routes/episodes.py`: xem / tải / publish / xóa; `routes/episode_edit.py`: title, cuts, add, post). ≈ 1 076 dòng. Vượt ~800 của F4 nhưng là di chuyển thuần nên ghi lý do ở đây, không tách thêm PR.
-  - **D4** Thứ tự khớp route giữ nguyên. Route bắt-tất-cả `GET /files/{episode_id}/{name}` (hiện dòng 3003, đăng ký cuối) chồng pattern với `/files/post-images/{name}`, `/files/{episode_id}/posts.docx` và các route `/files/…` khác. Nó phải nằm trong router riêng `routes/files_catchall.py`, được `include_router` **sau cùng** ở mọi phase. Mọi route khác giữ thứ tự tương đối cũ.
+  - **D4** Thứ tự khớp route giữ nguyên. Route bắt-tất-cả `GET /files/{episode_id}/{name}` (hiện dòng 3003, đăng ký cuối) chồng pattern với `/files/post-images/{name}`, `/files/{episode_id}/posts.docx` và các route `/files/…` khác. Nó phải nằm trong router riêng `routes/files_catchall.py`, được `include_router` **sau cùng** ở mọi phase. Giữ thứ tự tương đối của các cặp route chồng pattern; route không chồng có thể đăng ký theo nhóm router (ORCHESTRATOR review P5.1 F1, 2026-10-19).
+
+## Amendment A1 — ORCHESTRATOR review P5.1, 2026-10-19
+
+- Bổ sung 4 file caller `monitor.py`, `playlists.py`, `storage.py`, `compilations.py` vào Owned paths và `_series → series` vào phạm vi AC3; ORCHESTRATOR đã áp dụng bản vá đổi tên, IMPLEMENTER không áp lại.
+- F1 làm rõ D4: chỉ giữ thứ tự của các cặp route chồng pattern; include mỗi router P5.1 nguyên khối đúng một lần, thành một khối liền nhau. Catch-all sau cùng.
+- F2: mọi verification Python / pytest phải đặt `PYTHONPATH` trỏ `src` của worktree. Không sử dụng số PASS vòng trước; chạy lại targeted.
 
 ## Implementation approach
 
@@ -71,7 +77,7 @@ Lifecycle: `task` mode = `DRAFT → APPROVED → IN_PROGRESS → READY`. DONE su
 ## Phải giữ nguyên
 
 - Chữ ký, tham số mặc định và docstring của `create_app`; `server.py` vẫn `from .app import create_app`.
-- Bảng route (path, method, loại route, thứ tự) giống hệt trước.
+- Bảng route (path, method, loại route) và thứ tự khớp các cặp chồng pattern giống hệt trước (review P5.1 F1).
 - Middleware auth (W2), vẫn ở `create_app`: cookie, `LOGIN_DELAY`, redirect `/login?next=…` (303), 401 JSON `chưa đăng nhập` cho `/api/*`, `/files/*` và non-GET, ngoại lệ route worker enhance (`ENHANCE_PREFIX` trừ `ENHANCE_UI_PATHS`); header `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Cache-Control` như cũ.
 - Lifespan: thứ tự `JobRunner.restore()` → làn chạy → vòng tự dọn nguồn; sampler / enhance service khởi động và dừng như cũ.
 - Số test thu thập = 2198; tên test, parametrize và assert không đổi.
@@ -80,7 +86,7 @@ Lifecycle: `task` mode = `DRAFT → APPROVED → IN_PROGRESS → READY`. DONE su
 ## Code bị thay / xóa
 
 - Thân route và closure helper trong `create_app` → `web/routes/*.py` / `web/context.py` (xóa khỏi `app.py` trong cùng phase).
-- `ep._render_manifest`, `ep._zip_series`, `ep._publish`, `ep._label`, `ep._copy_prefixes` → tên public. Không giữ alias `_`.
+- `ep._render_manifest`, `ep._zip_series`, `ep._publish`, `ep._label`, `ep._copy_prefixes`, `ep._series` (A1) → tên public. Không giữ alias `_`.
 - Import trong `app.py` không còn dùng sau mỗi phase.
 
 ## Acceptance Criteria
@@ -113,11 +119,51 @@ Task không đổi database, security model hay public API contract (route giữ
 
 ## Result
 
-- Main changes:
-- Tests: <bảng AC → test, docs/ai/workflow.md §7>
-- Diff + / − (app, test):
-- Helper mới (đã tìm, lý do không tái dùng):
-- Review:
-- Important findings / decisions:
-- Known limitations:
-- PR:
+### P5.1 — sửa review vòng 1, 2026-10-19
+
+- **F1 đã sửa:** 5 router mới include nguyên khối đúng một lần, trong một khối sau các route còn lại và router sutra; catch-all sau router theme, cuối cùng. Bỏ mọi slice / import `APIRouter` trong app.py và các biến `*_router` tạm. Không thay thân route / helper / middleware / lifespan.
+- **F2 đã sửa:** lượt verification mới đều dùng `PYTHONPATH=/home/ntnghia/projects/youtube-auto-short/.claude/worktrees/chg-current-state-trim/src`; đã assert `auto_short.web.app.__file__` đúng worktree. Không dùng kết quả PASS của vòng trước.
+- A1: giữ nguyên bản vá public hóa 6 hàm do ORCHESTRATOR áp dụng; `rg -n '\bep\._[a-z]' src/auto_short/web` rỗng. Không sửa test, không helper mới, không commit/push, không mạng, không P5.2/P5.3 trong vòng này.
+
+Trích cuối `create_app` (app.py:2407; StaticFiles vẫn mount ở dòng 684; sutra router dòng 2311):
+
+```python
+app.include_router(auth.build(ctx))
+app.include_router(pages.build(ctx))
+app.include_router(status.build(ctx))
+app.include_router(reading_api.build(ctx))
+app.include_router(files.build(ctx))
+
+theme_index_web.register(app, config, playlists, STATIC_DIR)
+theme_plan_web.register(app, theme_plans)
+
+app.include_router(files_catchall.build(ctx))  # cuối cùng
+```
+
+| AC / finding | Verification vòng này |
+|---|---|
+| F1 / AC2 / D4 | Script ORCHESTRATOR → **127 route, 3 cặp chồng**; diff `/tmp/p51-review1-after.txt` với `…/p5/base.txt` **rỗng**. AST xác nhận 5 router đúng một lần, liền nhau; catch-all cuối; không `APIRouter` / slice. |
+| F2 / AC5 | Targeted chọn không socket: **58 passed, 1 warning in 2.20s**. Collect: **2198 tests collected in 3.47s**. Assert / tên test / parametrize giữ nguyên. |
+| Auth / signature / lifespan | `/tmp/p51_ast_review.py`: **103 route + 25 helper** tương đương cơ học; chữ ký/docstring create_app và AST middleware/lifespan giữ nguyên. `/tmp/p51-direct-smoke.py`: PASS auth/pages, reading so docx, file MP4/ZIP, queue, monitor, storage, downloads, deleted, ui (không TestClient/socket; không thay integration test). |
+| AC3 / AC4 | Không còn `ep._…`; FastAPI/Starlette/uvicorn chỉ import trong `web/` và `sutra/web.py`. |
+| AC1 / AC6 | app.py **3054 → 2418 dòng**; mốc ≤700 chỉ sau P5.3. Docs W1 và project-profile đã sửa. |
+
+Lệnh mới (tất cả đặt `PYTHONPATH` tuyệt đối nêu trên):
+
+- `python /home/ntnghia/.claude/jobs/1c1feb65/tmp/p5/routes.py "$PWD" /tmp/p51-review1-after.txt` rồi `diff /home/ntnghia/.claude/jobs/1c1feb65/tmp/p5/base.txt /tmp/p51-review1-after.txt`: PASS, rỗng.
+- `timeout 120 xargs -a /tmp/p51-unit-nodes.txt /home/ntnghia/miniconda3/envs/auto-short/bin/python -m pytest -q -x --tb=short tests/test_dlqueue_cp834.py`: **58 PASS** (storage, monitor, reading, downloads, naming/file, playlist, HD lease order, dlqueue).
+- `timeout 120 python -m pytest --collect-only -q -m '' tests`: **2198**, exit 0.
+- `timeout 120 python -m pytest -q -x --tb=short -o faulthandler_timeout=20 tests/test_web_app.py`: **TIMEOUT 120s, exit 124** ở `TestClient.__enter__` / `anyio.from_thread`; log `/tmp/p51-review1-web-app.log`. Không claim PASS integration.
+- AST review, direct endpoint smoke, `git diff --check`: PASS. Full suite / smoke 8080 dành cho ORCHESTRATOR. `jscpd`/`vulture` chưa có cục bộ, không cài/mạng. Framework checker vòng trước có lỗi metadata contract `Change class: S2 (…)`, chưa sửa.
+
+Diff: vòng sửa này riêng app.py **+6 / −67**, test **+0 / −0**, contract/Result **+47 / −36**; toàn P5.1 ứng dụng **+933 / −746** (gồm file mới và A1), riêng app.py **+74 / −710**, test **+18 / −10**, authority docs **+4 / −4** (chưa tính contract/Result). Không coi full suite / smoke / TestClient là PASS; ORCHESTRATOR chạy verification còn lại trước gate READY/merge.
+
+### P5.1 — ORCHESTRATOR verification, 2026-10-19
+
+- Full suite (ngoài sandbox, `PYTHONPATH=<worktree>/src`): **2185 passed, 13 skipped** (631 s). Collect 2198.
+- Bảng route (script tạm ngoài repo): 127 route, 3 cặp chồng, diff với base `95c213f` rỗng.
+- F5: `jscpd` `src/auto_short/web` 1 clone có sẵn trong `storage.py` (không do P5.1); `vulture` file đổi chỉ báo route handler / callback (dương tính giả), không helper chuyển sang mà không dùng.
+- Diff + / −: src +933 / −746 (app.py 3054 → 2418; mới `context.py` 248, `routes/` ≈ 575), tests +18 / −10 (chỉ đích patch / import).
+- Helper mới: không (helper closure chuyển nguyên thân vào `WebContext` / router).
+- IMPLEMENTER: Codex (`gpt-6.1-sol`, high), 2 vòng (≈ 166k + 218k tokens). Review vòng 1: F1 cắt router theo chỉ số → include nguyên khối; F2 PYTHONPATH (test vòng đầu chạy nhầm code checkout chính).
+- Manual smoke 8080 (gate P5.1): chờ HUMAN LEAD.

@@ -305,7 +305,8 @@ def web(tmp_path, monkeypatch):
                  web=WebConfig(session_days=30))
     gpu = Gpu(up=False)
     runner = JobRunner(gpu_retry_seconds=RETRY)
-    monkeypatch.setattr(app_mod, "LOGIN_DELAY", 0.01)
+    from auto_short.web.routes import auth as auth_routes
+    monkeypatch.setattr(auth_routes, "LOGIN_DELAY", 0.01)
     lister = lambda url, config: {"id": "PLOynZc0cJJfDVsh0G1RA3z-I3xSsuEvOp", "title": "T",
                                   "entries": [{"id": "aaaaaaaaaa1", "title": "Kinh tập 1", "duration": 3500.0}]}  # noqa: E731
     app = app_mod.create_app(cfg, "pw", runner=runner, preflight=gpu, post_preflight=gpu,
