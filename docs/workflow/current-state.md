@@ -23,8 +23,8 @@ Cập nhật 2026-10-19.
 
 1. HUMAN LEAD cập nhật `tools/enhance_worker/worker.py` trên máy 3090 + 3050 (bản #100: thoát mã 4 khi lỗi CUDA); ORCHESTRATOR kiểm log server sau đó.
 2. Manual test HUMAN LEAD trên điện thoại: ghép theo chủ đề (TC2.3) và "Khôi phục nguồn" (CP8.37) trên tập đã dọn; chấm tiêu đề AI (TC2.2).
-3. FIX đề xuất (chưa duyệt): `tests/test_web_lanes_cp810.py::test_lanes_overlap_fifo_and_render_job` chập chờn khi VM tải nặng (chạy riêng đạt) — đổi chờ theo thời gian sang chờ điều kiện.
-4. Chất lượng AI TC1 / TC2: synopsis đôi khi là mẩu ngắn, chủ đề có xu hướng gom theo tập; qwen3:30b `think=true` ≈ 1–2 phút / clip.
+3. Chất lượng AI TC1 / TC2: synopsis đôi khi là mẩu ngắn, chủ đề có xu hướng gom theo tập; qwen3:30b `think=true` ≈ 1–2 phút / clip.
+4. Audit dọn code §5.2 còn P5: tách `web/app.py` (S2, cần decision trước khi viết contract).
 5. Cũ, vẫn mở: CP8.34 tránh tải lại khi token `aborted`; HTTPS cho 8080; FIX `setup-enhance-worker.ps1` (S1); CP14 Whisper GPU tạm gác.
 
 Đây là PROPOSED, không authorize implementation tiếp theo.
