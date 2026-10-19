@@ -6,7 +6,7 @@
 | Task contract | `docs/tasks/CP13-enhance-measure.md` |
 | Người viết | IMPLEMENTER (nháp), 2026-10-03 |
 | Dữ liệu / video mẫu | `~/.cache/auto-short-cp13-test/` (ngoài repo): `out/compare/`, `out/metrics.json`, `out/*.json` |
-| Script | `scripts/cp13_e1_bench.py` (E1), `scripts/enhance_bench_win.py` (E2), hướng dẫn `docs/guides/enhance-gpu-windows.md` |
+| Script | `scripts/cp13_e1_bench.py` (E1), `scripts/enhance_bench_win.py` (E2), hướng dẫn `docs/guides/enhance-gpu-windows.md` (đã xóa ở CLEAN-P1; lấy lại: `git show 240003f:scripts/enhance_bench_win.py`, `git show 240003f:scripts/cp13_e1_bench.py`, `git show 240003f:docs/guides/enhance-gpu-windows.md`) |
 
 ## 1. Tóm tắt
 
@@ -113,7 +113,7 @@ Quan sát bằng mắt (D_face, D_text, E_text; chưa xem toàn bộ video):
 - Nghĩa là với nguồn 640×480 **không nên hạ khung** (ngược với 960×720 / 1440×1080 ở E1): `g10_p0`, chậm hơn ≈ 1.8× nhưng đẹp và ít nhấp nháy hơn. Nhấp nháy `g10_p0` 1.3–1.5× Lanczos, cùng cỡ các đoạn E1.
 - Dung lượng `g10_p0` x264 `medium`, 1080p: crf 20 → 0.86–0.94 GiB/giờ; crf 23 → 0.59–0.64 GiB/giờ (nguồn gốc 640×480 ≈ 0.16 GiB/giờ).
 
-Video / ảnh: `out/compare/D_compare_10s.mp4`, `E_compare_10s.mp4` (2×2: Lanczos, `g10_p0`, `g10_p360`, `g05_p360`), `D_face.jpg`, `D_text.jpg`, `E_face.jpg`, `E_text.jpg`. Mẫu Windows: `samples/D_640x480.mp4`, `E_640x480.mp4`; lệnh trong `docs/guides/enhance-gpu-windows.md` Bước 7.
+Video / ảnh: `out/compare/D_compare_10s.mp4`, `E_compare_10s.mp4` (2×2: Lanczos, `g10_p0`, `g10_p360`, `g05_p360`), `D_face.jpg`, `D_text.jpg`, `E_face.jpg`, `E_text.jpg`. Mẫu Windows: `samples/D_640x480.mp4`, `E_640x480.mp4`; lệnh trong `docs/guides/enhance-gpu-windows.md` Bước 7. (đã xóa ở CLEAN-P1; lấy lại: `git show 240003f:docs/guides/enhance-gpu-windows.md`)
 
 **E3 cho 98 giờ (≈ 10.6 triệu khung; ước lượng FLOPs, chưa đo GPU; giả thiết như §4: 3060 3–10, 3090 8–25 TFLOP/s hiệu dụng).** `g10_p0`: 0.72 TFLOP/khung; `g10_p360`: 0.40 TFLOP/khung. Cả tập = 107 892 khung/giờ; chỉ đoạn dùng cho Short ≈ 7 phút/tập ≈ 12 590 khung (giả định như §5.2; 102 tập ≈ 1.28 triệu khung).
 

@@ -4,7 +4,7 @@
 |---|---|
 | Status | ACCEPTED — HUMAN LEAD 2026-10-03: chất lượng video hiện tại ổn, không đổi title / điểm cắt (§8.3: không chọn mục nào) |
 | Task | `docs/tasks/CP8.20-doc-cut-title-measure.md` (S1) |
-| Script | `scripts/measure_doc_cut_title.py` (không đổi `src/`) |
+| Script | `scripts/measure_doc_cut_title.py` (không đổi `src/`) (đã xóa ở CLEAN-P1; lấy lại: `git show 240003f:scripts/measure_doc_cut_title.py`) |
 | Dữ liệu | bản sao `~/.cache/auto-short-cp820-test/` (work + output + `config.toml` riêng); kết quả thô `results/*.json` |
 | Chạy | M1+M2 3,2 s (không GPU); M3 9 lần chạy selection ≈ 40 phút GPU; M4 50 Short ≈ 2 s/Short; M5 dựng 12 Short. Mỗi lần chạy Ollama: không stage nào `running` ở 8080, `expires_at` của Ollama không đổi trong 90 s (cách CP11 D5) |
 

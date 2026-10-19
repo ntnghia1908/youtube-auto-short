@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: CHANGE
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -73,9 +73,9 @@ Không chạm database, security model hay public API contract. Manual test là 
 
 ## Result
 
-- Main changes:
-- Tests:
-- Review:
-- Important findings / decisions:
-- Known limitations:
-- PR:
+- Main changes: xóa 11 file (9 script bench + 2 guide đo Windows); pointer `CLEAN-P1` / `240003f` trong 6 decision/report, project-profile, 3 comment `tools/enhance_worker/`. 21 file, +18 / −3933.
+- Tests: `rg` không còn tham chiếu thiếu pointer (AC2); `git cat-file --batch-check` 11 path tại `240003f` đều là blob (AC1); `pytest -q tests/test_enhance_worker.py tests/test_enhance_face.py` 25 passed, 12 deselected — chạy ngoài sandbox (AC4); `node scripts/framework-check.mjs` PASS.
+- Review: ORCHESTRATOR đọc diff nội dung — chỉ thêm pointer, không đổi số liệu; inventory ⊆ Owned paths (AC3).
+- Important findings / decisions: Codex (effort medium, 1 vòng, 71k tokens) không chạy được pytest trong sandbox (timeout socket); ORCHESTRATOR chạy lại ngoài sandbox.
+- Known limitations: muốn đo lại phải lấy script từ Git.
+- PR: (xem branch `chore/p1-remove-bench`)
