@@ -221,9 +221,9 @@ def test_auto_archive_skips_hd_and_pending_episodes():
     assert [p["video_id"] for p in auto_archive_plan([_row()], now, 60)] == ["v"]
     assert auto_archive_plan([_row(hd=500)], now, 60) == []
     assert auto_archive_plan([_row(enhance_pending=True)], now, 60) == []
-    # the khai thị part with an HD hard link is skipped, the Short part (no HD) is not
+    # a video with a khai thị part is never auto-planned (FIX-keep-khaithi-source), HD or not
     rows = [_row(id="v", hd=0), _row(id="v.kt", hd=500)]
-    assert [p["episodes"] for p in auto_archive_plan(rows, now, 60)] == [["v"]]
+    assert auto_archive_plan(rows, now, 60) == []
 
 
 def test_storage_rows_report_hd_and_segment_sizes(tmp_path):

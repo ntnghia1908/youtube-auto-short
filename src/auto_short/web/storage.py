@@ -316,11 +316,14 @@ def recommend(rows: list[dict], now: float, *, old_days: int = OLD_DAYS) -> list
 def auto_archive_plan(rows: list[dict], now: float, grace_seconds: float) -> list[dict]:
     """S5 / D4 (pure): videos whose source is to be cleaned up automatically. A video qualifies when it has at
     least one part with a cleanable source, no part is processing, **every** part is "Xong" and the state has
-    held for ``grace_seconds`` (``complete_since`` of the latest part). Returns
+    held for ``grace_seconds`` (``complete_since`` of the latest part). A video with a khai thị part is never
+    planned (its source is kept for rebuilding the landscape video). Returns
     ``[{"video_id", "episodes": [ids to archive], "freed": bytes, "since": epoch}]`` in row order."""
     plan = []
     for vid, parts in _videos(rows).items():
         if any(r["state"] == PROCESSING for r in parts) or not all(r.get("complete") for r in parts):
+            continue
+        if any(r["id"].endswith(KT_SUFFIX) for r in parts):  # FIX-keep-khaithi-source: khai thị video keeps its source
             continue
         arch = [r for r in parts if _can_auto_archive(r)]
         since = max((r.get("complete_since") or now for r in parts), default=now)
