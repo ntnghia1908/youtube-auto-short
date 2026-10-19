@@ -40,7 +40,7 @@ Web chạy cho HUMAN LEAD trong tmux `youtube:web` từ worktree `../youtube-aut
 2. Manual test HUMAN LEAD trên điện thoại: ghép theo chủ đề (TC2.3) và "Khôi phục nguồn" (CP8.37) trên tập đã dọn; chấm tiêu đề AI (TC2.2).
 3. FIX đề xuất (chưa duyệt): `tests/test_web_lanes_cp810.py::test_lanes_overlap_fifo_and_render_job` chập chờn khi VM tải nặng (chạy riêng đạt) — đổi chờ theo thời gian sang chờ điều kiện.
 4. Chất lượng AI TC1 / TC2 (ghi nhận chạy thật): synopsis đôi khi là mẩu ngắn, chủ đề có xu hướng gom theo tập; prompt qwen3:30b `think=true` ≈ 1–2 phút / clip.
-5. Cũ, vẫn mở: CP8.34 tránh tải lại khi token `aborted`; HTTPS cho 8080; FIX `setup-enhance-worker.ps1` (S1); CP14 Whisper GPU tạm gác; dọn dữ liệu thử `~/.cache/auto-short-*-test/`, `~/.cache/auto-short-tc2*-test/`, `~/.cache/auto-short-cp837-test/`.
+5. Cũ, vẫn mở: CP8.34 tránh tải lại khi token `aborted`; HTTPS cho 8080; FIX `setup-enhance-worker.ps1` (S1); CP14 Whisper GPU tạm gác (số đo CPU cũ `~/.cache/auto-short-cp14-test/` đã xóa — đo lại khi mở lại).
 
 Đây là PROPOSED, không authorize implementation tiếp theo.
 
