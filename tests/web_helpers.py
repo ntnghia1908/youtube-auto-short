@@ -73,3 +73,33 @@ def fake_pipeline(calls: list, *, fail_stage: str | None = None, gate=None):
         return run
 
     return partial(run_pipeline, deps=StageDeps(runners={s: runner(s) for s in PIPELINE_STAGES}))
+
+
+PW = "pw"
+DISK_OK = lambda p: (100 * 10**9, 50 * 10**9, 50 * 10**9)
+
+
+def make_app(cfg, password=PW, **kw):
+    """Build a web app with isolated pipeline, preflight and disk defaults."""
+    from auto_short.web import app as app_mod
+
+    options = dict(preflight=lambda c: None, pipeline=fake_pipeline([]), disk_usage=DISK_OK)
+    options.update(kw)
+    return app_mod.create_app(cfg, password, **options)
+
+
+def login(c, password=PW, **data):
+    assert c.post("/login", data={"password": password, **data}).status_code == 303
+
+
+_login = login  # web_client's ``login`` flag shadows the function
+
+
+def web_client(cfg, *, login=False, password=PW, **kw):
+    """Build a client and optionally authenticate it."""
+    from fastapi.testclient import TestClient
+
+    c = TestClient(make_app(cfg, password=password, **kw), follow_redirects=False)
+    if login:
+        _login(c, password=password)
+    return c

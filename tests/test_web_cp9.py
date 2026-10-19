@@ -14,13 +14,11 @@ from fastapi.testclient import TestClient  # noqa: E402
 from auto_short.config import Config, RenderConfig, WebConfig, WorkspaceConfig  # noqa: E402
 from auto_short.pipeline import PreflightError  # noqa: E402
 from auto_short.titling.added import AddedTitle  # noqa: E402
-from auto_short.web import app as app_mod  # noqa: E402
 
 from cp9_helpers import EID, make_cp9_episode  # noqa: E402
 from test_web_post_cp815 import FakeComposeAI  # noqa: E402
-from web_helpers import fake_pipeline  # noqa: E402
+from web_helpers import login as _login, make_app  # noqa: E402
 
-PW = "pw"
 API = f"/api/episodes/{EID}"
 
 
@@ -69,15 +67,9 @@ class FakeTitler:
 
 
 def make_client(cfg, *, render=None, titler=None, preflight=lambda c: None):
-    app = app_mod.create_app(cfg, PW, preflight=preflight, render=render or FakeRender(),
-                             pipeline=fake_pipeline([]), titler=titler or FakeTitler(),
-                             post_compose=FakeComposeAI(), post_preflight=lambda c: None)  # FIX-test-speed T2: no real Ollama
-    c = TestClient(app, follow_redirects=False)
-    return c, app
-
-
-def _login(c):
-    assert c.post("/login", data={"password": PW}).status_code == 303
+    app = make_app(cfg, preflight=preflight, render=render or FakeRender(),
+                   titler=titler or FakeTitler(), post_compose=FakeComposeAI(), post_preflight=lambda c: None)
+    return TestClient(app, follow_redirects=False), app
 
 
 def _bytes(ws):

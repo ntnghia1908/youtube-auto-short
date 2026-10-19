@@ -6,14 +6,11 @@ from pathlib import Path
 import pytest
 
 pytest.importorskip("fastapi")
-from fastapi.testclient import TestClient  # noqa: E402
 
-from auto_short.config import Config, RenderConfig, WorkspaceConfig  # noqa: E402
-from auto_short.web import app as app_mod  # noqa: E402
+from auto_short.config import Config, WorkspaceConfig
 
-from web_helpers import fake_pipeline, write_episode  # noqa: E402
+from web_helpers import PW, web_client, write_episode  # noqa: E402
 
-PW = "pw"
 PL = "PLOynZc0cJJfA6C9mATbfggiF7ATJmwSJa"
 TT = "Tập {n}/128: Giảng \"Thái Thượng Cảm Ứng Thiên\" | Tịnh Không Lão Pháp sư chủ giảng"
 
@@ -34,17 +31,8 @@ class FakeLister:
         return self.info
 
 
-@pytest.fixture
-def tcfg(tmp_path) -> Config:
-    return Config(workspace=WorkspaceConfig(dir=tmp_path / "work"), render=RenderConfig(output_dir=tmp_path / "out"))
-
-
 def client(cfg, lister):
-    app = app_mod.create_app(cfg, PW, preflight=lambda c: None, pipeline=fake_pipeline([]),
-                             disk_usage=lambda p: (100 * 10**9, 50 * 10**9, 50 * 10**9),
-                             playlist_lister=lister, playlist_timeout=5.0)
-    c = TestClient(app, follow_redirects=False)
-    return c
+    return web_client(cfg, playlist_lister=lister, playlist_timeout=5.0)
 
 
 def _import(c):

@@ -13,13 +13,7 @@ from auto_short.config import Config, ConfigError, WebConfig, WhisperConfig, fro
 from auto_short.web import jobs as jobs_mod
 from auto_short.web.jobs import KIND_PIPELINE, PREPARE, JobRunner, Step, YoutubeWait
 
-
-def wait_for(pred, timeout: float = 10.0) -> None:
-    deadline = time.monotonic() + timeout
-    while not pred():
-        if time.monotonic() > deadline:
-            raise AssertionError("condition not reached")
-        time.sleep(0.005)
+from wait_helpers import wait_for
 
 
 class Gate:

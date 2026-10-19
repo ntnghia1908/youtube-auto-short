@@ -9,16 +9,13 @@ from types import SimpleNamespace
 import pytest
 
 pytest.importorskip("fastapi")
-from fastapi.testclient import TestClient  # noqa: E402
 
 from auto_short.config import Config, PostConfig, RenderConfig, WebConfig, WorkspaceConfig  # noqa: E402
 from auto_short.post import corrections as C  # noqa: E402
 from auto_short.post import store as post_store  # noqa: E402
-from auto_short.web import app as app_mod  # noqa: E402
 from post_helpers import EID, make_post_episode  # noqa: E402
-from web_helpers import fake_pipeline  # noqa: E402
+from web_helpers import login, web_client  # noqa: E402
 
-PW = "pw"
 EID2 = "post8TestEp2"
 NOW = "2026-10-02T08:00:00Z"
 RULES = "/api/post-corrections"
@@ -52,14 +49,7 @@ def paragraphs_of(cfg, eid, clip):
 
 
 def make_client(cfg):
-    app = app_mod.create_app(cfg, PW, preflight=lambda c: None, render=lambda eid, c: SimpleNamespace(ran=False),
-                             pipeline=fake_pipeline([]), post_preflight=lambda c: None)
-    c = TestClient(app, follow_redirects=False)
-    return c
-
-
-def login(c):
-    assert c.post("/login", data={"password": PW}).status_code == 303
+    return web_client(cfg, render=lambda eid, c: SimpleNamespace(ran=False), post_preflight=lambda c: None)
 
 
 def test_auth_required(tcfg, eps):

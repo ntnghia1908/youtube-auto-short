@@ -9,14 +9,13 @@ from pathlib import Path
 import pytest
 
 pytest.importorskip("fastapi")
-from fastapi.testclient import TestClient  # noqa: E402
 
 from auto_short.config import Config, RenderConfig, WebConfig, WorkspaceConfig  # noqa: E402
 from auto_short.pipeline import PreflightError  # noqa: E402
 from auto_short.web import app as app_mod  # noqa: E402
 from auto_short.web.auth import COOKIE_NAME, SECRET_FILE  # noqa: E402
 
-from web_helpers import fake_pipeline, write_episode  # noqa: E402
+from web_helpers import fake_pipeline, web_client, write_episode  # noqa: E402
 
 PW = "đúng-mật-khẩu"
 VID = "tHtxw6ykUmM"
@@ -34,9 +33,8 @@ def _fast_login_delay(monkeypatch):
 
 
 def make_client(cfg, *, password=PW, preflight=lambda c: None, pipeline=None, calls=None):
-    app = app_mod.create_app(cfg, password, preflight=preflight,
-                             pipeline=pipeline or fake_pipeline(calls if calls is not None else []))
-    return TestClient(app, follow_redirects=False)
+    return web_client(cfg, password=password, preflight=preflight,
+                      pipeline=pipeline or fake_pipeline(calls if calls is not None else []))
 
 
 def login(client, password=PW):

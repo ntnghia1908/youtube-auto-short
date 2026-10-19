@@ -21,16 +21,10 @@ from auto_short.ingest.youtube import is_blocked_message
 from auto_short.web.jobs import DONE, FAILED, KIND_PIPELINE, PREPARE, QUEUED, JobRunner, pipeline_target
 from auto_short.workspace import Workspace
 
+from wait_helpers import wait_for
+
 MIN = 60.0
 A, B, C = "aaaaaaaaaaa", "bbbbbbbbbbb", "ccccccccccc"
-
-
-def wait_for(pred, timeout: float = 10.0) -> None:
-    deadline = time.monotonic() + timeout
-    while not pred():
-        if time.monotonic() > deadline:
-            raise AssertionError("condition not reached")
-        time.sleep(0.005)
 
 
 class Clock:
@@ -50,11 +44,6 @@ def advance(runner: JobRunner, clock: Clock, seconds: float) -> None:
     clock.t += seconds
     with runner._lock:
         runner._lock.notify_all()
-
-
-@pytest.fixture
-def tcfg(tmp_path) -> Config:
-    return Config(workspace=WorkspaceConfig(dir=tmp_path / "work"), render=RenderConfig(output_dir=tmp_path / "output"))
 
 
 class Net:

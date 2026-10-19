@@ -17,14 +17,12 @@ from auto_short.ingest import IngestError, run_ingest  # noqa: E402
 from auto_short.render import RenderError, run_render  # noqa: E402
 from auto_short.review import (ArchivedError, ReviewError, archive_source, reject_archived_clip,  # noqa: E402
                                reset_title, restore_clip, set_alternative, set_title)
-from auto_short.web import app as app_mod  # noqa: E402
 from auto_short.web.storage import (GB, StorageCache, episode_sizes, recommend, tree_size,  # noqa: E402
                                     warning)
 
 from render_helpers import EID, TITLES, make_render_episode, write_docs  # noqa: E402
-from web_helpers import fake_pipeline, write_episode  # noqa: E402
+from web_helpers import fake_pipeline, login as _login, make_app, write_episode  # noqa: E402
 
-PW = "pw"
 BASE = f"/api/episodes/{EID}/shorts"
 NOW = 1_790_000_000.0  # fixed "now" (2026-09-21)
 DAY = 86400
@@ -56,15 +54,11 @@ def free_disk(free: int, total: int = 100 * GB):
 def client(cfg, *, disk=None, pipeline=None, preflight=None, clock=lambda: NOW):
     calls = [] if preflight is None else None
     pf = preflight or (lambda c: calls.append(c))
-    app = app_mod.create_app(cfg, PW, preflight=pf, render=lambda eid, c: SimpleNamespace(
+    app = make_app(cfg, preflight=pf, render=lambda eid, c: SimpleNamespace(
         ran=True, rendered=2, clips=2, encoded=0, reused=2), pipeline=pipeline or fake_pipeline([]),
         disk_usage=disk or free_disk(50 * GB), clock=clock)
     app.state.preflight_calls = calls
     return TestClient(app, follow_redirects=False)
-
-
-def _login(c):
-    assert c.post("/login", data={"password": PW}).status_code == 303
 
 
 # --- S1 sizes ------------------------------------------------------------------------------------------------

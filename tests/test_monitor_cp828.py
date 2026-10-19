@@ -6,7 +6,6 @@ page + API behind the login. Fake lane steps, fake ``/proc``, no network."""
 import json
 import sys
 import threading
-import time
 import urllib.error
 from pathlib import Path
 
@@ -22,6 +21,7 @@ from auto_short.web import monitor as mon  # noqa: E402
 from auto_short.web.auth import COOKIE_NAME  # noqa: E402
 from auto_short.web.jobs import AI, KIND_PIPELINE, PREPARE, RENDER, Job, JobRunner, Step  # noqa: E402
 
+from wait_helpers import wait_for  # noqa: E402
 from enhance_helpers import T1, T2, enhance_cfg  # noqa: E402
 
 TOOLS = Path(__file__).resolve().parents[1] / "tools" / "enhance_worker"
@@ -34,14 +34,6 @@ PW = "pw"
 H1 = {"Authorization": f"Bearer {T1}"}
 STATS = {"name": "NVIDIA GeForce RTX 3090", "util_pct": 87.0, "mem_used_mb": 9000.0, "mem_total_mb": 24576.0,
          "temp_c": 71.0, "power_w": 310.5}
-
-
-def wait_for(pred, timeout: float = 10.0) -> None:
-    deadline = time.monotonic() + timeout
-    while not pred():
-        if time.monotonic() > deadline:
-            raise AssertionError("condition not reached")
-        time.sleep(0.005)
 
 
 class Gate:

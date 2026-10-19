@@ -17,22 +17,15 @@ from auto_short.enhance import state as st  # noqa: E402
 from auto_short.enhance.service import EnhanceService  # noqa: E402
 from auto_short.web import app as app_mod  # noqa: E402
 from auto_short.web.auth import COOKIE_NAME  # noqa: E402
-from auto_short.web.jobs import DONE, KIND_PIPELINE, KIND_RENDER, QUEUED, JobRunner, pipeline_target  # noqa: E402
+from auto_short.web.jobs import DONE, KIND_RENDER, QUEUED, JobRunner
 from auto_short.web.priority import Priority, base_id  # noqa: E402
 
+from wait_helpers import wait_for  # noqa: E402
 from enhance_helpers import enhance_cfg, make_yt_episode  # noqa: E402
 from test_youtube_wait import Clock, Net, advance, blocked_error, blocked_n, submit  # noqa: E402
 
 PW = "pw"
 PL = "PLOynZc0cJJfDVsh0G1RA3z-I3xSsuEvOp"
-
-
-def wait_for(pred, timeout: float = 10.0) -> None:
-    deadline = time.monotonic() + timeout
-    while not pred():
-        if time.monotonic() > deadline:
-            raise AssertionError("condition not reached")
-        time.sleep(0.005)
 
 
 class Rec:
@@ -117,11 +110,6 @@ def test_pause_keeps_working_with_priority(runner):
 
 
 # --- AC3 YouTube wait ---------------------------------------------------------------------------------------------
-
-@pytest.fixture
-def tcfg(tmp_path) -> Config:
-    return Config(workspace=WorkspaceConfig(dir=tmp_path / "work"), render=RenderConfig(output_dir=tmp_path / "output"))
-
 
 def test_youtube_wait_retries_the_marked_job_first(tcfg):
     A, B, C = "aaaaaaaaaaa", "bbbbbbbbbbb", "ccccccccccc"

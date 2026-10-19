@@ -11,7 +11,6 @@ from types import SimpleNamespace
 import pytest
 
 pytest.importorskip("fastapi")
-from fastapi.testclient import TestClient  # noqa: E402
 
 from auto_short.config import Config, EnhanceConfig, RenderConfig, WorkspaceConfig  # noqa: E402
 from auto_short.enhance import state as st  # noqa: E402
@@ -21,9 +20,8 @@ from auto_short.web import app as app_mod  # noqa: E402
 from auto_short.web import auto_vertical as av_mod  # noqa: E402
 
 from test_web_vertical_cp832 import ffmpeg_clip, fake_vertical, make_ep, write_hd  # noqa: E402
-from web_helpers import write_episode  # noqa: E402
+from web_helpers import login, web_client, write_episode  # noqa: E402
 
-PW = "pw"
 VID = "aaaaaaaaaa1"
 KT = VID + ".kt"
 WS = "x"
@@ -61,12 +59,9 @@ def pipeline_of(height: int):
 
 
 def make_client(cfg, calls, *, height=1080, **kw):
-    app = app_mod.create_app(cfg, PW, preflight=lambda c: None, pipeline=pipeline_of(height),
-                             vertical=fake_vertical(calls),
-                             disk_usage=lambda p: (100 * 10**9, 50 * 10**9, 50 * 10**9), **kw)
-    c = TestClient(app, follow_redirects=False)
+    c = web_client(cfg, pipeline=pipeline_of(height), vertical=fake_vertical(calls), **kw)
     c.__enter__()
-    assert c.post("/login", data={"password": PW}).status_code == 303
+    login(c)
     return c
 
 

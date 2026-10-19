@@ -4,7 +4,6 @@ the whole bộ) running AI -> render for the Short and the khai thị (render wa
 number, the state surviving a restart. Fake stages, real tiny sources."""
 
 import json
-import time
 from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
@@ -21,8 +20,11 @@ from auto_short.web import app as app_mod  # noqa: E402
 from auto_short.web.auth import COOKIE_NAME  # noqa: E402
 from auto_short.web.jobs import JobRunner  # noqa: E402
 
+from wait_helpers import wait_for as _wait_for  # noqa: E402
 from enhance_helpers import FRAMES, SRC_H, T1, enhance_cfg, make_clip, make_segment, make_yt_episode, sha  # noqa: E402
 from web_helpers import write_episode  # noqa: E402
+
+wait_for = partial(_wait_for, timeout=20.0, interval=0.02)  # pre-P4 pace: predicates poll the web API
 
 PW = "pw"
 PL = "PLOynZc0cJJfDVsh0G1RA3z-I3xSsuEvOp"
@@ -47,13 +49,6 @@ def low_source(tmp_path_factory):
 def segments(tmp_path_factory):
     d = tmp_path_factory.mktemp("segments")
     return [make_segment(d / f"s{n}.mp4", n) for n in range(4)]
-
-
-def wait_for(pred, timeout=20.0):
-    deadline = time.monotonic() + timeout
-    while not pred():
-        assert time.monotonic() < deadline, "condition not reached"
-        time.sleep(0.02)
 
 
 def _mark(cfg, eid, *stages):

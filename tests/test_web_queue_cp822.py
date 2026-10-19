@@ -11,30 +11,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from auto_short.config import Config, RenderConfig, WorkspaceConfig
 from auto_short.pipeline import PIPELINE_STAGES, StageDeps, run_pipeline
-from auto_short.web.jobs import (AI, DONE, FAILED, INTERRUPTED, KIND_PIPELINE, KIND_RENDER, PREPARE, QUEUED, RENDER,
-                                 RUNNING, JobRunner, Step, pipeline_target)
+from auto_short.web.jobs import AI, DONE, INTERRUPTED, KIND_PIPELINE, PREPARE, QUEUED, RENDER, RUNNING, JobRunner, Step
 
-from web_helpers import write_episode
-
-
-def wait_for(pred, timeout: float = 10.0) -> None:
-    deadline = time.monotonic() + timeout
-    while not pred():
-        if time.monotonic() > deadline:
-            raise AssertionError("condition not reached")
-        time.sleep(0.005)
+from web_helpers import login, web_client, write_episode
+from wait_helpers import wait_for
 
 
 def settle() -> None:
     time.sleep(0.15)
-
-
-@pytest.fixture
-def tcfg(tmp_path) -> Config:
-    return Config(workspace=WorkspaceConfig(dir=tmp_path / "work"),
-                  render=RenderConfig(output_dir=tmp_path / "output"))
 
 
 class Target:
@@ -262,11 +247,8 @@ def test_restore_other_mode_starts_every_job_from_step_zero(mk, tmp_path):
 # --- web app -------------------------------------------------------------------------------------------------
 
 pytest.importorskip("fastapi")
-from fastapi.testclient import TestClient  # noqa: E402
 
-from auto_short.web import app as app_mod  # noqa: E402
 
-PW = "pw"
 VA, VB = "tHtxw6ykUmM", "rbjfCfFq3Dk"
 
 
@@ -289,14 +271,7 @@ def fake_pipeline(calls):
 
 
 def client(cfg, calls):
-    app = app_mod.create_app(cfg, PW, preflight=lambda c: None, pipeline=fake_pipeline(calls),
-                             disk_usage=lambda p: (100 * 10**9, 50 * 10**9, 50 * 10**9))
-    c = TestClient(app, follow_redirects=False)
-    return c
-
-
-def login(c):
-    assert c.post("/login", data={"password": PW}).status_code == 303
+    return web_client(cfg, pipeline=fake_pipeline(calls))
 
 
 def test_api_pause_resume_submit_while_paused_and_restart(tcfg):
