@@ -95,7 +95,7 @@ Cài đặt môi trường (conda env `auto-short`, `pip install -e ".[dev]"`, `
 
 Framework checker: `node scripts/framework-check.mjs`.
 
-Codex CLI (IMPLEMENTER): sandbox `workspace-write` cần `bubblewrap` hệ thống + AppArmor profile `/etc/apparmor.d/bwrap` cho phép `userns` (Ubuntu 24.04 bật `kernel.apparmor_restrict_unprivileged_userns`; bwrap đóng gói của Codex báo `RTM_NEWADDR` / `uid map` lỗi). Đã cài trên VM 2026-10-18 (sudo, HUMAN LEAD). Kiểm: `codex exec --skip-git-repo-check -s workspace-write "echo sandbox-ok"`. Không chạy Codex với `danger-full-access`.
+Codex CLI (IMPLEMENTER): sandbox `workspace-write` cần `bubblewrap` hệ thống + AppArmor profile `/etc/apparmor.d/bwrap` cho phép `userns` (Ubuntu 24.04 bật `kernel.apparmor_restrict_unprivileged_userns`; bwrap đóng gói của Codex báo `RTM_NEWADDR` / `uid map` lỗi). Đã cài trên VM 2026-10-18 (sudo, HUMAN LEAD). Kiểm: `codex exec --skip-git-repo-check -s workspace-write "echo sandbox-ok"`. Không chạy Codex với `danger-full-access`. Quota: `scripts/codex-usage.py`.
 
 ### Test policy
 
