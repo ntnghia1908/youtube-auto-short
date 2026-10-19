@@ -357,7 +357,7 @@ class PlaylistStore:
         series = None
         for e in doc["entries"]:
             if e.get("video_id"):
-                series = ep._series(self._config, e["video_id"])
+                series = ep.series(self._config, e["video_id"])
                 if series:
                     break
         return hashtags(series, tuple(self._config.web.hashtags)), False
@@ -366,7 +366,7 @@ class PlaylistStore:
         """Longest title in the files of the playlist's processed episodes, else a 60-char sample."""
         best = ""
         for e in doc["entries"]:
-            rm = ep._render_manifest(self._config, e["video_id"]) if e.get("video_id") else None
+            rm = ep.render_manifest(self._config, e["video_id"]) if e.get("video_id") else None
             for s in (rm or {}).get("shorts", []):
                 t = s.get("title") if isinstance(s, dict) and s.get("status") == "rendered" else None
                 if isinstance(t, str) and len(t) > len(best):
@@ -574,7 +574,7 @@ def disk_status(config: Config, video_id: str) -> dict:
         return out
     stages = manifest.get("stages") or {}
     statuses = {s: (stages.get(s) or {}).get("status") for s in ep.PIPELINE_STAGES}
-    doc = ep._render_manifest(config, video_id)
+    doc = ep.render_manifest(config, video_id)
     rendered = [s for s in (doc or {}).get("shorts", []) if isinstance(s, dict) and s.get("status") == "rendered"]
     try:
         pub = read_publish(ws.dir / PUBLISH_NAME, video_id)

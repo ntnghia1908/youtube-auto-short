@@ -176,7 +176,7 @@ def episode_sizes(config: Config, active: set[str] | None = None) -> list[dict]:
         stages = manifest.get("stages") or {}
         statuses = [(stages.get(s) or {}).get("status") for s in ep.PIPELINE_STAGES]
         archive = read_archive(ws.dir)
-        rm = ep._render_manifest(config, eid)
+        rm = ep.render_manifest(config, eid)
         rendered = [s for s in (rm or {}).get("shorts", []) if isinstance(s, dict) and s.get("status") == "rendered"]
         try:
             pub = read_publish(ws.dir / PUBLISH_NAME, eid)

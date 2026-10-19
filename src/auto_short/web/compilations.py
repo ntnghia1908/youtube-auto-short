@@ -105,11 +105,11 @@ class Compilations:
                 continue
             for part, (eid, kind) in enumerate(parts):
                 kf = ep.kind_fields(self.config, eid)
-                render = ep._render_manifest(self.config, eid)
+                render = ep.render_manifest(self.config, eid)
                 if kf["kind"] != kind or render is None:
                     continue
                 files = {cid: path for cid, path, _ in ep.short_files(self.config, eid) or []}
-                label, shorts = ep._label(self.config, eid, kf), render.get("shorts") or []
+                label, shorts = ep.label(self.config, eid, kf), render.get("shorts") or []
                 for n, s in enumerate(shorts, 1):
                     cid = s.get("clip_id") if isinstance(s, dict) else None
                     if cid in files:
@@ -462,9 +462,9 @@ class Compilations:
                     if any(i.episode_id == episode_id and i.kept is None for i in favs)]
             if not hits:
                 return lambda: None
-            render = ep._render_manifest(self.config, episode_id) or {}
+            render = ep.render_manifest(self.config, episode_id) or {}
             kf = ep.kind_fields(self.config, episode_id)
-            label, shorts = ep._label(self.config, episode_id, kf), render.get("shorts") or []
+            label, shorts = ep.label(self.config, episode_id, kf), render.get("shorts") or []
             meta = {s["clip_id"]: (n, s) for n, s in enumerate(shorts, 1) if isinstance(s, dict) and "clip_id" in s}
             files = {cid: path for cid, path, _ in ep.short_files(self.config, episode_id) or []}
             first: dict[str, Path] = {}  # clip -> the kept file of the first bộ kinh (later ones copy it)

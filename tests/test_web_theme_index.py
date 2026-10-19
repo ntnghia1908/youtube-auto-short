@@ -28,7 +28,8 @@ STATIC = Path(app_mod.__file__).parent / "static"
 
 @pytest.fixture(autouse=True)
 def _fast_login(monkeypatch):
-    monkeypatch.setattr(app_mod, "LOGIN_DELAY", 0.0)
+    from auto_short.web.routes import auth as auth_routes
+    monkeypatch.setattr(auth_routes, "LOGIN_DELAY", 0.0)
 
 
 @pytest.fixture

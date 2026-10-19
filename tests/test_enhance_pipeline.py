@@ -35,7 +35,8 @@ HIGH = "hi000000001"  # a 720p source: not enhanced
 
 @pytest.fixture(autouse=True)
 def _fast_login_delay(monkeypatch):
-    monkeypatch.setattr(app_mod, "LOGIN_DELAY", 0.05)
+    from auto_short.web.routes import auth as auth_routes
+    monkeypatch.setattr(auth_routes, "LOGIN_DELAY", 0.05)
 
 
 @pytest.fixture(scope="module")

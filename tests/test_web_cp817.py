@@ -13,7 +13,7 @@ pytest.importorskip("fastapi")
 from auto_short import khaithi  # noqa: E402
 from auto_short.khaithi import KhaiThi  # noqa: E402
 from auto_short.review.names import MAX_SERIES_BYTES, zip_name  # noqa: E402
-from auto_short.web import app as app_mod  # noqa: E402
+from auto_short.web import context as context_mod  # noqa: E402
 
 from web_helpers import login, web_client as client, write_episode  # noqa: E402
 
@@ -118,7 +118,7 @@ def test_zip_still_served_when_publish_json_unwritable(tcfg, monkeypatch):
 
     def boom(*a, **k):
         raise OSError("disk full")
-    monkeypatch.setattr(app_mod, "mark_downloaded", boom)
+    monkeypatch.setattr(context_mod, "mark_downloaded", boom)
     with client(tcfg) as c:
         login(c)
         r = c.get(f"/files/{VID}/shorts.zip")
