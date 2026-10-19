@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: DRAFT
+- Status: APPROVED
 - Type: CHANGE
 - Change class: S2 (sửa rule W1 của `docs/decisions/CP8.3-web-contract.md`)
 - Owner: HUMAN LEAD
@@ -15,8 +15,8 @@
 - Owned paths: `src/auto_short/web/app.py`, `src/auto_short/web/context.py` (mới), `src/auto_short/web/routes/` (mới), `src/auto_short/web/episodes.py` (chỉ đổi tên hàm private bị gọi chéo), test có `monkeypatch.setattr(app_mod, …)` (chỉ đích patch), `docs/decisions/CP8.3-web-contract.md` (W1 + dòng Accepted by), `docs/ai/project-profile.md` (dòng module `web/`), file này
 - Dependencies: CLEAN-P4 (#118, đã merge)
 - Base commit / branch: `95c213f` (origin/main) / mỗi phase một branch `refactor/p5-<n>-…`
-- Human Lead approval: pending
-- Implementation authorized: NO
+- Human Lead approval: accepted 2026-10-19 (chat "APPROVE CLEAN-P5": D1–D4)
+- Implementation authorized: YES
 
 Lifecycle: `task` mode = `DRAFT → APPROVED → IN_PROGRESS → READY`. DONE suy ra từ Git sau khi merge (cả ba phase).
 
