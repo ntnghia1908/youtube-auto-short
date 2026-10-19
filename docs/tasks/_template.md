@@ -40,6 +40,16 @@ Lifecycle: `task` mode = `DRAFT → APPROVED → IN_PROGRESS → READY`; `bounda
 
 - <hướng ngắn; không phải pseudo-code>
 
+## Phải giữ nguyên
+
+- <hành vi / action hiện có cần giữ>
+
+## Code bị thay / xóa
+
+<!-- docs/ai/workflow.md §4; ghi "không có" khi chỉ thêm mới. -->
+
+- <hàm / module / test bị thay và phải xóa trong task>
+
 ## Acceptance Criteria
 
 1. ...
@@ -68,7 +78,9 @@ Tùy chọn; chỉ dùng khi chuyển ORCHESTRATOR giữa chừng task (cần HU
 ## Result
 
 - Main changes:
-- Tests:
+- Tests: <bảng AC → test, docs/ai/workflow.md §7>
+- Diff + / − (app, test):
+- Helper mới (đã tìm, lý do không tái dùng):
 - Review:
 - Important findings / decisions:
 - Known limitations:

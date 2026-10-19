@@ -71,3 +71,10 @@ File này chỉ ghi lịch sử; rule hiện hành nằm ở canonical owner c�
 - Thay đổi: thêm Codex CLI (`codex exec`, sandbox `workspace-write`) vào danh sách IMPLEMENTER khi Claude Code là ORCHESTRATOR (`docs/ai/project-profile.md` §7), yêu cầu cài đặt VM (§8), cách gọi trong `.claude/rules/execution.md`. Không đổi Core / adapter descriptor / `framework.config.json` (`codex` đã bật, role `implementer` đã khai).
 - Lý do: HUMAN LEAD 2026-10-18 muốn dùng Codex trên máy làm worker để tăng hiệu suất và tiết kiệm token ORCHESTRATOR; sandbox Codex trước đó lỗi do AppArmor userns, HUMAN LEAD đã cài bubblewrap + profile.
 - Giới hạn: write concurrency vẫn 1. Pilot thật 2026-10-18 (TC3, TC2 phase C + 3 vòng sửa, review FIX-enhance-cuda-fatal) → phân vai trong project-profile §7; thêm quy tắc quota.
+
+### v4.4 — AS-FW-UPGRADE-02: quy tắc token (FW-TOKEN-01) + chống phình code (FW-GROWTH-01)
+
+- Ngày: 2026-10-19
+- Thay đổi: `docs/ai/workflow.md` = `core/docs/ai/workflow.md` của kit `ntnghia1908/ai-dev-framework` SHA `7496eac6c8046281da14a04501dc277a18cdc343` (kit PR #10, #11): §4 "Phải giữ nguyên" + "Code bị thay / xóa"; §5 giới hạn chờ 5 phút, chi phí / task merge, tái dùng trước khi viết; §7 READY report có AC → test, dòng + / −, helper mới; §9 handoff 250k, không resume sau 1 giờ; §10 ngân sách context. `_template.md` = template kit; pointer trong `.claude/agents/implementer.md`, `.claude/rules/execution.md` (giữ mục Codex 7 bước của dự án), `current-state.md`. Không đổi checker, `framework.config.json`, version Core.
+- Lý do: audit `docs/audit/code-growth-report.md` §5.1 (F1–F3); HUMAN LEAD duyệt 2026-10-19.
+- Task: `docs/tasks/AS-FW-UPGRADE-02.md`

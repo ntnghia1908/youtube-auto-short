@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: CHANGE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -74,11 +74,20 @@ Không chạm database, security model hay public API contract.
 
 ## Result
 
-- Main changes:
-- Tests: <bảng AC → test, docs/ai/workflow.md §7>
-- Diff + / − (app, test):
-- Helper mới (đã tìm, lý do không tái dùng):
-- Review:
-- Important findings / decisions:
-- Known limitations:
+- Main changes: `workflow.md` = kit `7496eac` (+28 dòng: §4 Phải giữ nguyên / Code bị thay / xóa, §5 giới hạn chờ + chi phí / task + tái dùng, §7 READY report, §9 handoff, §10 ngân sách context); `_template.md` = template kit; pointer §5 / §7 trong `implementer.md` và `execution.md` (bước 3 Codex + mẫu delegation prompt, resume theo §9); pointer §10 trong current-state; mục framework-history.
+- Tests:
+
+  | AC | Verification | Kết quả |
+  |---|---|---|
+  | 1 | `diff docs/ai/workflow.md <kit 7496eac>` | rỗng |
+  | 2 | `grep -c` 5 token trong `_template.md` | 5 |
+  | 3 | `grep` pointer §5 + "AC → test" trong 2 adapter; đếm 7 bước Codex | có đủ; 7 |
+  | 4 | `grep` §10 trong current-state, AS-FW-UPGRADE-02 trong history | có |
+  | 5 | `node scripts/framework-check.mjs` | exit 0, 0 FAIL |
+
+- Diff + / − (app, test): app 0 / 0, test 0 / 0; tài liệu +65 / −4 (không kể file này).
+- Helper mới (đã tìm, lý do không tái dùng): không có.
+- Review: tự review single-agent (diff → AC); inventory `git status` ⊆ Owned paths.
+- Important findings / decisions: workflow / template của dự án trước đó trùng kit trước PR #10, nên thay nguyên file không mất sửa riêng. Kit `execution.md` rút mục Codex thành pointer README; dự án giữ 7 bước riêng (Phải giữ nguyên).
+- Known limitations: checker chưa bắt buộc mục mới (kit cũng chưa). Hiệu quả F1–F3 đo sau 3–5 task (Manual test checklist).
 - PR:
