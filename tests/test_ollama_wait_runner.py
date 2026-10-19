@@ -17,20 +17,9 @@ from auto_short.selection.client import ChatUnavailable
 from auto_short.web.jobs import (AI, DONE, FAILED, INTERRUPTED, KIND_ADD, KIND_PIPELINE, KIND_POST, PREFETCH_LIMIT,
                                  RUNNING, JobRunner, add_short_target, pipeline_target, post_compose_target)
 
+from wait_helpers import wait_for
+
 RETRY = 0.05
-
-
-def wait_for(pred, timeout: float = 10.0) -> None:
-    deadline = time.monotonic() + timeout
-    while not pred():
-        if time.monotonic() > deadline:
-            raise AssertionError("condition not reached")
-        time.sleep(0.005)
-
-
-@pytest.fixture
-def tcfg(tmp_path) -> Config:
-    return Config(workspace=WorkspaceConfig(dir=tmp_path / "work"), render=RenderConfig(output_dir=tmp_path / "output"))
 
 
 @pytest.fixture

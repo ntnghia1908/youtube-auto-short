@@ -47,6 +47,12 @@ def cfg(tmp_path) -> Config:
 
 
 @pytest.fixture
+def tcfg(tmp_path) -> Config:
+    return Config(workspace=WorkspaceConfig(dir=tmp_path / "work"),
+                  render=RenderConfig(output_dir=tmp_path / "output"))
+
+
+@pytest.fixture
 def config_file(tmp_path) -> Path:
     p = tmp_path / "config.toml"
     p.write_text(

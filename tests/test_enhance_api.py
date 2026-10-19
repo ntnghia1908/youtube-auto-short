@@ -3,7 +3,7 @@ expiry, source download with Range, segment upload checks + idempotency, ``may-r
 (AC2, AC3, AC7, AC10). Real ffmpeg, tiny videos (320x240 source, 25-frame segments)."""
 
 import threading
-import time
+from functools import partial
 
 import pytest
 
@@ -16,9 +16,12 @@ from auto_short.web import app as app_mod  # noqa: E402
 from auto_short.web.auth import COOKIE_NAME  # noqa: E402
 from auto_short.web.jobs import AI, JobRunner, Step  # noqa: E402
 
+from wait_helpers import wait_for as _wait_for  # noqa: E402
 from enhance_helpers import (FRAMES, OUT_H, OUT_W, SEG, T1, T2, enhance_cfg, make_clip, make_segment, make_yt_episode,
                              sha)  # noqa: E402
 from web_helpers import fake_pipeline  # noqa: E402
+
+wait_for = partial(_wait_for, timeout=20.0, interval=0.02)  # pre-P4 pace: predicates poll the web API
 
 pytestmark = pytest.mark.usefixtures("_video_template")
 PW = "mật-khẩu"
@@ -77,13 +80,6 @@ def ctx(tmp_path):
     c = Ctx(tmp_path)
     with c.client:
         yield c
-
-
-def wait_for(pred, timeout=20.0):
-    deadline = time.monotonic() + timeout
-    while not pred():
-        assert time.monotonic() < deadline, "condition not reached"
-        time.sleep(0.02)
 
 
 # --- E8 / AC2: tokens, the cookie never opens a worker route ----------------------------------------------------

@@ -11,17 +11,13 @@ from pathlib import Path
 import pytest
 
 pytest.importorskip("fastapi")
-from fastapi.testclient import TestClient  # noqa: E402
 
-from auto_short.config import Config, RenderConfig, WorkspaceConfig  # noqa: E402
 from auto_short.review import episode_complete  # noqa: E402
-from auto_short.web import app as app_mod  # noqa: E402
 from auto_short.web.playlists import build_document, episode_number  # noqa: E402
 from auto_short.web.urls import ASK, PLAYLIST, VIDEO, UrlError, classify_url  # noqa: E402
 
-from web_helpers import fake_pipeline, write_episode  # noqa: E402
+from web_helpers import fake_pipeline, login as _login, web_client, write_episode  # noqa: E402
 
-PW = "pw"
 PL = "PLOynZc0cJJfDVsh0G1RA3z-I3xSsuEvOp"
 VIDS = ["aaaaaaaaaa1", "tHtxw6ykUmM", "ccccccccccc", "ddddddddddd"]
 
@@ -46,22 +42,9 @@ class FakeLister:
         return self.info
 
 
-@pytest.fixture
-def tcfg(tmp_path) -> Config:
-    return Config(workspace=WorkspaceConfig(dir=tmp_path / "work"),
-                  render=RenderConfig(output_dir=tmp_path / "output"))
-
-
 def client(cfg, lister=None, pipeline=None, timeout=5.0):
-    app = app_mod.create_app(cfg, PW, preflight=lambda c: None, pipeline=pipeline or fake_pipeline([]),
-                             disk_usage=lambda p: (100 * 10**9, 50 * 10**9, 50 * 10**9),
-                             playlist_lister=lister or FakeLister(), playlist_timeout=timeout)
-    c = TestClient(app, follow_redirects=False)
-    return c
-
-
-def _login(c):
-    assert c.post("/login", data={"password": PW}).status_code == 303
+    return web_client(cfg, pipeline=pipeline or fake_pipeline([]),
+                      playlist_lister=lister or FakeLister(), playlist_timeout=timeout)
 
 
 def _publish(cfg, eid):

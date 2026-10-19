@@ -3,7 +3,6 @@ Render/AI/search are fakes; no real Ollama, no real network."""
 
 from __future__ import annotations
 
-import json
 from types import SimpleNamespace
 
 import pytest
@@ -16,12 +15,10 @@ from auto_short.pipeline import PreflightError  # noqa: E402
 from auto_short.post import fetch as post_fetch  # noqa: E402
 from auto_short.post import stage as post_stage  # noqa: E402
 from auto_short.post import store as post_store  # noqa: E402
-from auto_short.web import app as app_mod  # noqa: E402
 from image_fixtures import make_png  # noqa: E402
 from post_helpers import EID, make_post_episode  # noqa: E402
-from web_helpers import fake_pipeline  # noqa: E402
+from web_helpers import login as _login, make_app  # noqa: E402
 
-PW = "pw"
 API = f"/api/episodes/{EID}"
 
 
@@ -76,15 +73,9 @@ class FakeComposeAI:
 
 
 def make_client(cfg, *, compose=None, post_preflight=lambda c: None, search=None):
-    app = app_mod.create_app(cfg, PW, preflight=lambda c: None, render=lambda eid, c: SimpleNamespace(ran=False),
-                             pipeline=fake_pipeline([]), post_compose=compose or FakeComposeAI(),
-                             post_preflight=post_preflight, post_search=search)
-    c = TestClient(app, follow_redirects=False)
-    return c, app
-
-
-def _login(c):
-    assert c.post("/login", data={"password": PW}).status_code == 303
+    app = make_app(cfg, render=lambda eid, c: SimpleNamespace(ran=False),
+                   post_compose=compose or FakeComposeAI(), post_preflight=post_preflight, post_search=search)
+    return TestClient(app, follow_redirects=False), app
 
 
 def _wait(app):

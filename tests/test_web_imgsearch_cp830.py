@@ -13,12 +13,9 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from auto_short.config import Config, PostConfig, RenderConfig, WebConfig, WorkspaceConfig  # noqa: E402
 from auto_short.post import imgsearch, store  # noqa: E402
-from auto_short.web import app as app_mod  # noqa: E402
 from post_helpers import EID, make_post_episode  # noqa: E402
 from test_imgsearch_cp830 import SOURCES, FakeWeb, _public, png_pattern, site_routes, write_posts  # noqa: E402
-from web_helpers import fake_pipeline  # noqa: E402
-
-PW = "pw"
+from web_helpers import login, make_app  # noqa: E402
 
 
 @pytest.fixture(params=["lanes", "serial"])
@@ -37,14 +34,8 @@ def fake_keyword_search(web):
 
 
 def make_client(cfg, **kw):
-    app = app_mod.create_app(cfg, PW, preflight=lambda c: None, render=lambda eid, c: SimpleNamespace(ran=False),
-                             pipeline=fake_pipeline([]), **kw)
-    c = TestClient(app, follow_redirects=False)
-    return c, app
-
-
-def login(c):
-    assert c.post("/login", data={"password": PW}).status_code == 303
+    app = make_app(cfg, render=lambda eid, c: SimpleNamespace(ran=False), **kw)
+    return TestClient(app, follow_redirects=False), app
 
 
 def find_and_wait(c, app, keyword="Tây Phương Tam Thánh"):

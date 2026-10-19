@@ -4,14 +4,12 @@ from __future__ import annotations
 
 import json
 import subprocess
-import time
 from pathlib import Path
 from urllib.parse import unquote
 
 import pytest
 
 pytest.importorskip("fastapi")
-from fastapi.testclient import TestClient  # noqa: E402
 
 from auto_short import compilation as comp  # noqa: E402
 from auto_short.config import Config, PostConfig, RenderConfig, WorkspaceConfig  # noqa: E402
@@ -19,9 +17,8 @@ from auto_short.web import app as app_mod  # noqa: E402
 from auto_short.web.jobs import RENDER, compilation_key  # noqa: E402
 
 from compilation_helpers import PL, duration_of, frame_color, make_series  # noqa: E402
-from web_helpers import fake_pipeline  # noqa: E402
+from web_helpers import login, web_client as client  # noqa: E402
 
-PW = "pw"
 V1, V2, V3 = "aaaaaaaaaa1", "bbbbbbbbbb2", "cccccccccc3"
 K1, K2, K3 = V1 + ".kt", V2 + ".kt", V3 + ".kt"
 BASE = f"/api/playlists/{PL}"
@@ -40,16 +37,6 @@ def series(tcfg, tmp_path):
     make_series(tcfg, tmp_path, [(V3, "9", [("blue", 2)]), (V1, "3", [("red", 2), ("white", 1)]),
                                  (V2, "5", [("green", 3)])])
     return tcfg
-
-
-def client(cfg, **kw):
-    app = app_mod.create_app(cfg, PW, preflight=lambda c: None, pipeline=fake_pipeline([]),
-                             disk_usage=lambda p: (100 * 10**9, 50 * 10**9, 50 * 10**9), **kw)
-    return TestClient(app, follow_redirects=False)
-
-
-def login(c):
-    assert c.post("/login", data={"password": PW}).status_code == 303
 
 
 def heart(c, eid, clip, on=True):

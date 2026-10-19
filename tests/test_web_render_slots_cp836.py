@@ -11,13 +11,7 @@ from auto_short.config import Config, ConfigError, from_dict
 from auto_short.web.jobs import (KIND_COMPILATION, KIND_ENHANCE, KIND_RENDER, KIND_VERTICAL, RENDER, JobRunner,
                                  compilation_key)
 
-
-def wait_for(pred, timeout: float = 10.0) -> None:
-    deadline = time.monotonic() + timeout
-    while not pred():
-        if time.monotonic() > deadline:
-            raise AssertionError("condition not reached")
-        time.sleep(0.005)
+from wait_helpers import wait_for
 
 
 def settle() -> None:

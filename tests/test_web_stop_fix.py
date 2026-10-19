@@ -3,8 +3,6 @@ process (children, grandchildren, processes started after the interrupt), never 
 Real child processes; steps that must be interruptible poll with ``time.sleep``."""
 
 import json
-import os
-import signal
 import subprocess
 import sys
 import threading
@@ -16,16 +14,10 @@ from auto_short.web import jobs as jobs_mod
 from auto_short.web.jobs import (INTERRUPTED, KIND_RENDER, PREPARE, QUEUED, RENDER, JobFailed, JobRunner, Step,
                                  _interrupt)
 
+from wait_helpers import wait_for
+
 TIMEOUT = 4.0
 BOUND = TIMEOUT + 5.0
-
-
-def wait_for(pred, timeout: float = 10.0) -> None:
-    deadline = time.monotonic() + timeout
-    while not pred():
-        if time.monotonic() > deadline:
-            raise AssertionError("condition not reached")
-        time.sleep(0.005)
 
 
 def gone(pid: int) -> bool:

@@ -15,14 +15,12 @@ from fastapi.testclient import TestClient  # noqa: E402
 from auto_short.config import Config, PostConfig, RenderConfig, WebConfig, WorkspaceConfig  # noqa: E402
 from auto_short.post import doc as post_doc  # noqa: E402
 from auto_short.post import store as post_store  # noqa: E402
-from auto_short.web import app as app_mod  # noqa: E402
 from auto_short.web.app import STATIC_DIR  # noqa: E402
 from doc_helpers import BASE_URL, write_playlist  # noqa: E402
 from post_helpers import EID, make_post_episode  # noqa: E402
 from test_web_post_cp815 import FakeComposeAI  # noqa: E402
-from web_helpers import fake_pipeline  # noqa: E402
+from web_helpers import login, make_app  # noqa: E402
 
-PW = "pw"
 PL = "PLdocTest0123456789"
 EID2 = "post8TestEp2"
 KT = EID + ".kt"
@@ -50,16 +48,12 @@ class FakePrepare:
 
 
 def make_client(cfg, *, compose=None, prepare=None):
-    app = app_mod.create_app(cfg, PW, preflight=lambda c: None, render=lambda eid, c: SimpleNamespace(ran=False),
-                             pipeline=fake_pipeline([]), post_compose=compose or FakeComposeAI(),
-                             post_preflight=lambda c: None, doc_prepare=prepare or FakePrepare(),
-                             playlist_lister=lambda url, c: {"id": PL, "title": "KT", "entries": [
-                                 {"id": EID, "title": "Kinh Thử tập 1", "duration": 1.0}]})
+    app = make_app(cfg, render=lambda eid, c: SimpleNamespace(ran=False),
+                   post_compose=compose or FakeComposeAI(), post_preflight=lambda c: None,
+                   doc_prepare=prepare or FakePrepare(),
+                   playlist_lister=lambda url, c: {"id": PL, "title": "KT", "entries": [
+                       {"id": EID, "title": "Kinh Thử tập 1", "duration": 1.0}]})
     return TestClient(app, follow_redirects=False), app
-
-
-def login(c):
-    assert c.post("/login", data={"password": PW}).status_code == 303
 
 
 def seed(cfg, eid, clip, *, origin="ai", posted=False, paragraphs=("Một đoạn.",)):

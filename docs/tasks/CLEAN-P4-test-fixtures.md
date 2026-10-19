@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: CHANGE
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -113,10 +113,35 @@ Không chạm database, security model hay public API contract; chỉ sửa `tes
 ## Result
 
 - Main changes:
+  - `tests/wait_helpers.py` (mới): `wait_for(pred, timeout=10.0, what="condition", *, interval=0.005)`; 13 bản riêng đã xóa.
+  - `tests/conftest.py`: fixture `tcfg` cơ sở; 16 bản riêng đã xóa (gồm `test_web_series_cp811`, không test nào phụ thuộc tên `out`).
+  - `tests/web_helpers.py`: `PW`, `DISK_OK`, `make_app`, `web_client`, `login`; 22 bản `login` / `_login` và thân dựng app của các helper `client` / `make_client` đã thay. File `PW` khác truyền `password=`.
+  - F: `test_lanes_overlap_fifo_and_render_job` chờ thêm `runner.running().get(RENDER) is ja`.
 - Tests:
-- Diff + / − (app, test):
-- Helper mới (đã tìm, lý do không tái dùng):
+
+  | AC | Bằng chứng |
+  |---|---|
+  | 1 | `grep -rnE '^def wait_for\(' tests` → chỉ `tests/wait_helpers.py:6` |
+  | 2 | `grep -rnE '^def _?login\(' tests` → `web_helpers.py` + `test_web_app.py` (hàm bọc trả response, gửi `next`; contract cho phép) |
+  | 3 | không file nào trong 16 file T còn `def tcfg`; `conftest.py` có `tcfg` |
+  | 4 | không helper `client` / `make_client` ở các file C còn gọi `app_mod.create_app(`; còn lại là harness class / thân test / `test_monitor_cp828.make_app` (ngoài scope) |
+  | 5 | 64 tiến trình bận CPU, VM 32 nhân: trước 2 / 30 lỗi; sau 0 / 30 + 0 / 60 |
+  | 6 | `--collect-only -m ''` = 2198; `pytest -q -n auto tests` = 2180 passed, 1 skipped (103 s) |
+  | 7 | diff `tests/` so với `origin/main`: 42 file, +142 / −511 (ròng −369) |
+
+  `node scripts/framework-check.mjs` PASS; `diff --check` sạch; pyflakes trên file đã sửa chỉ còn 8 cảnh báo có sẵn ở base.
+- Diff + / − (app, test): app 0 / 0; test +142 / −511.
+- Helper mới (đã tìm, lý do không tái dùng): `wait_helpers.wait_for` (chưa có bản chung; `web_helpers` chỉ dành cho web, còn `wait_for` dùng cả cho runner / enhance / youtube nên để file riêng); `make_app` / `web_client` / `login` / `PW` / `DISK_OK` mở rộng `web_helpers.py` sẵn có.
 - Review:
+  - IMPLEMENTER Codex (`gpt-6.1-sol`, effort `medium`, 1 lượt, 111 384 tokens): W, F, T, C xong; 211 test targeted PASS trong sandbox; test web và stress để ORCHESTRATOR chạy.
+  - ORCHESTRATOR sửa trực tiếp (nhỏ, cùng Owned paths), không mở vòng Codex:
+    1. `web_helpers.web_client` gọi `globals()["login"]` vì tham số `login` che hàm → alias module `_login`.
+    2. Poll 0,005 s làm 3 file enhance (`test_hd_first_cp132`, `test_enhance_api`, `test_enhance_pipeline`) gọi API web nhiều gấp ≈ 2,4 lần (warning cookie per-request 1514 → 3681). Thêm keyword `interval` cho `wait_for`; 3 file khai báo `wait_for = partial(_wait_for, timeout=20.0, interval=0.02)` thay vì sửa 35 lời gọi. Sau sửa: 1516 warning; cả suite 1104 warning (trước 1941).
+    3. `from wait_helpers import` bị đặt vào nhóm third-party ở 9 file → chuyển về nhóm helper cục bộ; khôi phục `# noqa: E402` ở dòng `from web_helpers import` sau `pytest.importorskip` (Codex bỏ không cần).
 - Important findings / decisions:
-- Known limitations:
+  - Nguyên nhân chập chờn CP8.10 nằm ở test (điều kiện chờ thiếu bước runner lấy job khỏi hàng đợi render), không ở `web/jobs.py`.
+  - D1: không file nào cần `disk_usage=None` (không test nào trong nhóm đó kiểm đĩa).
+  - D2: `test_enhance_worker` poll 0,005 s, timeout 60 s giữ ở lời gọi.
+  - `docs/workflow/current-state.md` Next action 3 (FIX CP8.10) cần bỏ ở lần đồng bộ state sau merge; không sửa trong PR này để tránh xung đột với nhánh trim state.
+- Known limitations: `ws` và các biến thể `tcfg` có thêm section vẫn để riêng từng file (ngoài scope). Cảnh báo pyflakes có sẵn (biến không dùng, f-string không placeholder) không sửa.
 - PR:

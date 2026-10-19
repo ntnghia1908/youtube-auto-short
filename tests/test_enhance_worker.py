@@ -24,6 +24,8 @@ from pathlib import Path
 
 import pytest
 
+from wait_helpers import wait_for
+
 TOOLS = Path(__file__).resolve().parents[1] / "tools" / "enhance_worker"
 sys.path.insert(0, str(TOOLS))
 
@@ -132,15 +134,6 @@ def run(tmp_path, server):
     yield make
     for r in made:
         r.kill_all()
-
-
-def wait_for(cond, timeout=60, what="dieu kien"):
-    end = time.time() + timeout
-    while time.time() < end:
-        if cond():
-            return
-        time.sleep(0.1)
-    pytest.fail(f"het gio cho {what}")
 
 
 def count_frames(path: Path) -> tuple[int, int, int]:
@@ -398,7 +391,6 @@ def test_old_vm_without_preempt_field_never_stops_mid_segment(server, inproc):
     s.may_run = True
     w.thread.join(60)
     assert w.code == [0] and s.complete and eng.aborted == []
-
 
 
 def test_pure_helpers():

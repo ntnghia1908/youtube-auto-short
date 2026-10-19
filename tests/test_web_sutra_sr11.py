@@ -8,7 +8,6 @@ import pytest
 pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
-from auto_short.config import Config, RenderConfig, WorkspaceConfig  # noqa: E402
 from auto_short.sutra.store import SutraStore  # noqa: E402
 from auto_short.web import app as app_mod  # noqa: E402
 
@@ -17,11 +16,6 @@ from web_helpers import fake_pipeline  # noqa: E402
 PW = "pw"
 TEXT = "= Kinh Thử\n@ Chính kinh\n# Phẩm một\nDòng a[^1]\n[^1]: chú\n"
 STATIC = Path(app_mod.STATIC_DIR)
-
-
-@pytest.fixture
-def tcfg(tmp_path) -> Config:
-    return Config(workspace=WorkspaceConfig(dir=tmp_path / "work"), render=RenderConfig(output_dir=tmp_path / "output"))
 
 
 @pytest.fixture

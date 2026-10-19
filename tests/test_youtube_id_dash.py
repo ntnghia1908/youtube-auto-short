@@ -1,22 +1,21 @@
 """FIX-youtube-id-dash: YouTube video ids may start with '-' or '_' (CP2 D3 amended)."""
 
 import json
+from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 pytest.importorskip("fastapi")
-from fastapi.testclient import TestClient  # noqa: E402
 
 from auto_short.config import Config, RenderConfig, WebConfig, WorkspaceConfig  # noqa: E402
 from auto_short.post.images import usage_counts  # noqa: E402
 from auto_short.web import app as app_mod  # noqa: E402
 from auto_short.workspace import WorkspaceError, iter_manifests, validate_episode_id  # noqa: E402
 
-from web_helpers import fake_pipeline, write_episode  # noqa: E402
+from web_helpers import fake_pipeline, login as web_login, web_client, write_episode  # noqa: E402
 
-PW = "pw"
 DASH, UNDER = "-RjgLgw_iVk", "_xIElIoe2Ls"
 
 
@@ -32,13 +31,10 @@ def _fast_login_delay(monkeypatch):
 
 
 def make_client(cfg, calls=None):
-    app = app_mod.create_app(cfg, PW, preflight=lambda c: None, pipeline=fake_pipeline(calls if calls is not None else []))
-    c = TestClient(app, follow_redirects=False)
-    return c
+    return web_client(cfg, pipeline=fake_pipeline(calls if calls is not None else []))
 
 
-def login(c):
-    assert c.post("/login", data={"password": PW, "next": "/"}).status_code == 303
+login = partial(web_login, next="/")
 
 
 # --- AC1 ---------------------------------------------------------------------------------------------------

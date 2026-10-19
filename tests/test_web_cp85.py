@@ -18,16 +18,9 @@ from auto_short.web import app as app_mod  # noqa: E402
 from auto_short.web.episodes import publish_group  # noqa: E402
 
 from render_helpers import EID, TITLES, make_render_episode, write_docs  # noqa: E402
-from web_helpers import fake_pipeline, write_episode  # noqa: E402
+from web_helpers import PW, fake_pipeline, login as _login, web_client, write_episode  # noqa: E402
 
-PW = "pw"
 BASE = f"/api/episodes/{EID}/shorts"
-
-
-@pytest.fixture
-def tcfg(tmp_path) -> Config:
-    return Config(workspace=WorkspaceConfig(dir=tmp_path / "work"),
-                  render=RenderConfig(output_dir=tmp_path / "output"))
 
 
 @pytest.fixture
@@ -52,14 +45,8 @@ class FakeRender:
 
 
 def client(cfg, render=None, pipeline=None, preflight=lambda c: None):
-    app = app_mod.create_app(cfg, PW, preflight=preflight, render=render or FakeRender(),
-                             pipeline=pipeline or fake_pipeline([]))
-    c = TestClient(app, follow_redirects=False)
-    return c
-
-
-def _login(c):
-    assert c.post("/login", data={"password": PW}).status_code == 303
+    return web_client(cfg, preflight=preflight, render=render or FakeRender(),
+                      pipeline=pipeline or fake_pipeline([]))
 
 
 def _review(ws):

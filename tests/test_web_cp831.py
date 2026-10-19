@@ -12,7 +12,6 @@ import pytest
 
 pytest.importorskip("fastapi")
 docx = pytest.importorskip("docx")
-from fastapi.testclient import TestClient  # noqa: E402
 
 from auto_short import khaithi  # noqa: E402
 from auto_short.config import Config, PostConfig, RenderConfig, WorkspaceConfig  # noqa: E402
@@ -21,11 +20,9 @@ from auto_short.post import export as post_export  # noqa: E402
 from auto_short.post import logic as post_logic  # noqa: E402
 from auto_short.post import store as post_store  # noqa: E402
 from auto_short.review.names import posts_docx_name  # noqa: E402
-from auto_short.web import app as app_mod  # noqa: E402
 
-from web_helpers import fake_pipeline, write_episode  # noqa: E402
+from web_helpers import login, web_client as client, write_episode  # noqa: E402
 
-PW = "pw"
 VID = "aaaaaaaaaa1"
 KT = VID + ".kt"
 VID2 = "bbbbbbbbbb2"
@@ -49,16 +46,6 @@ def tcfg(tmp_path) -> Config:
     (tmp_path / "images").mkdir()
     return Config(workspace=WorkspaceConfig(dir=tmp_path / "work"), render=RenderConfig(output_dir=tmp_path / "output"),
                   post=PostConfig(image_dir=tmp_path / "images"))
-
-
-def client(cfg, **kw):
-    app = app_mod.create_app(cfg, PW, preflight=lambda c: None, pipeline=fake_pipeline([]),
-                             disk_usage=lambda p: (100 * 10**9, 50 * 10**9, 50 * 10**9), **kw)
-    return TestClient(app, follow_redirects=False)
-
-
-def login(c):
-    assert c.post("/login", data={"password": PW}).status_code == 303
 
 
 def set_header(cfg, episode_id, series, episode):

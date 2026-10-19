@@ -18,13 +18,11 @@ from auto_short import khaithi  # noqa: E402
 from auto_short.config import Config, RenderConfig, WorkspaceConfig  # noqa: E402
 from auto_short.khaithi import KhaiThi  # noqa: E402
 from auto_short.render import full  # noqa: E402
-from auto_short.web import app as app_mod  # noqa: E402
 from auto_short.web import downloads as dl_mod  # noqa: E402
 
 from test_web_hd_cp827 import write_hd  # noqa: E402
-from web_helpers import fake_pipeline, write_episode  # noqa: E402
+from web_helpers import PW, login, make_app, web_client as client, write_episode  # noqa: E402
 
-PW = "pw"
 VID = "aaaaaaaaaa1"
 VID2 = "bbbbbbbbbb2"
 KT = VID + ".kt"
@@ -37,19 +35,6 @@ BIG = bytes(range(256)) * 1000  # 256 000 bytes: several 64 KiB chunks
 def tcfg(tmp_path) -> Config:
     return Config(workspace=WorkspaceConfig(dir=tmp_path / "work"),
                   render=RenderConfig(output_dir=tmp_path / "output", preset="ultrafast", threads=2))
-
-
-def make_app(cfg):
-    return app_mod.create_app(cfg, PW, preflight=lambda c: None, pipeline=fake_pipeline([]),
-                              disk_usage=lambda p: (100 * 10**9, 50 * 10**9, 50 * 10**9))
-
-
-def client(cfg):
-    return TestClient(make_app(cfg), follow_redirects=False)
-
-
-def login(c):
-    assert c.post("/login", data={"password": PW}).status_code == 303
 
 
 def big_clip(cfg, eid, clip="k01"):

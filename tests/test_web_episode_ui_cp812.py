@@ -13,30 +13,17 @@ pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
 from auto_short import khaithi  # noqa: E402
-from auto_short.config import Config, RenderConfig, WorkspaceConfig  # noqa: E402
 from auto_short.khaithi import KhaiThi  # noqa: E402
 from auto_short.web import app as app_mod  # noqa: E402
 
 from render_helpers import EID  # noqa: E402
-from web_helpers import fake_pipeline, write_episode  # noqa: E402
+from web_helpers import PW, fake_pipeline, web_client, write_episode  # noqa: E402
 
-PW = "pw"
 KT = EID + ".kt"
 
 
-@pytest.fixture
-def tcfg(tmp_path) -> Config:
-    return Config(workspace=WorkspaceConfig(dir=tmp_path / "work"),
-                  render=RenderConfig(output_dir=tmp_path / "output"))
-
-
 def client(cfg):
-    app = app_mod.create_app(cfg, PW, preflight=lambda c: None, render=lambda *a, **k: None,
-                             pipeline=fake_pipeline([]),
-                             disk_usage=lambda p: (100 * 10**9, 50 * 10**9, 50 * 10**9))
-    c = TestClient(app, follow_redirects=False)
-    assert c.post("/login", data={"password": PW}).status_code == 303
-    return c
+    return web_client(cfg, login=True, render=lambda *a, **k: None)
 
 
 def make_pair(cfg):

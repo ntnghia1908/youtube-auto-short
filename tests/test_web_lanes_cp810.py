@@ -14,7 +14,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from auto_short.config import Config, ConfigError, RenderConfig, WebConfig, WorkspaceConfig, from_dict
+from auto_short.config import Config, ConfigError, WebConfig, from_dict
 from auto_short.config import load as load_config
 from auto_short.ingest import run_ingest
 from auto_short.pipeline import PIPELINE_STAGES, PipelineError, PreflightError, StageDeps, run_pipeline
@@ -23,23 +23,10 @@ from auto_short.web.jobs import (AI, DONE, FAILED, INTERRUPTED, KIND_PIPELINE, K
 from auto_short.web.storage import BLOCK_MESSAGE
 from auto_short.workspace import FAILED as STAGE_FAILED, Workspace, run_stage
 
-from web_helpers import fake_pipeline, write_episode
+from web_helpers import DISK_OK, fake_pipeline, login as _login, web_client, write_episode
+from wait_helpers import wait_for
 
 log = logging.getLogger("auto_short")
-
-
-def wait_for(pred, timeout: float = 10.0) -> None:
-    deadline = time.monotonic() + timeout
-    while not pred():
-        if time.monotonic() > deadline:
-            raise AssertionError("condition not reached")
-        time.sleep(0.005)
-
-
-@pytest.fixture
-def tcfg(tmp_path) -> Config:
-    return Config(workspace=WorkspaceConfig(dir=tmp_path / "work"),
-                  render=RenderConfig(output_dir=tmp_path / "output"))
 
 
 @pytest.fixture
@@ -111,7 +98,7 @@ def test_lanes_overlap_fifo_and_render_job(runner):
     jb, _ = runner.submit("b", KIND_PIPELINE, LaneTarget("b", trace))
     jc, _ = runner.submit("c", KIND_PIPELINE, LaneTarget("c", trace))
     # A renders (blocked) while B and C go through prepare and ai, then wait for the render lane in order.
-    wait_for(lambda: jc.waiting and jc.lane == RENDER)
+    wait_for(lambda: jc.waiting and jc.lane == RENDER and runner.running().get(RENDER) is ja)
     assert runner.running() == {RENDER: ja} and not trace.has(RENDER, "a")
     assert all(trace.has(lane, n) for lane in (PREPARE, AI) for n in "bc")
     assert (ja.status, ja.lane, ja.waiting) == (RUNNING, RENDER, False) and runner.queue_position(ja) is None
@@ -173,11 +160,8 @@ def test_disk_block_before_ingest_fails_without_download(runner, tcfg):
 # --- web app helpers -----------------------------------------------------------------------------------------
 
 fastapi = pytest.importorskip("fastapi")
-from fastapi.testclient import TestClient  # noqa: E402
 
-from auto_short.web import app as app_mod  # noqa: E402
 
-PW = "pw"
 VA, VB = "tHtxw6ykUmM", "rbjfCfFq3Dk"
 
 
@@ -215,14 +199,7 @@ def gated_pipeline(calls, gates=None, *, ingest=None):
 
 
 def client(cfg, pipeline, *, disk=None, preflight=lambda c: None):
-    app = app_mod.create_app(cfg, PW, preflight=preflight, pipeline=pipeline,
-                             disk_usage=disk or (lambda p: (100 * 10**9, 50 * 10**9, 50 * 10**9)))
-    c = TestClient(app, follow_redirects=False)
-    return c
-
-
-def _login(c):
-    assert c.post("/login", data={"password": PW}).status_code == 303
+    return web_client(cfg, preflight=preflight, pipeline=pipeline, disk_usage=disk or DISK_OK)
 
 
 def _submit(c, vid, **extra):
