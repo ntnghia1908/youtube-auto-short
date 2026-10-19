@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: CHANGE
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -48,7 +48,7 @@ Tải zip (tick "Đã đăng") không còn làm mất video nguồn sau 30 phút
 
 ## Result
 
-- Main changes:
-- Tests:
-- Review:
+- Main changes: default `auto_archive_grace_minutes` = 4320 (3 ngày), bound 0–43200 (30 ngày); đồng bộ example và CP8.3 W9 S5/header. Thêm test default khi thiếu key, biên 0/43200, lỗi -1/43201 và plan không dọn sau 2 ngày / dọn đúng 3 ngày; fixture storage dùng ân hạn mới.
+- Tests: targeted subset PASS — 83 passed, 2 deselected (2.43 s): `env PYTHONPATH=/home/ntnghia/youtube-auto-short-grace/src /home/ntnghia/miniconda3/envs/auto-short/bin/python -m pytest -q tests/test_config*.py tests/test_storage_suggest.py -k 'not storage_api_merged_video and not auto_archive_after_grace' -x --tb=short`. Required command đã chạy nhưng treo sau 13 test tại `test_storage_api_merged_video`; chạy chẩn đoán với `-o faulthandler_timeout=10` xác nhận chờ `starlette.testclient.TestClient.__enter__` / AnyIO portal, đã ngắt. Không claim PASS required command; ORCHESTRATOR cần chạy lại ngoài sandbox. `node scripts/framework-check.mjs` PASS; `git diff --check` PASS. Full suite chưa chạy, giao ORCHESTRATOR theo chỉ thị.
+- Review: ORCHESTRATOR ACCEPTED 2026-10-19 (Codex 49k tokens); full suite ngoài sandbox 2248 passed, 1 skipped.
 - PR: chưa.
