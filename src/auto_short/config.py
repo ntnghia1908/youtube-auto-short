@@ -274,7 +274,7 @@ class StorageConfig:
     Execution-only: no stage uses it."""
 
     auto_archive: bool = True
-    auto_archive_grace_minutes: int = 30  # "đã đăng hết" must stay stable this long before the source is removed
+    auto_archive_grace_minutes: int = 7200  # "đã đăng hết" must stay stable this long before the source is removed
 
 
 @dataclass(frozen=True)
@@ -688,7 +688,7 @@ def _storage(data: dict) -> StorageConfig:
     return StorageConfig(
         auto_archive=_bool(st, "auto_archive", d.auto_archive, w),
         auto_archive_grace_minutes=_int(st, "auto_archive_grace_minutes", d.auto_archive_grace_minutes, w,
-                                        lo=0, hi=1440),
+                                        lo=0, hi=43200),
     )
 
 

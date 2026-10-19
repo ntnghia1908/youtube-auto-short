@@ -8,6 +8,23 @@ def test_example_config_equals_defaults():
     assert config_mod.load(config_mod.Path(__file__).parents[1] / "config.example.toml") == config_mod.Config()
 
 
+@pytest.mark.parametrize("data", [{}, {"storage": {}}, {"storage": {"auto_archive": False}}])
+def test_storage_grace_default(data):
+    assert config_mod.from_dict(data).storage.auto_archive_grace_minutes == 7200
+
+
+@pytest.mark.parametrize("minutes", [0, 7200, 43200])
+def test_storage_grace_bounds(minutes):
+    cfg = config_mod.from_dict({"storage": {"auto_archive_grace_minutes": minutes}})
+    assert cfg.storage.auto_archive_grace_minutes == minutes
+
+
+@pytest.mark.parametrize("minutes", [-1, 43201])
+def test_storage_grace_out_of_bounds(minutes):
+    with pytest.raises(ConfigError, match=r"storage\.auto_archive_grace_minutes.*0.*43200"):
+        config_mod.from_dict({"storage": {"auto_archive_grace_minutes": minutes}})
+
+
 def test_transcript_config_parsing():
     cfg = config_mod.from_dict({"transcript": {
         "min_coverage": 0.6,

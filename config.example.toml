@@ -203,7 +203,7 @@ soft_label_max_seconds = 5.0
 # and every 5 minutes: when every part (Short + khai thi) of a video is "Xong" and has stayed so for the grace
 # period, its downloaded source video is removed (same effect as the "Dọn video nguồn" button). Shorts are kept.
 auto_archive = true
-auto_archive_grace_minutes = 30      # 0 = no wait
+auto_archive_grace_minutes = 7200    # 5 days; allowed 0–43200 (30 days), 0 = no wait
 
 [enhance]
 # Recover detail of low-resolution sources on GPU workers (docs/decisions/CP13.1-enhance-worker-contract.md E9; worker:

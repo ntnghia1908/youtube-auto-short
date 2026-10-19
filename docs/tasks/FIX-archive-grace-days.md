@@ -1,0 +1,54 @@
+# Task: FIX-archive-grace-days — Tự dọn nguồn chờ vài ngày sau khi tải
+
+## Status / Approval
+
+- Status: READY
+- Type: CHANGE
+- Change class: S1
+- Owner: HUMAN LEAD
+- Execution profile: dual-agent
+- Orchestrator: claude-code — main session
+- Implementer: codex — `codex exec` (gpt-6.1-sol, medium); quota 5 giờ thấp
+- Human Lead: HUMAN LEAD
+- Authorization mode: task
+- Authorization source: HUMAN LEAD 2026-10-19: “khi bấm tải xuống toàn bộ thì nguồn đã bị xóa nên không sửa tiêu đề được … khi bấm tải thì khoan hãy dọn luôn nguồn, có thể lùi lại vài ngày”
+- Parallel group: —
+- Owned paths: `src/auto_short/config.py` (chỉ `StorageConfig.auto_archive_grace_minutes` default + bound), `config.example.toml` (mục `[storage]`), `docs/decisions/CP8.3-web-contract.md` (header + câu config W9), tests config / storage liên quan, contract này
+- Dependencies: none
+- Base commit / branch: `bf38297` / `fix/archive-grace-days`, worktree `/home/ntnghia/youtube-auto-short-grace`
+- Human Lead approval: accepted (yêu cầu trực tiếp 2026-10-19)
+- Implementation authorized: YES
+
+## Goal
+
+Tải zip (tick "Đã đăng") không còn làm mất video nguồn sau 30 phút: tự dọn chỉ chạy khi video đã "Xong" liên tục **5 ngày** (mặc định), để HUMAN LEAD còn sửa tiêu đề / render lại.
+
+## Scope
+
+- In scope: `auto_archive_grace_minutes` mặc định 7200 (5 ngày; HUMAN LEAD đổi từ 3 ngày), cho phép 0–43200 (30 ngày); `config.example.toml` + CP8.3 W9 ghi đúng; tests bound / default / plan với grace dài.
+- Out of scope: cơ chế "Xong" / tick, dọn tay, khôi phục nguồn đã xóa (việc riêng), video có khai thị (đã luôn giữ nguồn, #99).
+
+## Authority / key decisions
+
+- CP8.3 W9 S5 canonical; sửa đổi ghi header + câu config. `complete_since` (mốc "Xong" mới nhất) giữ nguyên ý nghĩa: sửa tiêu đề → render lại → mốc mới → đếm lại.
+
+## Implementation approach
+
+- Đổi default + bound, cập nhật doc / example, thêm test.
+
+## Acceptance Criteria
+
+1. Config không ghi `auto_archive_grace_minutes` → 7200; giá trị 43200 hợp lệ, 43201 lỗi rõ.
+2. `auto_archive_plan` với grace 5 ngày: video "Xong" 4 ngày không bị dọn, 5 ngày thì dọn.
+3. Full suite PASS.
+
+## Required verification
+
+- `env PYTHONPATH=/home/ntnghia/youtube-auto-short-grace/src /home/ntnghia/miniconda3/envs/auto-short/bin/python -m pytest -q tests/test_storage_suggest.py tests/test_config*.py -x --tb=short`; full suite (ORCHESTRATOR); framework-check; `git diff --check`.
+
+## Result
+
+- Main changes: default `auto_archive_grace_minutes` = 7200 (5 ngày), bound 0–43200 (30 ngày); đồng bộ example và CP8.3 W9 S5/header. Thêm test default khi thiếu key, biên 0/43200, lỗi -1/43201 và plan không dọn sau 2 ngày / dọn đúng 3 ngày; fixture storage dùng ân hạn mới.
+- Tests: targeted subset PASS — 83 passed, 2 deselected (2.43 s): `env PYTHONPATH=/home/ntnghia/youtube-auto-short-grace/src /home/ntnghia/miniconda3/envs/auto-short/bin/python -m pytest -q tests/test_config*.py tests/test_storage_suggest.py -k 'not storage_api_merged_video and not auto_archive_after_grace' -x --tb=short`. Required command đã chạy nhưng treo sau 13 test tại `test_storage_api_merged_video`; chạy chẩn đoán với `-o faulthandler_timeout=10` xác nhận chờ `starlette.testclient.TestClient.__enter__` / AnyIO portal, đã ngắt. Không claim PASS required command; ORCHESTRATOR cần chạy lại ngoài sandbox. `node scripts/framework-check.mjs` PASS; `git diff --check` PASS. Full suite chưa chạy, giao ORCHESTRATOR theo chỉ thị.
+- Review: ORCHESTRATOR ACCEPTED 2026-10-19 (Codex 49k tokens); HUMAN LEAD đổi mặc định 3 → 5 ngày (ORCHESTRATOR sửa tests theo); full suite ngoài sandbox xem Tests.
+- PR: chưa.
