@@ -84,4 +84,4 @@ Không chạm database, security model hay public API web (chỉ bỏ một lệ
 - Review: ORCHESTRATOR review diff Codex, 0 finding. Không chạy reviewer thứ hai (S1, chỉ xóa).
 - Important findings / decisions: Codex (gpt-6.1-sol, effort medium) ≈ 50k tokens, 1 vòng, 0 sửa; Codex không chạy được 3 test web trong sandbox (loopback) như dự kiến. Status CL1 contract / task docs theo enum của checker (xem Scope). Config hash stage Auto Short không đổi (`used_config` từng stage).
 - Known limitations: bundle + xóa nhánh CL1 / G6A làm sau merge (AC7); restart 8080 cần HUMAN LEAD đồng ý (AC6).
-- PR:
+- PR: #107
