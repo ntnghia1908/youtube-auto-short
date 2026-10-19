@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: DRAFT
+- Status: READY
 - Type: DOC
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -16,9 +16,9 @@
   - `docs/audit/` (báo cáo mới; không sửa `code-growth-evidence.md`, `code-growth-prs.tsv` trừ bổ sung cột khớp task)
   - `docs/tasks/AUDIT-code-growth.md`
 - Dependencies: FW-TOKEN-01 (ai-dev-framework PR #10) đã merge — để đề xuất bám quy tắc mới
-- Base commit / branch: <main HEAD lúc bắt đầu> / audit/code-growth
-- Human Lead approval: pending
-- Implementation authorized: NO
+- Base commit / branch: `39f6c80` / `claude/vigilant-faraday-y4vgxc` (phiên cloud chỉ được push nhánh này; HUMAN LEAD duyệt 2026-10-19)
+- Human Lead approval: APPROVED 2026-10-19 — PR đào sâu: #10, #82, #35, #98, #57 (app+ lớn nhất) + CHANGE #74, #78, #72 (#73 / #51 / #55 bỏ vì chủ yếu script bench); cài tạm `vulture` (`pip install --user`), `jscpd` qua `npx`
+- Implementation authorized: YES
 
 Lifecycle: `task` mode = `DRAFT → APPROVED → IN_PROGRESS → READY`.
 
@@ -74,4 +74,7 @@ Không chạm database, security model hay public API contract.
 
 ## Result
 
+- Báo cáo: `docs/audit/code-growth-report.md` (tóm tắt 1 trang + §2 số đo, §3 8 PR, §4 nguyên nhân, §5 đề xuất F1–F6 / P1–P5, phụ lục lệnh chạy lại).
+- Quét rộng: subagent `implementer` 2 lượt chỉ đọc (trùng lặp + code chết ≈ 56k tokens / 2,2 phút; test ≈ 27k / 1,3 phút); đào sâu PR, blame, spot-check: ORCHESTRATOR.
+- Giới hạn: không có `pytest` trên cloud (không số thời gian test); FW-TOKEN-01 chưa kiểm được (repo ngoài quyền truy cập).
 - PR:
