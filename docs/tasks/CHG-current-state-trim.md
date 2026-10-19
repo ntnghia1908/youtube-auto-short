@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: DRAFT
+- Status: READY
 - Type: DOC
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -11,11 +11,11 @@
 - Authorization mode: task
 - Authorization source: HUMAN LEAD duyệt hướng trong phiên token 2026-10-19; cần duyệt contract trước khi làm
 - Parallel group: —
-- Owned paths: `docs/workflow/current-state.md`
+- Owned paths: `docs/workflow/current-state.md`, `docs/workflow/ops-notes.md` (mới), `docs/tasks/CHG-current-state-trim.md`
 - Dependencies: none
-- Base commit / branch: <điền khi bắt đầu>
-- Human Lead approval: pending
-- Implementation authorized: NO
+- Base commit / branch: `fa92cab` / `docs/current-state-trim`
+- Human Lead approval: APPROVED 2026-10-19 (duyệt trong phiên, kèm tạo ops-notes)
+- Implementation authorized: YES
 
 ## Goal
 
@@ -49,4 +49,8 @@ Không chạm database, security model hay public API contract.
 
 ## Result
 
+- `current-state.md`: 8681 → 2347 byte (27 %); ước ≈ 1,2k token theo tỉ lệ baseline ≈ 4,4k. AC1 cần xác nhận bằng `/context` ở phiên mới.
+- Chuyển sang `docs/workflow/ops-notes.md`: khởi động lại sau reboot, Wake Lock, backup chuyển thư mục, bundle CL1, vị trí dữ liệu ngoài git, IP / GPU worker / enhance, tuning `config.toml`, ghi nhận Địa Tạng 2026-10-04.
+- Bỏ hẳn (suy ra được từ Git / contract hoặc đã hết hiệu lực): danh sách PR đã merge theo ngày; SR1 / SR2, `pypdf` (decision + Git); preview TC-WEB1 (tmux `tc-web1-preview` và scratch không còn, kiểm 2026-10-19; evidence ở `docs/tasks/TC-WEB1-theme-index-preview.md`); 9 parked-HD jobs, hàng đợi 7 việc, 13 video lỗi bot 2026-10-03 (trạng thái tạm thời đã qua).
+- `node scripts/framework-check.mjs`: PASS (exit 0) — AC3.
 - PR:
