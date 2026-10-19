@@ -90,4 +90,4 @@ Không chạm database, security model hay public API contract.
 - Review: tự review single-agent (diff → AC); inventory `git status` ⊆ Owned paths.
 - Important findings / decisions: workflow / template của dự án trước đó trùng kit trước PR #10, nên thay nguyên file không mất sửa riêng. Kit `execution.md` rút mục Codex thành pointer README; dự án giữ 7 bước riêng (Phải giữ nguyên).
 - Known limitations: checker chưa bắt buộc mục mới (kit cũng chưa). Hiệu quả F1–F3 đo sau 3–5 task (Manual test checklist).
-- PR:
+- PR: #116
