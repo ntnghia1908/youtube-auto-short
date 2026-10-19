@@ -96,8 +96,9 @@ const ThemePlan = (() => {
     });
   }
   function proposal(p) {
+    const existing = data.plans.find((plan) => plan.proposal && plan.proposal.proposal_id === p.proposal_id);
     let choice = choices.get(p.proposal_id);
-    if (!choice) { choice = { title: (p.titles || [])[0] || p.label }; choices.set(p.proposal_id, choice); }
+    if (!choice) { choice = { title: existing ? existing.title : (p.titles || [])[0] || p.label }; choices.set(p.proposal_id, choice); }
     const title = control(el("input", { type: "text", maxlength: "120", value: choice.title, "aria-label": "Sửa tiêu đề video" }));
     const options = el("div", { class: "tp-titles", role: "group", "aria-label": "Chọn tiêu đề video" });
     const radios = [];
@@ -105,18 +106,53 @@ const ThemePlan = (() => {
       const radio = control(el("input", { type: "radio", name: "tp-title-" + p.proposal_id, value: text }));
       radio.checked = choice.title === text;
       radios.push(radio);
-      radio.addEventListener("change", () => { choice.title = text; title.value = text; });
+      radio.addEventListener("change", () => { choice.title = text; title.value = text; drawActions(); });
       options.append(el("label", { class: "tp-title-option" }, radio, el("span", { text: (i === 0 ? "★ " : "") + text })));
     }
-    title.addEventListener("input", () => { choice.title = title.value; for (const radio of radios) radio.checked = radio.value === title.value; });
+    title.addEventListener("input", () => { choice.title = title.value; for (const radio of radios) radio.checked = radio.value === title.value; drawActions(); });
     const clips = el("ol", { class: "tp-clip-preview" });
     for (const c of p.clips) clips.append(el("li", { text: clipLabel(c) }));
-    const existing = data.plans.find((plan) => plan.proposal && plan.proposal.proposal_id === p.proposal_id);
-    const go = button("Ghép video", () => merge(p, choice.title), active(existing && existing.render_job));
-    go.className += " primary";
+    const actions = el("div", { class: "actions" });
+    function drawActions() {
+      for (const node of actions.children) inputs.delete(node);
+      actions.replaceChildren();
+      const job = existing && existing.render_job;
+      const busy = active(job);
+      const failed = job && ["failed", "interrupted"].includes(job.status);
+      const done = existing && existing.check && existing.check.state === "approved" && existing.output && existing.output.download_url;
+      if (done && !busy && !failed) {
+        actions.append(el("span", { class: "small", role: "status", text: "✓ Đã ghép · " + minutes(existing.total_duration) }));
+        appendOutput(actions, existing.output);
+        if (choice.title === existing.title) return;
+      }
+      if (failed && !busy) actions.append(el("span", { class: "small error", role: "status", text: jobText(job) }));
+      const go = button(busy ? "Đang ghép…" : failed ? "Ghép lại" : done ? "Ghép lại với tiêu đề này" : "Ghép video", () => {
+        go.textContent = "Đang ghép…";
+        return merge(p, choice.title);
+      }, busy);
+      go.className += " primary";
+      actions.append(go);
+    }
+    drawActions();
     return el("article", { class: "tp-plan" }, el("h4", { text: (p.titles || [])[0] || p.label }), options, title,
       el("p", { class: "small muted", text: `${p.clips.length} clip · ${duration(p.total_duration)} · ${p.label} · ${p.rationale}${p.dropped_for_length ? " · đã bớt " + p.dropped_for_length + " clip cho vừa thời lượng" : ""}` }),
-      details("proposal-" + p.proposal_id, `Xem ${p.clips.length} khai thị`, clips), el("div", { class: "actions" }, go));
+      details("proposal-" + p.proposal_id, `Xem ${p.clips.length} khai thị`, clips), actions);
+  }
+  function appendOutput(actions, output) {
+    const player = el("div", { class: "tp-player" });
+    const watch = button("Xem", () => {
+      if (player.children.length) {
+        player.replaceChildren();
+        watch.textContent = "Xem";
+      } else {
+        player.append(el("video", { controls: "", playsinline: "", preload: "metadata",
+          src: output.download_url + "?inline=1" }));
+        watch.textContent = "Ẩn video";
+      }
+    });
+    actions.append(watch);
+    actions.append(el("a", { class: "btn small", href: output.download_url, download: output.download_name || "", text: "Tải về" }),
+      button("Copy mô tả", async () => say(await copyText(output.description || "") ? "Đã copy mô tả." : "Không copy được.")), player);
   }
   function planRow(plan) {
     const check = plan.check || { state: "invalid", problems: [] };
@@ -178,9 +214,7 @@ const ThemePlan = (() => {
         el("div", { class: "actions" }, select, add), total, el("div", { class: "actions" }, reset)));
       actions.append(retry);
       if (plan.output && plan.output.download_url) {
-        const output = plan.output;
-        actions.append(el("a", { class: "btn small", href: output.download_url, download: output.download_name || "", text: "Tải về" }),
-          button("Copy mô tả", async () => say(await copyText(output.description || "") ? "Đã copy mô tả." : "Không copy được.")));
+        appendOutput(actions, plan.output);
       }
       drawClips();
     }

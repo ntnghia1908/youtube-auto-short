@@ -230,6 +230,48 @@ def test_render_approved_only_dedup_and_delete_busy(setup, monkeypatch):
     assert unquote(dl.headers["content-disposition"].split("filename*=UTF-8''")[1]) == "Tu học.mp4"
 
 
+def test_inline_file_range_and_hash_policy(setup, monkeypatch):
+    s = setup
+    plan = approve(s, create(s))
+    path, meta = fake_output(s, plan)
+    url = f"/files/playlists/{PID}/theme/{path.name}"
+    original_hash = hashing.sha256_file
+    video_hashes = []
+
+    def track_hash(file):
+        if file == path:
+            video_hashes.append(file)
+        return original_hash(file)
+
+    monkeypatch.setattr(hashing, "sha256_file", track_hash)
+    full = s.c.get(url + "?inline=1")
+    assert full.status_code == 200 and full.content == b"completed-mp4"
+    assert full.headers["content-type"] == "video/mp4"
+    assert "attachment" not in full.headers.get("content-disposition", "")
+    for byte_range, expected, content_range in [
+        ("bytes=0-3", b"comp", "bytes 0-3/13"),
+        ("bytes=4-", b"leted-mp4", "bytes 4-12/13"),
+    ]:
+        part = s.c.get(url + "?inline=1", headers={"Range": byte_range})
+        assert part.status_code == 206 and part.content == expected
+        assert part.headers["content-range"] == content_range
+        assert part.headers["content-type"] == "video/mp4"
+        assert "attachment" not in part.headers.get("content-disposition", "")
+    assert not video_hashes
+    download = s.c.get(url)
+    assert download.status_code == 200
+    assert download.headers["content-disposition"].startswith("attachment;")
+    assert video_hashes == [path]
+    path.write_bytes(b"changed video")
+    assert s.c.get(url).status_code == 404
+    path.write_bytes(b"")
+    assert s.c.get(url + "?inline=1").status_code == 404
+    path.write_bytes(b"completed-mp4")
+    meta["plan_fingerprint"] = "bad"
+    atomic_write_json(path.with_suffix(".json"), meta)
+    assert s.c.get(url + "?inline=1").status_code == 404
+
+
 @pytest.mark.parametrize("damage", ["no-file", "no-meta", "revision", "fingerprint", "hash", "schema", "symlink"])
 def test_file_fail_closed(setup, damage):
     s = setup
@@ -504,9 +546,9 @@ async function made() {await click('tp-proposals','Ghép video');ready();await r
   assert.deepEqual(approve.body,{revision:scenario==='one-click'?1:2,duration_override:true});
   assert.equal(fixture.plans[0].title,scenario==='radio'?p.titles[1]:scenario==='custom'?'Tựa tự sửa':p.titles[0]);
   assert.ok(app.els['tp-plans'].textContent.includes('đang chờ'));
-  assert.equal(btn('tp-proposals','Ghép video').disabled,true);
+  assert.equal(btn('tp-proposals','Đang ghép…').disabled,true);
   assert.equal(btn('tp-plans','Xóa').disabled,true);
-  const count=mutations().length;await click('tp-proposals','Ghép video');await click('tp-plans','Ghép lại');assert.equal(mutations().length,count);
+  const count=mutations().length;await click('tp-proposals','Đang ghép…');await click('tp-plans','Ghép lại');assert.equal(mutations().length,count);
   fixture.plans[0].render_job={active:true,status:'running',stage:'theme_render'};await refresh();
   assert.ok(app.els['tp-plans'].textContent.includes('đang ghép'));
   assert.ok(!app.els['tp-plans'].textContent.includes('theme_render'));
@@ -516,10 +558,58 @@ async function made() {await click('tp-proposals','Ghép video');ready();await r
   assert.ok(!nodes('tp-plans').some(n=>n.type==='checkbox'));
   fixture.generate_job.active=false;
   const before=app.timers.length;await refresh();assert.equal(app.timers.length,before);
+ } else if (scenario === 'card-poll' || scenario === 'card-reload' || scenario === 'card-retitle') {
+  // Hold the first GET: the card must show progress before any response arrives.
+  fixture.generate_job.active=false;
+  let release;hold=new Promise(r=>release=r);
+  const started=click('tp-proposals','Ghép video');
+  assert.equal(btn('tp-proposals','Đang ghép…').disabled,true);
+  assert.ok(!nodes('tp-proposals').some(n=>n.tagName==='BUTTON' && n.textContent==='Ghép video'));
+  release();await started;
+  assert.equal(btn('tp-proposals','Đang ghép…').disabled,true);
+  const poll=app.timers.filter(t=>t.ms===5000).at(-1);assert.ok(poll);
+  fixture.plans[0].render_job={active:true,status:'running'};await poll.f();
+  assert.equal(btn('tp-proposals','Đang ghép…').disabled,true);
+  ready();fixture.plans[0].output={download_url:'/files/ready.mp4',download_name:'Tu học.mp4',description:'00:00 Tu học'};
+  await app.timers.filter(t=>t.ms===5000).at(-1).f();
+  if (scenario === 'card-reload') {
+   fixture.plans[0].title='Tiêu đề đã lưu';fixture.plans[0].render_job=null;
+   // A completed output is sufficient even after job history has gone away.
+   app=boot();await tick();assert.equal(input('tp-proposals').value,'Tiêu đề đã lưu');
+  }
+  const card=app.els['tp-proposals'];
+  assert.ok(card.textContent.includes('✓ Đã ghép · 11,7 phút'));
+  assert.ok(!nodes('tp-proposals').some(n=>n.tagName==='BUTTON' && /Ghép video|Ghép lại/.test(n.textContent)));
+  const link=nodes('tp-proposals').find(n=>n.tagName==='A');
+  assert.equal(link.href,'/files/ready.mp4');assert.equal(link.download,'Tu học.mp4');
+  await click('tp-proposals','Copy mô tả');assert.deepEqual(copies,['00:00 Tu học']);
+  for (const id of ['tp-proposals','tp-plans']) {
+   assert.ok(!nodes(id).some(n=>n.tagName==='VIDEO'));
+   await click(id,'Xem');
+   const video=nodes(id).find(n=>n.tagName==='VIDEO');assert.ok(video);
+   assert.equal(video.src,'/files/ready.mp4?inline=1');
+   assert.equal(video.preload,'metadata');assert.ok('controls' in video && 'playsinline' in video);
+   await click(id,'Ẩn video');assert.ok(!nodes(id).some(n=>n.tagName==='VIDEO'));
+   await click(id,'Xem');assert.notEqual(nodes(id).find(n=>n.tagName==='VIDEO'),video);
+   await click(id,'Ẩn video');
+  }
+  if (scenario === 'card-retitle') {
+   nodes('tp-proposals').filter(n=>n.type==='radio')[1].listeners.change();
+   assert.equal(btn('tp-proposals','Ghép lại với tiêu đề này').disabled,false);
+   setTitle('tp-proposals',fixture.plans[0].title);
+   assert.ok(!nodes('tp-proposals').some(n=>n.tagName==='BUTTON' && n.textContent==='Ghép lại với tiêu đề này'));
+   setTitle('tp-proposals','Tựa mới');
+   const before=mutations().length;await click('tp-proposals','Ghép lại với tiêu đề này');
+   assert.deepEqual(mutations().slice(before).map(r=>r.method),['PUT','POST','POST']);
+   assert.equal(mutations()[before].body.title,'Tựa mới');
+   assert.equal(mutations()[before+1].body.revision,2);
+   assert.equal(fixture.plans.length,1);
+   assert.equal(btn('tp-proposals','Đang ghép…').disabled,true);
+  }
  } else if (scenario === 'double-reload') {
   let release;hold=new Promise(r=>release=r);
-  const first=click('tp-proposals','Ghép video'), second=click('tp-proposals','Ghép video');
-  assert.equal(btn('tp-proposals','Ghép video').disabled,true);
+  const first=click('tp-proposals','Ghép video'), second=click('tp-proposals','Đang ghép…');
+  assert.equal(btn('tp-proposals','Đang ghép…').disabled,true);
   release();await Promise.all([first,second]);assert.equal(fixture.plans.length,1);
   ready(); app=boot();await tick();
   await click('tp-proposals','Ghép video');assert.equal(fixture.plans.length,1);
@@ -565,9 +655,12 @@ async function made() {await click('tp-proposals','Ghép video');ready();await r
  } else if (scenario === 'failed-job') {
   await made();fixture.plans[0].render_job={active:false,status:'failed',error:'không đọc được nguồn'};await refresh();
   assert.ok(app.els['tp-plans'].textContent.includes('lỗi: không đọc được nguồn'));
+  assert.ok(app.els['tp-proposals'].textContent.includes('lỗi: không đọc được nguồn'));
+  assert.equal(btn('tp-proposals','Ghép lại').disabled,false);
   assert.equal(btn('tp-plans','Ghép lại').disabled,false);
   const approvals=mutations().filter(r=>r.path.endsWith('/approve')).length;
-  await click('tp-plans','Ghép lại');
+  await click('tp-proposals','Ghép lại');
+  assert.equal(btn('tp-proposals','Đang ghép…').disabled,true);
   assert.equal(mutations().filter(r=>r.path.endsWith('/approve')).length,approvals);
   assert.equal(fixture.plans[0].render_job.status,'queued');
  } else if (scenario === 'read-failure') {
@@ -605,6 +698,7 @@ async function made() {await click('tp-proposals','Ghép video');ready();await r
 
 @pytest.mark.parametrize("scenario", [
     "display", "one-click", "radio", "custom", "double-reload",
+    "card-poll", "card-reload", "card-retitle",
     "failure-create", "failure-edit", "failure-approve", "failure-render",
     "lost-create-response", "edit-clips", "edit-retry-failure", "failed-job", "read-failure",
     "conflict", "stale", "focus-long",

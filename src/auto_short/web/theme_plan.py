@@ -387,7 +387,7 @@ def register(app: FastAPI, service: ThemePlans):
         return invoke(pid, action, conflict=True)
 
     @app.get("/files/playlists/{pid}/theme/{name}")
-    def download(pid: str, name: str):
+    def download(pid: str, name: str, inline: int = 0):
         missing = lambda: response({"detail": "không có file này"}, 404)
         match = FILE_NAME.fullmatch(name)
         if match is None or service.checked(pid) is not None:
@@ -396,12 +396,17 @@ def register(app: FastAPI, service: ThemePlans):
             plan = service.find(pid, match[1])
             if str(plan.get("revision")) != match[2]:
                 return missing()
-            output = service.output(pid, plan, verify=True)
+            output = service.output(pid, plan, verify=inline != 1)
             if output is None:
                 return missing()
             path, meta = output
-            return FileResponse(path, media_type="video/mp4", headers={
-                "Content-Disposition": content_disposition(redact(meta["download_name"])),
-                "Cache-Control": "private, no-cache"})
+            # Metadata has no stored byte count; reject empty files and let
+            # FileResponse stat the file for Content-Length and Range handling.
+            if inline == 1 and path.stat().st_size <= 0:
+                return missing()
+            headers = {"Cache-Control": "private, no-cache"}
+            if inline != 1:
+                headers["Content-Disposition"] = content_disposition(redact(meta["download_name"]))
+            return FileResponse(path, media_type="video/mp4", headers=headers)
         except (MissingPlan, BrokenArtifact, theme_plan.PlanError, theme_index.IndexError, OSError, ValueError):
             return missing()
