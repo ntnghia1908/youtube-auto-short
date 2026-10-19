@@ -1,0 +1,104 @@
+pr	branch	app+	app-	test+	test-	web+	web-	doc+	doc-	task	type	implementer
+10	cp8.7-playlist	3889	84	3573	12	1311	0	1513	26	CP8.7-playlist	FEATURE	?
+82	sr1-sutra-reader	2198	23	1802	0	1033	6	664	2			
+98	tc2-theme-plan	1734	62	2071	15	222	3	350	0	TC2-theme-compilation-planner	FEATURE	claude-code
+35	cp8.15-community-post	1892	11	1414	0	411	2	379	5	CP8.15-community-post	FEATURE	?
+6	cp4-analysis	787	1	2279	0	0	0	356	8	CP4-analysis	FEATURE	?
+60	cp13.1b-enhance-vm	1583	22	1157	0	115	1	97	11	CP13.1b-enhance-vm	FEATURE	claude-subagent
+30	cp9-clip-review	1276	55	1074	5	446	4	202	17	CP9-clip-review	FEATURE	?
+86	cp8.33-khaithi-compilation	1248	9	774	0	352	3	130	0	CP8.33-khaithi-compilation	FEATURE	claude-subagent
+19	cp8.9-khai-thi	810	64	1161	11	239	28	312	7	CP8.9-khai-thi	FEATURE	?
+7	cp5-selection	1108	1	1045	0	0	0	451	9	CP5-selection	FEATURE	?
+57	cp13.1-enhance-worker	1625	0	360	0	0	0	1338	0			
+9	cp7-render	1129	1	671	0	0	0	499	11	CP7-render	FEATURE	?
+76	cp8.30-image-search	1026	5	577	0	141	0	121	4	CP8.30-image-search	FEATURE	claude-subagent
+96	tc-web1-theme-index-preview	668	0	802	0	176	0	260	0			
+12	cl1-chinese-learning	631	6	931	0	0	0	555	1			
+8	cp6-titling	785	1	776	0	0	0	453	6	CP6-titling	FEATURE	?
+48	cp8.19-post-doc-source	641	14	724	0	76	0	206	5	CP8.19-post-doc-source	FEATURE	claude-subagent
+88	cp8.34-sequential-download	269	10	700	0	372	0	124	0	CP8.34-sequential-download	FEATURE	claude-subagent
+68	cp8.28-monitor	619	26	461	0	208	7	216	3	CP8.28-monitor	FEATURE	claude-subagent
+85	cp8.32-vertical-original	535	58	664	0	87	8	121	2	CP8.32-vertical-original	FEATURE	claude-subagent
+15	cl1.2-lesson	550	11	684	10	0	0	150	3	CL1.2-ai-enrichment-lesson	FEATURE	?
+47	cp8.18-post-corrections	534	5	467	0	166	1	184	4	CP8.18-post-corrections	FEATURE	claude-subagent
+41	cp11-performance	1163	0	0	0	0	0	382	0			
+37	cp8.16-post-tab-auto	175	23	558	7	285	143	202	3	CP8.16-post-tab-auto	CHANGE	claude-subagent
+20	cp8.11-series-recognition	235	32	649	1	74	0	172	16	CP8.11-series-recognition	CHANGE	?
+74	cp13.4-gfpgan	576	30	337	0	28	5	190	5	CP13.4-enhance-gfpgan	CHANGE	claude-subagent
+78	cp8.31-downloads-mobile	296	8	497	28	145	40	188	9	CP8.31-downloads-mobile	CHANGE	claude-subagent
+39	ollama-wait	269	81	645	9	24	1	137	2	FIX-ollama-wait	CHANGE	claude-subagent
+73	cp13.3-enhance-quality	852	0	0	0	0	0	534	0	CP13.3-enhance-quality	CHANGE	claude-subagent
+22	cp8.10-queue-lanes	286	92	533	0	30	3	159	15	CP8.10-queue-lanes	CHANGE	?
+71	cp8.27-hd-download	463	8	286	0	54	2	88	0	CP8.27-hd-download	FEATURE	claude-subagent
+104	cp8.37-restore-source	267	17	410	2	35	9	85	5	CP8.37-restore-source	FEATURE	codex
+102	tc2.3-simple-ui	10	5	385	51	311	165	76	0	TC2.3-simple-ui	CHANGE	codex
+58	cp8.22-queue-pause	305	15	347	0	44	0	104	4	CP8.22-queue-pause-persist	FEATURE	claude-subagent
+51	cp8.20-doc-measure	677	0	0	0	0	0	360	0	CP8.20-doc-cut-title-measure	CHANGE	claude-subagent
+66	youtube-botcheck-wait	223	13	408	0	24	0	78	0	FIX-youtube-botcheck-wait	BUG	claude-subagent
+55	cp13-enhance-measure	650	0	0	0	0	0	460	0	CP13-enhance-measure	CHANGE	claude-subagent
+52	cp8.21-ui-names	264	38	286	36	92	11	135	9	CP8.21-ui-names-watched	CHANGE	claude-subagent
+62	cp13.2-hd-first	239	38	325	3	50	1	104	1	CP13.2-hd-first	FEATURE	claude-subagent
+56	storage-suggest	216	34	289	5	20	12	122	10			
+72	cp8.29-parallel-prepare	181	67	327	0	5	5	110	0	CP8.29-parallel-prepare	CHANGE	claude-subagent
+67	cp8.26-priority	193	12	273	0	41	2	69	0	CP8.26-priority	FEATURE	claude-subagent
+90	runner-stop	149	28	305	0	0	0	65	0	FIX-runner-stop	BUG	claude-subagent
+91	cp8.36-render-parallel	119	4	301	0	0	0	105	0	CP8.36-render-parallel	FEATURE	claude-subagent
+92	cp8.35-auto-vertical	133	6	248	0	15	6	87	1	CP8.35-auto-vertical	FEATURE	claude-subagent
+11	cp8.8-playlist-hashtags	140	4	118	0	126	0	119	14	CP8.8-playlist-hashtags	FEATURE	?
+38	cp8.17-download-rules	63	7	230	3	66	4	179	15	CP8.17-download-rules	CHANGE	claude-subagent
+25	cp8.12-episode-ui	0	0	190	0	143	22	134	3	CP8.12-episode-ui	CHANGE	?
+77	enhance-yield	85	20	220	4	0	0	109	6			
+26	cp8.13-playlist-groups	8	5	221	12	42	14	113	9	CP8.13-playlist-groups-loop	CHANGE	?
+28	cp8.14-title-layout	51	33	210	58	0	0	199	51	CP8.14-title-layout	CHANGE	?
+44	render-parallel	69	14	169	1	0	0	91	6			
+84	youtube-id-dash	33	10	163	0	0	0	77	1			
+70	monitor-labels	100	9	70	0	8	3	58	0	FIX-monitor-labels	BUG	claude-subagent
+50	post-doc-no-gpu	25	10	144	5	0	0	73	0			
+63	cp8.23-adaptive-boundary	98	7	58	4	0	0	110	0	CP8.23-adaptive-boundary	CHANGE	claude-subagent
+109	token-audit	154	0	0	0	0	0	122	0			
+64	cp8.24-doc-pages	39	11	99	1	11	2	83	0	CP8.24-doc-pages	FEATURE	claude-subagent
+100	enhance-cuda-fatal	64	0	79	0	0	0	59	0			
+81	render-video-tail	48	8	79	0	0	0	91	1	FIX-render-video-tail	BUG	claude-subagent
+61	test-speed	0	0	94	3	0	0	90	0			
+94	as-fw-upgrade-01	0	0	91	0	0	0	949	39			
+95	codex-native-pilot-01	0	0	83	0	0	0	107	0			
+59	cp13.1a-401	46	11	32	0	0	0	4	4	CP13.1a-enhance-worker-win	FEATURE	claude-subagent
+42	render-vfr	34	8	44	0	0	0	90	0			
+101	fw-codex-implementer	56	0	0	0	0	0	128	7			
+99	keep-khaithi-source	4	1	44	23	0	0	63	1			
+80	title-script	10	1	38	3	0	0	85	1	FIX-title-script	BUG	claude-subagent
+103	archive-grace-days	2	2	30	4	0	0	57	3			
+65	doc-match-050	1	1	19	0	0	0	61	1	FIX-doc-match-050	CHANGE	claude-subagent
+54	khaithi-name	6	10	13	13	0	0	62	6			
+69	post-title-upper	2	2	10	2	1	1	59	0	FIX-post-title-upper	CHANGE	claude-subagent
+23	test-output-dir	0	0	9	3	0	0	82	0			
+107	remove-cl1	6	1170	2	1603	0	0	101	49	CHG-remove-cl1	CHANGE	codex
+110	current-state-trim	0	0	0	0	0	0	56	33	CHG-current-state-trim	DOC	?
+108	state-cl1-removed	0	0	0	0	0	0	1	1			
+106	state-cleanup-2026-10-19	0	0	0	0	0	0	3	3			
+105	state-2026-10-19	0	0	0	0	0	0	7	7			
+97	tc1-web1-integration	0	0	0	0	0	0	19	8	TC1-theme-index	FEATURE	codex
+93	state-2026-10-18	0	0	0	0	0	0	5	2			
+89	keepawake-mp4	0	0	0	0	0	0	56	0	FIX-keepawake-mp4	BUG	
+87	state-2026-10-17	0	0	0	0	0	0	4	2			
+83	state-2026-10-13	0	0	0	0	0	0	3	1			
+79	state-2026-10-09	0	0	0	0	0	0	3	1			
+75	state-2026-10-04	0	0	0	0	0	0	17	27			
+53	post-cp821-state	0	0	0	0	0	0	6	1			
+45	post-r1-state	0	0	0	0	0	0	3	3			
+43	post-render-vfr-state	0	0	0	0	0	0	3	1			
+40	post-ollama-wait-state	0	0	0	0	0	0	3	3			
+36	post-cp815-state	0	0	0	0	0	0	5	4			
+34	fw-starter-kit	0	0	0	0	0	0	460	68	FW-starter-kit	CHANGE	?
+33	fw-v4.2	0	0	0	0	0	0	9	5			
+32	post-fw-implementer-speed-state	0	0	0	0	0	0	7	5			
+31	fw-implementer-speed	0	0	0	0	0	0	162	1			
+29	post-cp814-state	0	0	0	0	0	0	3	3			
+27	post-cp813-state	0	0	0	0	0	0	3	3			
+24	post-cp810-state	0	0	0	0	0	0	7	3			
+21	post-cp89-state	0	0	0	0	0	0	3	3			
+18	cp8.4-skip	0	0	0	0	0	0	5	3			
+17	g6a-evidence-profile	0	0	0	0	0	0	41	3			
+16	cl1-post-cl12-state	0	0	0	0	0	0	23	12			
+14	cl1-roadmap-framework-check	0	0	0	0	0	0	30	0	CL1.2-ai-enrichment-lesson	FEATURE	?
+13	cl1-roadmap	0	0	0	0	0	0	233	0			
