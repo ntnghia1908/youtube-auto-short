@@ -85,7 +85,7 @@ PDF chỉ có lớp chữ mới import được (PDF scan → 422 "PDF không c�
 - **Cảnh báo** trả về (`warnings`): trang không có chữ, chú thích không ghép được, mục quá dài / quá ngắn bất thường.
 - Thuật toán thử trên 3 PDF đầu (ORCHESTRATOR, 2026-10-12, prototype ngoài repo): chính văn A Di Đà, Thái Thượng tách đúng mục và đoạn; còn lỗi nhỏ ở vài mục kệ / chú; Vô Lượng Thọ còn header "KINH VÔ LƯỢNG THỌ - ÂM HÁN VIỆT n" lẫn vào tiêu đề phẩm (đã sửa bằng quy tắc header có số trang). Bản Vô Lượng Thọ đầy đủ HUMAN LEAD gửi sau (AMTBVN, 182 trang, sách chữ lớn): nhận đủ 48 phẩm + 48 nhãn nguyện sau các quy tắc giãn dòng / header theo chương / chữ nhỏ đánh số. Số đo chính thức do SR1.3 ghi.
 
-**Số đo SR1.3** (2026-10-12; `scripts/sutra_pdf_measure.py`, qua đúng đường `importer.import_pdf` + `markup.parse`; 4 PDF thật, không commit nội dung):
+**Số đo SR1.3** (2026-10-12; `scripts/sutra_pdf_measure.py`, qua đúng đường `importer.import_pdf` + `markup.parse`; 4 PDF thật, không commit nội dung): (đã xóa ở CLEAN-P1; lấy lại: `git show 240003f:scripts/sutra_pdf_measure.py`)
 
 | PDF | Trang | Mục nhận / mục thật | `markup.parse` | Header còn sót (dòng / dính trong dòng) | Dòng ngắt dở (< 45 ký tự, không dấu câu cuối, trong mục văn xuôi) | Cảnh báo | Thời gian |
 |---|---|---|---|---|---|---|---|

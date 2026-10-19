@@ -170,7 +170,7 @@ def total_segments(frames: int, seg_frames: int) -> int:
 
 
 def out_size(src_w: int, src_h: int, pre_h: int, out_h: int, scale: int = 4) -> tuple[int, int, int, int]:
-    """(pre_w, pre_h, out_w, out_h) theo cong thuc cua `enhance_bench_win.py`."""
+    """(pre_w, pre_h, out_w, out_h) theo cong thuc cua `enhance_bench_win.py` (đã xóa, xem git 240003f)."""
     if pre_h > 0 and pre_h != src_h:
         pre_w = int(round(src_w * pre_h / src_h / 2) * 2)
     else:

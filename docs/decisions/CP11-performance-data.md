@@ -4,7 +4,7 @@
 |---|---|
 | Status | PROPOSED (số liệu đo; không phải authority, không đổi hành vi nào) |
 | Task contract | `docs/tasks/CP11-performance-measure.md` |
-| Script | `scripts/cp11_bench.py` (chạy lại từng thí nghiệm bằng một lệnh; chỉ ghi vào thư mục bench) |
+| Script | `scripts/cp11_bench.py` (chạy lại từng thí nghiệm bằng một lệnh; chỉ ghi vào thư mục bench) (đã xóa ở CLEAN-P1; lấy lại: `git show 240003f:scripts/cp11_bench.py`) |
 | Người đo | IMPLEMENTER, 2026-09-30 |
 | Phần khuyến nghị | Không có ở file này. `CP11-performance-report.md` do ORCHESTRATOR viết từ số liệu dưới đây. |
 
@@ -176,7 +176,7 @@ Mỗi dòng: trung bình hai lượt (số từng lượt trong ngoặc). Render
 
 Đổi preset / crf / bố cục: hash đổi → mọi Short encode lại (mục 7; không chạy thật vì kết quả suy ra từ code).
 
-## 7. Đổi `config_hash` / `render_key` hay không (kiểm bằng code: `python scripts/cp11_bench.py hashes`)
+## 7. Đổi `config_hash` / `render_key` hay không (kiểm bằng code: `python scripts/cp11_bench.py hashes`) (đã xóa ở CLEAN-P1; lấy lại: `git show 240003f:scripts/cp11_bench.py`)
 
 `hashes` dựng `Config` biến thể và tính hash từng stage bằng chính `used_config()` của stage (hash đổi = True). `render_key` (`render/stage.py::render_key`) chứa `render_config_hash`, nên `render_key` đổi khi và chỉ khi hash render đổi (hoặc font, nguồn, fps, segments, layout, header, title, `RENDER_PLAN_VERSION`).
 

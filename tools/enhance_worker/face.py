@@ -2,7 +2,7 @@
 
 Chay SAU mang SRVGG, tren khung da enhance (BGR uint8, kich thuoc dich): do mat (facexlib RetinaFace) -> can 512 ->
 GFPGAN v1.4 -> tron voi mat goc theo `weight` -> dan lai co mat na parsing. Cung thuat toan voi `FaceRestorer(kind="gfp")`
-cua `scripts/enhance_quality_bench.py` (CP13.3, mau `cur+gfp`).
+cua `scripts/enhance_quality_bench.py` (đã xóa, xem git 240003f) (CP13.3, mau `cur+gfp`).
 
 Dependency (chi trong env cua worker, KHONG vao project): gfpgan, facexlib (+ basicsr do gfpgan keo vao). Trong so
 khong bao gio tai luc chay: `setup-enhance-worker.ps1` tai + kiem sha256 vao `models/`.

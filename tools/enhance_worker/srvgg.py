@@ -1,6 +1,6 @@
 """Mang SRVGGNetCompact + nap trong so `realesr-general-x4v3` (CP13.1a E4).
 
-Sao chep co rut gon tu `scripts/enhance_bench_win.py` (CP13), vốn rút gọn từ
+Sao chep co rut gon tu `scripts/enhance_bench_win.py` (đã xóa, xem git 240003f) (CP13), vốn rút gọn từ
 Real-ESRGAN / basicsr; giữ tên tham số để nạp được `.pth` chính thức.
 Chi can torch (khong can `realesrgan` / `basicsr`).
 """
