@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: DRAFT
+- Status: IN_PROGRESS
 - Type: DOC
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -16,9 +16,9 @@
   - `docs/audit/` (báo cáo mới; không sửa `code-growth-evidence.md`, `code-growth-prs.tsv` trừ bổ sung cột khớp task)
   - `docs/tasks/AUDIT-code-growth.md`
 - Dependencies: FW-TOKEN-01 (ai-dev-framework PR #10) đã merge — để đề xuất bám quy tắc mới
-- Base commit / branch: <main HEAD lúc bắt đầu> / audit/code-growth
-- Human Lead approval: pending
-- Implementation authorized: NO
+- Base commit / branch: `39f6c80` / `claude/vigilant-faraday-y4vgxc` (phiên cloud chỉ được push nhánh này; HUMAN LEAD duyệt 2026-10-19)
+- Human Lead approval: APPROVED 2026-10-19 — PR đào sâu: #10, #82, #35, #98, #57 (app+ lớn nhất) + CHANGE #74, #78, #72 (#73 / #51 / #55 bỏ vì chủ yếu script bench); cài tạm `vulture` (`pip install --user`), `jscpd` qua `npx`
+- Implementation authorized: YES
 
 Lifecycle: `task` mode = `DRAFT → APPROVED → IN_PROGRESS → READY`.
 
