@@ -23,14 +23,23 @@
 
 Từ trang Yêu thích, trên điện thoại: mở trang là thấy ngay “Ghép theo chủ đề (AI)”; bấm “AI gợi ý chủ đề” → mỗi chủ đề có tiêu đề (chọn 1 trong 3 hoặc sửa) và nút **“Ghép video”** → bấm là ghép luôn (không giai đoạn nháp, không xác nhận độ dài) → hiện tiến độ, xong có Tải về + Copy mô tả.
 
-## Scope / decisions
+## Scope
+
+- In scope: trang Yêu thích (tab, thẻ chủ đề, nút “Ghép video” một bước, “Video đã ghép”), CSS mobile, tests.
+- Out of scope: backend, TC1 / TC3, hành vi CP8.33.
+
+## Authority / key decisions
+
 
 - Sửa G4 (HUMAN LEAD 2026-10-19): bỏ tick xác nhận độ dài; độ dài ngoài 30–40 phút chỉ hiện chữ thông tin (“21,6 phút — ngắn hơn 30 phút”), không chặn. Việc bấm “Ghép video” với tiêu đề đã chọn là duyệt rõ ràng của HUMAN LEAD (boundary §4 giữ nguyên: người duyệt chủ đề, clip, thứ tự trước khi xuất).
 - Không đổi API / backend: JS gọi tuần tự các route hiện có: `POST /theme-plans` {proposal_id} → (nếu tiêu đề khác mặc định) `PUT` {revision, title, clip_ids} → `POST …/approve` {revision, duration_override: true} → `POST …/render`. Lỗi ở bước nào thì báo rõ bước đó; bấm lại không tạo trùng (nếu đã có plan từ cùng proposal_id thì dùng tiếp plan đó).
 - Thẻ chủ đề: tiêu đề (3 phương án dạng radio, mặc định ★, ô sửa), dòng phụ: số clip · phút · nhãn / lý do ngắn; danh sách clip thu gọn trong `<details>` “Xem N khai thị”; nút “Ghép video”.
 - “Video đã ghép” (các plan): mỗi dòng tiêu đề + trạng thái (đang chờ / đang ghép / xong → Tải về + Copy mô tả / lỗi + “Ghép lại” / nội dung clip đã đổi → “Gợi ý lại”) + Xóa. Sửa danh sách clip (↑ ↓ ✕ thêm) giữ nhưng thu gọn trong `<details>` “Sửa danh sách clip” — sửa xong “Ghép lại” (PUT → approve → render).
 - Bố cục: trang Yêu thích có tab (theo mẫu tab của `episode.html`): **“Ghép theo chủ đề (AI)”** (mặc định) | **“Yêu thích & ghép tay”** (danh sách yêu thích, ghép / lặp / tự ghép CP8.33, video ghép CP8.33). Nhớ tab cuối trong localStorage (try/catch). Mobile ≤ 640 px: không tràn ngang, nút đủ lớn để chạm.
-- Out of scope: backend, TC1 / TC3, CP8.33 hành vi.
+
+## Implementation approach
+
+- JS-only theo các quyết định trên; tái dùng helper `el` / `api` / `fmtDur` / `copyText` của `favorites.js` và mẫu tab của `episode.html`.
 
 ## Acceptance Criteria
 
