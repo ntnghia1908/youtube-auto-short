@@ -21,18 +21,23 @@ def find(obj):
     return None
 
 
-def latest_limits(root: Path):
-    for log in sorted(root.glob("*/*/*/*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True):
-        last = None
+def latest_limits(root: Path, recent: int = 50):
+    """The quota snapshot with the newest event timestamp across the most recent session logs (a log's mtime is not
+    the freshness of its quota events: concurrent / resumed sessions write in any order)."""
+    best = (None, None, None)
+    logs = sorted(root.glob("*/*/*/*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)[:recent]
+    for log in logs:
         for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
-            if '"rate_limits"' in line:
-                try:
-                    last = find(json.loads(line)) or last
-                except ValueError:
-                    continue
-        if last:
-            return log, last
-    return None, None
+            if '"rate_limits"' not in line:
+                continue
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            limits, stamp = find(event), event.get("timestamp") if isinstance(event, dict) else None
+            if limits and isinstance(stamp, str) and (best[0] is None or stamp > best[0]):
+                best = (stamp, log, limits)
+    return best[1], best[2]
 
 
 def main() -> int:
