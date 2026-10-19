@@ -4,7 +4,7 @@
 
 - Status: READY
 - Type: CHANGE
-- Change class: S2 (sửa rule W1 của `docs/decisions/CP8.3-web-contract.md`)
+- Change class: S2
 - Owner: HUMAN LEAD
 - Execution profile: dual-agent
 - Orchestrator: claude-code
@@ -19,6 +19,8 @@
 - Implementation authorized: YES
 
 Lifecycle: `task` mode = `DRAFT → APPROVED → IN_PROGRESS → READY`. DONE suy ra từ Git sau khi merge (cả ba phase).
+
+S2 vì: sửa rule W1 của `docs/decisions/CP8.3-web-contract.md`.
 
 ## Goal
 

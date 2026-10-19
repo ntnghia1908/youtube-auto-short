@@ -3,7 +3,7 @@
 "use strict";
 
 (function (root) {
-  const DEFAULTS = { concurrency: 2, maxRetries: 2, retryWaitMs: 5000, noRequestMs: 60000 };
+  const DEFAULTS = { concurrency: 2, maxRetries: 2, retryWaitMs: 5000, noRequestMs: 60000, abortGraceMs: 10000 };
 
   function createQueue(options) {
     const opt = Object.assign({}, DEFAULTS, options || {});
@@ -35,7 +35,7 @@
           const live = items.find((i) => i.key === s.key && !["done", "error", "skipped"].includes(i.status));
           if (live) continue;
           const item = { id: ++seq, key: s.key, name: s.name, url: s.url, kind: s.kind, status: s.skipped ? "skipped" : "waiting",
-            reason: s.skipped || "", attempts: 0, token: null, startedAt: 0, retryAt: 0, seen: false, bytesSent: 0, bytesTotal: null };
+            reason: s.skipped || "", attempts: 0, token: null, startedAt: 0, retryAt: 0, abortedAt: 0, seen: false, bytesSent: 0, bytesTotal: null };
           items.push(item);
           added.push(item);
         }
@@ -50,7 +50,7 @@
       retry(id) {
         const item = items.find((i) => i.id === id);
         if (!item || item.status !== "error") return false;
-        item.status = "waiting"; item.attempts = 0; item.reason = "";
+        item.status = "waiting"; item.attempts = 0; item.reason = ""; item.abortedAt = 0;
         return true;
       },
       /** Move due retries back to waiting, then start waiting items up to the concurrency. Returns [{item, token}]
@@ -63,7 +63,7 @@
           if (sendingCount() >= concurrency) break;
           if (i.status !== "waiting") continue;
           i.status = "sending"; i.attempts += 1; i.token = makeToken(); i.startedAt = now; i.seen = false;
-          i.bytesSent = 0; i.bytesTotal = null; i.reason = ""; i.polling = false;
+          i.bytesSent = 0; i.bytesTotal = null; i.reason = ""; i.polling = false; i.abortedAt = 0;
           started.push({ item: i, token: i.token });
         }
         return started;
@@ -80,8 +80,13 @@
         i.seen = true;
         i.bytesSent = info.bytes_sent || 0;
         i.bytesTotal = info.bytes_total == null ? null : info.bytes_total;
-        if (info.state === "done") { i.status = "done"; i.reason = ""; }
-        else if (info.state === "aborted") fail(i, now, "bị ngắt giữa chừng");
+        if (info.state === "aborted") {
+          if (i.abortedAt === 0) i.abortedAt = now;
+          if (now - i.abortedAt >= opt.abortGraceMs) fail(i, now, "bị ngắt giữa chừng");
+        } else {
+          i.abortedAt = 0;
+          if (info.state === "done") { i.status = "done"; i.reason = ""; }
+        }
       },
       /** A1c: the `sending` items that have no status request in flight (each is marked in flight). One hung request
        *  blocks only its own item, never the polling of the others or the next round. */
