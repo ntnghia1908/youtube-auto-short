@@ -8,6 +8,8 @@ Chỉ ghi operational state không suy ra được từ Git, task contract hoặ
 
 ## Current focus
 
+Auto Short (cập nhật 2026-10-19): `main` = `a3627a6`, 8080 chạy đúng commit này (worktree `../youtube-auto-short-web`, restart: hỏi HUMAN LEAD rồi `~/.local/bin/auto-short-web-restart`, mật khẩu ở `~/.local/share/auto-short/web.env` mode 600). Đã merge 2026-10-19: TC2 + TC3 ghép video ngang theo chủ đề (#98), FIX giữ nguồn video có khai thị (#99), FIX worker enhance lỗi CUDA (#100), framework Codex IMPLEMENTER (#101; kit ai-dev-framework #9), TC2.3 ghép một bước + tab điện thoại + nút Xem (#102), FIX ân hạn tự dọn 5 ngày (#103), CP8.37 khôi phục nguồn (#104). `config.toml` `[storage]`: `auto_archive = true`, `auto_archive_grace_minutes = 7200`. Kho nguồn gốc `work/_theme_sources/` (13 video, tải dần bằng `python -m auto_short.theme_render.sources`). Codex: quy trình `.claude/rules/execution.md`, quota `scripts/codex-usage.py`.
+
 TC1 + TC-WEB1 (2026-10-18): HUMAN LEAD đã test preview LAN thành công và authorize integration/rollout. Web production `youtube:web` đã rollout code merge PR #96, giữ 9 parked-HD jobs và mật khẩu/tokens hiện hành; lanes rảnh khi restart, queue đã resume như trước. Trang read-only `/playlists/{pid}/theme-index` không sinh AI/index trên GET; dataset thật được kiểm vẫn 0 eligible/2 ineligible. Preview synthetic còn chạy trong tmux `tc-web1-preview`, scratch `/tmp/tc-web1-human-preview-tqmanfv4`, LAN `10.8.102.102:8099`, password thử chỉ trong scratch `.preview-password`; production không chứa fixture synthetic. Evidence/giới hạn: `docs/tasks/TC-WEB1-theme-index-preview.md`; TC2/TC3 chưa được implement bởi scope này.
 
 Auto Short (cập nhật 2026-10-18): `main` = `ad59dfe`. Đã merge sau 2026-10-17: CP8.34 tải lần lượt nhiều file trên trang bộ kinh + giữ màn hình sáng bằng video câm lặp (#88), FIX-keepawake-mp4 (#89), FIX-runner-stop dừng server không treo / không để ffmpeg mồ côi (#90), CP8.36 làn render song song khi CPU bận < 60 % (`[web] render_workers = 2`, `render_max_cpu = 0.6`; #91), CP8.35 bấm "Xử lý" tự tạo luôn bản dọc sau khi có HD (#92); manual test HUMAN LEAD đạt 2026-10-18. Wake Lock trên http cần cờ Chrome `unsafely-treat-insecure-origin-as-secure` cho `http://10.8.102.102:8080` (điện thoại HUMAN LEAD đã bật).
@@ -34,13 +36,11 @@ Web chạy cho HUMAN LEAD trong tmux `youtube:web` từ worktree `../youtube-aut
 
 ## Next proposed action
 
-1. Dọn worktree / nhánh đã merge (classifier chặn agent, HUMAN LEAD chạy): worktree `../youtube-auto-short-{combo,cp835,cp836,keepawake,stop}`, nhánh local `local/test-835-836` + các nhánh #88–#92.
-1a. Đề xuất (chưa duyệt): CP8.34 tránh tải lại khi token tạm `aborted` giữa các lát Range của Chrome; HTTPS cho 8080; 3050 từng kẹt upload 2026-10-17 12:32–17:42 UTC sau `ClientDisconnect` — cần log worker để tìm nguyên nhân.
-2. FIX nhỏ `tools/enhance_worker/windows/setup-enhance-worker.ps1` (S1, chưa có contract): self-test dừng script vì `UserWarning` trên stderr (PowerShell 5.1 + `ErrorActionPreference = Stop`); facexlib tải lại 2 trọng số dò mặt vào `enhance-worker\models` (setup đặt ở `facexlib\weights`); `setup-gpu-node-v4.ps1` mặc định IP cũ; `auto-fix-gpu-v4.ps1` báo lỗi giả khi tunnel đã lên.
-3. Khi tập 1 Địa Tạng có HD GFPGAN (≈ 0 h 2026-10-05 VN): HUMAN LEAD xem Short / bản dọc; quyết "Chạy tiếp cả bộ".
-4. CP14 Whisper trên GPU: tạm gác (worktree `../youtube-auto-short-wgpu`); số đo GPU chưa có.
-5. Bản dọc (CP8.27): manual test trên điện thoại.
-6. Dọn dữ liệu thử: `~/.cache/auto-short-cp8{27,28,29}-test/`, `~/.cache/auto-short-dt12-backup/`, `~/.cache/auto-short-cp13{2,4}-test/` (giữ `cp133-test` tới khi #73 merge).
+1. HUMAN LEAD cập nhật `tools/enhance_worker/worker.py` trên máy 3090 + 3050 (bản #100: thoát mã 4 khi lỗi CUDA); ORCHESTRATOR kiểm log server sau đó.
+2. Manual test HUMAN LEAD trên điện thoại: ghép theo chủ đề (TC2.3) và "Khôi phục nguồn" (CP8.37) trên tập đã dọn; chấm tiêu đề AI (TC2.2).
+3. FIX đề xuất (chưa duyệt): `tests/test_web_lanes_cp810.py::test_lanes_overlap_fifo_and_render_job` chập chờn khi VM tải nặng (chạy riêng đạt) — đổi chờ theo thời gian sang chờ điều kiện.
+4. Chất lượng AI TC1 / TC2 (ghi nhận chạy thật): synopsis đôi khi là mẩu ngắn, chủ đề có xu hướng gom theo tập; prompt qwen3:30b `think=true` ≈ 1–2 phút / clip.
+5. Cũ, vẫn mở: CP8.34 tránh tải lại khi token `aborted`; HTTPS cho 8080; FIX `setup-enhance-worker.ps1` (S1); CP14 Whisper GPU tạm gác; dọn dữ liệu thử `~/.cache/auto-short-*-test/`, `~/.cache/auto-short-tc2*-test/`, `~/.cache/auto-short-cp837-test/`.
 
 Đây là PROPOSED, không authorize implementation tiếp theo.
 
