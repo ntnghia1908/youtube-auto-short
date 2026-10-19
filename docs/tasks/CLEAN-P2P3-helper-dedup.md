@@ -123,4 +123,4 @@ Không chạm database, security model hay public API contract (route / schema g
 - Implementer: Codex `gpt-6.1-sol` effort medium, 2 lượt, 80k + 101k tokens, 0 blocking.
 - Important findings / decisions: 2 quyết định cục bộ đã duyệt (câu lỗi link bài đăng theo W3; thanh hàng đợi trên trang Yêu thích).
 - Known limitations: chưa manual test trên 8080.
-- PR: chưa tạo (chờ HUMAN LEAD).
+- PR: #117.
