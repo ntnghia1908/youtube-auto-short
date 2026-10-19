@@ -26,7 +26,7 @@ from web_helpers import fake_pipeline, write_episode  # noqa: E402
 PW = "pw"
 KT = EID + ".kt"
 DAY = 86400
-GRACE = 3 * DAY
+GRACE = 5 * DAY
 MB = 10**6
 
 
