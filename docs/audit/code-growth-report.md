@@ -39,7 +39,7 @@ Báo cáo chỉ đề xuất. Không có thay đổi code / test / framework nà
 - `src/` = 27,97k dòng Python. Con số "app ≈ 34,1k" trong evidence gồm cả `scripts/` (3,9k) và `tools/` (2,2k). `tests/` = 31,5k. Web JS / HTML / CSS = 6,5k.
 - Công cụ cài tạm trong phiên, không vào repo: `vulture` 2.16 (`pip install --user`), `jscpd` 5.4.1 (`npx -y`), cùng script AST / blame nhỏ (lệnh chạy lại ở phụ lục A).
 - Quét rộng do subagent `implementer` làm (2 lượt, chỉ đọc). Đào sâu PR và spot-check do ORCHESTRATOR làm.
-- Chưa chạy được `pytest --durations`: phiên cloud không có `pytest`. Chưa có số thời gian test.
+- Phiên cloud không có `pytest`. Số thời gian test đo bổ sung trên VM: §2.5.
 
 ## 2. Số đo toàn repo (AC1)
 
@@ -101,6 +101,18 @@ Tổng ≈ 3,3k dòng. Đây là phần lớn nhất của "app+" không phải 
 | Test bám implementation | 11 `monkeypatch` hàm private, 10 import tên private, 16 assert HTML nguyên văn, 66 file đọc `static/*` rồi assert chuỗi, 7 assert số lần gọi mock |
 
 Test **không trùng**. Lượng test lớn đến từ (a) nhiều test / AC (§3) và (b) mỗi file tự dựng fixture riêng. Assert HTML / JS nguyên văn là cách repo kiểm UI khi không có trình duyệt: giòn nhưng có chủ đích.
+
+### 2.5 Thời gian test (bổ sung trên VM)
+
+Đo 2026-10-19 trên VM (env `auto-short`, loadavg ≈ 2,5), commit `chore/p1-remove-bench`: `python -m pytest -q -p no:cacheprovider --durations=30 tests`.
+
+| Số đo | Giá trị |
+|---|---|
+| Kết quả | 2166 passed, 1 skipped, 17 deselected; 593 s (9 phút 53 giây) |
+| 30 test chậm nhất | ≈ 222 s (≈ 37 % suite); mỗi test 5–13 s |
+| File chiếm nhiều nhất trong top 30 | `test_render_reuse` 54 s, `test_render_parallel` 30 s, `test_hd_first_cp132` 27 s, `test_render_cp9` 24 s, `test_enhance_worker` 17 s, `test_render_stage` 16 s |
+
+Test chậm hầu hết render ffmpeg thật (render reuse / parallel / cut / HD) hoặc worker chờ theo thời gian. Phần còn lại ≈ 2140 test chạy trung bình ≈ 0,17 s. Thời gian suite không phải nguồn phình chính. Nếu cần nhanh hơn: gom render thật vào fixture dùng chung theo module (đi cùng P3), không cắt test.
 
 ## 3. Đào sâu 8 PR (AC2)
 
@@ -262,5 +274,5 @@ Quét test (AST): parse `tests/**/*.py`. Chuẩn hóa thân hàm (tên biến / 
 - `git blame` không theo dòng bị move (`-M` / `-C` không dùng): % còn ở HEAD có thể thấp hơn thực một chút.
 - Gán test theo package là heuristic theo import. Mẫu "bám implementation" là số dòng khớp regex, chưa lọc tay.
 - Quét JS chỉ bắt `function name(` / `const name = … =>`. Route kiểm bằng grep path, có thể sót URL dựng động.
-- Không chạy được `pytest` (thiếu trong môi trường cloud) nên không có số thời gian test.
+- Số thời gian test (§2.5) đo một lần trên VM, không lặp lại; có thể lệch theo tải máy.
 - Dependency FW-TOKEN-01 (ai-dev-framework) chưa kiểm được từ phiên này vì repo ngoài quyền truy cập. Đề xuất §5.1 dựa trên mô tả trong contract.
