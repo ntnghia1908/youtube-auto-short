@@ -12,7 +12,7 @@
 - Authorization mode: boundary
 - Authorization source: `docs/decisions/TC1-TC3-implementation-authorization.md` (ACCEPTED 2026-10-18) §3 / §4; `docs/workflow/current-state.md` Next action 3
 - Parallel group: —
-- Owned paths: `src/auto_short/theme_index/__init__.py`, `src/auto_short/theme_plan/__init__.py`, `src/auto_short/web/static/theme_index.js` (chỉ hàm `ref` / nhãn tóm tắt), `tests/test_theme_index.py`, `tests/test_theme_plan.py`, `tests/test_web_theme_index.py`, file này
+- Owned paths: `src/auto_short/theme_index/__init__.py`, `src/auto_short/theme_plan/__init__.py`, `src/auto_short/web/static/theme_index.js` (chỉ hàm `ref` / nhãn tóm tắt), `tests/test_theme_index.py`, `tests/test_theme_plan.py`, `tests/test_web_theme_index.py`, file này; amendment A1 (ORCHESTRATOR, 2026-10-19): `tests/test_theme_render.py` (chỉ `make_plan` — fixture fake AI ghi thứ tự nghe tường minh vì input TC2 đã xáo)
 - Dependencies: TC1 (#96), TC2 / TC2.3 (đã merge)
 - Base commit / branch: `4cc0ed3` (origin/main) / `feature/tc-aiq` (contract từ `docs/task-tc-ai-quality`)
 - Human Lead approval: inherited from boundary; D1 accepted 2026-10-19 (chat "Chốt D1")

@@ -35,7 +35,12 @@
     items.forEach(function (x) { ul.appendChild(el("li", fmt(x))); });
     return ul;
   }
-  function ref(r) { return r ? r.evidence_id + ": " + r.text : ABSENT; }
+  function ref(r) {
+    if (!r) return ABSENT;
+    var ids = r.evidence_ids;
+    var label = ids && ids.length > 1 ? ids[0] + "–" + ids[ids.length - 1] : r.evidence_id;
+    return label + ": " + r.text;
+  }
 
   function render(r) {
     var li = el("li");

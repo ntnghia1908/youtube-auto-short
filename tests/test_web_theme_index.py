@@ -509,6 +509,13 @@ const state = () => ({ list: els["ti-list"].textContent, counts: els["ti-counts"
   vm.runInNewContext(code, { document, fetch, location: { pathname: "/playlists/PLeligible/theme-index", href: "" },
     encodeURIComponent, decodeURIComponent, JSON, Object, String, Promise, setTimeout });
   await tick(); out.success = state();
+  record.metadata.synopsis = { evidence_id: "s1", evidence_ids: ["s1", "s8", "s12"], text: "Ý đầu. Ý tiếp." };
+  els["ti-refresh"].listeners.click(); await tick(); out.span = state();
+  record.metadata.synopsis = { evidence_id: "s1", evidence_ids: ["s1"], text: "Một đoạn." };
+  els["ti-refresh"].listeners.click(); await tick(); out.single = state();
+  record.metadata.synopsis = null;
+  els["ti-refresh"].listeners.click(); await tick(); out.absent = state();
+  record.metadata.synopsis = { evidence_id: "s1", text: "x" };
   const click = async (n) => { next = n; els["ti-refresh"].listeners.click(); out.during = state(); await tick(); return state(); };
   out.rejected = await click(() => Promise.reject(new Error("net")));
   await click(ok); out.restored = state();
@@ -532,6 +539,10 @@ def test_ui_refresh_failure_never_keeps_stale_rows():
     res = json.loads(out.stdout)
     assert "ep.kt" in res["success"]["list"] and "indexed: 1" in res["success"]["counts"] and res["success"]["checked"]
     assert res["during"]["list"] == "" and res["during"]["counts"] == "" and res["during"]["checked"] == ""  # cleared at once
+    assert "s1: x" in res["success"]["list"]  # legacy shape remains readable
+    assert "s1–s12: Ý đầu. Ý tiếp." in res["span"]["list"]
+    assert "s1: Một đoạn." in res["single"]["list"] and "s1–s1" not in res["single"]["list"]
+    assert "Tóm tắt (trích)không có" in res["absent"]["list"]
     assert res["restored"]["list"]
     for key in ("rejected", "http500", "badjson", "rendererr"):
         r = res[key]

@@ -25,7 +25,11 @@ def checked(cmd):
 
 
 def make_plan(cfg, *, approve=True):
-    proposal = tp.propose(cfg, 'PLtest', client=Planner())['proposals'][0]
+    # The AI owns listening order (TC2 input is hash-shuffled): k02 before k01 exercises reordering.
+    planner = Planner(lambda ids: [dict(label='Tu học', rationale='Cùng chủ đề tu học', clip_ids=sorted(ids, reverse=True),
+                                        titles=['Tu học', 'Vì sao cần chuyên tâm tu học?', 'Giữ tâm thanh tịnh'],
+                                        title_styles=['A', 'B', 'A'])])
+    proposal = tp.propose(cfg, 'PLtest', client=planner)['proposals'][0]
     doc = tp.create_plan(cfg, 'PLtest', proposal['proposal_id'])
     if approve:
         doc = tp.approve_plan(cfg, 'PLtest', doc['plan_id'], revision=1, duration_override=True)
