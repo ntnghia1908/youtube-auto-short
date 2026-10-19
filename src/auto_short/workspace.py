@@ -51,6 +51,21 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def read_json_dict(path: Path) -> dict | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def read_stage_json(path: Path, what: str, error: type[Exception]):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise error(f"cannot read {path}: {exc}; re-run 'auto-short {what}'") from exc
+
+
 def validate_episode_id(episode_id: str) -> str:
     if not is_episode_id(episode_id):
         raise WorkspaceError(

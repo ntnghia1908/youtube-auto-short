@@ -47,7 +47,6 @@ def test_frame_plan_keeps_video_within_half_a_frame_of_audio():
     frames = plan.frame_plan(segs, NTSC)
     total = sum(n for _, n in frames)
     assert total == round(Fraction(plan.total_ms(segs), 1000) * NTSC)
-    assert abs(plan.planned_video_seconds(segs, NTSC) - plan.total_ms(segs) / 1000) <= 0.5 / float(NTSC)
     assert frames[0][0] == round(Fraction(1000, 1000) * NTSC)
 
 

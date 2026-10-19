@@ -16,13 +16,12 @@ import urllib.request
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 
 from ..config import Config, PostConfig
 from ..pipeline import OllamaUnavailable, PreflightError
 from ..selection.client import ChatClient, ChatError, ChatUnavailable, OllamaClient, resolve_host
-from ..workspace import atomic_write_json
+from ..workspace import atomic_write_json, utc_now
 from . import corrections, doc as doc_mod, images, source, store
 from .logic import chunk_lines
 from .prompt import prompt_sha256, render_user_prompt, system_prompt
@@ -51,10 +50,6 @@ class _NullLock(AbstractContextManager):
 
     def __exit__(self, *exc: object) -> bool:
         return False
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def backoff_before(attempt: int, backoff: tuple[float, ...]) -> float:
@@ -373,7 +368,7 @@ def compose_posts(episode_id: str, config: Config, clips: "list[str] | str", *, 
             if dp is not None:  # D6: before the AI path; the CP8.18 dictionary is not applied to a doc post
                 summary.doc += 1
                 _append_log(ws_dir / LOG_NAME, episode_id, {
-                    "at": _now(), "clip_id": cid, "candidate_id": cand_by_clip[cid], "origin": store.DOC,
+                    "at": utc_now(), "clip_id": cid, "candidate_id": cand_by_clip[cid], "origin": store.DOC,
                     "doc_url": docsrc.url, "doc_match": docsrc.match, "ratio": dp.ratio, "span": list(dp.span),
                     "expanded": {"head": dp.head, "tail": dp.tail}, "seconds": round(time.monotonic() - t0, 3),
                     "text": raw_text, "paragraphs": dp.paragraphs})
@@ -383,7 +378,7 @@ def compose_posts(episode_id: str, config: Config, clips: "list[str] | str", *, 
                         if store.find(doc, cid) is None else None
                     doc = store.with_compose(doc, order, clip_id=cid, candidate_id=cand_by_clip[cid],
                                              source_sha256=source.source_sha256(raw_text),
-                                             paragraphs=dp.paragraphs, origin=store.DOC, image=image, now=_now())
+                                             paragraphs=dp.paragraphs, origin=store.DOC, image=image, now=utc_now())
                     store.write(posts_path, doc)
                 log.info("post: %s [%s]: doc (ratio %.2f)", cid, episode_id, dp.ratio)
                 continue
@@ -400,7 +395,7 @@ def compose_posts(episode_id: str, config: Config, clips: "list[str] | str", *, 
         else:
             summary.raw += 1
         _append_log(ws_dir / LOG_NAME, episode_id, {
-            "at": _now(), "clip_id": cid, "candidate_id": cand_by_clip[cid], "model": model_block(cfg),
+            "at": utc_now(), "clip_id": cid, "candidate_id": cand_by_clip[cid], "model": model_block(cfg),
             "prompt_version": cfg.prompt_version, "prompt_sha256": prompt_sha256(cfg.prompt_version),
             "chunks": result.chunks, "attempts": result.attempts, "first_try": result.first_try,
             "match_ratio": result.match_ratio, "seconds": round(secs, 3), "origin": result.origin,
@@ -412,7 +407,7 @@ def compose_posts(episode_id: str, config: Config, clips: "list[str] | str", *, 
                 else None
             doc = store.with_compose(doc, order, clip_id=cid, candidate_id=cand_by_clip[cid],
                                      source_sha256=source.source_sha256(raw_text),
-                                     paragraphs=result.paragraphs, origin=result.origin, image=image, now=_now())
+                                     paragraphs=result.paragraphs, origin=result.origin, image=image, now=utc_now())
             store.write(posts_path, doc)
         valid_first = sum(1 for c in clog["ai_calls"] if c["valid"])
         log.info("post: %s [%s]: %s (%d/%d call(s) valid, %.1f s)", cid, episode_id, result.origin, valid_first,

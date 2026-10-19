@@ -6,7 +6,6 @@ Canonical contract: docs/decisions/CP4-analysis-contract.md.
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
@@ -20,6 +19,7 @@ from ..workspace import (
     Workspace,
     WorkspaceError,
     atomic_write_json,
+    read_stage_json,
     record_failure,
     run_stage,
     validate_episode_id,
@@ -149,13 +149,6 @@ def _remove_outputs(ws: Workspace) -> None:
         (ws.dir / name).unlink(missing_ok=True)
 
 
-def _read_json(path: Path, what: str) -> dict:
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        raise AnalysisError(f"cannot read {path}: {exc}; re-run 'auto-short {what}'") from exc
-
-
 def run_analysis(episode_id: str, config: Config, *, force: bool = False,
                  analyzer: MediaAnalyzer | None = None) -> AnalysisResult:
     try:
@@ -199,8 +192,8 @@ def run_analysis(episode_id: str, config: Config, *, force: bool = False,
     outcome: dict = {}
 
     def action() -> list[str]:
-        metadata = _read_json(meta_path, "ingest")
-        transcript = _read_json(tr_path, "transcript")
+        metadata = read_stage_json(meta_path, "ingest", AnalysisError)
+        transcript = read_stage_json(tr_path, "transcript", AnalysisError)
         if metadata.get("audio_codec") is None:
             raise AnalysisError(f"source media has no audio stream: {media}")
         duration = float(metadata["duration"])

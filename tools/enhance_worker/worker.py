@@ -182,10 +182,6 @@ def out_size(src_w: int, src_h: int, pre_h: int, out_h: int, scale: int = 4) -> 
     return pre_w, pre_h, uw, uh
 
 
-def utcnow_iso() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-
-
 def load_config(path: str | None, overrides: dict | None = None) -> dict:
     cfg = dict(DEFAULTS)
     base = Path.cwd()

@@ -736,13 +736,15 @@ get('fv-auto-min').value='60';
 const favorites=[{episode_id:'ep1',clip:'k1',code:'KT01',kind:'khaithi',usable:true,duration:350},
  {episode_id:'ep2',clip:'s1',code:'S01',kind:'short',usable:true,duration:50}];
 const document={querySelector:s=>get(s.slice(1)),getElementById:get,createElement:tag=>new El(tag),
- querySelectorAll:s=>s==='[data-fv-tab]'?tabs:filters,activeElement:null};
+ querySelectorAll:s=>s==='[data-fv-tab]'?tabs:filters,addEventListener:()=>{},activeElement:null};
 const ctx={document,location:{pathname:'/playlists/PLeligible/favorites'},localStorage:{getItem:k=>{if(mode==='blocked')throw Error('denied');return values.get(k);},setItem:(k,v)=>{if(mode==='blocked')throw Error('denied');values.set(k,v);}},
  fetch:async(path,opts)=>{calls.push({path,opts});return {ok:true,status:200,json:async()=>opts.method==='POST'?{created:true}:{series:'Bộ kinh',max_minutes:720,favorites,compilations:[]}};},
  window:{dispatchEvent:()=>{}},setTimeout:()=>1,clearTimeout:()=>{},confirm:()=>true};
 const tick=()=>new Promise(r=>setImmediate(r));
 (async()=>{
- vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8')+'\nFavorites.init();',ctx);await tick();
+ vm.createContext(ctx);  // favorites.html loads app.js (AutoShort helpers) before favorites.js
+ vm.runInContext(fs.readFileSync(require('path').join(require('path').dirname(process.argv[1]),'app.js'),'utf8'),ctx);
+ vm.runInContext(fs.readFileSync(process.argv[1],'utf8')+'\nFavorites.init();',ctx);await tick();
  assert.equal(get('fv-pane-ai').hidden,mode==='saved');
  assert.equal(get('fv-pane-manual').hidden,mode!=='saved');
  assert.equal(tabs[mode==='saved'?1:0]['aria-selected'],'true');

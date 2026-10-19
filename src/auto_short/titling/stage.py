@@ -6,7 +6,6 @@ Canonical contract: docs/decisions/CP6-titling-contract.md.
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import time
 from collections.abc import Callable
@@ -23,6 +22,7 @@ from ..workspace import (
     Workspace,
     WorkspaceError,
     atomic_write_json,
+    read_stage_json,
     record_failure,
     run_stage,
     validate_episode_id,
@@ -96,13 +96,6 @@ def model_block(cfg: TitlingConfig) -> dict:
 def _remove_outputs(ws: Workspace) -> None:
     for name in ARTIFACTS:
         (ws.dir / name).unlink(missing_ok=True)
-
-
-def _read_json(path: Path, what: str) -> dict:
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        raise TitlingError(f"cannot read {path}: {exc}; re-run 'auto-short {what}'") from exc
 
 
 def _title_clip(client: ChatClient, cfg: TitlingConfig, messages: list[dict], clip_id: str, text: str,
@@ -245,7 +238,7 @@ def run_titling(episode_id: str, config: Config, *, force: bool = False, speaker
                    "run 'auto-short selection' first")
 
     try:
-        metadata = _read_json(meta_path, "ingest")
+        metadata = read_stage_json(meta_path, "ingest", TitlingError)
         youtube = metadata.get("youtube")
         video_id = youtube.get("id") if isinstance(youtube, dict) else None  # a .kt episode: its base video
         header = resolve_header(cfg.header, metadata.get("title"),
@@ -264,8 +257,8 @@ def run_titling(episode_id: str, config: Config, *, force: bool = False, speaker
     outcome: dict = {}
 
     def action() -> list[str]:
-        clips_doc = _read_json(clips_path, "selection")
-        cand_doc = _read_json(cand_path, "analysis")
+        clips_doc = read_stage_json(clips_path, "selection", TitlingError)
+        cand_doc = read_stage_json(cand_path, "analysis", TitlingError)
         log.info("%s: model %s (think=%s) via %s", STAGE, cfg.model, cfg.think,
                  getattr(chat, "host", type(chat).__name__))
         log.info("%s: header %s (%s)", STAGE, " | ".join(header["lines"]),

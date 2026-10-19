@@ -21,7 +21,7 @@ from .. import hashing, khaithi
 from ..config import Config, EnhanceConfig
 from ..hashing import FileFingerprint
 from ..render import plan
-from ..workspace import Workspace, WorkspaceError, atomic_write_json, validate_episode_id
+from ..workspace import Workspace, WorkspaceError, atomic_write_json, read_json_dict, validate_episode_id
 
 log = logging.getLogger("auto_short")
 
@@ -33,7 +33,6 @@ PLAN_VERSION = 1  # bump when the segment format changes (part of the config_has
 FACE_PLAN_VERSION = 2  # CP13.4: plan version of segments with a face-restoration step (``params.face`` != none)
 FACE_NONE = "none"
 FACE_GFPGAN = "gfpgan_v1.4"
-FACE_MODELS = (FACE_NONE, FACE_GFPGAN)
 
 PENDING, ASSEMBLING, DONE, FAILED = "pending", "assembling", "done", "failed"
 
@@ -237,7 +236,7 @@ def decide(config: Config, episode_id: str, *, force: bool | None = None, ffprob
         hd_path(ws.dir).unlink(missing_ok=True)
         keep = {k: doc[k] for k in ("override", "wanted", "wanted_at")}
         doc = {**new_doc(ws.episode_id), **keep}
-    meta = _read_json(ws.dir / "metadata.json") or {}
+    meta = read_json_dict(ws.dir / "metadata.json") or {}
     height = meta.get("height") if isinstance(meta.get("height"), int) else None
     src = source_file(ws, manifest)
     if force is True or (force is None and doc["override"] and doc["wanted"]):
@@ -287,14 +286,6 @@ def decide(config: Config, episode_id: str, *, force: bool | None = None, ffprob
     log.info("enhance: %s wanted=%s (%s)", ws.episode_id, wanted, reason)
     mirror(config, ws.episode_id)
     return doc
-
-
-def _read_json(path: Path) -> dict | None:
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    return data if isinstance(data, dict) else None
 
 
 def _source_facts(src: Path, meta: dict, ffprobe: str) -> dict:
@@ -432,12 +423,12 @@ def effective_source(config: Config, episode_id: str) -> EffectiveSource | None:
     fp = hd_fingerprint(d)
     if fp is not None:
         return EffectiveSource(SRC_HD, fp.path, fp.sha256)
-    manifest = _read_json(d / "manifest.json")
+    manifest = read_json_dict(d / "manifest.json")
     source = (manifest or {}).get("source") or {}
     sha = source.get("sha256")
     if source.get("kind") != "youtube" or not isinstance(sha, str) or not sha:
         return None
-    height = (_read_json(d / "metadata.json") or {}).get("height")
+    height = (read_json_dict(d / "metadata.json") or {}).get("height")
     if not isinstance(height, int) or height < config.enhance.min_height:
         return None
     path = _source_in(d, manifest)

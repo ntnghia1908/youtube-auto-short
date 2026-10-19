@@ -13,9 +13,9 @@ import json
 from pathlib import Path
 
 from ..config import Config
-from ..workspace import atomic_write_json
+from ..workspace import atomic_write_json, utc_now
 from .logic import ReviewError
-from .publish import (_AT_RE, _SHA_RE, _paths, _render_shorts, _tickable, publish_status, utc_now)
+from .publish import (_AT_RE, _SHA_RE, _paths, _render_shorts, _tickable, publish_status)
 
 WATCHED_NAME = "watched.json"
 SCHEMA_VERSION = 1

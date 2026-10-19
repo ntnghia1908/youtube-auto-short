@@ -10,11 +10,10 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone
 from pathlib import Path
 
 from ..config import Config
-from ..workspace import Workspace, WorkspaceError, atomic_write_json, validate_episode_id
+from ..workspace import Workspace, WorkspaceError, atomic_write_json, utc_now, validate_episode_id
 from .logic import ReviewError
 
 PUBLISH_NAME = "publish.json"
@@ -93,10 +92,6 @@ def publish_status(doc: dict, shorts: list[dict]) -> dict[str, dict]:
         out[s.get("clip_id")] = {"published": True, "stale": current is not None and current != t["sha256"],
                                  "at": t["at"]}
     return out
-
-
-def utc_now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 # --- episode -----------------------------------------------------------------------------------------------------

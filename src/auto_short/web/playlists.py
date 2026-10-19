@@ -18,7 +18,6 @@ import threading
 import time
 import unicodedata
 from collections.abc import Callable
-from datetime import datetime, timezone
 from pathlib import Path
 
 from .. import khaithi
@@ -30,7 +29,7 @@ from ..review.publish import PUBLISH_NAME
 from ..titling.logic import match_title
 from ..titling.playlist import PLAYLISTS_DIR, normalize_series, stored_series
 from ..enhance import state as enh_state
-from ..workspace import DONE, Workspace, WorkspaceError, atomic_write_json
+from ..workspace import DONE, Workspace, WorkspaceError, atomic_write_json, utc_now
 from . import episodes as ep
 from . import prepared
 from .urls import PLAYLIST_ID_RE, playlist_url, valid_playlist_id
@@ -126,10 +125,6 @@ def ytdlp_list(url: str, config: Config) -> dict:
         raise PlaylistError(f"không lấy được playlist từ YouTube: {exc}") from exc
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
 def episode_number(title: str | None, config: Config) -> str | None:
     """Episode number from the entry title with the first matching CP6 ``[titling.header] title_patterns`` entry
     (group ``episode``, CP8.11 D4), e.g. "Thập Thiện Nghiệp Đạo Kinh tập 1/149 - …" -> "1",
@@ -177,7 +172,7 @@ def build_document(info: dict, playlist_id: str, config: Config, *, now: str | N
                         "available": available})
     return {"schema_version": SCHEMA_VERSION, "playlist_id": playlist_id,
             "title": info.get("title") if isinstance(info.get("title"), str) else playlist_id,
-            "url": playlist_url(playlist_id), "fetched_at": now or _now(), "entries": entries}
+            "url": playlist_url(playlist_id), "fetched_at": now or utc_now(), "entries": entries}
 
 
 class PlaylistStore:

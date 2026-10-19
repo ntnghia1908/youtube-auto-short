@@ -21,7 +21,6 @@ import urllib.request
 import zlib
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from html.parser import HTMLParser
 from pathlib import Path
@@ -29,7 +28,7 @@ from urllib.parse import urljoin, urlparse
 
 from ..selection.logic import normalize_word
 from ..titling.playlist import PLAYLISTS_DIR
-from ..workspace import atomic_write_json
+from ..workspace import atomic_write_json, utc_now
 from . import fetch
 
 DOC_HOST = "ph.tinhtong.vn"
@@ -317,10 +316,6 @@ def transcript_words(segments: list[dict]) -> list[str]:
 
 # --- D3: cache + prepare -------------------------------------------------------------------------------------------
 
-def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
 def read_cache(path: Path, url: str) -> DocText | None:
     try:
         doc = json.loads(path.read_text(encoding="utf-8"))
@@ -351,7 +346,7 @@ def prepare(episode_id: str, workspace_dir: str | Path, segments: list[dict], *,
     paragraphs = fetch_paragraphs(url, opener=opener, resolver=resolver)
     text = build_text(url, paragraphs, None)
     match = round(match_ratio(transcript_words(segments), text.words), 4)
-    atomic_write_json(path, {"schema_version": SCHEMA_VERSION, "url": url, "fetched_at": now or _now(),
+    atomic_write_json(path, {"schema_version": SCHEMA_VERSION, "url": url, "fetched_at": now or utc_now(),
                              "paragraphs": paragraphs, "match": match})
     return build_text(url, paragraphs, match)
 

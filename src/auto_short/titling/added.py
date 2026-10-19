@@ -17,12 +17,11 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 
 from ..config import Config
 from ..selection.client import ChatClient, OllamaClient, resolve_host
-from ..workspace import Workspace, atomic_write_json, validate_episode_id
+from ..workspace import Workspace, atomic_write_json, utc_now, validate_episode_id
 from .logic import TITLED, UNTITLED, VALID, TitlingError, choose_title
 from .prompt import RESPONSE_SCHEMA, prompt_sha256, prompt_texts, render_user_prompt, system_prompt
 from .stage import _title_clip, model_block
@@ -41,10 +40,6 @@ class AddedTitle:
     alternatives: list[dict]
     error: str | None  # no schema-valid response at all (connection, bad JSON...); None otherwise
     stored: bool  # review.json updated
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _append_log(path: Path, episode_id: str, entry: dict) -> None:
@@ -86,7 +81,7 @@ def title_added(episode_id: str, config: Config, clip_id: str, *, client: ChatCl
     chosen, alternatives = choose_title(records) if records else (None, [])
     status = TITLED if chosen else UNTITLED
     _append_log(ws.dir / LOG_NAME, ws.episode_id, {
-        "at": _now(), "clip_id": clip_id, "candidate_id": inp["candidate_id"], "source": inp["source"],
+        "at": utc_now(), "clip_id": clip_id, "candidate_id": inp["candidate_id"], "source": inp["source"],
         "model": model_block(cfg), "prompt_version": cfg.prompt_version,
         "prompt_sha256": prompt_sha256(cfg.prompt_version), "system_prompt": system,
         "response_format": RESPONSE_SCHEMA, "duration": inp["duration"], "text": inp["text"],

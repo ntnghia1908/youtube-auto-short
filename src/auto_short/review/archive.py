@@ -24,7 +24,7 @@ from pathlib import Path
 from ..config import Config
 from ..hashing import sha256_file
 from ..khaithi import SUFFIX
-from ..workspace import DONE, Workspace, WorkspaceError, atomic_write_json, validate_episode_id
+from ..workspace import DONE, Workspace, WorkspaceError, atomic_write_json, utc_now, validate_episode_id
 from .logic import ReviewError
 
 log = logging.getLogger("auto_short")
@@ -86,10 +86,6 @@ def source_files(ws_dir: Path) -> list[Path]:
     return sorted(p for p in ws_dir.iterdir() if p.name.startswith("source.") and (p.is_symlink() or p.is_file()))
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
 def archive_source(episode_id: str, config: Config, *, now: str | None = None, auto: bool = False) -> ArchiveResult:
     """S3: delete the downloaded source video of a YouTube episode whose render is ``done`` and mark the episode
     archived. Local sources, unfinished renders -> ReviewError (nothing deleted). Already archived -> no-op.
@@ -111,7 +107,7 @@ def archive_source(episode_id: str, config: Config, *, now: str | None = None, a
                           "không dọn video nguồn")
     files = source_files(ws.dir)
     sizes = [(p, p.lstat().st_size) for p in files]
-    doc = {"schema_version": SCHEMA_VERSION, "episode_id": ws.episode_id, "archived_at": now or _now(),
+    doc = {"schema_version": SCHEMA_VERSION, "episode_id": ws.episode_id, "archived_at": now or utc_now(),
            "removed": [{"path": p.name, "size": size} for p, size in sizes]}
     if auto:
         doc["auto"] = True
@@ -225,7 +221,7 @@ def restore_source(episode_id: str, config: Config, *, downloader=None,
                         else:
                             originals[path] = None
                 stamp = now or (datetime.fromtimestamp(clock(), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-                                if clock is not None else _now())
+                                if clock is not None else utc_now())
                 for link, final in staged:
                     link.replace(final)
                     installed.append(final)

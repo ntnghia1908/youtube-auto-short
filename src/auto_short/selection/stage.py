@@ -6,7 +6,6 @@ Canonical contract: docs/decisions/CP5-selection-contract.md.
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import time
 from collections.abc import Callable
@@ -21,6 +20,7 @@ from ..workspace import (
     Workspace,
     WorkspaceError,
     atomic_write_json,
+    read_stage_json,
     record_failure,
     run_stage,
     validate_episode_id,
@@ -100,13 +100,6 @@ def options(cfg: SelectionConfig) -> dict:
 def _remove_outputs(ws: Workspace) -> None:
     for name in ARTIFACTS:
         (ws.dir / name).unlink(missing_ok=True)
-
-
-def _read_json(path: Path, what: str) -> dict:
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        raise SelectionError(f"cannot read {path}: {exc}; re-run 'auto-short {what}'") from exc
 
 
 def backoff_before(attempt: int, backoff: tuple[float, ...]) -> float:
@@ -299,10 +292,10 @@ def run_selection(episode_id: str, config: Config, *, force: bool = False,
     outcome: dict = {}
 
     def action() -> list[str]:
-        cand_doc = _read_json(cand_path, "analysis")
-        metadata = _read_json(meta_path, "ingest")
-        silences_doc = _read_json(sil_path, "analysis")
-        transcript = _read_json(tr_path, "transcript")
+        cand_doc = read_stage_json(cand_path, "analysis", SelectionError)
+        metadata = read_stage_json(meta_path, "ingest", SelectionError)
+        silences_doc = read_stage_json(sil_path, "analysis", SelectionError)
+        transcript = read_stage_json(tr_path, "transcript", SelectionError)
         log.info("%s: model %s (think=%s) via %s", STAGE, cfg.model, cfg.think,
                  getattr(chat, "host", type(chat).__name__))
         clips_doc, log_doc = select(ws.episode_id, cand_doc, metadata, silences_doc, transcript, cfg, chat, sleep)

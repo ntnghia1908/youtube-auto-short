@@ -24,7 +24,7 @@ from ..config import Config
 from ..hashing import sha256_file
 from ..review.archive import is_archived
 from ..titling.logic import match_title
-from ..workspace import Workspace, WorkspaceError, atomic_write_json, validate_episode_id
+from ..workspace import Workspace, WorkspaceError, atomic_write_json, read_json_dict, validate_episode_id
 from . import state as st
 from .state import EnhanceError
 
@@ -232,7 +232,7 @@ class EnhanceService:
     def _series_episode(self, d: Path) -> tuple[str | None, int | None]:
         """(series, episode number) of a video from the title in its ``metadata.json`` (the CP6 ``title_patterns``);
         (None, None) when no pattern recognizes it."""
-        meta = st._read_json(d / "metadata.json") or {}
+        meta = read_json_dict(d / "metadata.json") or {}
         m = match_title(self.config.titling.header.title_patterns, meta.get("title"))
         if m is None:
             return None, None

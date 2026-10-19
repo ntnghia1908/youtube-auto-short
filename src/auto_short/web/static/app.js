@@ -3610,5 +3610,5 @@ const AutoShort = (() => {
   }
   document.addEventListener("DOMContentLoaded", initQueueBar);
 
-  return { initIndex, initEpisode, initStorage, initPlaylist, initPosts, initMonitor };
+  return { initIndex, initEpisode, initStorage, initPlaylist, initPosts, initMonitor, el, api, copyText };
 })();
