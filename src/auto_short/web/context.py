@@ -76,6 +76,13 @@ class WebContext:
     keyword_search: Callable | None
     doc_prepare: Callable | None
 
+    render: Callable
+    titler: Callable | None
+    enhance_complete: Callable
+    hd_ready: Callable
+    release_hd: Callable
+    restore_target: Callable
+
     def tracked(self, dl: str | None, response: Any) -> Any:
         """CP8.34: a download with a valid ``?dl=<token>`` reports its progress to the table; without one (or with a
         malformed token) the response is returned untouched. An error response ends the token as ``aborted``."""
@@ -353,3 +360,20 @@ class WebContext:
 
     def enh_error(self, exc: EnhanceError, *, error_response: Callable) -> Any:
         return error_response({"detail": str(exc)}, status_code=exc.status)
+
+    def check_clip(self, episode_id: str, clip_id: str, *, error_response: Callable) -> Any:
+        if not ep.valid_episode_id(episode_id) or not ep.valid_clip_id(clip_id):
+            return error_response({"detail": "không có Short này"}, status_code=404)
+        return None
+
+    def episode_or_404(self, episode_id: str, *, error_response: Callable) -> Any:
+        if not ep.valid_episode_id(episode_id):
+            return error_response({"detail": "không có episode này"}, status_code=404)
+        return None
+
+    def busy(self, episode_id: str, *, error_response: Callable) -> Any:
+        current = self.runner.latest(episode_id)
+        if current is not None and current.active:
+            return error_response({"detail": "episode đang có job chạy/đợi; thử lại sau khi job xong",
+                                 "job": self.job_view(current)}, status_code=409)
+        return None

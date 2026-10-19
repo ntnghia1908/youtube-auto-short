@@ -91,7 +91,14 @@ def app_for(cfg, **kw):
 
 
 def endpoint(app, name):
-    return next(r.endpoint for r in app.routes if getattr(r, "name", None) == name)
+    def routes(items):
+        for route in items:
+            if hasattr(route, "original_router"):
+                yield from routes(route.original_router.routes)
+            else:
+                yield route
+
+    return next(r.endpoint for r in routes(app.routes) if getattr(r, "name", None) == name)
 
 
 def body(response):

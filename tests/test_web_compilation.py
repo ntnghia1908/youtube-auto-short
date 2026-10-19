@@ -14,6 +14,7 @@ pytest.importorskip("fastapi")
 from auto_short import compilation as comp  # noqa: E402
 from auto_short.config import Config, PostConfig, RenderConfig, WorkspaceConfig  # noqa: E402
 from auto_short.web import app as app_mod  # noqa: E402
+from auto_short.web.routes import episodes as episodes_routes, episode_edit as episode_edit_routes  # noqa: E402
 from auto_short.web.jobs import RENDER, compilation_key  # noqa: E402
 
 from compilation_helpers import PL, duration_of, frame_color, make_series  # noqa: E402
@@ -369,7 +370,7 @@ def test_delete_without_favorites_is_unchanged_and_failure_keeps_everything(seri
         def boom(*a, **k):
             raise app_mod.ReviewError("disk")
 
-        monkeypatch.setattr(app_mod, "delete_episode", boom)
+        monkeypatch.setattr(episodes_routes, "delete_episode", boom)
         assert c.delete(f"/api/episodes/{K1}").status_code == 500
         assert src.is_file() and (folder_of(series) / "favorites.json").read_text() == before
         assert not (folder_of(series) / "kept" / K1 / "k01.mp4").exists()
@@ -385,7 +386,7 @@ def test_rejecting_a_favorite_clip_drops_its_heart(series, monkeypatch):
         login(c)
         heart(c, K1, "k01")
         heart(c, K1, "k02")
-        monkeypatch.setattr(app_mod, "reject_clip", lambda eid, cfg, clip: True)
+        monkeypatch.setattr(episode_edit_routes, "reject_clip", lambda eid, cfg, clip: True)
         r = c.post(f"/api/episodes/{K1}/shorts/k01/delete")
         assert r.status_code == 202, r.text
         left = json.loads((folder_of(series) / "favorites.json").read_text())["items"]
@@ -510,7 +511,7 @@ def test_rejecting_a_favorite_short_drops_its_heart(mixed, monkeypatch):
         login(c)
         heart(c, V1, "s01")
         heart(c, V1, "s02")
-        monkeypatch.setattr(app_mod, "reject_clip", lambda eid, cfg, clip: True)
+        monkeypatch.setattr(episode_edit_routes, "reject_clip", lambda eid, cfg, clip: True)
         assert c.post(f"/api/episodes/{V1}/shorts/s01/delete").status_code == 202
         left = json.loads((folder_of(mixed) / "favorites.json").read_text())["items"]
         assert [(i["episode_id"], i["clip"]) for i in left] == [(V1, "s02")]
