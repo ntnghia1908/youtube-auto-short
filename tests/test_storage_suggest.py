@@ -123,10 +123,10 @@ def test_plan_skips_video_with_khaithi_part():  # FIX-keep-khaithi-source
     assert auto_archive_plan(rows[:2], NOW, GRACE) == []
 
 
-def test_plan_three_day_grace():  # FIX-archive-grace-days
+def test_plan_five_day_grace():  # FIX-archive-grace-days
     grace = StorageConfig().auto_archive_grace_minutes * 60
-    assert grace == 3 * DAY
-    rows = [_row("v1", complete_since=NOW - 2 * DAY)]
+    assert grace == 5 * DAY
+    rows = [_row("v1", complete_since=NOW - 4 * DAY)]
     assert auto_archive_plan(rows, NOW, grace) == []
     assert auto_archive_plan(rows, NOW + DAY - 1, grace) == []
     assert [item["video_id"] for item in auto_archive_plan(rows, NOW + DAY, grace)] == ["v1"]
@@ -292,7 +292,7 @@ def test_config_storage_section(tmp_path):
     p.write_text("[storage]\nauto_archive = false\nauto_archive_grace_minutes = 5\n")
     cfg = load_config(p)
     assert (cfg.storage.auto_archive, cfg.storage.auto_archive_grace_minutes) == (False, 5)
-    assert Config().storage == StorageConfig(True, 4320)
+    assert Config().storage == StorageConfig(True, 7200)
 
 
 def test_hard_linked_source_counted_once(video):

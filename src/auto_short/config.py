@@ -274,7 +274,7 @@ class StorageConfig:
     Execution-only: no stage uses it."""
 
     auto_archive: bool = True
-    auto_archive_grace_minutes: int = 4320  # "đã đăng hết" must stay stable this long before the source is removed
+    auto_archive_grace_minutes: int = 7200  # "đã đăng hết" must stay stable this long before the source is removed
 
 
 @dataclass(frozen=True)

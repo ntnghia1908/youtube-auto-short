@@ -10,10 +10,10 @@ def test_example_config_equals_defaults():
 
 @pytest.mark.parametrize("data", [{}, {"storage": {}}, {"storage": {"auto_archive": False}}])
 def test_storage_grace_default(data):
-    assert config_mod.from_dict(data).storage.auto_archive_grace_minutes == 4320
+    assert config_mod.from_dict(data).storage.auto_archive_grace_minutes == 7200
 
 
-@pytest.mark.parametrize("minutes", [0, 4320, 43200])
+@pytest.mark.parametrize("minutes", [0, 7200, 43200])
 def test_storage_grace_bounds(minutes):
     cfg = config_mod.from_dict({"storage": {"auto_archive_grace_minutes": minutes}})
     assert cfg.storage.auto_archive_grace_minutes == minutes
