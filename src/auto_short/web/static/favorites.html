@@ -42,11 +42,25 @@
     </div>
   </section>
   <section class="card">
+    <h3>Ghép theo chủ đề (AI)</h3>
+    <p class="small muted">AI gợi ý từ khai thị yêu thích đã index. Chọn chủ đề, sửa kế hoạch rồi duyệt để xuất video ngang 30–40 phút.</p>
+    <p id="tp-summary" class="small">Đang kiểm tra…</p>
+    <div class="actions">
+      <button id="tp-generate" class="btn small" type="button">AI gợi ý chủ đề</button>
+      <button id="tp-refresh" class="btn small" type="button">Tải lại trạng thái</button>
+    </div>
+    <p id="tp-job" class="small" role="status"></p>
+    <p id="tp-msg" class="small" role="status"></p>
+    <div id="tp-proposals"></div>
+    <div id="tp-plans"></div>
+  </section>
+  <section class="card">
     <h3>Video ghép</h3>
     <ul id="fv-comps" class="fv-list"><li class="muted">Chưa có.</li></ul>
   </section>
 </main>
 <script src="/static/favorites.js"></script>
-<script>Favorites.init();</script>
+<script src="/static/theme_plan.js"></script>
+<script>Favorites.init();ThemePlan.init();</script>
 </body>
 </html>
