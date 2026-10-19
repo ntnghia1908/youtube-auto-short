@@ -11,7 +11,7 @@ pytest.importorskip("fastapi")
 
 from auto_short.config import Config, RenderConfig, WebConfig, WorkspaceConfig  # noqa: E402
 from auto_short.post.images import usage_counts  # noqa: E402
-from auto_short.web import app as app_mod  # noqa: E402
+from auto_short.web.routes import episodes as episodes_routes  # noqa: E402
 from auto_short.workspace import WorkspaceError, iter_manifests, validate_episode_id  # noqa: E402
 
 from web_helpers import fake_pipeline, login as web_login, web_client, write_episode  # noqa: E402
@@ -115,7 +115,7 @@ def test_submit_short_and_khaithi_for_a_dash_id(wcfg):
 
 
 def test_invalid_id_is_422_not_500(wcfg, monkeypatch):
-    monkeypatch.setattr(app_mod, "classify_url",
+    monkeypatch.setattr(episodes_routes, "classify_url",
                         lambda url: SimpleNamespace(kind="video", video_id="bad/id", playlist_id=None))
     with make_client(wcfg) as c:
         login(c)

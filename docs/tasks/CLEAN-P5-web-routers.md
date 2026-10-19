@@ -68,6 +68,10 @@ Lifecycle: `task` mode = `DRAFT → APPROVED → IN_PROGRESS → READY`. DONE su
 - F1 làm rõ D4: chỉ giữ thứ tự của các cặp route chồng pattern; include mỗi router P5.1 nguyên khối đúng một lần, thành một khối liền nhau. Catch-all sau cùng.
 - F2: mọi verification Python / pytest phải đặt `PYTHONPATH` trỏ `src` của worktree. Không sử dụng số PASS vòng trước; chạy lại targeted.
 
+## Amendment A2 — ORCHESTRATOR review P5.3, 2026-10-19
+
+- Helper test tra endpoint theo tên (`tests/test_restore_source_cp837.py` `endpoint()`) được duyệt cả router lồng (`_IncludedRouter.original_router`). Đây là đích tra cứu như đích `monkeypatch.setattr`; assert, tên test, parametrize không đổi. ORCHESTRATOR áp dụng bản vá.
+
 ## Implementation approach
 
 - Mỗi phase: chụp bảng route trước (`[(r.path, sorted(r.methods or []), type(r).__name__) for r in app.routes]` theo thứ tự) bằng script tạm ngoài repo (F6). Di chuyển nhóm. Chụp lại, so khớp. Chạy test targeted rồi full suite.
@@ -178,3 +182,22 @@ Diff: vòng sửa này riêng app.py **+6 / −67**, test **+0 / −0**, contrac
 - Diff: app.py **+135 / −1089**, `context.py` **+112 / −5**, `routes/` mới **+1022**; test 0. Codex trong sandbox: 64 test targeted PASS, `test_enhance_api.py` treo ở `TestClient.__enter__` (đã chạy trong full suite ngoài sandbox).
 - IMPLEMENTER: Codex (`gpt-6.1-sol`, high), 1 vòng, ≈ 9 phút, 165k tokens; không vòng sửa.
 - Manual smoke 8080 (điểm danh P5.2): chờ HUMAN LEAD.
+
+### P5.3 — 2026-10-19 (branch `refactor/p5-3-episodes`, base `8560eb4`)
+
+- Chuyển 30 route còn lại sang `routes/episodes.py` (19) và `routes/episode_edit.py` (11), mỗi router `build(ctx)` include nguyên khối sau `post_corrections_routes`, trước theme; catch-all vẫn cuối. Model/helper riêng đi theo router; `PublishedIn` dùng lại từ `routes/models.py`.
+- `WebContext`: di chuyển nguyên thân 3 helper dùng chung `check_clip`, `episode_or_404`, `busy` (nhận `error_response`, không import FastAPI); thêm `render`, `titler` và 4 callable trỏ tới callback factory `enhance_complete`, `hd_ready`, `release_hd`, `restore_target`. Helper mới: không. Callback/lifespan/middleware và `RestoreSourceTarget` giữ ở app.py; giữ re-export `KINDS` / `KIND_RESTORE_SOURCE`.
+- AC1: app.py **1464 → 581 dòng**, decorator route **0**. AC2: **127 route, 3 cặp chồng**, diff thô và sort với `…/tmp/p5/base53.txt` đều **rỗng** (`/tmp/p53/after53.txt`). AC3: không `ep._…` / import private chéo trong `web/`; AC4 chỉ `web/` + `sutra/web.py`; `git diff --check` sạch.
+- AST `/tmp/p53/review.py`: **61 hàm/helper** tương đương cơ học, gồm 30 route; model/constant, signature/docstring factory không đổi; callback/middleware/lifespan AST nguyên vẹn. Smoke `/tmp/p53/smoke.py`: PASS gọi trực tiếp đủ 30 handler bằng fixture cục bộ, chặn network; có title/render, delete/restore Short, cut/reset, add, posts compose/edit/posted và kiểm đích patch mới.
+- AC5: collect **2198** (`-m '' -o pythonpath=src`); targeted **14 PASS** prepare/Whisper và **121 PASS, 3 deselected** review/post backend (`-k 'not preflight'`). Lượt backend đầu: 116 PASS rồi lỗi socket `test_post_stage.py::test_preflight_ok`; không coi lượt đó PASS. `test_web_titles.py`: **TIMEOUT 120s, exit 124**, ở `TestClient.__enter__`. Full suite / manual smoke 8080 dành cho ORCHESTRATOR; không claim PASS.
+- Đích patch: `test_web_compilation.py:373` `app_mod.delete_episode → routes.episodes.delete_episode`; `:389`, `:514` `app_mod.reject_clip → routes.episode_edit.reject_clip`; `test_youtube_id_dash.py:118` `app_mod.classify_url → routes.episodes.classify_url`. `replace` (test prepare), `JobRunner`, `episode_sizes` vẫn tra ở app.py; `mark_downloaded` vẫn tra ở context.py, không đổi patch.
+- Blocker Codex: `test_restore_source_cp837.py:94` helper `endpoint()` chỉ duyệt lớp ngoài `app.routes` nên `test_route_statuses_duplicate_sibling_and_busy_guards` gặp `StopIteration` sau khi route vào router. ORCHESTRATOR áp bản vá duyệt router lồng theo A2 (test +8 / −1, assert không đổi).
+- F5: `jscpd` toàn `web/` trước/sau **9 clone, 69 dòng trùng**; `vulture` **128 → 127 finding**, không finding mới. Pyflakes chỉ còn `KINDS` re-export có sẵn; không thêm import không dùng. Logs/scripts tạm ở `/tmp/p53/`, không thêm dependency/mạng/commit/push.
+
+### P5.3 — ORCHESTRATOR verification, 2026-10-19
+
+- Full suite ngoài sandbox (`pytest -q -m '' -o pythonpath=src`, sau bản vá A2): **2185 passed, 13 skipped** (654 s); collect 2198.
+- Bảng route chạy lại: 127 route, 3 cặp chồng, diff thô với base `8560eb4` **rỗng**. AC1 app.py **581** dòng, 0 decorator; AC3 / AC4 grep đạt; `git diff --check` sạch.
+- Diff: app.py **+13 / −896**, `context.py` **+24 / −0**, `routes/` mới **+913**, tests **+14 / −6** (đích patch + A2). Helper mới: không.
+- IMPLEMENTER: Codex (`gpt-6.1-sol`, high), 1 vòng, 147k tokens; ORCHESTRATOR áp bản vá test A2, không vòng sửa.
+- Manual smoke 8080 (điểm danh P5.3): chờ HUMAN LEAD.
