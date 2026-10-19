@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: CHANGE
 - Change class: S2 (sửa rule W1 của `docs/decisions/CP8.3-web-contract.md`)
 - Owner: HUMAN LEAD
