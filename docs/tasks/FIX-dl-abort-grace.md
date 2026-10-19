@@ -4,7 +4,7 @@
 
 - Status: DRAFT
 - Type: BUG
-- Change class: S1 (chỉ logic client `dlqueue.js`; route / state của `GET /api/downloads/{token}` trong CP8.3 web contract giữ nguyên)
+- Change class: S1
 - Owner: HUMAN LEAD
 - Execution profile: dual-agent
 - Orchestrator: claude-code
@@ -19,6 +19,8 @@
 - Implementation authorized: NO
 
 Lifecycle: `task` mode = `DRAFT → APPROVED → IN_PROGRESS → READY`. DONE suy ra từ Git sau khi merge.
+
+S1 vì: chỉ logic client `dlqueue.js`; route / state của `GET /api/downloads/{token}` trong CP8.3 web contract giữ nguyên.
 
 ## Bối cảnh (2026-10-19, ORCHESTRATOR)
 
