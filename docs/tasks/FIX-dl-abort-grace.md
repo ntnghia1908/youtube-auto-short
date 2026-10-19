@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: DRAFT
+- Status: IN_PROGRESS
 - Type: BUG
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -10,13 +10,13 @@
 - Orchestrator: claude-code
 - Implementer: codex — fix nhỏ tự chứa trong máy trạng thái thuần có test Node sẵn, effort `medium`; Sonnet subagent `implementer` nếu quota Codex vượt ngưỡng
 - Authorization mode: task
-- Authorization source: follow-up ở Result CP8.34 (log thật A1d, 2026-10-18) + `docs/workflow/current-state.md` Next action 4; chờ HUMAN LEAD duyệt
+- Authorization source: follow-up ở Result CP8.34 (log thật A1d, 2026-10-18) + `docs/workflow/current-state.md` Next action 4; HUMAN LEAD APPROVE 2026-10-19
 - Parallel group: —
 - Owned paths: `src/auto_short/web/static/dlqueue.js`, `src/auto_short/web/static/app.js` (chỉ `dqStatusText`), `tests/test_dlqueue_cp834.py`, file này
 - Dependencies: CP8.34 (#88, đã merge)
 - Base commit / branch: `79436e8` (origin/main) / `fix/dl-abort-grace`
-- Human Lead approval: pending
-- Implementation authorized: NO
+- Human Lead approval: accepted 2026-10-19 (chat "APPROVE FIX-dl-abort-grace": D1–D4)
+- Implementation authorized: YES
 
 Lifecycle: `task` mode = `DRAFT → APPROVED → IN_PROGRESS → READY`. DONE suy ra từ Git sau khi merge.
 
