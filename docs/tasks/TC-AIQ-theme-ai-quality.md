@@ -98,11 +98,19 @@ Không chạm database, security model hoặc public API contract; manual test s
 
 ## Result
 
-- Main changes:
-- Tests:
-- Diff + / − (app, test):
-- Helper mới (đã tìm, lý do không tái dùng):
-- Review:
-- Important findings / decisions:
-- Known limitations:
-- PR:
+- Main changes: TC1 `tc1-v3` synopsis span liên tiếp nguyên văn (min 20 cứng khi đủ evidence, max 80 mềm), cache validate shape mới; TC2 `tc2-v4` payload không `episode_id`, xáo theo hash, 8 key message, `episode_count`; JS `ref` hiển thị `s1–sN`.
+- Tests (ORCHESTRATOR, 2026-10-19, ngoài sandbox, PYTHONPATH worktree): targeted index / plan / web **227 passed**; full `-n auto` lần 1 **1 failed** (`test_theme_render::test_real_render_two_clips_order_chapters_cache_revision` — fake Planner đổi sang `sorted`, test TC3 ngầm dựa thứ tự cũ) → amendment A1 sửa fixture `make_plan` ghi thứ tự nghe tường minh, kỳ vọng k02→k01 giữ nguyên → **2214 passed, 1 skipped**. framework-check, `git diff --check` PASS.
+  | AC | Test |
+  |---|---|
+  | 1 | `test_synopsis_spans_are_extractive_and_bounded`, `test_unknown_and_duplicate_ids_are_dropped_with_uncertainty` |
+  | 2 | `test_v2_cache_invalidated_and_v3_reused`, `test_tampered_synopsis_cache_is_rejected` |
+  | 3 | `test_planner_payload_groups_by_content_and_counts_selected_episodes`, `test_proposal_basic_and_truncated_to_max` |
+  | 4 | `test_ui_refresh_failure_never_keeps_stale_rows` |
+  | 5 | full suite + checks trên |
+  | 6 | **chưa chạy** — xem Known limitations |
+- Diff + / − (app, test): app +68 / −17; test +162 / −16.
+- Helper mới (đã tìm, lý do không tái dùng): `_resolve_metadata` — tách từ `validate_metadata` để cache re-resolve span dài hơn maxItems của AI.
+- Review: Codex IMPLEMENTER 2 vòng (≈ 194,5k tokens): F1 (cắt max làm synopsis < min) sửa ở vòng 2. ORCHESTRATOR review diff + AC ACCEPTED. Reviewer thứ hai `codex exec review --commit 692efec` read-only: không có regression.
+- Important findings / decisions: D1 accepted; amendment A1 Owned paths.
+- Known limitations: AC6 (re-index + propose thật) chưa chạy: 3090 nhận lease enhance mới (KfQWXcCcNgs) ngay sau 4ZtytkY1BCY, gọi Ollama từ CLI sẽ tranh GPU không yield; cần 8080 chạy code branch (session cô lập không pin được worktree web). Topic null / tốc độ qwen3 think chưa xử lý (ngoài scope).
+- PR: https://github.com/ntnghia1908/youtube-auto-short/pull/127 (draft)
