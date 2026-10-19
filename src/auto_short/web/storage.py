@@ -196,7 +196,8 @@ def episode_sizes(config: Config, active: set[str] | None = None) -> list[dict]:
         if complete:
             ticks = [t for t in (parse_time(e.get("at")) for e in (pub.get("published") or [])) if t is not None]
             finished = parse_time((stages.get("render") or {}).get("finished_at"))
-            complete_since = max([*ticks, _mtime(ws.dir / PUBLISH_NAME),
+            restored = parse_time((ep._read_json(ws.dir / "restored.json") or {}).get("restored_at"))
+            complete_since = max([*ticks, *([restored] if restored is not None else []), _mtime(ws.dir / PUBLISH_NAME),
                                   _mtime(out_root / eid / ep.RENDER_MANIFEST),
                                   *([finished] if finished is not None else [])])
         if eid in active or "running" in statuses:

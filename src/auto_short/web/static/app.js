@@ -617,7 +617,7 @@ const AutoShort = (() => {
     showGpu(data.gpu);
     showYoutube(data.youtube);
     renderEpisode(data);
-    const running = jobActive(data.job) || data.stages.some((s) => s.status === "running");
+    const running = jobActive(data.job) || jobActive(data.restore_job) || data.stages.some((s) => s.status === "running");
     if (running) pollTimer = setTimeout(refreshEpisode, POLL_MS);
     else if (enhanceBusy(data.enhance) || verticalBusy(data.hd_video)) pollTimer = setTimeout(refreshEpisode, POLL_MS * 2);
   }
@@ -823,21 +823,43 @@ const AutoShort = (() => {
     if (archived) {
       an.textContent = `${d.archived.auto ? "Đã tự dọn video nguồn" : "Đã dọn video nguồn"}${d.archived.freed ? ` (giải phóng ${fmtBytes(d.archived.freed)})` : ""}` +
         `${d.archived.at ? `, ${fmtTime(d.archived.at)}` : ""}: chỉ xem / tải / đánh dấu đã đăng / xóa ${noun()}. ` +
-        `Muốn sửa tiêu đề hay khôi phục ${noun()} thì xóa tập rồi chạy lại.`;
+        `Bấm “Khôi phục nguồn” để sửa tiêu đề, khôi phục ${noun()} hay render lại.`;
     }
+    const restoreJob = d.restore_job;
+    const restoring = jobActive(restoreJob);
+    $("#restore-source-box").hidden = !archived && !restoreJob;
+    const restoreBtn = $("#restore-source");
+    restoreBtn.hidden = !archived;
+    restoreBtn.disabled = restoring || jobActive(job) || verticalBusy(d.hd_video);
+    restoreBtn.textContent = restoring ? "Đang khôi phục nguồn…" : "Khôi phục nguồn";
+    const restoreStatus = $("#restore-source-status");
+    restoreStatus.className = "small" + (restoreJob && restoreJob.status === "failed" ? " error" : "");
+    restoreStatus.textContent = restoring
+      ? (restoreJob.yt_wait ? "Đợi YouTube hết chặn tải để khôi phục nguồn." :
+        restoreJob.status === "queued" || restoreJob.waiting ? "Đang chờ khôi phục nguồn." : "Đang khôi phục video nguồn…")
+      : restoreJob && restoreJob.status === "failed" ? `Khôi phục nguồn lỗi: ${restoreJob.error}`
+      : restoreJob && restoreJob.status === "interrupted" ? "Khôi phục nguồn bị ngắt; bấm lại để thử tiếp."
+      : restoreJob && restoreJob.status === "done" && !archived ? "Đã khôi phục nguồn; có thể sửa và render lại." : "";
+    restoreBtn.onclick = async () => {
+      restoreBtn.disabled = true;
+      try {
+        await api(`/api/episodes/${encodeURIComponent(episodeId)}/restore-source`, { method: "POST" });
+      } catch (e) { alert(e.message); }
+      await refreshEpisode();
+    };
     const rb = $("#resubmit");
     rb.hidden = !d.source_url || jobActive(job) || archived;
     rb.dataset.url = d.source_url || "";
     const del = $("#delete-episode");
     del.hidden = !d.stages.length;
-    del.disabled = jobActive(job);
-    $("#delete-note").hidden = !jobActive(job) || !d.stages.length;
+    del.disabled = jobActive(job) || restoring;
+    $("#delete-note").hidden = !(jobActive(job) || restoring) || !d.stages.length;
 
     lastData = d;
     renderEnhance(d);
     renderHdVideo(d);
     renderShorts(d);
-    setEditsLocked(jobActive(job));
+    setEditsLocked(jobActive(job) || restoring);
   }
 
   // Shorts grid: a card is rebuilt only when its own state changes, in place, so polling never stops a playing
@@ -2499,8 +2521,8 @@ const AutoShort = (() => {
     const postWarn = r.post_unticked ? `\n\nCòn ${r.post_unticked} bài đăng chưa đăng — xóa cả tập sẽ mất bài đã soạn.` : "";
     const msg = a.action === "archive"
       ? `Dọn video nguồn của "${name}" (${r.episode_id})${parts}? Giải phóng ${fmtBytes(a.frees)}.\n\n` +
-        "Short vẫn xem / tải được. Sau đó KHÔNG sửa tiêu đề, khôi phục Short hay chạy lại được nữa " +
-        "(muốn sửa thì xóa tập rồi chạy lại từ đầu)."
+        "Short vẫn xem / tải được. Muốn sửa sau khi dọn cần bấm Khôi phục nguồn; " +
+        "chỉ khôi phục được khi lấy lại đúng bản gốc."
       : `Xóa toàn bộ tập "${name}" (${r.episode_id})${parts}? Giải phóng ${fmtBytes(a.frees)}.\n\n` +
         "Sẽ xóa video nguồn đã tải, mọi Short và dữ liệu xử lý. KHÔNG khôi phục được." + postWarn;
     if (!confirm(msg)) return;
@@ -3389,7 +3411,7 @@ const AutoShort = (() => {
 
   const MON_MS = 4000;
   const LANE_NAMES = { prepare: "Chuẩn bị (tải + phiên âm + phân tích)", ai: "AI (chọn đoạn + đặt tên)", render: "Render", serial: "Tuần tự" };
-  const KIND_NAMES = { pipeline: "xử lý tập", render: "render lại", add: "thêm Short", post: "soạn bài đăng", post_search: "tìm ảnh", enhance: "ghép HD", vertical: "bản dọc cả tập" };
+  const KIND_NAMES = { pipeline: "xử lý tập", render: "render lại", add: "thêm Short", post: "soạn bài đăng", post_search: "tìm ảnh", enhance: "ghép HD", vertical: "bản dọc cả tập", restore_source: "khôi phục nguồn" };
   const STAGE_NAMES = { ingest: "tải video", transcript: "phiên âm", analysis: "phân tích", preflight: "kiểm Ollama", selection: "chọn đoạn", titling: "đặt tên", render: "render" };
   const WAIT_NAMES = { hd: "đợi HD", gpu: "đợi GPU / Ollama", youtube: "đợi YouTube" };
 

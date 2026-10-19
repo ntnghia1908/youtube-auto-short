@@ -64,6 +64,7 @@ from ..review import (ArchivedError, EpisodeNotFound, ReviewError, TitlePreview,
                       delete_episode, is_archived, list_titles, preview_title, reject_archived_clip, reject_clip,
                       reset_title, restore_clip, set_alternative, set_published, set_title, set_watched)
 from ..review import shorts as review_shorts
+from ..review.archive import restore_parts, restore_source
 from ..review.names import hashtags as review_hashtags
 from ..review.names import posts_docx_name
 from ..titling.playlist import stored_series as playlist_series
@@ -76,9 +77,10 @@ from . import monitor as monitor_mod
 from . import theme_index as theme_index_web
 from . import theme_plan as theme_plan_web
 from .auth import COOKIE_NAME, SessionSigner, load_or_create_secret
-from .storage import BLOCK_MESSAGE, StorageCache, auto_archive_plan, episode_sizes, video_id
+from .storage import BLOCK_MESSAGE, StorageCache, auto_archive_plan, episode_sizes, parse_time, video_id
 from .jobs import (EPISODE_KINDS, KIND_ADD, KIND_COMPILATION, KIND_ENHANCE, KIND_IMAGE_SEARCH, KIND_PIPELINE, KIND_POST, KIND_POST_SEARCH, KIND_RENDER, KIND_VERTICAL,
-                   POST_IMAGES_KEY, JobRunner, add_short_target, enhance_assemble_target, image_search_target, keyword_search_target,
+                   POST_IMAGES_KEY, PREPARE, JobFailed, JobRunner, Step, YoutubeWait,
+                   add_short_target, enhance_assemble_target, image_search_target, keyword_search_target,
                    pipeline_target, post_compose_target, render_target, vertical_target)
 from . import playlists as playlists_mod
 from .auto_vertical import WISH_FILE, AutoVertical
@@ -87,6 +89,48 @@ from .playlists import LIST_TIMEOUT, PlaylistError, PlaylistStore, ytdlp_list
 from .urls import ASK, PLAYLIST, UrlError, canonical_url, classify_url, valid_playlist_id
 
 log = logging.getLogger("auto_short")
+KIND_RESTORE_SOURCE = "restore_source"  # Uses the owner's episode key and a single prepare step; no jobs.py change.
+
+
+class RestoreSourceTarget:
+    """CP8.37: exact source restoration; download work stays outside the submit/publication lock."""
+
+    def __init__(self, config, episode_id, *, downloader=None, lock=None, disk_blocked=None,
+                 clock=time.time, after=None):
+        self.config, self.episode_id = config, episode_id
+        self.downloader, self.lock, self.disk_blocked = downloader, lock, disk_blocked
+        self.clock, self.after = clock, after
+
+    def needs_download(self):
+        from ..theme_render.sources import cached_source
+        return cached_source(self.config, self.episode_id) is None
+
+    def __call__(self, job):
+        from ..ingest.youtube import YoutubeBlocked
+        job.stage = "ingest"
+        if self.disk_blocked is not None and (message := self.disk_blocked()):
+            raise JobFailed(message)
+        t0 = time.monotonic()
+        try:
+            result = restore_source(self.episode_id, self.config, downloader=self.downloader, lock=self.lock,
+                                    clock=self.clock)
+        except YoutubeBlocked as exc:
+            raise YoutubeWait(f"khôi phục nguồn: {exc}") from exc
+        except (ReviewError, OSError) as exc:
+            raise JobFailed(f"khôi phục nguồn: {exc}") from exc
+        if result.downloaded:
+            job.youtube_ok()
+        if self.after is not None:
+            self.after(result.episodes)
+        job.stages.append({"stage": "ingest", "ran": result.downloaded, "seconds": round(time.monotonic() - t0, 3)})
+        job.stage = None
+        job.summary = "Đã khôi phục nguồn: " + ", ".join(result.episodes)
+
+    def lane_steps(self):
+        return [Step(PREPARE, self)]
+
+    def spec(self):
+        return {"episode_id": self.episode_id}
 
 STATIC_DIR = Path(__file__).parent / "static"
 LOGIN_DELAY = 1.0  # seconds to wait after a wrong password
@@ -350,7 +394,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                enhance_tokens: dict[str, str] | None = None, enhance_service: EnhanceService | None = None,
                proc_dir: str = "/proc", ollama_ps: Callable[[], dict] | None = None,
                monitor_interval: float = monitor_mod.SAMPLE_SECONDS, vertical: Callable | None = None,
-               vertical_downloader: Callable | None = None) -> FastAPI:
+               vertical_downloader: Callable | None = None, restore_downloader: Callable | None = None) -> FastAPI:
     """``preflight`` / ``pipeline`` / ``render`` are injectable for tests (defaults: CP8 ``ollama_preflight`` /
     ``run_pipeline``, CP7/CP8.2 ``run_render``); so are ``disk_usage`` (``shutil.disk_usage``) and ``clock`` (epoch
     seconds, ages of the storage recommendations) for CP8.6; ``playlist_lister`` (yt-dlp flat listing) and
@@ -469,6 +513,12 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                 if any((j := runner.latest(eid)) is not None and j.active for eid in parts) \
                         or any((j := runner.latest_vertical(ep.hd_owner(eid))) is not None and j.active for eid in parts):
                     continue  # CP8.32: a queued vertical job still needs the original
+                # A restore may have finished since the rows were measured. Recheck its grace under the same lock.
+                restored_times = [parse_time((ep._read_json(Path(config.workspace.dir) / eid / "restored.json")
+                                              or {}).get("restored_at")) for eid in parts]
+                if any(t is not None and clock() - t < config.storage.auto_archive_grace_minutes * 60
+                       for t in restored_times):
+                    continue
                 for eid in item["episodes"]:
                     if enh_state.has_hd(Path(config.workspace.dir) / eid) \
                             or enh_state.is_pending(enh_state.read(Path(config.workspace.dir) / eid)):
@@ -502,6 +552,19 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         return vertical_target(config, vertical=vertical, episode_id=owner, downloader=vertical_downloader,
                                disk_blocked=storage.block_message)
 
+    def _restored(episodes):
+        storage.invalidate()
+        for eid in episodes:
+            playlists.invalidate(eid)
+
+    def _restore_target(eid: str):
+        return RestoreSourceTarget(config, eid, downloader=restore_downloader, lock=submit_lock,
+                                   disk_blocked=storage.block_message, clock=clock, after=_restored)
+
+    def _restore_job(eid: str):
+        job = runner.latest(ep.hd_owner(eid))
+        return job if job is not None and job.kind == KIND_RESTORE_SOURCE else None
+
     def _auto_vertical_waiting(vid: str) -> bool:
         """CP8.35 D6: the video has the wish and its vertical job waits for the HD source (enhance on, HD not done)."""
         if not auto_vertical.wanted(vid):
@@ -520,7 +583,8 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             parts = (owner, owner + khaithi.SUFFIX)  # a part may still be before its first manifest
             if not any(post_stage.rendered_clip_ids(config, p) for p in parts):
                 return  # the Shorts are not rendered (yet)
-            if any((j := runner.latest(p)) is not None and j.active and j.kind in EPISODE_KINDS for p in parts):
+            if any((j := runner.latest(p)) is not None and j.active
+                   and j.kind in (*EPISODE_KINDS, KIND_RESTORE_SOURCE) for p in parts):
                 return  # a job of the video still runs the render step: its end checks again
             if _auto_vertical_waiting(owner):
                 return  # enhance on, HD not done: _hd_ready checks again
@@ -550,7 +614,18 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             return compilations.rebuild(eid, spec)
         if kind in (theme_plan_web.KIND_GENERATE, theme_plan_web.KIND_THEME_RENDER):
             return None  # TC2: restart requires a fresh user request and plan audit
-        if not ep.valid_episode_id(eid) or (is_archived(ws / eid) and kind != KIND_VERTICAL):
+        if not ep.valid_episode_id(eid):
+            return None
+        if kind == KIND_RESTORE_SOURCE:
+            target_id = spec.get("episode_id")
+            if not isinstance(target_id, str) or not ep.valid_episode_id(target_id) or ep.hd_owner(target_id) != eid:
+                return None
+            try:
+                restore_parts(target_id, config)
+            except (ReviewError, OSError):
+                return None
+            return _restore_target(target_id)
+        if is_archived(ws / eid) and kind != KIND_VERTICAL:
             return None
         if kind == KIND_PIPELINE:
             url, kt = spec.get("url"), spec.get("episode_id")
@@ -583,16 +658,21 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     def _vertical_failed(job) -> None:
         """K2: the vertical job of an archived episode ended failed / interrupted: remove the original it re-downloaded
         (unless another vertical job of the video is still active)."""
-        latest = runner.latest_vertical(ep.hd_owner(job.episode_id))
-        if latest is not None and latest is not job and latest.active:
-            return
-        render_full.remove_refetched_source(config, job.episode_id)
+        with submit_lock:
+            latest = runner.latest_vertical(ep.hd_owner(job.episode_id))
+            restoring = _restore_job(job.episode_id)
+            if (latest is not None and latest is not job and latest.active) \
+                    or (restoring is not None and restoring.active):
+                return
+            render_full.remove_refetched_source(config, job.episode_id)
 
     runner.on_vertical_failed = _vertical_failed
 
     def _sweep_refetched() -> int:
-        active = {j.episode_id for j in runner.jobs() if j.kind == KIND_VERTICAL and j.active}
-        return render_full.sweep_refetched_sources(config, active)
+        with submit_lock:
+            active = {ep.hd_owner(j.episode_id) for j in runner.jobs()
+                      if j.kind in (KIND_VERTICAL, KIND_RESTORE_SOURCE) and j.active}
+            return render_full.sweep_refetched_sources(config, active)
 
     app_sweep = _sweep_refetched
 
@@ -1327,6 +1407,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                     "zip_url": None, "zip_name": None, "zip_all_url": None, "zip_all_name": None,
                     "archived": None}
         view["job"] = _job_view(job)
+        view["restore_job"] = _job_view(_restore_job(episode_id))
         view["priority"] = runner.priority.marked(episode_id)  # CP8.26
         view["gpu"] = runner.gpu_status()  # FIX-ollama-wait O7
         view["youtube"] = runner.youtube_status()  # FIX-youtube-botcheck-wait Y3
@@ -2092,7 +2173,9 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             return JSONResponse({"detail": "không có episode này"}, status_code=404)
         with submit_lock:
             runner.drop_parked(episode_id)  # CP13.1b: a job only waiting for its HD source does not block the deletion
-            current = runner.latest(episode_id)
+            current = _restore_job(episode_id)
+            if current is None or not current.active:
+                current = runner.latest(episode_id)
             if current is None or not current.active:
                 current = runner.latest_post(episode_id)  # CP8.16 R3: a compose job also blocks the deletion
             if current is None or not current.active:
@@ -2339,6 +2422,10 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                 skipped.append({"episode_id": vid, "reason": reason})
                 continue
             with submit_lock:
+                restoring = _restore_job(vid)
+                if restoring is not None and restoring.active:
+                    skipped.append({"episode_id": vid, "reason": "đang khôi phục nguồn"})
+                    continue
                 try:
                     job, created = runner.submit(vid, KIND_VERTICAL, _vertical_target(vid))
                 except Exception as exc:  # a broken workspace must not stop the others
@@ -2448,6 +2535,10 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             return bad
         owner = ep.hd_owner(episode_id)
         with submit_lock:
+            restoring = _restore_job(owner)
+            if restoring is not None and restoring.active:
+                return JSONResponse({"detail": "đang khôi phục nguồn; tạo bản dọc sau khi xong",
+                                     "job": _job_view(restoring)}, status_code=409)
             job, created = runner.submit(owner, KIND_VERTICAL, _vertical_target(owner))
         log.info("web: bản dọc [%s] -> job %s%s", owner, job.id, "" if created else " (đã có)")
         return JSONResponse({"job": _job_view(job, logs=False), "hd_video": _hd_video_view(episode_id)},
@@ -2550,6 +2641,28 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         """S4 banner on every page: free space, ``warn``, ``block`` (not cached)."""
         return storage.status()
 
+    @app.post("/api/episodes/{episode_id}/restore-source")
+    def api_restore_source(episode_id: str):
+        if not ep.valid_episode_id(episode_id) or not (Path(config.workspace.dir) / episode_id).is_dir():
+            return JSONResponse({"detail": "không có episode này"}, status_code=404)
+        owner = ep.hd_owner(episode_id)
+        with submit_lock:
+            current = _restore_job(owner)
+            if current is not None and current.active:
+                return JSONResponse({"job": _job_view(current), "created": False}, status_code=200)
+            if not is_archived(Path(config.workspace.dir) / episode_id):
+                return JSONResponse({"detail": "tập chưa dọn video nguồn"}, status_code=409)
+            busy = next((j for j in runner.jobs() if j.active and ep.hd_owner(j.episode_id) == owner), None)
+            if busy is not None:
+                return JSONResponse({"detail": "video đang có job chạy/đợi; khôi phục sau khi xong",
+                                     "job": _job_view(busy)}, status_code=409)
+            try:
+                restore_parts(episode_id, config)
+            except (ReviewError, OSError) as exc:
+                return JSONResponse({"detail": str(exc)}, status_code=422)
+            job, created = runner.submit(owner, KIND_RESTORE_SOURCE, _restore_target(episode_id))
+        return JSONResponse({"job": _job_view(job), "created": created}, status_code=202 if created else 200)
+
     @app.post("/api/episodes/{episode_id}/archive")
     def api_archive(episode_id: str):
         """S3: delete the downloaded source video, keep the Shorts; 409 while a job of the episode is
@@ -2557,7 +2670,9 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         if not ep.valid_episode_id(episode_id) or not (Path(config.workspace.dir) / episode_id).is_dir():
             return JSONResponse({"detail": "không có episode này"}, status_code=404)
         with submit_lock:
-            current = runner.latest(episode_id)
+            current = _restore_job(episode_id)
+            if current is None or not current.active:
+                current = runner.latest(episode_id)
             if current is not None and current.active:
                 return JSONResponse({"detail": "episode đang có job chạy/đợi; dọn sau khi job xong",
                                      "job": _job_view(current)}, status_code=409)
