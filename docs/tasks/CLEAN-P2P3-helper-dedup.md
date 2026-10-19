@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: DRAFT
+- Status: IN_PROGRESS
 - Type: CHANGE
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -15,8 +15,8 @@
 - Owned paths: `src/auto_short/workspace.py`, `src/auto_short/youtube_url.py` (mới), `src/auto_short/web/{urls,jobs,playlists,episodes}.py`, `src/auto_short/post/{logic,stage,doc}.py`, `src/auto_short/review/{archive,publish,watched,tombstone,logic}.py`, `src/auto_short/titling/{added,stage}.py`, `src/auto_short/{analysis,selection,render}/stage.py`, `src/auto_short/enhance/state.py`, `src/auto_short/compilation/store.py`, `src/auto_short/selection/logic.py`, `src/auto_short/render/plan.py`, `src/auto_short/web/static/{app,favorites}.js`, `src/auto_short/web/static/favorites.html`, `tools/enhance_worker/worker.py`, `tests/test_review_cp9.py`, `tests/test_render_plan.py`, test mới cho helper `workspace` / `youtube_url` (trong file test sẵn có của module), `docs/ai/project-profile.md` (§3 dòng đầu), file này
 - Dependencies: none
 - Base commit / branch: `e709e23` (origin/main) / `chore/p2p3-helper-dedup`
-- Human Lead approval: pending
-- Implementation authorized: NO
+- Human Lead approval: accepted 2026-10-19 (chat; đồng ý cả 2 quyết định cục bộ)
+- Implementation authorized: YES
 
 Lifecycle: `task` mode = `DRAFT → APPROVED → IN_PROGRESS → READY`. DONE suy ra từ Git sau khi merge.
 
@@ -46,7 +46,7 @@ Mỗi helper nhỏ (giờ UTC, đọc JSON, phân tích URL YouTube, `el` / `api
 
 - Audit: `docs/audit/code-growth-report.md` §2.1, §2.2, §5.2.
 - Hướng import: core module không import `auto_short.web` (quy ước ở `titling/playlist.py`, `post/doc.py`) → parser URL đặt ở module core `youtube_url.py`, không đặt trong `web/urls.py`.
-- Quyết định cục bộ S1 (cần HUMAN LEAD đồng ý khi duyệt):
+- Quyết định cục bộ S1 (HUMAN LEAD đồng ý 2026-10-19):
   1. Ô "link" của bài đăng: tập link được nhận và kết quả chuẩn hóa không đổi; **câu báo lỗi** đổi sang câu của form gửi URL (W3), ví dụ `chỉ nhận URL YouTube (youtube.com, youtu.be)`, `không nhận playlist — dán link của một video`.
   2. Trang Yêu thích nạp `app.js` nên **có thanh hàng đợi** ở đầu trang như các trang khác (`initQueueBar`).
 
