@@ -144,4 +144,4 @@ Không chạm database, security model hay public API contract; chỉ sửa `tes
   - D2: `test_enhance_worker` poll 0,005 s, timeout 60 s giữ ở lời gọi.
   - `docs/workflow/current-state.md` Next action 3 (FIX CP8.10) cần bỏ ở lần đồng bộ state sau merge; không sửa trong PR này để tránh xung đột với nhánh trim state.
 - Known limitations: `ws` và các biến thể `tcfg` có thêm section vẫn để riêng từng file (ngoài scope). Cảnh báo pyflakes có sẵn (biến không dùng, f-string không placeholder) không sửa.
-- PR:
+- PR: #118
