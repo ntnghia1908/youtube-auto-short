@@ -95,11 +95,21 @@ Không chạm database, security model, public API contract (chỉ logic trang).
 
 ## Result
 
-- Main changes:
-- Tests:
-- Diff + / − (app, test):
-- Helper mới (đã tìm, lý do không tái dùng):
-- Review:
-- Important findings / decisions:
-- Known limitations:
+- Main changes: `dlqueue.js` — `DEFAULTS.abortGraceMs = 10000`, item có `abortedAt` (0 = không chờ; reset ở `step` khi bắt đầu lần thử mới và ở `retry`); `report`: `aborted` đặt mốc lần đầu, chỉ `fail` khi `now − abortedAt ≥ abortGraceMs`; `sending` / `done` xoá mốc. `app.js` `dqStatusText`: "đang tải · mất kết nối, chờ nối lại…" (+ MB) khi có mốc. Server không đổi.
+- Tests: `tests/test_dlqueue_cp834.py`
+
+  | AC | Test |
+  |---|---|
+  | 1 | `test_transient_abort_recovers_without_retry` (parametrize `sending` / `done` × loại file) |
+  | 2 | `test_retry_twice_then_error_and_other_files_continue`, `test_manual_retry_resets_attempts_and_new_token_each_try` (cũ, không sửa) |
+  | 3 | `test_interrupted_abort_grace_restarts_after_sending`, `test_abort_marker_resets_for_new_attempt_and_stale_reports_are_ignored` |
+  | 4 | review diff + `node --check`; manual test |
+  | 5 | `tests/test_web_downloads_cp834.py` (không sửa) + full suite |
+
+  ORCHESTRATOR 2026-10-19 (ngoài sandbox): `test_dlqueue_cp834.py` + `test_web_downloads_cp834.py` 42 passed; `pytest -q -n auto` 2189 passed, 1 skipped; `node --check app.js` OK; `node scripts/framework-check.mjs` FAIL chỉ vì `docs/tasks/CLEAN-P5-web-routers.md` (`Change class: S2 (…)`, có sẵn trên `main` `79436e8`, ngoài owned paths) — file này hợp lệ.
+- Diff + / − (app, test): app +12 / −7 (`dlqueue.js` +11 / −6, `app.js` +1 / −1); test +76 / −0.
+- Helper mới (đã tìm, lý do không tái dùng): không có (Codex: `rg -n 'function fail|function dqStatusText|def run_js|…|abortedAt|abortGraceMs'`; dùng lại `fail`, `run_js` / `specs` / `tok`).
+- Review: ORCHESTRATOR 2026-10-19 ACCEPTED — đọc diff `report` / `step` / `retry` / `dqStatusText` và test mới; inventory ⊆ Owned paths, không commit lạ. Non-blocking: parametrize theo loại file ở AC1 thừa (logic không phụ thuộc `kind`).
+- Important findings / decisions: Implementer Codex (`gpt-6.1-sol`, effort `medium`), 1,3 phút, 36k tokens, 0 vòng sửa; quota trước khi giao: 5 giờ 22 %, tuần 34 %.
+- Known limitations: lỗi thật (mất mạng, route trả lỗi) thử lại chậm thêm ≤ 10 s; mốc dùng `0` làm "không chờ" (`Date.now()` thật không bao giờ 0); điểm treo A1 (`sending` mãi khi còn lỗ) vẫn ngoài scope; chưa manual test trên điện thoại.
 - PR:

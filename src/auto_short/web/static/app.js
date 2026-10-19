@@ -3258,7 +3258,7 @@ const AutoShort = (() => {
   function dqStatusText(i) {
     switch (i.status) {
       case "waiting": return "đang chờ";
-      case "sending": return i.seen ? `đang tải${i.bytesSent ? " · " + dqMb(i.bytesSent) + (i.bytesTotal ? " / " + dqMb(i.bytesTotal) : "") : ""}` : "đang bắt đầu…";
+      case "sending": return i.seen ? `đang tải${i.abortedAt ? " · mất kết nối, chờ nối lại…" : ""}${i.bytesSent ? " · " + dqMb(i.bytesSent) + (i.bytesTotal ? " / " + dqMb(i.bytesTotal) : "") : ""}` : "đang bắt đầu…";
       case "retrywait": return `thử lại sau vài giây (lần ${i.attempts + 1}) — ${i.reason}`;
       case "done": return "xong" + (i.bytesSent ? " · " + dqMb(i.bytesSent) : "");
       case "error": return `lỗi: ${i.reason}`;

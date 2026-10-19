@@ -86,6 +86,82 @@ console.log(JSON.stringify({afterFail, ok, status: status(q), unique: new Set(to
     assert r["afterFail"] == "error" and r["ok"] and r["status"] == "sending" and r["unique"] == r["n"] == 3
 
 
+@pytest.mark.parametrize("kind", ["zip", "vertical", "source-hd"])
+@pytest.mark.parametrize("recovered_state", ["sending", "done"])
+def test_transient_abort_recovers_without_retry(kind, recovered_state):
+    r = run_js("""
+const q = Q.createQueue();
+const spec = specs(1)[0]; spec.kind = KIND;
+q.add([spec]);
+const it = q.items[0];
+const initial = it.abortedAt;
+q.step(100, tok);
+const token = it.token;
+q.report(it.id, token, {state: "aborted", bytes_sent: 1, bytes_total: 5}, 1000);
+const during = [it.status, it.abortedAt, it.attempts];
+q.report(it.id, token, {state: RECOVERED_STATE, bytes_sent: 5, bytes_total: 5}, 10999);
+const starts = q.step(20000, tok).length;
+console.log(JSON.stringify({initial, during, status: it.status, abortedAt: it.abortedAt,
+  attempts: it.attempts, sameToken: it.token === token, tokens: n, starts}));
+""".replace("KIND", json.dumps(kind)).replace("RECOVERED_STATE", json.dumps(recovered_state)))
+    assert r == {
+        "initial": 0, "during": ["sending", 1000, 1], "status": recovered_state,
+        "abortedAt": 0, "attempts": 1, "sameToken": True, "tokens": 1, "starts": 0,
+    }
+
+
+def test_interrupted_abort_grace_restarts_after_sending():
+    r = run_js("""
+const q = Q.createQueue(); q.add(specs(1)); q.step(100, tok);
+const it = q.items[0];
+q.report(it.id, it.token, {state: "aborted"}, 1000);
+q.report(it.id, it.token, {state: "sending"}, 9000);
+const cleared = it.abortedAt;
+q.report(it.id, it.token, {state: "aborted"}, 11000);
+const restarted = [it.status, it.abortedAt];
+q.report(it.id, it.token, null, 15000);  // 404 preserves the grace marker and the existing seen rule
+q.report(it.id, it.token, {state: "aborted"}, 20999);
+const before = [it.status, it.abortedAt];
+q.report(it.id, it.token, {state: "aborted"}, 21000);
+console.log(JSON.stringify({cleared, restarted, before, after: [it.status, it.retryAt, it.reason]}));
+""")
+    assert r == {
+        "cleared": 0, "restarted": ["sending", 11000], "before": ["sending", 11000],
+        "after": ["retrywait", 26000, "bị ngắt giữa chừng"],
+    }
+
+
+@pytest.mark.parametrize("manual", [False, True])
+def test_abort_marker_resets_for_new_attempt_and_stale_reports_are_ignored(manual):
+    r = run_js("""
+const manual = MANUAL;
+const q = Q.createQueue({maxRetries: manual ? 0 : 2, abortGraceMs: 2000});
+q.add(specs(1)); q.step(100, tok);
+const it = q.items[0], oldToken = it.token;
+q.report(it.id, oldToken, {state: "aborted"}, 1000);
+q.report(it.id, oldToken, {state: "aborted"}, 3000);
+const failed = it.status;
+let reset = null;
+if (manual) { q.retry(it.id); reset = it.abortedAt; }
+const tooEarly = manual ? 0 : q.step(7999, tok).length;
+q.step(8000, tok);
+const started = [it.status, it.abortedAt, it.attempts];
+q.report(it.id, oldToken, {state: "aborted"}, 9000);
+const staleAbort = it.abortedAt;
+q.report(it.id, it.token, {state: "aborted"}, 10000);
+q.report(it.id, oldToken, {state: "sending"}, 11000);
+q.report(it.id, oldToken, {state: "done"}, 11000);
+q.report(it.id, it.token, {state: "aborted"}, 11999);
+console.log(JSON.stringify({failed, reset, tooEarly, started, staleAbort,
+  after: [it.status, it.abortedAt], newToken: it.token !== oldToken, tokens: n}));
+""".replace("MANUAL", json.dumps(manual)))
+    assert r == {
+        "failed": "error" if manual else "retrywait", "reset": 0 if manual else None,
+        "tooEarly": 0, "started": ["sending", 0, 1 if manual else 2], "staleAbort": 0,
+        "after": ["sending", 10000], "newToken": True, "tokens": 2,
+    }
+
+
 def test_no_request_seen_within_60s_is_error_but_seen_sending_is_not():
     r = run_js("""
 const q = Q.createQueue({concurrency: 2, maxRetries: 0}); q.add(specs(2));
