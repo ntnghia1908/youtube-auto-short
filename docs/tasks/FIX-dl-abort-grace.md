@@ -113,4 +113,4 @@ Không chạm database, security model, public API contract (chỉ logic trang).
 - Review: ORCHESTRATOR 2026-10-19 ACCEPTED — đọc diff `report` / `step` / `retry` / `dqStatusText` và test mới; inventory ⊆ Owned paths, không commit lạ. Non-blocking: parametrize theo loại file ở AC1 thừa (logic không phụ thuộc `kind`).
 - Important findings / decisions: Implementer Codex (`gpt-6.1-sol`, effort `medium`), 1,3 phút, 36k tokens, 0 vòng sửa; quota trước khi giao: 5 giờ 22 %, tuần 34 %.
 - Known limitations: lỗi thật (mất mạng, route trả lỗi) thử lại chậm thêm ≤ 10 s; mốc dùng `0` làm "không chờ" (`Date.now()` thật không bao giờ 0); điểm treo A1 (`sending` mãi khi còn lỗ) vẫn ngoài scope; chưa manual test trên điện thoại.
-- PR:
+- PR: #125
