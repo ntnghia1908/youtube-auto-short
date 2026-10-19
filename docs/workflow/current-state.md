@@ -28,7 +28,7 @@ Auto Short (cập nhật 2026-10-04): `main` = `abd6704`. Phiên 2026-10-04 đã
 
 Hạ tầng: VM 32 nhân, 125 GB RAM; IP đổi `10.8.102.101` → **`10.8.102.100`** khi reboot 2026-10-04 (DHCP) — ssh config 3090 / 3050 đã sửa; nên xin IP cố định. `setup-gpu-node-v4.ps1` mặc định `-ServerHost 10.8.102.101` (cũ) → chạy với `-ServerHost 10.8.102.100`. `config.toml` repo chính: `[enhance] lease_hours = 12`, `face = "gfpgan_v1.4"`; `[web] prepare_workers = 4`, `worker_nice = 10`; `[transcript.whisper] cpu_threads = 24`, `cpu_threads_per_job = 8`; `[render] jobs = 2` (bản sao lưu `~/.cache/config.toml.bak-pre-*`).
 
-Chinese Learning (CL1, bản đồ: `docs/tasks/CL1-roadmap.md`): CL1.1, CL1.2 MERGED. G6A / G6B: PENDING HUMAN LEAD DECISION. CL1.3, CL1.4 chờ.
+Chinese Learning (CL1): HUMAN LEAD bỏ 2026-10-19; code / test / config / nhánh đã gỡ bởi `docs/tasks/CHG-remove-cl1.md`. Bundle sao lưu nhánh: `~/.local/share/auto-short/cl1-branches-2026-10-19.bundle`. CL1 C0 / C1 (quy ước host) vẫn hiệu lực.
 
 Đọc Kinh (SR1 + SR2, `docs/decisions/SR1-sutra-reader-contract.md`, `docs/decisions/SR2-khaithi-library-contract.md`): MERGED #82 (2026-10-13), manual test HUMAN LEAD OK. Trang `/sutras` (tab Đọc Kinh \| Khai thị). Dữ liệu kinh ở `work/_sutras/` (8 bộ, không trong git — bản quyền); dependency mới `pypdf==6.20.0` (env `auto-short` đã cài).
 

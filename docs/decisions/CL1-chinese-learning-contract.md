@@ -2,7 +2,7 @@
 
 | Metadata | Value |
 |---|---|
-| Status | PROPOSED — kiến trúc hai ứng dụng duyệt về nguyên tắc (HUMAN LEAD 2026-09-27: G1, G2, G3, G5 phần lấy clip, G7, G8, G9, G10, G11); G4, G6 tạm, chốt từ số đo; chuyển ACCEPTED khi CL1 hoàn tất |
+| Status | ACCEPTED (chỉ C0, C1 — quy ước host / application, HUMAN LEAD 2026-09-27 G11; SR1 / SR2 dựa vào) — phần ứng dụng Chinese Learning (C2–C12, gate G4 / G6) WITHDRAWN: HUMAN LEAD bỏ CL1 2026-10-19, code gỡ bởi `docs/tasks/CHG-remove-cl1.md` |
 | Accepted by | — |
 | Checkpoint | CL1 (S2) — Experiment Chinese Learning MVP |
 | Task contract | `docs/tasks/CL1-chinese-learning-mvp.md` (tổng, DRAFT); `docs/tasks/CL1.1-chinese-captions-media.md` (APPROVED 2026-09-27) |
@@ -11,7 +11,7 @@
 
 Khi ACCEPTED, file này là **canonical owner** của: ứng dụng Chinese Learning (input, namespace `work/_learning/`, stage learning, chọn phụ đề tiếng Trung, cửa sổ 5 phút, AI enrichment, schema `lesson.json`, route/API/trang learning, tiến độ phía client) và của **quy ước host/application** tối thiểu ở C1 (G11). Nơi khác chỉ trỏ tới đây. Auto Short (CP1–CP8.7) **không đổi behavior**; mọi điểm chạm code chung liệt kê ở C3 và đi qua gate tương ứng.
 
-Implementation: `src/auto_short/learning/` — CL1.1 *implemented* (C4 workspace/ownership, C5, C6, C9 stage `subtitle` + `media` và `run_stage(downstream)`, C10 phần lấy clip, C12 lệnh `learn`; `[learning]` `window_seconds`, `min_han_ratio`, `media_format`). CL1.2 *implemented* (C7 AI enrichment + preflight riêng, C8 `lesson.json`, C9 stage `lesson`; `[learning]` key C7; chi tiết cục bộ: `docs/tasks/CL1.2-ai-enrichment-lesson.md`). Model G6 **chưa chốt**. Còn *planned*: C10 phục vụ clip, C11 web/job, xóa bài học.
+Implementation: **đã gỡ** (CHG-remove-cl1, 2026-10-19) — không còn `src/auto_short/learning/`, lệnh `learn`, `[learning]`, `run_stage(downstream)`. C2–C12 bên dưới chỉ là lịch sử. C0 / C1 vẫn là canonical owner của quy ước host / application cho các ứng dụng còn lại (Đọc Kinh, …); ví dụ "learning" trong C1 chỉ mang tính minh họa.
 
 ## C0. Dữ kiện từ repository (base `eab3134`, 2026-09-27)
 
