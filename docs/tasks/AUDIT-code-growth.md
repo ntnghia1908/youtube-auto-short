@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: DOC
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -74,4 +74,7 @@ Không chạm database, security model hay public API contract.
 
 ## Result
 
+- Báo cáo: `docs/audit/code-growth-report.md` (tóm tắt 1 trang + §2 số đo, §3 8 PR, §4 nguyên nhân, §5 đề xuất F1–F6 / P1–P5, phụ lục lệnh chạy lại).
+- Quét rộng: subagent `implementer` 2 lượt chỉ đọc (trùng lặp + code chết ≈ 56k tokens / 2,2 phút; test ≈ 27k / 1,3 phút); đào sâu PR, blame, spot-check: ORCHESTRATOR.
+- Giới hạn: không có `pytest` trên cloud (không số thời gian test); FW-TOKEN-01 chưa kiểm được (repo ngoài quyền truy cập).
 - PR:
