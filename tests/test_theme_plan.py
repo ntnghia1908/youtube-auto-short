@@ -28,7 +28,9 @@ class Planner(IndexFake):
         ids = [c['id'] for c in data['clips']]
         themes = self.themes(ids) if callable(self.themes) else self.themes
         return ChatResult(json.dumps({'themes': themes if themes is not None else
-                                      [dict(label='Tu học', rationale='Cùng chủ đề tu học', clip_ids=ids)]}))
+                                      [dict(label='Tu học', rationale='Cùng chủ đề tu học', clip_ids=ids,
+                                            titles=['Tu học', 'Vì sao cần chuyên tâm tu học?', 'Giữ tâm thanh tịnh'],
+                                            title_styles=['A', 'B', 'A'])]}))
 
 
 class Down:
@@ -78,7 +80,7 @@ def test_proposal_basic_and_truncated_to_max(multi):
     c = p['clips'][0]
     assert c['render_sha256'] and c['input_fingerprint'] and c['topic'] == 'Tu học' and c['synopsis']
     saved = json.loads((tp._folder(cfg, 'PLtest') / 'theme_proposals.json').read_text())
-    assert saved['proposals'][0]['proposal_id'] == p['proposal_id'] and saved['provenance']['prompt_version'] == 'tc2-v2'
+    assert saved['proposals'][0]['proposal_id'] == p['proposal_id'] and saved['provenance']['prompt_version'] == 'tc2-v3'
     assert fake.plan_calls[0]['options']['num_predict'] == tp.NUM_PREDICT == 8192
     assert saved['provenance']['options'] == fake.plan_calls[0]['options']
     prompt = json.loads(fake.plan_calls[0]['messages'][1]['content'])
@@ -378,3 +380,136 @@ def test_shared_index_stale_and_wrong_playlist_fail_closed(multi, monkeypatch):
     wrong = {**index, 'playlist_id': 'PLother'}
     assert tp.check_plan(cfg, 'PLtest', plan, index=wrong)['state'] == 'stale'
     assert 'mismatch' in tp.list_plans(cfg, 'PLtest', index=wrong)[0]['check']['problems'][0]
+
+
+def title_theme(titles=None, styles=None, label='Tu học'):
+    return dict(label=label, rationale='Cùng chủ đề tu học', clip_ids=ids(6),
+                titles=titles if titles is not None else ['chuyên tâm tu học', 'Vì sao cần chuyên tâm?', 'Giữ tâm thanh tịnh'],
+                title_styles=styles if styles is not None else ['A', 'B', 'A'])
+
+
+@pytest.mark.parametrize('speaker,full,short', [
+    ('HT.Tịnh Không', 'Hòa Thượng Tịnh Không', 'HT Tịnh Không'),
+    ('HT. Tịnh Không', 'Hòa Thượng Tịnh Không', 'HT Tịnh Không'),
+    ('HT Tịnh Không', 'Hòa Thượng Tịnh Không', 'HT Tịnh Không'),
+    ('H.T.Tịnh Không', 'Hòa Thượng Tịnh Không', 'HT Tịnh Không'),
+    ('Thầy A', 'Thầy A', 'Thầy A'), (None, None, None)])
+def test_three_titles_composed_and_saved_in_plan(multi, speaker, full, short):
+    cfg, ws, _, out = multi
+    titles = {'header': {'fields': {'speaker': speaker}}}
+    atomic_write_json(ws.dir / 'titles.json', titles)
+    change(out / 'render_manifest.json', lambda d: d.update(titles_sha256=hashing.config_hash(titles)))
+    doc, fake = proposal(cfg, [title_theme()])
+    p = doc['proposals'][0]
+    expected = [f'{full} - Chuyên tâm tu học' if full else 'Chuyên tâm tu học',
+                f'Vì sao cần chuyên tâm? | {short}' if short else 'Vì sao cần chuyên tâm?',
+                f'{full} - Giữ tâm thanh tịnh' if full else 'Giữ tâm thanh tịnh']
+    assert p['titles'] == expected and p['speaker'] == speaker and not p['title_rejected']
+    assert len(fake.plan_calls) == 1
+    schema = fake.plan_calls[0]['format']['properties']['themes']['items']['properties']
+    assert schema['titles']['minItems'] == schema['titles']['maxItems'] == 3
+    plan = tp.create_plan(cfg, 'PLtest', p['proposal_id'])
+    assert plan['title'] == expected[0] and plan['title_options'] == expected
+    approved = tp.approve_plan(cfg, 'PLtest', plan['plan_id'], revision=1)
+    assert tp.check_plan(cfg, 'PLtest', approved)['state'] == 'approved'
+    changed = {**approved, 'title_options': list(reversed(expected))}
+    assert tp.plan_fingerprint(changed) != tp.plan_fingerprint(approved)
+
+
+@pytest.mark.parametrize('bad,reason', [
+    (None, 'not a string'), (3, 'not a string'), ('  ', 'empty'), ('x' * 81, '80'),
+    ('Tu "học"', 'forbidden'), ('Tu ‘học’', 'forbidden'), ('Tu\nhọc', 'forbidden'),
+    ('Tu\u2028học', 'forbidden'), ('Tu #học', 'forbidden'), ('Tu học!', 'forbidden'),
+    ('Tu học 🧘', 'emoji'), ('Tu học ☀', 'emoji'), ('Tu học 1️⃣', 'emoji'),
+    ('SỐC khi tu học', 'clickbait'), ('Bí mật tu học', 'clickbait'),
+    ('Chấn động', 'clickbait'), ('Không thể tin', 'clickbait'),
+    ('Tu học 30 phút', 'duration'), ('Tu học 30phút', 'duration')])
+def test_invalid_title_is_rejected_without_losing_theme(multi, bad, reason):
+    cfg, *_ = multi
+    doc, _ = proposal(cfg, [title_theme([bad, 'Vì sao cần chuyên tâm?', 'Giữ tâm thanh tịnh'])])
+    p = doc['proposals'][0]
+    assert not doc['rejected_themes'] and len(p['titles']) == len(set(p['titles'])) == 3
+    assert p['titles'] == ['Tu học', 'Vì sao cần chuyên tâm?', 'Giữ tâm thanh tịnh']
+    assert any(r.get('position') == 0 and reason in r['reason'] for r in p['title_rejected'])
+
+
+def test_titles_deduplicated_in_order_and_filled_with_label(multi):
+    cfg, *_ = multi
+    doc, _ = proposal(cfg, [title_theme(['Chuyên tâm', 'Vì sao cần chuyên tâm?', 'chuyên tâm'])])
+    p = doc['proposals'][0]
+    assert p['titles'] == ['Chuyên tâm', 'Vì sao cần chuyên tâm?', 'Tu học']
+    assert any('duplicate' in r['reason'] for r in p['title_rejected'])
+
+
+@pytest.mark.parametrize('titles,styles', [
+    ([], []), (None, None), ('invalid', 'invalid'),
+    (['', '!', '#'], ['A', 'B', 'A']), (['Tu học?'] * 3, ['B', 'Z', None])])
+def test_all_bad_titles_keep_theme_with_three_distinct_fallbacks(multi, titles, styles):
+    cfg, *_ = multi
+    raw = {**title_theme(), 'titles': titles, 'title_styles': styles}
+    doc, _ = proposal(cfg, [raw])
+    p = doc['proposals'][0]
+    assert p['titles'] == ['Tu học', 'Cùng tìm hiểu Tu học', 'Hiểu thêm về Tu học']
+    assert p['title_rejected'] and not doc['rejected_themes']
+
+
+def test_style_b_must_be_question_and_ai_text_length_boundary(multi):
+    cfg, *_ = multi
+    doc, _ = proposal(cfg, [title_theme(['a' * 80, 'Chuyên tâm', 'Giữ tâm'])])
+    p = doc['proposals'][0]
+    assert p['titles'] == ['A' + 'a' * 79, 'Giữ tâm', 'Tu học']
+    assert any('end with ?' in r['reason'] for r in p['title_rejected'])
+
+
+def test_composed_title_limit_and_fallback_speaker(multi):
+    cfg, ws, _, out = multi
+    titles = {'header': {'fields': {'speaker': 'HT.Tịnh Không'}}}
+    atomic_write_json(ws.dir / 'titles.json', titles)
+    change(out / 'render_manifest.json', lambda d: d.update(titles_sha256=hashing.config_hash(titles)))
+    doc, _ = proposal(cfg, [title_theme(['a' * 80, 'Vì sao cần tu học?', 'Giữ tâm'])])
+    p = doc['proposals'][0]
+    assert p['titles'][0] == 'Hòa Thượng Tịnh Không - Tu học'
+    assert p['titles'][1:] == ['Vì sao cần tu học? | HT Tịnh Không', 'Hòa Thượng Tịnh Không - Giữ tâm']
+    assert any('100' in r['reason'] for r in p['title_rejected'])
+
+
+def test_majority_speaker_counts_selected_clips_only(multi, monkeypatch):
+    cfg, ws, *_ = multi
+    index = tp.theme_index.build_index(cfg, 'PLtest', client=Planner())
+    for i, r in enumerate(index['records']):
+        # First 6 clips selected: 2 guest + 4 main. Dropped tail: 2 guest.
+        r['identity']['episode_id'] = 'guest.kt' if i < 2 or i >= 6 else ws.episode_id
+    for eid, speaker in [('guest.kt', 'Thầy B'), (ws.episode_id, 'HT.Tịnh Không')]:
+        atomic_write_json(cfg.workspace.dir / eid / 'titles.json', {'header': {'fields': {'speaker': speaker}}})
+    monkeypatch.setattr(tp.theme_index, 'build_index', lambda *a, **kw: index)
+    doc, _ = proposal(cfg, lambda all_ids: [{**title_theme(), 'clip_ids': all_ids}])
+    p = doc['proposals'][0]
+    assert p['speaker'] == 'HT.Tịnh Không' and p['titles'][0].startswith('Hòa Thượng Tịnh Không - ')
+
+
+@pytest.mark.parametrize('raw', [b'{bad', b'\xff', b'[]', b'null', b'{"header":null}',
+                                  b'{"header":{"fields":[]}}', b'{"header":{"fields":{"speaker":3}}}'])
+def test_title_metadata_is_best_effort(episode, raw):
+    cfg, ws, *_ = episode
+    (ws.dir / 'titles.json').write_bytes(raw)
+    assert tp.title_fields(cfg, ws.episode_id) == {}
+    (ws.dir / 'titles.json').unlink()
+    assert tp.title_fields(cfg, ws.episode_id) == {}
+    assert tp.speaker_for_clips(cfg, [{'episode_id': ws.episode_id}]) is None
+
+
+def test_legacy_plan_and_proposal_without_title_options(multi):
+    cfg, *_ = multi
+    doc, _ = proposal(cfg)
+    p = doc['proposals'][0]
+    for key in ('titles', 'speaker', 'title_rejected'):
+        p.pop(key)
+    atomic_write_json(tp._folder(cfg, 'PLtest') / tp.PROPOSALS_NAME, doc)
+    plan = tp.create_plan(cfg, 'PLtest', p['proposal_id'])
+    assert plan['title'] == p['label'] and plan['title_options'] == []
+    plan.pop('title_options')
+    atomic_write_json(tp._plan_path(cfg, 'PLtest', plan['plan_id']), plan)
+    assert tp.check_plan(cfg, 'PLtest', plan)['state'] == 'draft'
+    approved = tp.approve_plan(cfg, 'PLtest', plan['plan_id'], revision=1)
+    assert tp.check_plan(cfg, 'PLtest', approved)['state'] == 'approved'
+    assert tp.list_plans(cfg, 'PLtest')[0]['check']['state'] == 'approved'

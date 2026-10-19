@@ -200,8 +200,8 @@ def test_render_approved_only_dedup_and_delete_busy(setup, monkeypatch):
     plan = approve(s, plan)
     calls = []
 
-    def render(config, pid, plan_id):
-        calls.append((config, pid, plan_id))
+    def render(config, pid, plan_id, *, hashtags):
+        calls.append((config, pid, plan_id, hashtags))
         out, meta = fake_output(s, plan)
         return SimpleNamespace(path=out, metadata=meta, ran=True)
 
@@ -221,6 +221,7 @@ def test_render_approved_only_dedup_and_delete_busy(setup, monkeypatch):
     finally:
         s.runner.stop()
     assert len(calls) == 1
+    assert calls[0][3] == s.service.playlists.effective_hashtags(s.service.playlists.load(PID))[0]
     view = s.c.get(BASE + "/theme-plan").json()["plans"][0]
     assert view["render_job"]["status"] == "done"
     assert view["output"]["description"].startswith("00:00")
@@ -320,7 +321,7 @@ def test_other_ai_errors_fail_and_latest_error_stays_visible(setup, monkeypatch)
 def test_youtube_blocked_has_retry_message(setup, monkeypatch):
     s = setup
     plan = approve(s, create(s))
-    def blocked(*args):
+    def blocked(*args, **kwargs):
         raise SourceBlocked("blocked /private/server")
     monkeypatch.setattr(web.theme_render, "render_landscape", blocked)
     s.c.post(plan_path(plan) + "/render")
@@ -382,6 +383,25 @@ def test_restart_skips_theme_jobs(setup):
     assert not app.state.runner.jobs()
 
 
+def test_render_target_passes_playlist_hashtags_without_http(monkeypatch):
+    plan = {'plan_id': '12345678', 'revision': 1}
+    playlist = {'playlist_id': PID}
+    calls = []
+    monkeypatch.setattr(tp, 'approved_plan', lambda *args: plan)
+
+    def render(config, pid, plan_id, *, hashtags):
+        calls.append((config, pid, plan_id, hashtags))
+        return SimpleNamespace(metadata={'duration': 120})
+
+    monkeypatch.setattr(web.theme_render, 'render_landscape', render)
+    service = SimpleNamespace(config=object(), playlists=SimpleNamespace(
+        load=lambda pid: playlist, effective_hashtags=lambda doc: (['#DiaTang', '#PhatPhap'], True)))
+    job = SimpleNamespace(stage=None, summary=None)
+    web.RenderTarget(service, PID, plan)(job)
+    assert calls == [(service.config, PID, plan['plan_id'], ['#DiaTang', '#PhatPhap'])]
+    assert job.stage is None and '2.0' in job.summary
+
+
 NODE = r"""
 const fs = require('fs'), vm = require('vm');
 class El {
@@ -400,9 +420,9 @@ const fixture = {index_summary: {usable: 1, unusable: 2, source_missing: 1, comm
  generate_job: {active: true, status: 'queued', gpu_wait: true},
  clips_available: [{id: 'ep/k1', label: '<script>x</script> · Tập 1', duration: 350}],
  proposals: {ai_error: 'lỗi AI', shortfall: 'thiếu clip', rejected_themes: [{position: 0, reason: 'bịa'}],
- proposals: [{proposal_id: 'p1', label: 'Tu học', rationale: 'Cùng chủ đề', clips: [{id: 'ep/k1', duration: 350}],
+ proposals: [{proposal_id: 'p1', label: 'Tu học', titles: ['HT A - Chuyên tâm tu học'], rationale: 'Cùng chủ đề', clips: [{id: 'ep/k1', duration: 350}],
  total_duration: 350, shortfall_seconds: 1450, dropped_for_length: 1}]},
- plans: [{plan_id: '12345678', revision: 1, title: 'Kế hoạch', clips: [{id:'ep/k1', duration:350}],
+ plans: [{plan_id: '12345678', revision: 1, title: 'Kế hoạch', title_options: ['Kế hoạch', 'Vì sao tu học? | HT A', '<script>gợi ý</script>'], clips: [{id:'ep/k1', duration:350}],
  check: {state:'draft', problems:[]}, render_job: null}]};
 let body = fixture;
 function el(tag, attrs = {}, ...children) { const n = document.createElement(tag); for (const [k,v] of Object.entries(attrs)) {
@@ -418,11 +438,19 @@ const ctx = { Favorites: {el, api: async (path, opts) => {requests.push({path,op
  if (!els['tp-proposals'].textContent.includes('thiếu') || !els['tp-proposals'].textContent.includes('<script>x</script>')) throw Error('proposal text');
  if (!timers.some(t => t.ms === 5000)) throw Error('active polling');
  const all = n => [n,...n.children.filter(c=>typeof c!=='string').flatMap(all)];
+ if (all(els['tp-proposals']).find(n=>n.tagName==='H4').textContent !== 'HT A - Chuyên tâm tu học') throw Error('default proposal title');
+ if (!els['tp-proposals'].textContent.includes('Tu học · Cùng chủ đề')) throw Error('label/rationale');
  let nodes = all(els['tp-plans']);
+ let suggestions = nodes.filter(n=>n.tagName==='BUTTON' && n.textContent.startsWith('Gợi ý: '));
+ if (suggestions.length !== 2 || !suggestions.some(n=>n.textContent.includes('<script>gợi ý</script>'))) throw Error('title suggestions/text only');
  const approve = nodes.find(n=>n.tagName==='BUTTON' && n.textContent==='Duyệt');
  if (!approve.disabled) throw Error('override required');
  const checkbox = nodes.find(n=>n.type==='checkbox'); checkbox.checked = true; checkbox.listeners.change();
  if (approve.disabled) throw Error('override approval');
+ const firstInput = nodes.find(n=>n.type==='text');
+ suggestions[0].listeners.click();
+ if (firstInput.value !== 'Vì sao tu học? | HT A' || !els['tp-plans'].textContent.includes('chưa lưu') || !approve.disabled) throw Error('suggestion fills dirty draft');
+ if (requests.some(r=>r.opts && r.opts.method==='PUT')) throw Error('suggestion must await save');
  const title = nodes.find(n=>n.type==='text'); title.value = 'Sửa chưa lưu'; title.listeners.input();
  const refresh = els['tp-refresh'].listeners.click; fixture.generate_job.active = false; await refresh();
  nodes = all(els['tp-plans']);

@@ -45,7 +45,8 @@ const ThemePlan = (() => {
   function proposal(p) {
     const clips = el("ol");
     for (const c of p.clips) clips.append(el("li", { text: clipLabel(c) }));
-    return el("article", { class: "tp-plan" }, el("h4", { text: p.label }), el("p", { text: p.rationale }), clips,
+    return el("article", { class: "tp-plan" }, el("h4", { text: (p.titles || [])[0] || p.label }),
+      el("p", { class: "small", text: `${p.label} · ${p.rationale}` }), clips,
       el("p", { class: "small", text: `${minutes(p.total_duration)}${p.shortfall_seconds ? " · thiếu " + minutes(p.shortfall_seconds) : ""}${p.dropped_for_length ? " · đã cắt bớt " + p.dropped_for_length + " clip" : ""}` }),
       button("Dùng chủ đề này", () => change("/theme-plans", "POST", { proposal_id: p.proposal_id })));
   }
@@ -90,6 +91,15 @@ const ThemePlan = (() => {
       save.disabled = busy || !draft.clips.length;
     }
     function edit() { draft.dirty = true; override.checked = false; controls(); }
+    const suggestions = el("div", { class: "actions" });
+    function drawSuggestions() {
+      suggestions.replaceChildren();
+      for (const option of new Set(plan.title_options || [])) if (typeof option === "string" && option !== draft.title) {
+        suggestions.append(button(`Gợi ý: ${option}`, () => {
+          title.value = option; draft.title = option; edit(); drawSuggestions();
+        }, busy));
+      }
+    }
     function drawClips() {
       rows.replaceChildren();
       draft.clips.forEach((c, i) => {
@@ -112,7 +122,7 @@ const ThemePlan = (() => {
       }
       controls();
     }
-    title.addEventListener("input", () => { draft.title = title.value; edit(); });
+    title.addEventListener("input", () => { draft.title = title.value; edit(); drawSuggestions(); });
     override.addEventListener("change", controls);
     const add = button("Thêm clip", () => {
       const clip = (data.clips_available || []).find((c) => c.id === select.value);
@@ -120,7 +130,7 @@ const ThemePlan = (() => {
     }, busy);
     select.disabled = busy;
     const reset = button("Tải lại bản đã lưu", () => { drafts.delete(plan.plan_id); renderPlans(); });
-    box.append(title, rows, el("div", { class: "actions" }, select, add), totalText, overrideLabel,
+    box.append(title, suggestions, rows, el("div", { class: "actions" }, select, add), totalText, overrideLabel,
       el("div", { class: "actions" }, save, reset, approve, render, remove),
       el("p", { class: "small" + (plan.render_job && plan.render_job.error ? " error" : ""), text: jobText(plan.render_job) }));
     if (plan.output) {
@@ -130,7 +140,7 @@ const ThemePlan = (() => {
         el("a", { class: "btn small", href: output.download_url, download: output.download_name, text: "Tải về" }), copy,
         el("span", { class: "small", text: fmtDur(output.duration) })));
     }
-    drawClips();
+    drawSuggestions(); drawClips();
     return box;
   }
   function renderPlans() {

@@ -156,7 +156,16 @@ def _encode_key(config: Config, records: list[dict]) -> str:
                         audio.MIN_CORRELATION, audio.MAX_DURATION_DIFF]})
 
 
-def render_landscape(config: Config, playlist_id: str, plan_id: str, *, runner=_run,
+def _description(config: Config, approved: dict, chapters: list[dict], hashtags: list[str]) -> str:
+    clips = approved.get("clips") or []
+    fields = theme_plan.title_fields(config, clips[0]["episode_id"]) if clips else {}
+    byline = " · ".join(x for x in (theme_plan.speaker_for_clips(config, clips), fields.get("series")) if x)
+    heading = "\n".join(x for x in (approved["title"], byline) if x)
+    return "\n\n".join(x for x in (heading, meta.description("concat", chapters, None, []),
+                                    " ".join(hashtags)) if x)
+
+
+def render_landscape(config: Config, playlist_id: str, plan_id: str, *, hashtags: list[str] = (), runner=_run,
                      downloader=ytdlp_download) -> LandscapeResult:
     """Make/reuse ``theme/<plan_id>-r<revision>.mp4``; reject unapproved or stale input before any writes."""
     approved = theme_plan.approved_plan(config, playlist_id, plan_id)
@@ -181,6 +190,10 @@ def render_landscape(config: Config, playlist_id: str, plan_id: str, *, runner=_
             cached = {}
         if cached.get("schema_version") == SCHEMA_VERSION and cached.get("plan_fingerprint") == fingerprint \
                 and cached.get("encode_key") == key and cached.get("sha256") == hashing.sha256_file(out):
+            description = _description(config, approved, cached.get("chapters") or [], hashtags)
+            if cached.get("description") != description:
+                cached["description"] = description
+                atomic_write_json(metadata_path, cached)
             return LandscapeResult(out, cached, False)
     # Validate every reference before downloading/encoding any source.
     references = [_reference(config, playlist_id, r) for r in records]
@@ -228,7 +241,7 @@ def render_landscape(config: Config, playlist_id: str, plan_id: str, *, runner=_
             chapters = meta.chapters([title for _, title in references], result.parts)
             doc = {"schema_version": SCHEMA_VERSION, "plan_id": plan_id, "revision": approved["revision"],
                    "plan_fingerprint": fingerprint, "encode_key": key, "clips": clips, "duration": result.duration,
-                   "chapters": chapters, "description": meta.description("concat", chapters, approved["title"], []),
+                   "chapters": chapters, "description": _description(config, approved, chapters, hashtags),
                    "download_name": (truncate_utf8(clean_part(approved["title"])) or plan_id) + ".mp4",
                    "created_at": utc_now(), "sha256": hashing.sha256_file(joined)}
             atomic_write_json(tmp / "metadata.json", doc)

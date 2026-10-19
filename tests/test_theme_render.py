@@ -323,6 +323,45 @@ def test_cache_requires_matching_fingerprint_key_and_file_sha(episode, monkeypat
     assert_clean(folder.parent)
 
 
+@pytest.mark.parametrize('fields,byline', [
+    ({'speaker': 'HT.Tịnh Không', 'series': 'Kinh Địa Tạng'}, 'HT.Tịnh Không · Kinh Địa Tạng'),
+    ({'speaker': 'HT.Tịnh Không'}, 'HT.Tịnh Không'),
+    ({'series': 'Kinh Địa Tạng'}, 'Kinh Địa Tạng'), ({}, '')])
+def test_description_refresh_on_cache_hit_without_encoding(episode, fields, byline):
+    cfg, ws, folder, out = episode
+    titles = {'header': {'fields': fields}}
+    atomic_write_json(ws.dir / 'titles.json', titles)
+    change(out / 'render_manifest.json', lambda d: d.update(titles_sha256=hashing.config_hash(titles)))
+    doc = make_plan(cfg)
+    records = theme_index.build_index(cfg, 'PLtest', client=Fake(), write=False)['records']
+    folder = folder / 'theme'
+    folder.mkdir()
+    output = folder / f"{doc['plan_id']}-r1.mp4"
+    output.write_bytes(b'previously verified output')
+    chapters = [{'start': 0, 'title': 'Chuyên tâm'}, {'start': 120, 'title': 'Giữ tâm'}]
+    metadata = dict(schema_version=1, plan_fingerprint=tp.plan_fingerprint(doc),
+                    encode_key=tr._encode_key(cfg, records), sha256=hashing.sha256_file(output),
+                    chapters=chapters, description='old description', created_at='old timestamp')
+    path = output.with_suffix('.json')
+    atomic_write_json(path, metadata)
+    original = output.stat()
+    result = tr.render_landscape(cfg, 'PLtest', doc['plan_id'], hashtags=['#DiaTang', '#PhatPhap'],
+                                 runner=no_call, downloader=no_call)
+    heading = doc['title'] + ('\n' + byline if byline else '')
+    assert result.metadata['description'] == heading + '\n\n00:00 Chuyên tâm\n02:00 Giữ tâm\n\n#DiaTang #PhatPhap'
+    assert not result.ran and output.stat() == original
+    assert json.loads(path.read_text()) == result.metadata
+    assert {k: v for k, v in result.metadata.items() if k != 'description'} == {
+        k: v for k, v in metadata.items() if k != 'description'}
+    unchanged = path.stat()
+    same = tr.render_landscape(cfg, 'PLtest', doc['plan_id'], hashtags=['#DiaTang', '#PhatPhap'],
+                               runner=no_call, downloader=no_call)
+    assert not same.ran and path.stat() == unchanged
+    removed = tr.render_landscape(cfg, 'PLtest', doc['plan_id'], runner=no_call, downloader=no_call)
+    assert not removed.ran and '#' not in removed.metadata['description']
+    assert output.stat() == original and removed.metadata['encode_key'] == metadata['encode_key']
+
+
 def test_present_source_sha_checked_again_after_audit(episode, monkeypatch):
     cfg, ws, folder, _ = episode
     doc = make_plan(cfg)

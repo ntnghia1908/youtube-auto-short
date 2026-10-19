@@ -107,7 +107,10 @@ class RenderTarget:
             current = theme_plan.approved_plan(self.service.config, self.pid, self.plan["plan_id"])
             if theme_plan.plan_fingerprint(current) != theme_plan.plan_fingerprint(self.plan):
                 raise theme_plan.PlanConflict("kế hoạch đã thay đổi, cần xuất lại")
-            result = theme_render.render_landscape(self.service.config, self.pid, self.plan["plan_id"])
+            doc = self.service.playlists.load(self.pid)
+            hashtags = self.service.playlists.effective_hashtags(doc)[0]
+            result = theme_render.render_landscape(self.service.config, self.pid, self.plan["plan_id"],
+                                                   hashtags=hashtags)
         except (SourceBlocked, YoutubeBlocked) as exc:
             raise JobFailed("YouTube đang chặn tải, thử lại sau") from exc
         except (theme_plan.PlanError, theme_index.IndexError, RenderError, OSError) as exc:
