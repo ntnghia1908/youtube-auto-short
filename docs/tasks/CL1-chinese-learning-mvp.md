@@ -1,5 +1,7 @@
 # Task: CL1 — Chinese Learning MVP (experiment)
 
+> **ABANDONED — HUMAN LEAD bỏ CL1 (Chinese Learning) 2026-10-19.** Code đã gỡ bởi `docs/tasks/CHG-remove-cl1.md`; file này chỉ còn là lịch sử, không phải authority hay việc đang mở.
+
 ## Status / Approval
 
 - Status: DRAFT

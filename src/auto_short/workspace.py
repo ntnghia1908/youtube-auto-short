@@ -10,7 +10,7 @@ import logging
 import os
 import re
 import tempfile
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -157,15 +157,10 @@ def iter_manifests(root: Path):
             yield ws, manifest
 
 
-def mark_downstream_stale(manifest: dict, stage: str, downstream: Sequence[str] | None = None) -> list[str]:
-    """Mark every recorded stage after ``stage`` (CP1 §8 order) as stale.
-
-    ``downstream`` (CL1 C9): an explicit set of stage names to mark instead of the
-    CP1 §8 order; ``stage`` then need not be in :data:`STAGES`. ``None`` = CP2 D6 as is.
-    """
+def mark_downstream_stale(manifest: dict, stage: str) -> list[str]:
+    """Mark every recorded stage after ``stage`` (CP1 §8 order) as stale."""
     marked = []
-    names = STAGES[STAGES.index(stage) + 1:] if downstream is None else downstream
-    for name in names:
+    for name in STAGES[STAGES.index(stage) + 1:]:
         entry = manifest["stages"].get(name)
         if entry and entry.get("status") != PENDING and entry.get("status") != STALE:
             entry["status"] = STALE
@@ -222,14 +217,12 @@ def run_stage(
     cfg_hash: str,
     force: bool,
     action: Callable[[], list[str]],
-    downstream: Sequence[str] | None = None,
 ) -> bool:
     """Run ``action`` unless the stage is up to date. Returns True if it ran.
 
     ``action`` returns the artifact paths (relative to the episode dir) it produced.
     On failure the stage is recorded as ``failed`` with ``error``, its artifacts are
-    removed and :class:`StageError` is raised. ``downstream``: see
-    :func:`mark_downstream_stale` (``None`` = the CP1 §8 order).
+    removed and :class:`StageError` is raised.
     """
     reason = "--force" if force else check_up_to_date(ws, manifest, stage, inputs, cfg_hash)
     if reason is None:
@@ -248,7 +241,7 @@ def run_stage(
         "finished_at": None,
         "error": None,
     }
-    stale = mark_downstream_stale(manifest, stage, downstream)
+    stale = mark_downstream_stale(manifest, stage)
     if stale:
         log.info("%s: marked downstream stale: %s", stage, ", ".join(stale))
     ws.save_manifest(manifest)
