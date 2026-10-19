@@ -325,6 +325,43 @@ def test_pause_without_preempt_finishes_the_current_segment(server, inproc):
     assert w.code == [0] and s.complete and eng.aborted == []
 
 
+class FailingEngine(SlowEngine):
+    """Engine gia: moi doan nem RuntimeError(msg)."""
+
+    def __init__(self, msg):
+        super().__init__(block_first=())
+        self.msg = msg
+
+    def run_segment(self, *a, **kw):
+        self.calls.append(0)
+        raise RuntimeError(self.msg)
+
+
+def test_cuda_fatal_markers():
+    for m in ("CUDA error: an illegal memory access was encountered", "device-side assert triggered",
+              "CUDA error: unspecified launch failure", "cudaErrorLaunchFailure", "CUBLAS_STATUS_EXECUTION_FAILED"):
+        assert W.is_cuda_fatal(RuntimeError(m))
+    assert not W.is_cuda_fatal(RuntimeError("CUDA out of memory")) and W.EXIT_CUDA_FATAL not in (0, 3)
+
+
+@needs_ffmpeg
+def test_cuda_fatal_releases_once_and_exits_with_own_code(server, inproc):
+    s = server()
+    eng = FailingEngine("CUDA error: an illegal memory access was encountered")
+    w = inproc(s, eng).start()
+    w.thread.join(60)
+    assert w.code == [W.EXIT_CUDA_FATAL] and eng.calls == [0] and len(s.releases) == 1
+
+
+@needs_ffmpeg
+def test_ordinary_error_keeps_three_tries_then_release(server, inproc):
+    s = server()
+    eng = FailingEngine("loi thuong")
+    w = inproc(s, eng).start()
+    wait_for(lambda: len(s.releases) >= 1, 60, "release sau 3 lan loi")
+    assert eng.calls[:3] == [0, 0, 0] and w.code != [W.EXIT_CUDA_FATAL]
+
+
 @needs_ffmpeg
 def test_errors_while_polling_mid_segment_do_not_abort(server, inproc):
     """AC 5: loi HTTP khi hoi may-run giua doan = run true."""

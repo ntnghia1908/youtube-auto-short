@@ -64,6 +64,20 @@ class PutContext:
         self.tmp.unlink(missing_ok=True)
 
 
+# FIX-enhance-cuda-fatal: release reasons the worker sends that are NOT a processing failure (matched by prefix, case-
+# insensitive; the worker's texts are ASCII). Everything else (segment errors, download errors, bad sha256...) counts
+# towards the per-(worker, video) error-release avoidance below.
+NON_ERROR_RELEASE_PREFIXES = ("model khong ho tro", "can cap nhat worker", "het dung luong", "lease khong hop le",
+                              "preempt", "dung", "stop")
+ERROR_RELEASE_LIMIT = 3          # consecutive error releases ...
+ERROR_RELEASE_WINDOW = 3600.0    # ... within this many seconds -> avoid the video for the worker for as long
+
+
+def is_error_release(reason: object) -> bool:
+    text = str(reason or "").strip().lower()
+    return not any(text.startswith(p) for p in NON_ERROR_RELEASE_PREFIXES)
+
+
 class EnhanceService:
     def __init__(self, config: Config, *, ai_busy: Callable[[], bool] | None = None,
                  on_complete: Callable[[str], None] | None = None, clock: Callable[[], float] = time.time,
@@ -79,6 +93,8 @@ class EnhanceService:
         self.lock = threading.RLock()
         self._workers: dict[str, dict] = {}
         self._warned_caps: set[tuple[str, str]] = set()  # (worker, video) pairs already logged "cần cập nhật worker"
+        self._err_releases: dict[tuple[str, str], list[float]] = {}  # (worker token, episode) -> error-release times
+        self._avoid_until: dict[tuple[str, str], float] = {}         # (worker token, episode) -> clock time
         self._paused = self._load_paused()
 
     # --- global switches ---------------------------------------------------------------------------------------
@@ -270,6 +286,22 @@ class EnhanceService:
                         "video này chỉ giao cho worker hỗ trợ", name, params.get("face"), eid)
         return False
 
+    def _avoided(self, name: str, eid: str) -> bool:
+        """True while ``name`` must not get ``eid`` again (too many consecutive error releases). Caller holds the lock."""
+        until = self._avoid_until.get((name, eid))
+        if until is None:
+            return False
+        if self.clock() >= until:
+            self._avoid_until.pop((name, eid), None)
+            return False
+        return True
+
+    def _clear_errors(self, eid: str, name: str | None = None) -> None:
+        """Progress (segment stored) or completion: forget the error releases (of ``name``, or of every worker)."""
+        for table in (self._err_releases, self._avoid_until):
+            for key in [k for k in table if k[1] == eid and (name is None or k[0] == name)]:
+                del table[key]
+
     def lease(self, name: str, label: str | None = None, gpu: str | None = None,
               gpu_stats: object = None, capabilities: object = None) -> dict | None:
         """E3 ``POST lease``: the worker's own valid lease, else the next video (waiting for HD first, then by
@@ -301,6 +333,8 @@ class EnhanceService:
                 for eid, d, doc in self._lease_order(cands):
                     doc = self._eligible(eid, d, doc)
                     if doc is None or not self._can_take(name, doc.get("params"), caps, eid):
+                        continue
+                    if self._avoided(name, eid):
                         continue
                     if len(st.stored_segments(d, doc)) >= st.total_segments(doc):  # complete but never assembled
                         doc.update(state=st.ASSEMBLING, lease=None)
@@ -364,6 +398,16 @@ class EnhanceService:
             doc["lease"] = None
             st.write(d, doc)
             self._touch(name, episode_id=None, lease_id=None, progress=None)
+            if is_error_release(reason):
+                now = self.clock()
+                times = [t for t in self._err_releases.get((name, eid), []) if now - t < ERROR_RELEASE_WINDOW]
+                times.append(now)
+                self._err_releases[(name, eid)] = times
+                if len(times) >= ERROR_RELEASE_LIMIT:
+                    self._avoid_until[(name, eid)] = now + ERROR_RELEASE_WINDOW
+                    self._err_releases.pop((name, eid), None)
+                    log.warning("enhance: %s released %s %d times in a row with errors -> not giving it to this "
+                                "worker for %d s", name, eid, len(times), ERROR_RELEASE_WINDOW)
         log.info("enhance: %s released lease %s of %s: %s", name, lease_id, eid, str(reason)[:200] or "-")
         return {"ok": True}
 
@@ -438,6 +482,7 @@ class EnhanceService:
                 "sha256": got_sha, "size": size, "worker": doc["lease"].get("worker"),
                 "gpu": doc["lease"].get("gpu"), "at": self._now_iso()}
             doc["profile"] = doc.get("profile") or profile
+            self._clear_errors(eid, ctx.token)
             have = len(st.stored_segments(d, doc))
             complete = have >= st.total_segments(doc)
             if complete:
@@ -455,6 +500,8 @@ class EnhanceService:
         return {"ok": True, "expires_at": expires}
 
     def _complete(self, eid: str) -> None:
+        with self.lock:
+            self._clear_errors(eid)
         if self.on_complete is not None:
             try:
                 self.on_complete(eid)
