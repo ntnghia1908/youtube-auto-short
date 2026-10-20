@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: CHANGE
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -98,7 +98,7 @@ Không chạm database, security model hoặc public API contract; manual test s
 
 ## Result
 
-- Main changes: TC1 `tc1-v3` synopsis span liên tiếp nguyên văn (min 20 cứng khi đủ evidence, max 80 mềm), cache validate shape mới; TC2 `tc2-v4` payload không `episode_id`, xáo theo hash, 8 key message, `episode_count`; JS `ref` hiển thị `s1–sN`.
+- Main changes: TC1 `tc1-v4` (schema `enum` evidence id theo từng clip — F2) synopsis span liên tiếp nguyên văn (min 20 cứng khi đủ evidence, max 80 mềm), cache validate shape mới; TC2 `tc2-v4` payload không `episode_id`, xáo theo hash, 8 key message, `episode_count`; JS `ref` hiển thị `s1–sN`.
 - Tests (ORCHESTRATOR, 2026-10-19, ngoài sandbox, PYTHONPATH worktree): targeted index / plan / web **227 passed**; full `-n auto` lần 1 **1 failed** (`test_theme_render::test_real_render_two_clips_order_chapters_cache_revision` — fake Planner đổi sang `sorted`, test TC3 ngầm dựa thứ tự cũ) → amendment A1 sửa fixture `make_plan` ghi thứ tự nghe tường minh, kỳ vọng k02→k01 giữ nguyên → **2214 passed, 1 skipped**. framework-check, `git diff --check` PASS.
   | AC | Test |
   |---|---|
@@ -107,10 +107,11 @@ Không chạm database, security model hoặc public API contract; manual test s
   | 3 | `test_planner_payload_groups_by_content_and_counts_selected_episodes`, `test_proposal_basic_and_truncated_to_max` |
   | 4 | `test_ui_refresh_failure_never_keeps_stale_rows` |
   | 5 | full suite + checks trên |
-  | 6 | **chưa chạy** — xem Known limitations |
-- Diff + / − (app, test): app +68 / −17; test +162 / −16.
+  | 6 | chạy thật 2026-10-20 trên 8080 `9818fc6` — xem Important findings |
+- Diff + / − (app, test): app +85 / −23; test +199 / −23 (gồm F2).
+- Tests sau F2: full `-n auto` **2217 passed, 1 skipped**; framework-check, `git diff --check` PASS.
 - Helper mới (đã tìm, lý do không tái dùng): `_resolve_metadata` — tách từ `validate_metadata` để cache re-resolve span dài hơn maxItems của AI.
-- Review: Codex IMPLEMENTER 2 vòng (≈ 194,5k tokens): F1 (cắt max làm synopsis < min) sửa ở vòng 2. ORCHESTRATOR review diff + AC ACCEPTED. Reviewer thứ hai `codex exec review --commit 692efec` read-only: không có regression.
-- Important findings / decisions: D1 accepted; amendment A1 Owned paths.
-- Known limitations: AC6 (re-index + propose thật) chưa chạy: 3090 nhận lease enhance mới (KfQWXcCcNgs) ngay sau 4ZtytkY1BCY, gọi Ollama từ CLI sẽ tranh GPU không yield; cần 8080 chạy code branch (session cô lập không pin được worktree web). Topic null / tốc độ qwen3 think chưa xử lý (ngoài scope).
+- Review: Codex IMPLEMENTER 2 vòng (≈ 194,5k tokens): F1 (cắt max làm synopsis < min) sửa ở vòng 2. ORCHESTRATOR review diff + AC ACCEPTED. Reviewer thứ hai `codex exec review --commit 692efec` read-only: không có regression. Vòng 3 (F2, ≈ 20k tokens, tổng ≈ 215k): chạy thật `tc1-v3` 32/39 synopsis rỗng — probe output thô cho thấy qwen3 viết tóm tắt tự do vào mảng id (validator chặn đúng) → schema per-clip `enum` id + prompt chỉ trả id; probe lại trả id hợp lệ.
+- Important findings / decisions: D1 accepted; amendment A1 Owned paths. AC6 (playlist `PLOynZc0cJJfA6C9mATbfggiF7ATJmwSJa`, job 8080 ≈ 25 phút, qwen3:30b think): synopsis 39/39, 31–80 từ (trung vị 73; trước 0–10); topic 39/39 (trước 32/37); 5 theme mỗi theme 2–3 tập (trước 1–2), 3 clip / theme, 12,6–17,4 phút, 15/39 clip dùng (trước 3–5 clip, 20 clip). 2 plan đã duyệt stale theo D1.
+- Known limitations: theme TC2 chỉ 3 clip, tất cả `short` so với mục tiêu 30–40 phút — prompt TC2 không nêu thời lượng / số clip mục tiêu (ngoài scope; đề xuất follow-up). Synopsis có thể là đoạn mở đầu clip thay vì ý chính (cần HUMAN LEAD chấm). Subtopic gần như luôn null → `missing_metadata` 37/39. Tốc độ qwen3 think ngoài scope.
 - PR: https://github.com/ntnghia1908/youtube-auto-short/pull/127 (draft)
