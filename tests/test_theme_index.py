@@ -206,20 +206,48 @@ def test_id_only_output_is_resolved_verbatim_and_options_recorded(episode):
     call = fake.calls[0]
     assert call['options']['num_predict'] == tc1.NUM_PREDICT == 8192
     assert record['provenance']['options'] == call['options']
-    assert record['provenance']['prompt_version'] == 'tc1-v3'
-    assert call['format']['properties']['synopsis']['items'] == {'type': 'string'}
+    assert record['provenance']['prompt_version'] == 'tc1-v4'
+    for key in ('synopsis', 'key_messages'):
+        assert call['format']['properties'][key]['items'] == {'type': 'string', 'enum': ['s1']}
     assert call['format']['properties']['synopsis']['maxItems'] == 12
     assert call['format']['properties']['key_messages']['maxItems'] == 8
     system = call['messages'][0]['content']
-    assert '2-8 sentences' in system and 'consecutive evidence_id' in system
+    assert 'return ONLY evidence_id strings' in system and 'Do NOT write sentences or a summary' in system
+    assert 'consecutive evidence order' in system and 'ids need not be numerically consecutive' in system
+    assert '2-8 sentences' not in system and 'aiming for 20-80 words' not in system
     assert 'Always provide a topic IN VIETNAMESE whenever evidence exists' in system
     assert 'Avoid fragments shorter than 6 words' not in system
+
+
+def test_request_schema_is_scoped_to_each_clip(episode, monkeypatch):
+    cfg, *_ = episode
+    records = audit_playlist(cfg, 'PLtest')
+    records.append(deepcopy(records[0]))
+    records[1]['identity']['clip'] = 'k02'
+    for record, ids in zip(records, (['s00331', 's00334', 's00336'], ['s00901', 's00905'])):
+        record['evidence'] = [{'evidence_id': sid, 'text': 'Phải chuyên tâm tu học.'} for sid in ids]
+    monkeypatch.setattr(tc1, 'audit_playlist', lambda *a: deepcopy(records))
+    template = deepcopy(tc1.SCHEMA)
+    fake = Fake()
+    result = build_index(cfg, 'PLtest', client=fake, write=False)
+    assert len(fake.calls) == 2 and all(r['status'] == 'indexed' for r in result['records'])
+    for call, record in zip(fake.calls, result['records']):
+        ids = [e['evidence_id'] for e in record['evidence']]
+        for key in ('synopsis', 'key_messages'):
+            assert call['format']['properties'][key]['items'] == {'type': 'string', 'enum': ids}
+        assert record['metadata']['synopsis']['evidence_ids'] == ids
+        assert record['provenance']['prompt_sha256'] == hashing.config_hash({'system': tc1.SYSTEM, 'schema': template})
+    assert tc1.SCHEMA == template
+    fake.calls[0]['format']['properties']['synopsis']['items']['enum'].append('invented')
+    assert fake.calls[1]['format']['properties']['synopsis']['items']['enum'] == ['s00901', 's00905']
+    assert tc1.SCHEMA == template
 
 
 @pytest.mark.parametrize('synopsis,messages,expected_synopsis,expected_messages', [
     (['outside', 's1'], ['s1', 'outside'], 's1', ['s1']),
     (['s1', 's1'], ['s1', 's1'], 's1', ['s1']),
     (['outside'], ['outside'], None, []),
+    (['Cha mẹ phải làm tấm gương tốt cho con cái.'], ['s1'], None, ['s1']),
     ([], ['s1'], None, ['s1']),
 ])
 def test_unknown_and_duplicate_ids_are_dropped_with_uncertainty(
@@ -342,13 +370,15 @@ def test_tampered_synopsis_cache_is_rejected(episode, monkeypatch, mutation):
     assert fresh['status'] == 'indexed' and not fresh['cached'] and len(fake.calls) == 2
 
 
-def test_v2_cache_invalidated_and_v3_reused(episode):
+@pytest.mark.parametrize('old_version', ['tc1-v2', 'tc1-v3'])
+def test_old_cache_invalidated_and_v4_reused(episode, old_version):
     cfg, _, folder, _ = episode
     fake = Fake()
-    old = build_index(cfg, 'PLtest', client=fake, prompt_version='tc1-v2')['records'][0]
-    change(folder / 'theme_index.json', lambda d: d['records'][0]['metadata']['synopsis'].pop('evidence_ids'))
+    old = build_index(cfg, 'PLtest', client=fake, prompt_version=old_version)['records'][0]
+    if old_version == 'tc1-v2':
+        change(folder / 'theme_index.json', lambda d: d['records'][0]['metadata']['synopsis'].pop('evidence_ids'))
     current = build_index(cfg, 'PLtest', client=fake)['records'][0]
-    assert old['provenance']['prompt_version'] == 'tc1-v2' and current['provenance']['prompt_version'] == 'tc1-v3'
+    assert old['provenance']['prompt_version'] == old_version and current['provenance']['prompt_version'] == 'tc1-v4'
     assert old['input_fingerprint'] != current['input_fingerprint'] and not current['cached']
     assert build_index(cfg, 'PLtest', client=fake)['records'][0]['cached'] and len(fake.calls) == 2
 
