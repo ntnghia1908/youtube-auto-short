@@ -25,7 +25,7 @@ class Planner(IndexFake):
         self.plan_calls.append(kwargs)
         if self.raw is not None:
             return ChatResult(self.raw)
-        ids = [c['id'] for c in data['clips']]
+        ids = sorted(c['id'] for c in data['clips'])  # fake AI chooses its own listening order
         themes = self.themes(ids) if callable(self.themes) else self.themes
         return ChatResult(json.dumps({'themes': themes if themes is not None else
                                       [dict(label='Tu học', rationale='Cùng chủ đề tu học', clip_ids=ids,
@@ -75,18 +75,59 @@ def test_proposal_basic_and_truncated_to_max(multi):
     p = doc['proposals'][0]
     # 8 clips x 350 = 2800 -> tail cut so the total is <= 2400 (6 clips = 2100)
     assert p['total_duration'] == 2100 and len(p['clips']) == 6 and p['status'] == 'ok'
-    assert p['shortfall_seconds'] == 0 and p['dropped_for_length'] == 2
+    assert p['shortfall_seconds'] == 0 and p['dropped_for_length'] == 2 and p['episode_count'] == 1
     assert [c['id'] for c in p['clips']] == ids(6)
     c = p['clips'][0]
     assert c['render_sha256'] and c['input_fingerprint'] and c['topic'] == 'Tu học' and c['synopsis']
     saved = json.loads((tp._folder(cfg, 'PLtest') / 'theme_proposals.json').read_text())
-    assert saved['proposals'][0]['proposal_id'] == p['proposal_id'] and saved['provenance']['prompt_version'] == 'tc2-v3'
+    assert saved['proposals'][0]['proposal_id'] == p['proposal_id'] and saved['provenance']['prompt_version'] == 'tc2-v4'
     assert fake.plan_calls[0]['options']['num_predict'] == tp.NUM_PREDICT == 8192
     assert saved['provenance']['options'] == fake.plan_calls[0]['options']
     prompt = json.loads(fake.plan_calls[0]['messages'][1]['content'])
     assert {x['id'] for x in prompt['clips']} == set(ids(8))
     assert prompt['clips'][0]['synopsis'] == c['synopsis'] == 'Phải chuyên tâm tu học.'
     assert prompt['clips'][0]['key_messages'] == ['Phải chuyên tâm tu học.']
+
+
+@pytest.mark.parametrize('reverse_records', [False, True])
+def test_planner_payload_groups_by_content_and_counts_selected_episodes(multi, monkeypatch, reverse_records):
+    cfg, *_ = multi
+    index = tp.theme_index.build_index(cfg, 'PLtest', client=Planner())
+    selected_ids = []
+    for i, record in enumerate(index['records']):
+        # Input grouped by four episodes; the last episode is dropped for length.
+        record['identity']['episode_id'] = f'episode{i // 2}.kt'
+        record['metadata']['key_messages'] = [dict(evidence_id=f's{j}', text=f'Ý dạy {j}') for j in range(9)]
+        record['metadata']['synopsis'] = dict(evidence_id='s1', evidence_ids=['s1', 's2'], text='Ý đầu. Ý tiếp.')
+        selected_ids.append(tp._clip_id(record))
+    if reverse_records:
+        index['records'].reverse()
+    monkeypatch.setattr(tp.theme_index, 'build_index', lambda *a, **kw: index)
+    themes = [dict(label='Tu học', rationale='Cùng nội dung', clip_ids=selected_ids)]
+    doc, fake = proposal(cfg, themes)
+    call = fake.plan_calls[0]
+    payload = json.loads(call['messages'][1]['content'])
+    clips = payload['clips']
+    assert 'episode_id' not in call['messages'][1]['content']
+    expected = sorted(selected_ids, key=hashing.config_hash)
+    assert [c['id'] for c in clips] == expected
+    episode_order = [c['id'].split('/')[0] for c in clips]
+    assert len([e for i, e in enumerate(episode_order) if i == 0 or e != episode_order[i - 1]]) > 4
+    assert all(c['key_messages'] == [f'Ý dạy {i}' for i in range(8)] for c in clips)
+    assert all(c['synopsis'] == 'Ý đầu. Ý tiếp.' for c in clips)
+    system = call['messages'][0]['content']
+    assert 'Group by teaching idea and content, not by episode or position' in system
+    assert 'multiple episodes whenever their content fits' in system
+    p = doc['proposals'][0]
+    assert p['episode_count'] == 3 and p['dropped_for_length'] == 2
+    assert [c['id'] for c in p['clips']] == selected_ids[:6]  # keep AI listening order
+    assert {c['episode_id'] for c in p['clips']} == {'episode0.kt', 'episode1.kt', 'episode2.kt'}
+    assert doc['provenance']['prompt_version'] == 'tc2-v4'
+    # Reversing the same records cannot change the AI input or proposal.
+    index['records'].reverse()
+    again, other = proposal(cfg, themes)
+    assert other.plan_calls[0]['messages'] == call['messages']
+    assert again['proposals'] == doc['proposals']
 
 
 def test_short_proposal_reports_shortfall(multi):
@@ -482,7 +523,9 @@ def test_majority_speaker_counts_selected_clips_only(multi, monkeypatch):
     for eid, speaker in [('guest.kt', 'Thầy B'), (ws.episode_id, 'HT.Tịnh Không')]:
         atomic_write_json(cfg.workspace.dir / eid / 'titles.json', {'header': {'fields': {'speaker': speaker}}})
     monkeypatch.setattr(tp.theme_index, 'build_index', lambda *a, **kw: index)
-    doc, _ = proposal(cfg, lambda all_ids: [{**title_theme(), 'clip_ids': all_ids}])
+    # Listening order belongs to the AI response, independently of shuffled input.
+    listening_order = [tp._clip_id(r) for r in index['records']]
+    doc, _ = proposal(cfg, [{**title_theme(), 'clip_ids': listening_order}])
     p = doc['proposals'][0]
     assert p['speaker'] == 'HT.Tịnh Không' and p['titles'][0].startswith('Hòa Thượng Tịnh Không - ')
 

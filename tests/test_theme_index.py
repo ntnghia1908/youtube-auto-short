@@ -12,7 +12,7 @@ from auto_short import theme_index as tc1
 from auto_short.compilation import store
 from auto_short.review import logic
 from auto_short.selection.client import ChatError, ChatResult
-from auto_short.theme_index import audit_playlist, build_index, validate_metadata, IndexError
+from auto_short.theme_index import audit_playlist, build_index, IndexError
 from auto_short.workspace import Workspace, atomic_write_json
 
 
@@ -174,7 +174,7 @@ def test_invalidation(episode, field):
 @pytest.mark.parametrize('bad', [lambda d: d.update(quote='invented'),
     lambda d: d.update(synopsis=[{'evidence_id': 's1', 'text': 'invented'}]),
     lambda d: d.update(synopsis='s1'), lambda d: d.update(synopsis=None),
-    lambda d: d.update(synopsis=['s1'] * 3), lambda d: d.update(key_messages=['s1'] * 9),
+    lambda d: d.update(synopsis=['s1'] * 13), lambda d: d.update(key_messages=['s1'] * 9),
     lambda d: d.update(key_messages=[1]), lambda d: d.update(key_messages=None),
     lambda d: d.update(topic=123), lambda d: d.update(topic='“invented speech”'),
     lambda d: d.update(topic='a\nb'), lambda d: d.update(subtopic='a\rb'),
@@ -200,21 +200,54 @@ def test_id_only_output_is_resolved_verbatim_and_options_recorded(episode):
     record = build_index(cfg, 'PLtest', client=fake)['records'][0]
     assert record['status'] == 'indexed'
     ref = {'evidence_id': 's1', 'text': text}
-    assert record['metadata']['synopsis'] == ref
+    assert record['metadata']['synopsis'] == {**ref, 'evidence_ids': ['s1']}
     assert record['metadata']['key_messages'] == [ref]
     assert record['metadata']['uncertainty'] == []
     call = fake.calls[0]
     assert call['options']['num_predict'] == tc1.NUM_PREDICT == 8192
     assert record['provenance']['options'] == call['options']
-    assert record['provenance']['prompt_version'] == 'tc1-v2'
-    assert call['format']['properties']['synopsis']['items'] == {'type': 'string'}
+    assert record['provenance']['prompt_version'] == 'tc1-v4'
+    for key in ('synopsis', 'key_messages'):
+        assert call['format']['properties'][key]['items'] == {'type': 'string', 'enum': ['s1']}
+    assert call['format']['properties']['synopsis']['maxItems'] == 12
     assert call['format']['properties']['key_messages']['maxItems'] == 8
+    system = call['messages'][0]['content']
+    assert 'return ONLY evidence_id strings' in system and 'Do NOT write sentences or a summary' in system
+    assert 'consecutive evidence order' in system and 'ids need not be numerically consecutive' in system
+    assert '2-8 sentences' not in system and 'aiming for 20-80 words' not in system
+    assert 'Always provide a topic IN VIETNAMESE whenever evidence exists' in system
+    assert 'Avoid fragments shorter than 6 words' not in system
+
+
+def test_request_schema_is_scoped_to_each_clip(episode, monkeypatch):
+    cfg, *_ = episode
+    records = audit_playlist(cfg, 'PLtest')
+    records.append(deepcopy(records[0]))
+    records[1]['identity']['clip'] = 'k02'
+    for record, ids in zip(records, (['s00331', 's00334', 's00336'], ['s00901', 's00905'])):
+        record['evidence'] = [{'evidence_id': sid, 'text': 'Phải chuyên tâm tu học.'} for sid in ids]
+    monkeypatch.setattr(tc1, 'audit_playlist', lambda *a: deepcopy(records))
+    template = deepcopy(tc1.SCHEMA)
+    fake = Fake()
+    result = build_index(cfg, 'PLtest', client=fake, write=False)
+    assert len(fake.calls) == 2 and all(r['status'] == 'indexed' for r in result['records'])
+    for call, record in zip(fake.calls, result['records']):
+        ids = [e['evidence_id'] for e in record['evidence']]
+        for key in ('synopsis', 'key_messages'):
+            assert call['format']['properties'][key]['items'] == {'type': 'string', 'enum': ids}
+        assert record['metadata']['synopsis']['evidence_ids'] == ids
+        assert record['provenance']['prompt_sha256'] == hashing.config_hash({'system': tc1.SYSTEM, 'schema': template})
+    assert tc1.SCHEMA == template
+    fake.calls[0]['format']['properties']['synopsis']['items']['enum'].append('invented')
+    assert fake.calls[1]['format']['properties']['synopsis']['items']['enum'] == ['s00901', 's00905']
+    assert tc1.SCHEMA == template
 
 
 @pytest.mark.parametrize('synopsis,messages,expected_synopsis,expected_messages', [
     (['outside', 's1'], ['s1', 'outside'], 's1', ['s1']),
     (['s1', 's1'], ['s1', 's1'], 's1', ['s1']),
     (['outside'], ['outside'], None, []),
+    (['Cha mẹ phải làm tấm gương tốt cho con cái.'], ['s1'], None, ['s1']),
     ([], ['s1'], None, ['s1']),
 ])
 def test_unknown_and_duplicate_ids_are_dropped_with_uncertainty(
@@ -256,14 +289,98 @@ def test_null_subtopic_adds_missing_metadata_without_model_uncertainty(episode):
     assert record['metadata']['uncertainty'] == ['missing_metadata']
 
 
-def test_two_synopsis_ids_keep_first_valid_ref_for_existing_consumers():
-    evidence = [{'evidence_id': sid, 'text': text} for sid, text in
-                [('s1', 'Câu chính thứ nhất.'), ('s2', 'Câu chính thứ hai.')]]
-    metadata = validate_metadata(dict(topic='Tu học', subtopic='Thực hành', synopsis=['s2', 's1'],
-                                      key_messages=['s1', 's2'], uncertainty=[]), evidence)
-    assert metadata['synopsis'] == {'evidence_id': 's2', 'text': 'Câu chính thứ hai.'}
-    assert metadata['key_messages'] == evidence
-    assert metadata['uncertainty'] == []
+@pytest.mark.parametrize('word_counts,selected,span,missing', [
+    ([10] * 5, [0, 1], (0, 2), False),  # consecutive by evidence position, not numeric id
+    ([10] * 5, [0, 1, 3, 4], (0, 2), True),  # stop at the first gap
+    ([10] * 5, [0, 'invented', 1], (0, 2), True),
+    ([10] * 5, [0, 0, 1], (0, 2), True),
+    ([10] * 5, [2, 1], (2, 4), True),  # reversed ids are not a consecutive passage
+    ([5] * 6, [2], (2, 6), False),  # extend after before considering preceding evidence
+    ([5] * 6, [4], (2, 6), False),  # end reached: extend before
+    ([30] * 4, [0, 1, 2, 3], (0, 2), False),  # trim only whole tail segments
+    ([10, 75], [0], (0, 2), False),  # retain 85 words rather than drop below the minimum
+    ([15, 10, 70], [0, 1, 2], (0, 2), False),  # tail removal leaves 25 words
+    ([20] * 5, [0, 1, 2, 3], (0, 4), False),  # exactly max words
+    ([100, 5], [0], (0, 1), False),  # retain at least one, even an oversized segment
+    ([3, 4], [1], (0, 2), False),  # use all evidence when fewer than min words exist
+    ([1] * 25, [0], (0, 20), False),  # expanded cache may exceed AI maxItems
+])
+def test_synopsis_spans_are_extractive_and_bounded(episode, monkeypatch, word_counts, selected, span, missing):
+    cfg, *_ = episode
+    records = audit_playlist(cfg, 'PLtest')
+    # Deliberately nonnumeric order; preserve whitespace and punctuation verbatim.
+    segments = [dict(id=f's{100 - i}', start=i * 2, end=i * 2 + 1, kind='speech',
+                     text='  ' + ' '.join([f'từ{i}'] * n) + '.\n') for i, n in enumerate(word_counts)]
+    evidence, _ = tc1._evidence({'segments': segments}, [[0, 100]])
+    records[0]['evidence'] = evidence
+    monkeypatch.setattr(tc1, 'audit_playlist', lambda *a: deepcopy(records))
+    ids = [evidence[i]['evidence_id'] if isinstance(i, int) else i for i in selected]
+    fake = Fake(lambda d: d.update(synopsis=ids))
+    record = build_index(cfg, 'PLtest', client=fake)['records'][0]
+    assert record['status'] == 'indexed', record
+    expected = evidence[slice(*span)]
+    assert record['metadata']['synopsis'] == {
+        'evidence_id': expected[0]['evidence_id'], 'evidence_ids': [e['evidence_id'] for e in expected],
+        'text': ' '.join(e['text'] for e in expected)}
+    assert record['metadata']['uncertainty'] == (['missing_metadata'] if missing else [])
+    assert record['metadata']['key_messages'] == [
+        {'evidence_id': evidence[0]['evidence_id'], 'text': evidence[0]['text']}]
+    assert json.loads(fake.calls[0]['messages'][1]['content'])['evidence'] == evidence
+    cached = build_index(cfg, 'PLtest', client=fake)['records'][0]
+    assert cached['cached'] and len(fake.calls) == 1
+    assert cached['metadata'] == record['metadata']
+
+
+@pytest.mark.parametrize('mutation', ['text', 'first_id', 'unknown_id', 'duplicate_id', 'old_shape', 'empty_ids',
+                                      'reordered_ids', 'nonconsecutive_ids', 'ids_not_list'])
+def test_tampered_synopsis_cache_is_rejected(episode, monkeypatch, mutation):
+    cfg, _, folder, _ = episode
+    records = audit_playlist(cfg, 'PLtest')
+    records[0]['evidence'] = [{'evidence_id': f's{i}', 'text': ' '.join([f'từ{i}'] * 10)} for i in range(5)]
+    evidence = records[0]['evidence']
+    monkeypatch.setattr(tc1, 'audit_playlist', lambda *a: deepcopy(records))
+    fake = Fake()
+    build_index(cfg, 'PLtest', client=fake)
+
+    def tamper(doc):
+        ref = doc['records'][0]['metadata']['synopsis']
+        if mutation == 'text':
+            ref['text'] = 'invented'
+        elif mutation == 'first_id':
+            ref['evidence_id'] = 's1'
+        elif mutation == 'unknown_id':
+            ref['evidence_ids'][0] = 'invented'
+        elif mutation == 'duplicate_id':
+            ref['evidence_ids'] = ['s0', 's0']
+        elif mutation == 'old_shape':
+            ref.pop('evidence_ids')
+        elif mutation == 'empty_ids':
+            ref['evidence_ids'] = []
+        elif mutation in ('reordered_ids', 'nonconsecutive_ids'):
+            indexes = [1, 0] if mutation == 'reordered_ids' else [0, 2]
+            ref.update(evidence_id=f's{indexes[0]}', evidence_ids=[f's{i}' for i in indexes],
+                       text=' '.join(evidence[i]['text'] for i in indexes))
+        else:
+            ref['evidence_ids'] = 's0'
+    change(folder / 'theme_index.json', tamper)
+    meta = json.loads((folder / 'theme_index.json').read_text())['records'][0]['metadata']
+    with pytest.raises(IndexError):
+        tc1._validate_cached_metadata(meta, evidence)
+    fresh = build_index(cfg, 'PLtest', client=fake)['records'][0]
+    assert fresh['status'] == 'indexed' and not fresh['cached'] and len(fake.calls) == 2
+
+
+@pytest.mark.parametrize('old_version', ['tc1-v2', 'tc1-v3'])
+def test_old_cache_invalidated_and_v4_reused(episode, old_version):
+    cfg, _, folder, _ = episode
+    fake = Fake()
+    old = build_index(cfg, 'PLtest', client=fake, prompt_version=old_version)['records'][0]
+    if old_version == 'tc1-v2':
+        change(folder / 'theme_index.json', lambda d: d['records'][0]['metadata']['synopsis'].pop('evidence_ids'))
+    current = build_index(cfg, 'PLtest', client=fake)['records'][0]
+    assert old['provenance']['prompt_version'] == old_version and current['provenance']['prompt_version'] == 'tc1-v4'
+    assert old['input_fingerprint'] != current['input_fingerprint'] and not current['cached']
+    assert build_index(cfg, 'PLtest', client=fake)['records'][0]['cached'] and len(fake.calls) == 2
 
 
 def test_num_predict_change_invalidates_index_cache(episode, monkeypatch):
