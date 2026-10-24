@@ -27,7 +27,7 @@ from ..review import content_disposition
 from ..selection.client import ChatError, ChatUnavailable
 from .jobs import AI, RENDER, GpuUnavailable, JobFailed, JobRunner, Step, run_preflight
 from .playlists import PlaylistError, PlaylistStore
-from .theme_index import RefusingClient, project_record, redact
+from .theme_index import GENERATION_DISABLED, RefusingClient, project_record, redact
 from .urls import valid_playlist_id
 
 KIND_GENERATE, KIND_THEME_RENDER = "theme_plan", "theme_render"
@@ -215,7 +215,10 @@ class ThemePlans:
         index = theme_index.build_index(self.config, pid, write=False, client=RefusingClient())
         records = [project_record(self.config, r) for r in index["records"]]
         counts = Counter(r.get("status") for r in records)
-        reasons = Counter(r.get("reason") or r.get("status") for r in records if r.get("status") != "indexed")
+        # Preview never calls AI: valid khai thi clips that only await indexing are "pending", not unusable.
+        awaiting = [r for r in records if r.get("status") == "ai_error" and r.get("reason") == GENERATION_DISABLED]
+        reasons = Counter(r.get("reason") or r.get("status") for r in records
+                          if r.get("status") != "indexed" and r not in awaiting)
         labels = self.labels(records)
         durations = {f"{r['identity']['episode_id']}/{r['identity']['clip']}": r["duration"]
                      for r in records if r.get("status") == "indexed"}
@@ -245,7 +248,8 @@ class ThemePlans:
                     f"/files/playlists/{pid}/theme/{plan['plan_id']}-r{plan['revision']}.mp4"}
             out_plans.append(view)
         return {"index_summary": safe({"total": len(records), "usable": counts["indexed"],
-                    "unusable": len(records) - counts["indexed"], "by_status": dict(counts),
+                    "pending": len(awaiting), "unusable": len(records) - counts["indexed"] - len(awaiting),
+                    "by_status": dict(counts),
                     "source_missing": sum(r.get("source_status") == "missing" for r in records),
                     "common_reasons": [{"reason": why, "count": n} for why, n in reasons.most_common(3)]}),
                 "generate_job": job_view(generate), "proposals": safe(proposals), "plans": out_plans,

@@ -153,6 +153,30 @@ def test_index_summary_and_plans_share_one_audit(setup, monkeypatch):
     assert calls == [PID]
 
 
+def test_index_summary_separates_pending_from_unusable(setup, monkeypatch):
+    s = setup
+    original = web.theme_index.build_index
+    disabled = web.GENERATION_DISABLED
+
+    def with_extra(*args, **kwargs):
+        index = original(*args, **kwargs)
+        def rec(n, status, reason):
+            return {"status": status, "reason": reason, "identity": {"episode_id": f"x{n}", "clip": f"c{n}"}}
+        index["records"] = list(index["records"]) + [
+            rec(1, "ai_error", disabled), rec(2, "ai_error", disabled),
+            rec(3, "ai_error", "model timeout"),
+            rec(4, "ineligible", "not a khai thi episode"), rec(5, "ineligible", "not a khai thi episode")]
+        return index
+
+    monkeypatch.setattr(web.theme_index, "build_index", with_extra)
+    summary = s.c.get(BASE + "/theme-plan").json()["index_summary"]
+    assert summary["total"] == 6 and summary["usable"] == 1
+    assert summary["pending"] == 2 and summary["unusable"] == 3
+    assert summary["by_status"]["ai_error"] == 3 and "source_missing" in summary
+    reasons = {r["reason"]: r["count"] for r in summary["common_reasons"]}
+    assert reasons == {"not a khai thi episode": 2, "model timeout": 1}
+
+
 def test_get_and_download_do_not_take_service_write_lock(setup, monkeypatch):
     s = setup
     plan = approve(s, create(s))
@@ -518,10 +542,19 @@ const input = id => nodes(id).find(n=>n.type==='text');
 function setTitle(id, text) {const n=input(id);n.value=text;n.listeners.input();}
 function ready() {fixture.plans[0].render_job = {active:false,status:'done'};}
 async function made() {await click('tp-proposals','Ghép video');ready();await refresh();}
+if (process.argv[2] === 'summary') fixture.index_summary = {usable:0, pending:52, unusable:82, source_missing:28,
+ common_reasons:[{reason:'not a khai thi episode', count:70}, {reason:'rejected', count:10}, {reason:'lý do lạ', count:2}]};
+if (process.argv[2] === 'summary-zero') fixture.index_summary = {usable:4, pending:0, unusable:0, source_missing:0, common_reasons:[]};
 (async () => {
  app = boot(); await tick();
  const scenario = process.argv[2];
- if (scenario === 'display') {
+ if (scenario === 'summary') {
+  assert.equal(app.els['tp-summary'].textContent, '0 clip sẵn sàng · 52 clip khai thị chờ AI đọc nội dung (bấm "AI gợi ý chủ đề") · ' +
+   '82 không dùng cho ghép chủ đề (70 × Short thường, không phải khai thị; 10 × clip đã bị loại khi duyệt; 2 × lý do lạ) · ' +
+   '28 clip phải tải lại nguồn khi ghép');
+ } else if (scenario === 'summary-zero') {
+  assert.equal(app.els['tp-summary'].textContent, '4 clip sẵn sàng');
+ } else if (scenario === 'display') {
   assert.ok(app.els['tp-summary'].textContent.includes('3 clip'));
   assert.ok(app.els['tp-job'].textContent.includes('Ollama'));
   assert.ok(app.els['tp-proposals'].textContent.includes('thiếu'));
@@ -697,7 +730,7 @@ async function made() {await click('tp-proposals','Ghép video');ready();await r
 
 
 @pytest.mark.parametrize("scenario", [
-    "display", "one-click", "radio", "custom", "double-reload",
+    "display", "summary", "summary-zero", "one-click", "radio", "custom", "double-reload",
     "card-poll", "card-reload", "card-retitle",
     "failure-create", "failure-edit", "failure-approve", "failure-render",
     "lost-create-response", "edit-clips", "edit-retry-failure", "failed-job", "read-failure",
