@@ -2,13 +2,13 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: BUG
 - Change class: S2
 - Owner: HUMAN LEAD
 - Execution profile: dual-agent
 - Orchestrator: claude-code
-- Implementer: Codex CLI (`gpt-6.1-sol`, effort high) — IMPLEMENTER mặc định (project-profile §7); quota 5 h 5 %, tuần 17 %.
+- Implementer: codex — IMPLEMENTER mặc định (`gpt-6.1-sol`, effort high); quota 2026-10-24: 5 giờ 5 %, tuần 17 %
 - Authorization mode: task
 - Authorization source: HUMAN LEAD 2026-10-24 ("Đồng ý" đề xuất sửa code; thêm "những bài chữ AI nên có cảnh báo khi copy")
 - Parallel group: —
@@ -74,9 +74,10 @@ Trên 8080 (pin commit branch): mở tab Bài đăng một tập Địa Tạng c
 
 ## Result
 
-- Main changes:
-- Tests:
-- Review:
-- Important findings / decisions:
-- Known limitations:
+- Main changes: `post/doc.py` `align` gate hai mức (`MIN_RATIO` 0,6 giữ nguyên; `MIN_RATIO_LOW` 0,40 + `MIN_CHAIN` 20 + `CHAIN_DOMINANCE` 2); `expand` bỏ paragraph chú thích `[số]` và dấu `[số]` trong câu ở đầu ra (chỉ số gióng không đổi), `compose` trả None nếu chỉ còn chú thích; `app.js` thêm `postHasAiText`, `copyPostButton` (nhãn + cảnh báo hai bước "Vẫn sao chép" / "Hủy"), `copyTitleButton` thêm tham số tùy chọn `beforeCopy` (tiêu đề không đổi hành vi). Không thêm field API. Decision CP8.15 D4 + P9 cập nhật.
+- Tests: `tests/test_post_doc.py` (AC1 `test_align_two_level_gate_boundaries` 10 case, AC2 `test_noisy_t11_k03_style_source_composes_doc_without_ai`, AC3 `test_doc_footnotes_removed_only_from_output`); `tests/test_web_post_doc_gate.py` (AC4, chạy handler JS thật trong Node VM, 8 case: copy không xảy ra ở lần bấm đầu, không confirm/alert, copy trong user gesture). Full suite ngoài sandbox: 2470 passed, 1 skipped. `node --check app.js`, framework-check PASS.
+- AC5 replay (ORCHESTRATOR, dữ liệu thật `work/`, chỉ đọc): 1866/1866 bài `doc` trước đợt sửa vẫn gióng được; 168/274 bài `ai` gióng được (4 tập có D3 `match` < 0,5 vẫn không dùng văn bản trong app).
+- Review: ORCHESTRATOR 2026-10-24 — ACCEPTED, không có blocking finding. Codex 1 vòng, 103k tokens, không vòng sửa.
+- Important findings / decisions: bỏ kiểm thứ tự theo Short lân cận (chỉ loại thêm 2/264 trên dữ liệu thật); dữ liệu đã sửa một lần trước code (xem Bối cảnh).
+- Known limitations: ~106 bài `ai` vẫn không gióng được (chuỗi khớp ngắn / mơ hồ) — UI cảnh báo khi copy. Vùng gióng có thể lệch một hai câu ở đầu / cuối khi phụ đề rất lỗi (T11 k03 chỉnh tay).
 - PR:

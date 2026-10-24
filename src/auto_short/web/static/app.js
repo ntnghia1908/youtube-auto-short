@@ -1138,11 +1138,12 @@ const AutoShort = (() => {
   }
 
   // ``onCopied`` (CP8.17 D1) runs only when the copy really succeeded (not in the "Giữ vào ô để copy" fallback).
-  function copyTitleButton(text, onCopied) {
+  function copyTitleButton(text, onCopied, beforeCopy) {
     const wrap = el("span", { class: "copy-wrap" });
     const btn = el("button", { class: "btn small copy-btn", type: "button", text: "Copy", title: "Copy tiêu đề" });
     const note = el("span", { class: "copy-note small", hidden: true });
     btn.addEventListener("click", async () => {
+      if (beforeCopy && !beforeCopy()) return;
       const ok = await copyText(text);
       wrap.querySelectorAll(".copy-fallback").forEach((n) => n.remove());
       if (ok) {
@@ -1586,9 +1587,12 @@ const AutoShort = (() => {
     return { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(obj) };
   }
 
+  function postHasAiText(p) { return p.origin === "ai" || p.origin === "raw"; }
+
   function postBadges(p) {
     const nodes = [];
     if (p.origin === "doc") nodes.push(el("span", { class: "badge", text: "Văn bản gốc" }));
+    if (postHasAiText(p)) nodes.push(el("span", { class: "badge stale-badge", text: "Chữ AI từ phụ đề — đọc kỹ trước khi đăng" }));
     if (p.origin === "raw") nodes.push(el("span", { class: "badge stale-badge", text: "AI không chắc — kiểm lại" }));
     if (p.low_punctuation) nodes.push(el("span", { class: "badge stale-badge", text: "Ít dấu câu — kiểm lại" }));
     if (p.stale) {
@@ -1597,6 +1601,33 @@ const AutoShort = (() => {
     }
     if (p.image_missing) nodes.push(el("span", { class: "badge stale-badge", text: "Thiếu ảnh" }));
     return nodes;
+  }
+
+  function copyPostButton(p, onCopied) {
+    const warning = el("div", { class: "post-copy-warning", hidden: true },
+      el("p", { class: "warn small", role: "alert",
+        text: "Bài này do AI chấm câu từ phụ đề tự động, có thể sai chữ. Đọc kỹ / sửa trước khi đăng." }));
+    const copy = copyTitleButton(p.text, onCopied, () => {
+      if (!postHasAiText(p)) return true;
+      warning.hidden = false;
+      return false;
+    });
+    const btn = copy.querySelector(".copy-btn");
+    btn.textContent = "Sao chép bài";
+    btn.title = "Sao chép bài";
+    if (!postHasAiText(p)) return copy;
+    // A separate click keeps the HTTP clipboard fallback inside a fresh user gesture.
+    const proceed = copyTitleButton(p.text, () => {
+      warning.hidden = true;
+      if (onCopied) onCopied();
+    });
+    const proceedBtn = proceed.querySelector(".copy-btn");
+    proceedBtn.textContent = "Vẫn sao chép";
+    proceedBtn.title = "Vẫn sao chép";
+    const cancel = el("button", { class: "btn small", type: "button", text: "Hủy" });
+    cancel.addEventListener("click", () => { warning.hidden = true; btn.focus(); });
+    warning.append(el("div", { class: "edit-actions" }, proceed, cancel));
+    return el("span", { class: "copy-wrap" }, copy, warning);
   }
 
   const postsPage = { vid: null, groups: [], autoTried: false, timer: null, nodes: new Map(), loaded: false };
@@ -2007,8 +2038,7 @@ const AutoShort = (() => {
       const linkMsg = el("span", { class: "small", hidden: true });
       linkSave.addEventListener("click", () => saveLink(link, linkSave, linkMsg));
 
-      const copyBtn = copyTitleButton(cur.text, () => markPostStep("copy", cur.text));
-      copyBtn.querySelector(".copy-btn").textContent = "Sao chép bài";
+      const copyBtn = copyPostButton(cur, () => markPostStep("copy", cur.text));
       const composeAgain = el("button", { class: "btn small", type: "button", text: "Soạn lại" });
       const composeMsg = el("p", { class: "error small", hidden: true });
       composeAgain.addEventListener("click", () => compose(composeAgain, composeMsg));
