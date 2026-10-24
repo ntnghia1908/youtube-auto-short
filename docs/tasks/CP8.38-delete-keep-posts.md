@@ -85,9 +85,12 @@ Tất cả required verification phải chạy và PASS trước READY.
 
 Task không chạm database, security model; thêm route nội bộ web (cookie như mọi route) — không phải public API contract. Manual test sau automated verification là điểm danh.
 
-- [ ] Trang tập có bài chưa đăng → “Xóa tập này” báo số bài sẽ giữ.
-- [ ] Sau khi xóa: trang chủ có mục “Bài đăng của tập đã xóa”, Copy dán đúng vào app YouTube / Facebook trên điện thoại.
-- [ ] Tick “Đã đăng bài” giữ sau khi tải lại trang; “Bỏ khỏi danh sách” hỏi xác nhận.
+- [x] Trang tập có bài chưa đăng → `post_unticked` đúng (nguồn câu “Xóa tập này” báo số bài sẽ giữ). *ORCHESTRATOR, API 8080.*
+- [x] Sau khi xóa: `/api/kept-posts` có tập, đúng số bài, `copy_text` đúng P4, ảnh mở được. *ORCHESTRATOR, API 8080.*
+- [x] Tick / bỏ tick lưu được; “Bỏ khỏi danh sách” xóa file (lần hai 404). *ORCHESTRATOR, API 8080.*
+- [ ] Nhìn trên điện thoại: hộp xác nhận, mục trang chủ, Copy dán vào app, nút ≥ 40 px — HUMAN LEAD (không có trình duyệt headless trên VM).
+
+ORCHESTRATOR 2026-10-24, 8080 @ `9033cb5`: tập thử `zzTestCP838` (bản sao dữ liệu tập 10, không video, 1/13 bài tick sẵn) → 12/12 bước PASS (post_unticked 12; xóa; 12 bài giữ; ảnh 200; tick / bỏ tick; 404 clip lạ; bia mộ còn; bỏ khỏi danh sách; 404 lần hai; dọn bia mộ; không còn dấu vết). 8080 phục vụ `index.html` / `app.js` mới.
 
 ## Result
 
