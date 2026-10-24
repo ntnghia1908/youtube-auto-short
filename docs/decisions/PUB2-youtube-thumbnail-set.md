@@ -2,7 +2,7 @@
 
 | Metadata | Value |
 |---|---|
-| Status | PROPOSED — chờ HUMAN LEAD xác nhận G1–G5 |
+| Status | ACCEPTED — HUMAN LEAD 2026-10-24 ("Đồng ý", G1–G5) |
 | Authority | HUMAN LEAD 2026-10-24: "Thử cách a, không được thì gắn tay" (sau PKG2.2) |
 | Change class | S2 (scope: PKG §5 để "tự đăng / upload YouTube" ngoài scope; security model: token OAuth ghi được lên kênh) |
 | Integration | Push / PR / merge vẫn cần HUMAN LEAD duyệt riêng |
