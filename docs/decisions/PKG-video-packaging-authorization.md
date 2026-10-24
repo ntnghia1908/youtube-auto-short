@@ -2,13 +2,13 @@
 
 | Metadata | Value |
 |---|---|
-| Status | PROPOSED — chờ HUMAN LEAD (G1–G6) |
+| Status | ACCEPTED — HUMAN LEAD 2026-10-24 (G1–G6, §4) |
 | Authority | HUMAN LEAD yêu cầu 2026-10-24 (đề xuất P1–P4); P1 Publishing Queue (PUB1, PUB1.1) và nhật ký thử nghiệm (PKG1.1) bị HUMAN LEAD bỏ cùng ngày |
 | Governance | Framework v4.4 — boundary-authorized, dual-agent (Codex IMPLEMENTER, Codex reviewer thứ hai) |
 | Scope | PKG1 thumbnail + tiêu đề → VIS1 hình ambient → AUD1 nhạc nền, đều sau kết quả TC3 |
 | Integration | Push / PR / merge / restart 8080 vẫn cần HUMAN LEAD duyệt riêng |
 
-Record này chỉ là **đề xuất**. Chưa task nào có `Implementation authorized: YES` cho tới khi HUMAN LEAD chấp nhận G1 và Status chuyển ACCEPTED.
+Task nằm hoàn toàn trong boundary này ghi `Authorization mode: boundary`, `Authorization source: docs/decisions/PKG-video-packaging-authorization.md` và `Implementation authorized: YES` khi có base commit; không cần APPROVE TASK riêng.
 
 ## 1. Mục tiêu
 
@@ -36,7 +36,7 @@ TC3 (có) ──► PKG1 thumbnail + tiêu đề
 
 Tuần tự, một writer: PKG1 → VIS1 → AUD1. PKG1 và VIS1 không chung owned path nhưng cùng sửa trang kế hoạch chủ đề (`theme_plan.js`) và đăng ký route, nên không chạy song song.
 
-## 4. Gate chờ HUMAN LEAD
+## 4. Gate — HUMAN LEAD đã quyết 2026-10-24
 
 | ID | Câu hỏi | Đề xuất |
 |---|---|---|
@@ -46,6 +46,15 @@ Tuần tự, một writer: PKG1 → VIS1 → AUD1. PKG1 và VIS1 không chung ow
 | G4 | Thêm font `BeVietnamPro-ExtraBold.ttf` (OFL, cùng họ font đang dùng) vào `render/fonts/` cho chữ thumbnail | Đồng ý (asset, không phải thư viện) |
 | G5 | Public API + config mới: route dưới `/api/playlists/{pid}/theme-plans/{plan_id}/package…`, `/files/playlists/{pid}/theme-pkg/{plan_rev}/{name}`, job kind `theme_package`, mục `[packaging]` (`asset_dir`, mặc định `~/.local/share/auto-short/packaging/`) | Đồng ý; chi tiết schema trong từng task contract |
 | G6 | Dung lượng: mỗi variant 40 phút ~0,4–1,5 GB, ổ còn ~35 GB (93 %). Variant không tự archive; xóa tay trên trang đóng gói | Đồng ý |
+
+Quyết định HUMAN LEAD (2026-10-24, trả lời từng câu):
+
+- **G1**: duyệt cả PKG1 + VIS1 + AUD1 (tuần tự). VIS1.1 / AUD1.1 chưa duyệt.
+- **G2**: ảnh người giảng trong `post-images/` được dùng cho thumbnail **và** nền video; import ghi `license` theo xác nhận của HUMAN LEAD.
+- **G3**: ORCHESTRATOR tìm nguồn hình cảnh / loop / nhạc **CC0 hoặc public domain** (ghi URL, license, tác giả), HUMAN LEAD duyệt từng nguồn trước khi nạp kho. Code không tải media tự động (R5 giữ nguyên); nạp kho bằng CLI sau khi duyệt. Chưa có asset duyệt → nền ffmpeg tự tạo.
+- **G4**: thêm `BeVietnamPro-ExtraBold.ttf` (OFL).
+- **G5**: đồng ý route / config `[packaging]` (kho mặc định `~/.local/share/auto-short/packaging/`) / job `theme_package` như trên.
+- **G6**: variant xóa tay trên trang Đóng gói (hiện dung lượng từng bản); không tự archive.
 
 ## 5. Ngoài scope
 
