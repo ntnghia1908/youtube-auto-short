@@ -16,12 +16,14 @@ from ...compilation import CompilationError
 from ...enhance import state as enh_state
 from ...enhance.state import EnhanceError
 from ...pipeline import PIPELINE_STAGES
+from ...post import store as post_store
 from ...render import full as render_full
 from ...review import (
     ArchivedError, EpisodeNotFound, ReviewError, archive_source, content_disposition,
-    delete_episode, is_archived, set_published, set_watched, shorts as review_shorts,
+    delete_episode, is_archived, list_titles, set_published, set_watched, shorts as review_shorts,
 )
 from ...review.archive import restore_parts
+from ...review.names import hashtags as review_hashtags
 from .. import episodes as ep
 from ..context import WebContext, KIND_RESTORE_SOURCE, KINDS
 from ..jobs import KIND_ADD, KIND_COMPILATION, KIND_RENDER, KIND_VERTICAL, render_target
@@ -162,6 +164,11 @@ def build(ctx: WebContext) -> APIRouter:
                     "zip_url": None, "zip_name": None, "zip_all_url": None, "zip_all_name": None,
                     "archived": None}
         view["job"] = ctx.job_view(job)
+        rm = ep.render_manifest(ctx.config, episode_id) or {}
+        rendered_ids = {s.get("clip_id") for s in rm.get("shorts", []) if s.get("status") == "rendered"}
+        with ctx.post_lock:
+            view["post_unticked"] = sum(1 for e in post_store.read_posts_quiet(ctx.posts_path(episode_id), episode_id)["posts"]
+                                         if e["posted_at"] is None and e["clip_id"] in rendered_ids)
         view["restore_job"] = ctx.job_view(ctx.restore_job(episode_id))
         view["priority"] = ctx.runner.priority.marked(episode_id)  # CP8.26
         view["gpu"] = ctx.runner.gpu_status()  # FIX-ollama-wait O7
@@ -288,7 +295,22 @@ def build(ctx: WebContext) -> APIRouter:
                 log.error("web: delete episode %s: %s", episode_id, exc)
                 return JSONResponse({"detail": str(exc)}, status_code=500)
             try:
-                removed = delete_episode(episode_id, ctx.config)
+                # Snapshot P4 via the exact Posts-tab view, before its workspace disappears.
+                # Hold post_lock through deletion so a concurrent manual edit cannot be lost.
+                with ctx.post_lock:
+                    try:
+                        titles = {c["clip_id"]: c["title"] for c in list_titles(episode_id, ctx.config)["clips"]}
+                    except ReviewError:
+                        titles = {}
+                    fields = ctx.post_header_fields(episode_id)
+                    series, tags = ctx.post_series_and_tags(episode_id)
+                    hashtags_list = review_hashtags(series, tags)
+
+                    def copy_text(entry):
+                        return ctx.post_entry_view(entry, ep_src=None, title=titles.get(entry["clip_id"]),
+                                                   header_fields=fields, hashtags_list=hashtags_list)["text"]
+
+                    removed = delete_episode(episode_id, ctx.config, copy_text=copy_text)
             except EpisodeNotFound:
                 undo_keep()
                 return JSONResponse({"detail": "không có episode này"}, status_code=404)

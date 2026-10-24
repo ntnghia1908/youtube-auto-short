@@ -8,11 +8,14 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from ...post import images as post_images, kept
 from ...review import list_tombstones, remove_tombstone
+from ...workspace import WorkspaceError
 from .. import downloads as dl_mod
 from .. import episodes as ep
 from .. import monitor as monitor_mod
 from ..context import WebContext
+from .models import PublishedIn
 
 
 class QueuePauseIn(BaseModel):
@@ -21,6 +24,42 @@ class QueuePauseIn(BaseModel):
 
 def build(ctx: WebContext) -> APIRouter:
     router = APIRouter()
+
+    @router.get("/api/kept-posts")
+    def api_kept_posts():
+        with ctx.post_lock:
+            episodes = kept.list_kept(ctx.config)
+        for episode in episodes:
+            for entry in episode["posts"]:
+                entry["image_missing"] = entry["image"] is not None \
+                    and post_images.resolve(ctx.config.post.image_dir, entry["image"]) is None
+        return {"episodes": episodes}
+
+    @router.post("/api/kept-posts/{episode_id}/{clip_id}/posted")
+    def api_kept_posted(episode_id: str, clip_id: str, body: PublishedIn, index: int | None = None):
+        try:
+            with ctx.post_lock:
+                entry = kept.set_posted(ctx.config, episode_id, clip_id, body.value, index=index)
+        except WorkspaceError:
+            entry = None
+        except (kept.KeptPostsError, OSError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=500)
+        if entry is None:
+            return JSONResponse({"detail": "không có bài giữ lại này"}, status_code=404)
+        return {"clip_id": clip_id, "posted": entry["posted_at"] is not None, "posted_at": entry["posted_at"]}
+
+    @router.delete("/api/kept-posts/{episode_id}")
+    def api_kept_remove(episode_id: str):
+        try:
+            with ctx.post_lock:
+                removed = kept.remove(ctx.config, episode_id)
+        except WorkspaceError:
+            removed = False
+        except OSError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=500)
+        if not removed:
+            return JSONResponse({"detail": "không có bài giữ lại của tập này"}, status_code=404)
+        return {"removed": episode_id}
 
     @router.get("/api/deleted")
     def api_deleted():
