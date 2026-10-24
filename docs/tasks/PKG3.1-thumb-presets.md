@@ -82,4 +82,4 @@ Không chạm database, security model, public API ngoài (chỉ thêm trường
 - Review: ORCHESTRATOR — `view()` ban đầu gọi `episode.images` (băm sha256 129 ảnh, ~0,34 s mỗi lượt, 2 giây / lượt khi đang dựng) → đổi `image_order` lấy từ danh sách ảnh `view()` đã có, sắp theo id; PUT vẫn kiểm `usable`.
 - Important findings / decisions: bấm mẫu sau khi đã duyệt đưa bản ghi về nháp (như sửa PKG3).
 - Known limitations: bản ghi PKG3 đã có trước (asset_ids rỗng) giữ "không ảnh" cho tới khi bấm "Ảnh khác".
-- PR:
+- PR: #143 (nối tiếp #140)
