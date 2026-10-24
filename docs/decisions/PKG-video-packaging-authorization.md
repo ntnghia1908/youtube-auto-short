@@ -51,10 +51,12 @@ Quyết định HUMAN LEAD (2026-10-24, trả lời từng câu):
 
 - **G1**: duyệt cả PKG1 + VIS1 + AUD1 (tuần tự). VIS1.1 / AUD1.1 chưa duyệt.
 - **G2**: ảnh người giảng trong `post-images/` được dùng cho thumbnail **và** nền video; import ghi `license` theo xác nhận của HUMAN LEAD.
-- **G3**: ORCHESTRATOR tìm nguồn hình cảnh / loop / nhạc **CC0 hoặc public domain** (ghi URL, license, tác giả), HUMAN LEAD duyệt từng nguồn trước khi nạp kho. Code không tải media tự động (R5 giữ nguyên); nạp kho bằng CLI sau khi duyệt. Chưa có asset duyệt → nền ffmpeg tự tạo.
+- **G3**: ORCHESTRATOR tìm nguồn hình cảnh / loop / nhạc **CC0 hoặc public domain** (ghi URL, license, tác giả), HUMAN LEAD duyệt từng nguồn trước khi nạp kho. Code không tải media tự động (R5 giữ nguyên); nạp kho bằng CLI sau khi duyệt. Chưa có asset duyệt → nền ffmpeg tự tạo. Nhóm nguồn được phép (HUMAN LEAD 2026-10-24): **hình** — bảo tàng Open Access CC0 (The Met, Smithsonian, Cleveland, Art Institute of Chicago), Wikimedia Commons chỉ file Public Domain / CC0, Pexels / Pixabay (license riêng, không CC0); **nhạc** — YouTube Audio Library (ghi công vào mô tả khi bài yêu cầu), CC0 / public domain (FreePD, OpenGameArt CC0, Musopen), Pixabay Music. Mỗi asset ghi `source` (URL trang) + `license` đúng tên; CC BY-SA / NC / ND không được nạp. Rủi ro biết trước: nhạc CC0 / Pixabay vẫn có thể bị Content ID nhận nhầm — HUMAN LEAD xử lý khiếu nại trên Studio.
 - **G4**: thêm `BeVietnamPro-ExtraBold.ttf` (OFL).
 - **G5**: đồng ý route / config `[packaging]` (kho mặc định `~/.local/share/auto-short/packaging/`) / job `theme_package` như trên.
 - **G6**: variant xóa tay trên trang Đóng gói (hiện dung lượng từng bản); không tự archive.
+
+- **G7** (HUMAN LEAD 2026-10-24, sau G1–G6): thêm **PKG2 — thumbnail cho tập** (bản ngang HD 16:9 + bản dọc 9:16 và 16:9) cho cả bộ kinh, **làm trước VIS1**. Chữ chỉ "tên bộ kinh — Tập N" + người giảng (deterministic từ header, không AI). Output đặt cạnh tập `output/<episode_id>/thumbs/` (ngoại lệ R3 vì đầu vào là tập, không phải TC3). Duyệt = HUMAN LEAD xem lưới + tải zip (R6 thu gọn). Thứ tự mới: PKG1 → PKG2 → VIS1 → AUD1.
 
 ## 5. Ngoài scope
 

@@ -82,11 +82,31 @@ Chạm public API (route mới, sau đăng nhập), không chạm security model
 
 ## Result
 
-- Main changes:
-- Tests:
-- Diff + / − (app, test):
+- Main changes: IMPLEMENTER hoàn tất `packaging/` (kho asset + CLI, hồ sơ/cache/stale, 3 template ffmpeg), web service + trang chọn/sửa/dựng/duyệt/tải, link Đóng gói, `[packaging]`, module map. Không sửa TC1–TC3 / post / font Regular. ExtraBold có sẵn ở HEAD, không đổi font.
+- Tests (env `auto-short`; prefix `PATH=/home/ntnghia/miniconda3/envs/auto-short/bin:$PATH`):
+  - `PYTHONPATH=src python -m pytest -q -x tests/test_packaging_thumbnail.py`: **18 PASS** (2 case ffmpeg thật: 3 template × có/không ảnh; NFC/glyph/pixel/vùng an toàn; còn lại runner giả).
+  - `PYTHONPATH=src python -m pytest -q -x tests/test_web_packaging.py -k service`: **6 PASS, 7 deselected**; không socket. Có kiểm TC3 trước job, dedup/làn render, cache, duyệt, revision/fingerprint/TC3/tamper stale.
+  - `timeout 45s env PATH=/home/ntnghia/miniconda3/envs/auto-short/bin:$PATH PYTHONPATH=src python -m pytest -q -x tests/test_web_packaging.py -o faulthandler_timeout=20`: **exit 124** sau 6 service case; HTTP treo ngay `TestClient.post("/login")` trong fixture TC2, traceback AnyIO/asyncio. **7 HTTP case chưa xác minh**, gồm auth/file route/Content-Disposition; chuyển ORCHESTRATOR chạy ngoài sandbox.
+  - Python mặc định (`/home/ntnghia/miniconda3/bin/python`) không có pytest; lần đầu lệnh thumbnail trả `No module named pytest`, đã dùng đúng env ở trên.
+  - `node --check src/auto_short/web/static/package.js`, `node --check src/auto_short/web/static/theme_plan.js`, `git diff --check`, `node scripts/framework-check.mjs`: PASS.
+- Diff + / − (app, test): **app +888 / −1** (gồm config example); **test +403 / −0**. Đếm tracked bằng `git diff --numstat -- src/auto_short config.example.toml tests/test_packaging_thumbnail.py tests/test_web_packaging.py`; file mới chưa stage bằng `git diff --no-index --numstat /dev/null <file>`. Không tính docs và diff boundary của writer khác.
 - Helper mới (đã tìm, lý do không tái dùng):
-- Review:
-- Important findings / decisions:
-- Known limitations:
-- PR:
+  - Đã chạy `rg -n '^def |^class ' src/auto_short/post/images.py src/auto_short/theme_plan/__init__.py src/auto_short/theme_render/__init__.py src/auto_short/render/text.py src/auto_short/render/stage.py src/auto_short/workspace.py src/auto_short/compilation/store.py src/auto_short/hashing.py src/auto_short/review/names.py`; tìm thêm `rg -n 'escape|quote|def .*path|def .*text' src/auto_short/render/plan.py src/auto_short/theme_render/__init__.py src/auto_short/render/full.py` và các service/fixture TC2.
+  - Mới: `assets.list_assets/add/approve/usable/import_post_images/_save` cho kho content-addressed có license + approval; post image library không có schema/quyền dùng này. Import tái dùng `post.images.list_images` và chỉ đọc nguồn.
+  - Mới: `record.directory/fingerprint/title_options/new/cache_key/validate/read/status/write` cho schema/namespace PKG1, `thumbnail.Template/fit/key/reusable/_graph/build/ready` cho JPEG 16:9/ba template/duyệt bản đăng; artifact Short và TC3 có schema/layout khác. Regex playlist trong core chỉ bảo vệ thành phần đường dẫn, không import web; kiểm playlist đầy đủ ở adapter.
+  - Mới: `Packages`, `ThumbnailTarget`, `render_key`, `invoke/no_store/register` cùng helper UI cho lifecycle PKG1; không dùng job key TC3 vì đây là output/job riêng. Tái dùng `ThemePlans.find/checked/output(verify=True)`, response/safe/job_view, JobRunner/Step/RENDER.
+  - Tái dùng `config_hash` (canonical JSON), `sha256_file`, `atomic_write_json`, `utc_now`, `store.directory`, `Font/nfc/check_glyphs/wrap_greedy/fit_title`, `escape_option`, `probe_media/_run/_last_line/RenderError`, TC2 `speaker_for_clips/_compose_title/_title_problem`, `clean_part/truncate_utf8/content_disposition`. Không có bản sao helper hashing / ghi JSON / escape / đo chữ / validate title.
+- Review: ORCHESTRATOR chạy ngoài sandbox: `tests/test_web_packaging.py` 3 FAIL (preview 404) — `response()`/`safe()` che URL `/files/...` thành "[đã ẩn đường dẫn]"; micro-fix ORCHESTRATOR ở `Packages.view` (safe dữ liệu trước rồi gắn URL, `JSONResponse` như TC2). Sau sửa: PKG1 31 passed; full suite `python -m pytest -q -n auto` 2276 passed, 1 skipped; framework-check PASS. Chạy thật 3 template với ảnh người giảng + chữ "Kinh Địa Tạng — Tập 74": glyph đúng. Codex: 130k tokens, 1 vòng. Review Codex thứ hai: gộp cùng PKG2.
+- Important findings / decisions: stale tính khi đọc, giữ nguyên record/file cũ để tra cứu nhưng không cấp preview/tải như bản hợp lệ; chỉ bản approved được attachment. JPEG qscale tăng khi cần giảm dung lượng (quy ước ffmpeg). Không gọi mạng, agent, commit/push/PR. Boundary có diff G3 do writer khác trong session, IMPLEMENTER không sửa/hoàn tác.
+- Known limitations: HTTP/AC7 chưa PASS trong môi trường này; full suite, chạy trên dữ liệu thật và chấm mắt trên điện thoại chưa chạy theo phân công. Không claim các verification đó đã PASS.
+- PR: không tạo theo chỉ thị.
+
+| AC | Test | Bằng chứng |
+|---|---|---|
+| 1 | `test_vietnamese_three_real_templates_and_safe_area`, `test_headline_rejected_without_partial_files` | PASS; ffmpeg thật + pixel/glyph/NFC/1280×720/≤2 MB |
+| 2 | `test_traditional_title_uses_source_speaker_without_ai`, `test_service_title_validation_job_lane_dedup_cache_and_approval`, `test_http_titles_and_validation` | Core/service PASS; HTTP pending |
+| 3 | `test_record_stale_and_schema_validation`, `test_service_stale_preserves_old_record`, `test_http_approve_download_and_stale` | Core/service PASS; tải HTTP pending |
+| 4 | `test_cache_checks_key_and_file_sha`, `test_service_title_validation_job_lane_dedup_cache_and_approval` | PASS; cache không gọi media runner, file hỏng dựng lại |
+| 5 | `test_assets_require_approval_license_and_source`, `test_cli_import_provenance_and_config` | PASS; import giữ source/license, không ghi thư viện post |
+| 6 | `test_ffmpeg_failure_rolls_back_all_templates_and_keeps_tc3`, `test_service_job_rechecks_input_and_reports_failure` | PASS; lỗi ở cả 3 vị trí encode, không file dở, TC3 nguyên vẹn |
+| 7 | `test_http_auth_ids_and_static_page` | HTTP pending (401/redirect, regex/traversal, symlink) |
