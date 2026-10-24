@@ -55,6 +55,18 @@
 <button id="visual-cancel-preview" class="btn small" type="button" hidden>Hủy xem thử</button></div>
 <p id="visual-msg" class="small" role="status"></p>
 <video id="visual-player" controls preload="metadata" style="width:100%;max-height:540px" hidden></video>
+<h3>Nhạc nền</h3>
+<p class="small muted">Mặc định chỉ giọng giảng. Chọn nhạc, nghe thử rồi dựng và duyệt bản đăng.</p>
+<label>Nhạc nền <select id="music-source"><option value="">Chỉ giọng giảng (mặc định)</option></select></label>
+<p id="music-empty" class="small muted" hidden>Chưa có nhạc đã duyệt trong kho</p>
+<label>Hình <select id="music-visual"><option value="">Original (TC3)</option></select></label>
+<label>Mức nhạc (LU so với giọng) <input id="music-level" type="range" min="-30" max="-12" step="0.5" value="-20"><output id="music-level-value">−20 LU</output></label>
+<label>Fade vào (giây) <input id="music-in" type="number" min="0" max="10" step="0.1" value="3"></label>
+<label>Fade ra (giây) <input id="music-out" type="number" min="0" max="15" step="0.1" value="5"></label>
+<label>Crossfade vòng nhạc (giây) <input id="music-crossfade" type="number" min="0.5" max="8" step="0.1" value="3"></label>
+<div class="actions"><button id="music-preview" class="btn small" type="button">Nghe thử 3 đoạn</button>
+<button id="music-build" class="btn primary small" type="button">Dựng cả bài</button></div>
+<div id="music-previews"></div>
 <div style="overflow-x:auto"><table><thead><tr><th>Nguồn</th><th>Trạng thái</th><th>Dung lượng</th><th>Thời lượng</th><th>Thời gian dựng</th><th>Phương pháp</th><th>Thao tác</th></tr></thead><tbody id="visual-variants"></tbody></table></div>
 </section>
 </main>

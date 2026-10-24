@@ -123,6 +123,23 @@
     select.replaceChildren(...view.visual_sources.map((s) => el("option", { value: s.id, text: sourceLabel(s.id) })));
     if (view.visual_sources.some((s) => s.id === chosen)) select.value = chosen;
     motionOptions();
+    const musicSelect = $("music-source"), musicChosen = musicSelect.value;
+    musicSelect.replaceChildren(el("option", { value: "", text: "Chỉ giọng giảng (mặc định)" }),
+      ...view.music_sources.map((s) => el("option", { value: s.id, text: `${s.tags.join(", ") || s.id.slice(0, 12)} · ${s.license}` })));
+    if (view.music_sources.some((s) => s.id === musicChosen)) musicSelect.value = musicChosen;
+    $("music-empty").hidden = view.music_sources.length > 0;
+    const videoSelect = $("music-visual"), videoChosen = videoSelect.value;
+    const built = view.variants.filter((v) => !v.spec.music && v.state !== "stale" && v.inline_url);
+    videoSelect.replaceChildren(el("option", { value: "", text: "Original (TC3)" }),
+      ...built.map((v) => el("option", { value: v.key12, text: sourceLabel(v.spec.visual.asset_id) })));
+    if (built.some((v) => v.key12 === videoChosen)) videoSelect.value = videoChosen;
+    for (const id of ["music-preview", "music-build"]) $(id).disabled = visualPending;
+    const urls = view.preview.audio_urls || [];
+    if (JSON.stringify(urls) !== $("music-previews").dataset.urls) {
+      $("music-previews").dataset.urls = JSON.stringify(urls);
+      $("music-previews").replaceChildren(...urls.map((url, i) => el("label", { text: ["Đầu", "Giữa", "Cuối"][i] },
+        el("audio", { src: url, controls: "", preload: "metadata" }))));
+    }
     for (const id of ["visual-preview", "visual-build"]) $(id).disabled = visualPending;
     const previewJob = view.preview.job;
     $("visual-cancel-preview").hidden = !(previewJob && previewJob.active);
@@ -154,9 +171,10 @@
       if (v.download_url) actions.append(el("a", { href: v.download_url, class: "btn small", text: "Tải bản đăng", download: "" }));
       if (v.job && v.job.active) button("Hủy", () => performVisual(() => request(path + "/cancel", "POST")));
       else if (v.size == null) button("Dựng lại", () => performVisual(() => request("/variants", "POST", v.spec)));
-      else button("Xóa", () => { if (confirm("Xóa bản ambient này?")) performVisual(() => request(path, "DELETE")); });
+      else button("Xóa", () => { if (confirm("Xóa variant này?")) performVisual(() => request(path, "DELETE")); });
       const size = v.size == null ? "—" : v.size >= 1e9 ? `${(v.size / 1e9).toFixed(2)} GB` : `${(v.size / 1e6).toFixed(1)} MB`;
-      const row = el("tr", {}, ...[sourceLabel(v.spec.visual.asset_id), `r${v.revision} · ${states[v.state]}`, size, seconds(v.duration),
+      const row = el("tr", {}, ...[(v.spec.visual ? sourceLabel(v.spec.visual.asset_id) : "Original") +
+          (v.spec.music ? ` · Nhạc ${v.spec.music.asset_id.slice(0, 12)} · ${v.spec.music.level_lu} LU` : " · Chỉ giọng giảng"), `r${v.revision} · ${states[v.state]}`, size, seconds(v.duration),
         seconds(v.build_seconds), v.method || "—"].map((text) => el("td", { text })), actions);
       if (v.job && v.job.error) row.firstChild.append(el("p", { class: "error small", text: v.job.error }));
       return row;
@@ -173,5 +191,20 @@
   $("visual-preview").addEventListener("click", () => performVisual(() => request("/preview", "POST", visualSpec())));
   $("visual-build").addEventListener("click", () => performVisual(() => request("/variants", "POST", visualSpec())));
   $("visual-cancel-preview").addEventListener("click", () => performVisual(() => request(`/variants/r${view.preview.revision}/preview/cancel`, "POST")));
+  function musicSpec() {
+    const source = view.variants.find((v) => v.key12 === $("music-visual").value);
+    return { visual: source ? source.spec.visual : null,
+      music: $("music-source").value ? { asset_id: $("music-source").value, level_lu: Number($("music-level").value),
+        fade_in: Number($("music-in").value), fade_out: Number($("music-out").value),
+        loop_crossfade: Number($("music-crossfade").value) } : null };
+  }
+  $("music-level").addEventListener("input", () => { $("music-level-value").textContent = $("music-level").value + " LU"; });
+  for (const [id, route] of [["music-preview", "/preview"], ["music-build", "/variants"]]) {
+    $(id).addEventListener("click", () => performVisual(async () => {
+      const spec = musicSpec();
+      if (!spec.visual && !spec.music) { $("visual-msg").textContent = "Chỉ giọng giảng + Original: dùng video TC3 đã ghép."; return; }
+      await request(route, "POST", spec);
+    }));
+  }
   load();
 })();

@@ -1,20 +1,25 @@
 """PKG1: authenticated HTTP routes plus socket-free service/job verification."""
+import asyncio
 import json
 import os
+import shutil
 from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.requests import Request
+from starlette.responses import Response
 
 from auto_short import hashing, theme_plan as tp
 from auto_short.config import PackagingConfig
-from auto_short.packaging import PackageError, record, thumbnail, variant, visual
+from auto_short.packaging import PackageError, assets, music, record, thumbnail, variant, visual
 from auto_short.web import packaging as web
 from auto_short.web.jobs import RENDER
 from auto_short.workspace import atomic_write_json
 
 from test_packaging_thumbnail import fake_media
+from test_packaging_music import synthetic  # noqa: F401 — shared synthetic media fixture
 from test_packaging_visual import Media, SPEC
 from test_theme_plan import Planner
 from test_web_theme_index import fx, snapshot
@@ -193,6 +198,10 @@ def test_http_auth_ids_and_static_page(setup):
         assert result.status_code == 401 and result.headers["cache-control"] == "no-store"
     file = f"/files/playlists/{PID}/theme-pkg/{plan['plan_id']}-r1/classic-{'a' * 64}.jpg"
     assert anon.get(file).status_code == 401
+    for suffix in ("/variants", "/preview"):
+        assert anon.post(url + suffix, json={"visual": None, "music": {"asset_id": "a" * 64}}).status_code == 401
+    preview_file = file.rsplit("/", 1)[0] + "/preview-" + "a" * 12 + "-1.m4a?inline=1"
+    assert anon.get(preview_file).status_code == 401
     assert s.c.get(f"/playlists/{PID}/theme-plans/{plan['plan_id']}/package").status_code == 200
     for pid, ident in [("bad!", plan["plan_id"]), ("PLunknown", plan["plan_id"]), (PID, "bad!"), (PID, "12345678")]:
         result = s.c.get(f"/api/playlists/{pid}/theme-plans/{ident}/package")
@@ -452,3 +461,107 @@ def test_visual_view_caches_fingerprints_and_download_hashes_fully(service, monk
     for _ in range(2):
         assert download(PID, folder.name, files[1].name, inline=1).status_code == 200
     assert counts[files[1]] == 3
+
+
+def test_music_registered_endpoints_socket_free(service, synthetic):
+    """Real AUD1 jobs plus direct route calls keep this runnable without loopback."""
+    s, ident = service, service.plan["plan_id"]
+    tc3, track = synthetic
+    path, meta = fake_output(s, s.plan)
+    shutil.copyfile(tc3, path)
+    meta.update(sha256=hashing.sha256_file(path))
+    atomic_write_json(path.with_suffix(".json"), meta)
+    entry = assets.add(s.cfg.packaging.asset_dir, track, kind="music", source="synthetic", license="CC0")
+    assets.approve(s.cfg.packaging.asset_dir, entry["id"])
+    s.package.config = replace(s.package.config, render=replace(s.cfg.render, audio_bitrate="128k"))
+    s.package.media_runner = None
+    prefix = "/api/playlists/{pid}/theme-plans/{plan_id}/package"
+    def endpoint(path, method="POST"):
+        return next(r.endpoint for r in s.app.routes if getattr(r, "path", None) == path and method in r.methods)
+    def call(path, method="POST", **kwargs):
+        if "{revision}" in path:
+            kwargs.setdefault("revision", s.plan["revision"])
+        return endpoint(prefix + path, method)(PID, ident, **kwargs)
+    assert call("/variants", body=web.VariantIn(visual=None, music=None)).status_code == 400
+    value = dict(asset_id=entry["id"], loop_crossfade=1)
+    body = web.VariantIn(visual=None, music=value)
+    missing = call("/variants", body=web.VariantIn(visual={}, music=value))
+    assert missing.status_code == 400 and "hãy dựng hình ambient trước" in json.loads(missing.body)["detail"]
+    assert call("/preview", body=web.VariantIn(visual={}, music=value)).status_code == 202
+    assert call("/variants/r{revision}/{key12}/cancel", key12="preview").status_code == 200
+    assert s.package.view(PID, ident)["music_sources"][0]["id"] == entry["id"]
+    assert call("/variants", body=body).status_code == 202
+    assert call("/variants", body=body).status_code == 200
+    row = s.package.visual_view(PID, ident)["variants"][0]
+    key = row["key12"]
+    assert key == variant.key(body.model_dump(), meta["sha256"], settings=music.encoding("128k"))[:12]
+    assert call("/variants/r{revision}/{key12}", "DELETE", key12=key).status_code == 409
+    assert call("/variants/r{revision}/{key12}/cancel", key12=key).status_code == 200
+    assert call("/variants", body=body).status_code == 202
+    s.runner.start()
+    try:
+        assert s.runner.wait_idle(30)
+        row = s.package.visual_view(PID, ident)["variants"][0]
+        assert row["state"] == "draft", row
+        download = endpoint("/files/playlists/{pid}/theme-pkg/{plan_rev}/{name}", "GET")
+        def file(name=None, inline=0):
+            return download(PID, f"{ident}-r1", name or f"variant-{key}.mp4", inline)
+        assert file().status_code == 404 and file(inline=1).status_code == 200
+        assert call("/variants/r{revision}/{key12}/approve", key12=key).status_code == 200
+        assert file().headers["content-type"] == "video/mp4"
+        assert json.loads(call("/variants", body=body).body)["variant"]["state"] == "approved"
+        assert call("/preview", body=body).status_code == 202
+        assert s.runner.wait_idle(30)
+        preview = s.package.visual_view(PID, ident)["preview"]
+        assert preview["url"] is None and len(preview["audio_urls"]) == 3
+        for i in (1, 2, 3):
+            response = file(f"preview-{key}-{i}.m4a", inline=1)
+            assert response.status_code == 200 and response.headers["content-type"] == "audio/mp4"
+            assert file(f"preview-{key}-{i}.m4a").status_code == 404
+        for bad in (f"preview-{key}-0.m4a", f"preview-{key}-4.m4a", f"preview-{key}-1.mp4", "preview-../../etc.m4a"):
+            assert file(bad, inline=1).status_code == 404
+        folder = record.directory(s.cfg.render.output_dir, PID, ident, 1)
+        preview_file = folder / f"preview-{key}-2.m4a"
+        previous = preview_file.read_bytes()
+        preview_file.write_bytes(b"tampered")
+        assert file(preview_file.name, inline=1).status_code == 404
+        preview_file.write_bytes(previous)
+        library = json.loads((s.cfg.packaging.asset_dir / "library.json").read_text())
+        library["assets"][0]["approved"] = False
+        atomic_write_json(s.cfg.packaging.asset_dir / "library.json", library)
+        assert s.package.visual_view(PID, ident)["variants"][0]["state"] == "stale"
+        assert file(inline=1).status_code == 404 and file(f"preview-{key}-1.m4a", inline=1).status_code == 404
+        assert call("/variants/r{revision}/{key12}/approve", key12=key).status_code == 409
+        assert call("/variants/r{revision}/{key12}", "DELETE", key12=key).status_code == 200
+    finally:
+        s.runner.stop()
+
+
+@pytest.mark.parametrize("value", [dict(level_lu=0), dict(level_lu=True), dict(fade_in="3"),
+                                  dict(loop_crossfade=float("nan")), dict(extra=1)])
+def test_music_body_is_strict(value):
+    with pytest.raises(ValueError):
+        web.VariantIn(visual=None, music=dict(asset_id="a" * 64) | value)
+
+
+def test_music_routes_auth_middleware_socket_free(service):
+    s = service
+    dispatch = next(m.kwargs["dispatch"] for m in s.app.user_middleware
+                    if getattr(m.kwargs.get("dispatch"), "__name__", None) == "auth_middleware")
+    from auto_short.web.auth import COOKIE_NAME
+    async def check():
+        for method, path in (("POST", f"/api/playlists/{PID}/theme-plans/abcdefgh/package/variants"),
+                             ("POST", f"/api/playlists/{PID}/theme-plans/abcdefgh/package/preview"),
+                             ("GET", f"/files/playlists/{PID}/theme-pkg/abcdefgh-r1/preview-{'a' * 12}-1.m4a")):
+            for signed_in in (False, True):
+                called = False
+                async def downstream(request):
+                    nonlocal called
+                    called = True
+                    return Response(status_code=204)
+                headers = [(b"cookie", f"{COOKIE_NAME}={s.app.state.signer.issue()}".encode())] if signed_in else []
+                request = Request(dict(type="http", method=method, path=path, headers=headers, query_string=b""))
+                response = await dispatch(request, downstream)
+                assert response.status_code == (204 if signed_in else 401)
+                assert called is signed_in
+    asyncio.run(check())
