@@ -85,4 +85,4 @@ Chạm public API nội bộ web (route mới) và xóa dữ liệu → manual t
 - Review: ORCHESTRATOR — thứ tự ghi trước / xóa sau; xóa thêm hard link `<id>.kt/source_hd.mp4` (cùng file, không xóa thì không giải phóng được) chấp nhận; ghép chủ đề vẫn tải lại bản gốc khi thiếu file (hành vi cũ; nguồn HD thuộc HD1b G5).
 - Important findings / decisions: script chỉ đề nghị giải phóng tập đã xác nhận cả ngang lẫn dọc; không gửi `allow_no_vertical`.
 - Known limitations: `backup.json` khóa trong process (web một process); 52 tập Kinh Địa Tạng chưa có bản dọc → chưa giải phóng được tới khi tạo bản dọc.
-- PR:
+- PR: #144
