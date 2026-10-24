@@ -77,4 +77,8 @@ Không chạm database, security model; đổi payload API nội bộ của tran
 
 ## Result
 
-- Main changes:
+- Main changes: `thumbnail._render` / `_text` dùng chung cho tập (PKG2) và video ghép (PKG3); `PALETTES` 4 bảng màu, nền blur (kiểu A); `theme_text` / `check` / `build` / `ready` / `key` bản A/B/C × 2 khuôn; badge B ngang dời xuống (64,504) cho 2 dòng ghi công; `record` schema 2 (settings, mỗi kiểu `files` theo khuôn; v1 coi như chưa dựng); web: chọn kiểu, 3 dòng, bảng màu / nền, xem trước 2 khuôn, tải 2 khuôn. Bỏ `TEMPLATES` / `fit` / `_graph` PKG1.
+- Review vòng 1 (ORCHESTRATOR, AC5): tên bộ kinh mặc định rơi thẳng về tiêu đề playlist ("Thái Thượng Cảm Ứng Thiên (128 tập) - Pháp Sư Tịnh Không") → không vừa khung. Sửa: `stored_series` → series header tập nguồn (`episode.header`, như PKG2) → tiêu đề.
+- Verification: test targeted 222 passed; full suite 2520 passed, 1 skipped. AC3: 12 ảnh tập (3 kiểu × 2 khuôn × có / không ảnh, playlist Địa Tạng) dựng bằng main `fe82caf` và PKG3 trùng từng byte, cache key giống, bản A ngang trùng file trên đĩa. AC5: bddcede7d89d-r2, d6a874b50e91-r1 dựng đủ 3 kiểu × 2 khuôn với settings mặc định, có / không ảnh, A × 4 bảng màu × plain / blur; dựng lại cùng settings 0,06 s (không ffmpeg). 1ec7a733a281 chưa có TC3 → bỏ.
+- Ghi nhận: nền blur thì ảnh chiếm 75 % (như mẫu số 5) nên 4 bảng màu gần như giống nhau.
+- IMPLEMENTER: Sonnet, 2 vòng.

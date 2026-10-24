@@ -23,22 +23,41 @@
 <h3>Tiêu đề</h3>
 <div id="pkg-options" class="actions"></div>
 <label>Tiêu đề đăng video <input id="pkg-title" type="text" maxlength="80" required></label>
-<label>Dòng chữ lớn trên ảnh <input id="pkg-headline" type="text" maxlength="300" required></label>
-<p class="small muted">Tối đa 3 dòng. Chữ quá dài sẽ báo lỗi để bạn rút ngắn.</p>
 <div class="actions">
-<button id="pkg-save" class="btn small" type="button">Lưu thay đổi</button>
-<button id="pkg-build" class="btn primary small" type="button">Dựng 3 thumbnail</button>
 <button id="pkg-copy-title" class="btn small" type="button">Copy tiêu đề</button>
 <button id="pkg-copy-description" class="btn small" type="button">Copy mô tả</button>
 </div>
 </section>
 <section class="card">
-<h3>Chọn thumbnail</h3>
-<p class="small muted">Chọn ảnh đã duyệt trong kho hoặc dùng nền có sẵn. Góc phải dưới chừa cho nhãn thời lượng YouTube.</p>
+<h3>Chữ trên thumbnail</h3>
+<p class="small muted">Tối đa 3 dòng tiêu đề (bỏ trống dòng nào thì dòng sau dồn lên). Chữ quá dài sẽ báo lỗi để bạn rút ngắn. Khung thời lượng tự tính từ video đã ghép.</p>
+<label>Dòng 1 <input id="pkg-line-0" type="text" maxlength="40"></label>
+<label>Dòng 2 <input id="pkg-line-1" type="text" maxlength="40"></label>
+<label>Dòng 3 (tùy chọn) <input id="pkg-line-2" type="text" maxlength="40"></label>
+<label>Tên bộ kinh <input id="pkg-series" type="text" maxlength="100"></label>
+<label>Người giảng <input id="pkg-speaker" type="text" maxlength="60"></label>
+<label>Vị trí ảnh (trái ↔ phải) <input id="pkg-focus" type="range" min="0" max="1" step="0.05" value="0.5"></label>
+<p id="pkg-minutes" class="small muted"></p>
+<div id="pkg-style-a" hidden>
+<label>Bảng màu (kiểu A) <select id="pkg-palette">
+<option value="nau-vang">Nâu vàng</option><option value="xanh-ngoc">Xanh ngọc</option>
+<option value="do-son">Đỏ son</option><option value="xanh-dem">Xanh đêm</option></select></label>
+<label>Nền (kiểu A) <select id="pkg-background">
+<option value="plain">Màu trơn</option><option value="blur">Ảnh mờ toàn khung (cần chọn ảnh)</option></select></label>
+</div>
+<div class="actions">
+<button id="pkg-save" class="btn small" type="button">Lưu thay đổi</button>
+<button id="pkg-build" class="btn primary small" type="button">Dựng thumbnail (3 kiểu × ngang / dọc)</button>
+</div>
+</section>
+<section class="card">
+<h3>Chọn kiểu thumbnail</h3>
+<p class="small muted">Chọn kiểu A / B / C, ảnh đã duyệt trong kho (hoặc không ảnh). Bản đăng gồm cả ảnh ngang 16:9 và dọc 9:16 của kiểu đã chọn; góc phải dưới bản ngang chừa cho nhãn thời lượng YouTube.</p>
 <div id="pkg-thumbnails"></div>
 <div class="actions">
 <button id="pkg-approve" class="btn primary" type="button">Duyệt bản đăng</button>
-<a id="pkg-download" class="btn" hidden download>Tải bản đăng</a>
+<a id="pkg-download-landscape" class="btn" hidden download>Tải ảnh ngang</a>
+<a id="pkg-download-vertical" class="btn" hidden download>Tải ảnh dọc</a>
 </div>
 </section>
 </form>
