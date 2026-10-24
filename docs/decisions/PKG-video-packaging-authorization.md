@@ -57,6 +57,7 @@ Quyết định HUMAN LEAD (2026-10-24, trả lời từng câu):
 - **G6**: variant xóa tay trên trang Đóng gói (hiện dung lượng từng bản); không tự archive.
 
 - **G7** (HUMAN LEAD 2026-10-24, sau G1–G6): thêm **PKG2 — thumbnail cho tập** (bản ngang HD 16:9 + bản dọc 9:16 và 16:9) cho cả bộ kinh, **làm trước VIS1**. Chữ chỉ "tên bộ kinh — Tập N" + người giảng (deterministic từ header, không AI). Output đặt cạnh tập `output/<episode_id>/thumbs/` (ngoại lệ R3 vì đầu vào là tập, không phải TC3). Duyệt = HUMAN LEAD xem lưới + tải zip (R6 thu gọn). Thứ tự mới: PKG1 → PKG2 → VIS1 → AUD1.
+- **G8** (HUMAN LEAD 2026-10-24, sau G7): thumbnail tập chỉ ghép ảnh kho + chữ, không phụ thuộc video → mọi tập của bộ kinh (header hợp lệ) đều được dựng **cả 16:9 và 9:16**, kể cả tập đã xóa video trên VM (bản lưu nằm ở máy khác) hoặc chưa có bản HD / bản dọc. Thay điều kiện "tập đủ điều kiện" của PKG2. Task: PKG2.2.
 
 ## 5. Ngoài scope
 

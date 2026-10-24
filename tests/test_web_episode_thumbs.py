@@ -2,6 +2,7 @@
 import io
 import json
 import re
+import shutil
 import zipfile
 from types import SimpleNamespace
 from urllib.parse import unquote
@@ -13,6 +14,7 @@ from auto_short.packaging import PackageError, assets, episode
 from auto_short.web import episode_thumbs as web
 from auto_short.web.auth import COOKIE_NAME
 from auto_short.web.jobs import RENDER
+from auto_short.workspace import atomic_write_json
 
 from test_packaging_episode import IDS, PID, SERIES, add_images, episode_media, seed_episodes
 from test_web_theme_index import fx
@@ -79,7 +81,7 @@ def test_service_job_lane_dedup_cache_and_playlist_settings(service):
     try:
         assert s.runner.wait_idle(5)
         assert first.status == "done", first.error
-        assert len(s.calls) == 3
+        assert len(s.calls) == 4
         view = s.service.view(PID)
         assert view["series"] == SERIES and all(row["files"] for row in view["episodes"])
         for row in view["episodes"]:
@@ -94,7 +96,7 @@ def test_service_job_lane_dedup_cache_and_playlist_settings(service):
         assert all(not row["files"] for row in s.service.view(PID)["episodes"])
         job, _ = s.service.render(PID)
         assert s.runner.wait_idle(5) and job.status == "done", job.error
-        assert len(s.calls) == 3
+        assert len(s.calls) == 4
     finally:
         s.runner.stop()
 
@@ -106,7 +108,7 @@ def test_service_zip_only_verified_files_and_series_name(service, damage):
     data, name = s.service.archive(PID)
     assert SERIES in name
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
-        assert set(archive.namelist()) == {"T101_ngang.jpg", "T101_doc.jpg", "T102_ngang.jpg"}
+        assert set(archive.namelist()) == {"T101_ngang.jpg", "T101_doc.jpg", "T102_ngang.jpg", "T102_doc.jpg"}
         assert archive.read("T101_ngang.jpg").startswith(b"jpeg:")
     doc = episode.read(s.cfg, IDS[0])
     path = episode.directory(s.cfg, IDS[0]) / doc["files"]["landscape"]["file"]
@@ -199,7 +201,7 @@ def test_http_build_grid_download_zip_and_tamper(client):
         zipped = s.c.get(view["zip_url"])
         assert zipped.status_code == 200 and SERIES in unquote(zipped.headers["content-disposition"])
         with zipfile.ZipFile(io.BytesIO(zipped.content)) as archive:
-            assert set(archive.namelist()) == {"T101_ngang.jpg", "T101_doc.jpg", "T102_ngang.jpg"}
+            assert set(archive.namelist()) == {"T101_ngang.jpg", "T101_doc.jpg", "T102_ngang.jpg", "T102_doc.jpg"}
         path = episode.directory(s.cfg, IDS[0]) / entry["file"]
         path.write_bytes(b"changed")
         assert s.c.get(entry["download_url"]).status_code == 404
@@ -234,7 +236,7 @@ def test_http_settings_validation_preview_and_rebuild(client, tmp_path):
     s.runner.start()
     try:
         assert s.runner.wait_idle(5)
-        assert len([cmd for cmd in s.calls if "mjpeg" in cmd]) == 3
+        assert len([cmd for cmd in s.calls if "mjpeg" in cmd]) == 4
         view = s.c.get(BASE).json()
         assert view["settings"]["asset_id"] == pool[0]
         assert all(row["asset_id"] == pool[0] for row in view["episodes"])
@@ -248,9 +250,12 @@ def test_service_progress_counts_per_shape_and_reasons(service):
     reason = "chưa dựng hoặc đầu vào đã đổi — dựng lại"
     assert progress == dict(total=2, landscape=0, vertical=0, with_any=0, skipped=2, skipped_by_reason={reason: 2})
     episode.build_playlist(s.cfg, PID, run=episode_media)
-    assert s.service.view(PID)["progress"] == dict(total=2, landscape=2, vertical=1, with_any=2, skipped=0, skipped_by_reason={})
-    (s.cfg.workspace.dir / IDS[1] / "source.mp4").unlink()  # no HD landscape and no vertical: skipped
+    assert s.service.view(PID)["progress"] == dict(total=2, landscape=2, vertical=2, with_any=2, skipped=0, skipped_by_reason={})
+    (s.cfg.workspace.dir / IDS[1] / "source.mp4").unlink()  # G8: the video is irrelevant, still both shapes
     episode.build_playlist(s.cfg, PID, run=episode_media)
+    assert s.service.view(PID)["progress"] == dict(total=2, landscape=2, vertical=2, with_any=2, skipped=0, skipped_by_reason={})
+    atomic_write_json(s.cfg.workspace.dir / IDS[1] / "titles.json", dict(header=dict(fields=dict(series=SERIES))))
+    episode.build_playlist(s.cfg, PID, run=episode_media)  # an invalid header is what still skips an episode
     progress = s.service.view(PID)["progress"]
     assert (progress["total"], progress["landscape"], progress["vertical"], progress["with_any"], progress["skipped"]) \
         == (2, 1, 1, 1, 1)
@@ -293,9 +298,9 @@ def test_http_vertical_override_only_rebuilds_vertical(client, tmp_path):
     s.runner.start()
     try:
         assert s.runner.wait_idle(5)
-        assert len([cmd for cmd in s.calls if "mjpeg" in cmd]) == 1
+        assert len([cmd for cmd in s.calls if "mjpeg" in cmd]) == 2  # the 9:16 file of each episode
         progress = s.c.get(BASE).json()["progress"]
-        assert (progress["landscape"], progress["vertical"], progress["with_any"]) == (2, 1, 2)
+        assert (progress["landscape"], progress["vertical"], progress["with_any"]) == (2, 2, 2)
     finally:
         s.runner.stop()
 
@@ -319,3 +324,20 @@ def test_page_has_sticky_action_bar_and_collapsed_lists(client):
     assert 'id="thumbs-vsep"' in html and 'id="thumbs-vgroup"' in html
     script = client.c.get("/static/thumbs.js").text
     assert "vertical:" in script and '"toggle"' in script and "view.progress" in script
+
+
+def test_http_episode_without_video_has_both_shapes_and_zip_names(client):  # G8 / AC4
+    s = client
+    work = s.cfg.workspace.dir
+    (work / (IDS[0] + ".kt")).mkdir()
+    (work / IDS[0] / "titles.json").replace(work / (IDS[0] + ".kt") / "titles.json")
+    shutil.rmtree(work / IDS[0])
+    shutil.rmtree(s.cfg.render.output_dir / IDS[0])
+    episode.build_playlist(s.cfg, PID, run=episode_media)
+    view = s.c.get(BASE).json()
+    assert set(view["episodes"][0]["files"]) == {"landscape", "vertical"} and not view["episodes"][0]["skipped_reason"]
+    assert view["progress"]["skipped"] == 0
+    for entry in view["episodes"][0]["files"].values():
+        assert s.c.get(entry["preview_url"]).status_code == 200
+    with zipfile.ZipFile(io.BytesIO(s.c.get(view["zip_url"]).content)) as archive:
+        assert {"T101_ngang.jpg", "T101_doc.jpg"} <= set(archive.namelist())
