@@ -2,7 +2,7 @@
 
 | Metadata | Value |
 |---|---|
-| Status | PROPOSED — chờ HUMAN LEAD xác nhận G1–G7 |
+| Status | ACCEPTED — HUMAN LEAD 2026-10-24 "duyệt đề xuất HD1 nhưng đổi … HD Dọc chuyển thành HD Mobile" (sửa G6) |
 | Authority | HUMAN LEAD 2026-10-24: tải hết bản ngang HD + dọc Kinh Địa Tạng về máy 3090 rồi dọn ổ VM; "script tải mới tự check có bản dọc nào rồi để xóa luôn"; Short / khai thị làm sau từ bản HD đã upload YouTube — chọn cách **B** (gắn video HD đã upload vào tập cũ, giữ transcript / AI) |
 | Change class | S2 (sửa artifact `source_hd` + "render dùng nguồn HD" của `CP13.1-enhance-worker-contract.md` E5 / E6; luật dọn / archived của `CP8.3-web-contract.md` CP8.6; thêm route web) |
 | Integration | Push / PR / merge vẫn cần HUMAN LEAD duyệt riêng |
@@ -20,8 +20,10 @@ Script `kdt-backup.ps1` (máy 3090, sinh bởi `~/.local/share/auto-short/backup
 - **G3 Trạng thái sau khi giải phóng** (sửa E5 / E6): `enhance.json` giữ `state: done` + `source_hd_sha256`, thêm `released: true` → (a) Short / khai thị đã render **không** thành cũ, không tự render lại; (b) enhance không xếp lại tập; (c) web hiện "HD đã chuyển ra máy ngoài" thay link tải HD / dọc; (d) `effective_source` trả "cần lấy lại" (G5) thay vì rơi về bản gốc im lặng.
 - **G4 Gắn video HD đã upload (cách B)**: trên trang bộ kinh, HUMAN LEAD dán link **playlist YouTube chứa bản HD đã upload**. VM đọc danh sách bằng yt-dlp (như ingest, không OAuth): ghép theo "Tập N" trong tiêu đề **và** thời lượng khớp tập cũ (≤ 1 s; enhance giữ đúng số khung, CP13.1). Ghi `work/<owner>/hd_link.json` (`youtube_id`, `duration`, `linked_at`). Không khớp / trùng → không gắn, liệt kê để HUMAN LEAD xem. Có nút gỡ / gắn tay từng tập (dán link video, vẫn kiểm thời lượng).
 - **G5 Lấy lại nguồn HD khi cần**: job cần nguồn cho tập `released` (render Short / khai thị mới hoặc làm lại, bản dọc, ghép chủ đề) tải `hd_link.youtube_id` (chất lượng cao nhất ≤ 1080p) vào `work/<owner>/source_hd_yt.mp4`, kiểm thời lượng, dùng xong xóa (như tải lại bản gốc của tập archived, CP8.32 K2). Render key dùng sha của file tải về → Short mới là bản mới; Short cũ giữ nguyên. Chưa gắn link → job dừng với thông báo "HD đã chuyển ra máy ngoài — gắn link bản HD trên YouTube hoặc render bằng bản gốc" (nút "Render bằng bản gốc" như E6). Bản tải từ YouTube đã nén lại một lần (chấp nhận được cho Short).
-- **G6 Script 3090**: `kdt-backup.ps1` thêm bước cuối: với mỗi file đã kiểm sha khớp (kể cả file có sẵn nhận qua `-Have`), gọi G1; rồi in danh sách tập đủ điều kiện G2 cùng dung lượng sẽ giải phóng, hỏi **một lần** "Giải phóng N tập (X GB) trên VM? (y/N)" → gọi G2. Cờ `-Release` bỏ câu hỏi (chạy qua đêm), `-NoRelease` chỉ xác nhận. Generator + template chuyển vào repo `scripts/backup/` (tham số playlist, không cố định Kinh Địa Tạng); bảng sha vẫn sinh từ VM.
+- **G6 Script 3090**: `kdt-backup.ps1` thêm bước cuối: với mỗi file đã kiểm sha khớp (kể cả file có sẵn nhận qua `-Have`), gọi G1; rồi in danh sách tập đủ điều kiện G2 cùng dung lượng sẽ giải phóng, hỏi **một lần** "Giải phóng N tập (X GB) trên VM? (y/N)" → gọi G2. Cờ `-Release` bỏ câu hỏi (chạy qua đêm), `-NoRelease` chỉ xác nhận. Generator + template chuyển vào repo `scripts/backup/` (tham số playlist, không cố định Kinh Địa Tạng); bảng sha vẫn sinh từ VM. **Tên file bản dọc: `[HD Mobile] <bộ kinh> - Tập N.mp4`** (thay `[HD Dọc]`, HUMAN LEAD 2026-10-24); ảnh kèm `[HD Mobile] … .jpg`; script tự đổi tên file `[HD Dọc]` cũ trong thư mục đích (giữ sha đã kiểm). Bản ngang giữ `[HD] …`.
 - **G7 Dependency / security**: không thêm dependency (yt-dlp, curl có sẵn). Route mới sau cookie, kiểm regex id như route hiện có, chỉ xóa đúng hai đường dẫn cố định trong `work/<owner>/` và `output/<owner>/full/`; nhật ký trong `backup.json`. Không mở port mới.
+
+- Hệ quả cho PUB2 (PR #141, G2 ghép theo tên file upload): nhận cả `[HD Mobile]` lẫn `[HD Dọc]` (video đã upload trước khi đổi tên) — sửa trong PUB2, không trong HD1.
 
 ## 3. Ngoài scope
 
