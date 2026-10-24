@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 import threading
+from copy import deepcopy
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -56,7 +57,7 @@ class ThumbnailTarget:
                 theme_index.IndexError, MissingPlan, BrokenArtifact, OSError) as exc:
             raise JobFailed(safe(str(exc))) from exc
         job.stage = None
-        job.summary = "Đã dựng 3 thumbnail"
+        job.summary = "Đã dựng thumbnail kiểu A / B / C (ngang và dọc)"
 
     def lane_steps(self):
         return [Step(RENDER, self)]
@@ -138,13 +139,13 @@ class Packages:
         if doc is not None:
             doc = record.status(doc, plan, meta)
         elif meta is not None:
-            doc = record.new(self.config, plan, meta)
+            doc = record.new(self.config, plan, meta, pid)
         if require_output and meta is None:
             raise Unavailable("Video TC3 không còn hợp lệ; hãy xuất lại video trước khi đóng gói")
         if doc is None:
             previous = variant.listing(folder, plan, meta)
             digest = previous[-1][1]["tc3"]["sha256"] if previous else "0" * 64
-            doc = record.new(self.config, plan, {"sha256": digest})
+            doc = record.new(self.config, plan, {"sha256": digest}, pid)
             doc.update(state="stale", approved_at=None)
         return plan, meta, folder, doc
 
@@ -163,19 +164,27 @@ class Packages:
             if asset["kind"] == "image" and asset["approved"] and asset["license"].strip() and asset["source"].strip():
                 images.append({k: asset[k] for k in ("id", "kind", "tags", "source", "license", "width", "height")})
         base = f"/files/playlists/{pid}/theme-pkg/{doc['plan_id']}-r{doc['revision']}/"
-        download = None
+        folder = record.directory(self.config.render.output_dir, pid, plan_id, doc["revision"])
+        downloads = None
         if doc["state"] == "approved":
-            folder = record.directory(self.config.render.output_dir, pid, plan_id, doc["revision"])
             try:
-                download = base + thumbnail.ready(folder, doc, self.config.packaging.asset_dir)["file"]
+                chosen = thumbnail.ready(folder, doc, self.config.packaging.asset_dir)
+                downloads = {shape: base + chosen["files"][shape]["file"] for shape in record.SHAPES}
             except PackageError:
                 doc.update(state="stale", approved_at=None)
         # Redact artifact strings first, then add the local URLs (safe() would hide them like paths, as in TC2).
         view = safe(doc)
         for entry, raw in zip(view["thumbnails"], doc["thumbnails"]):
-            entry["preview_url"] = base + raw["file"] + "?inline=1" if raw["file"] and doc["state"] != "stale" else None
-        view["download_url"] = download
+            # Only files that match the current settings are shown; an edited style waits for a rebuild.
+            entry["preview_urls"] = {
+                shape: base + f["file"] + "?inline=1"
+                if f and doc["state"] != "stale" and thumbnail.reusable(folder, f, thumbnail.key(doc, raw, shape)) else None
+                for shape, f in raw["files"].items()}
+        view["download_urls"] = downloads
+        view["download_url"] = downloads["landscape"] if downloads else None
         return {"package": view, "description": safe(meta["description"]) if meta else "", "assets": safe(images),
+                "duration": meta.get("duration") if meta else None,
+                "image_order": sorted(a["id"] for a in images),  # same order as episode.images; PUT re-checks usable
                 "job": job_view(self.runner.latest(render_key(pid, plan_id))), **self.visual_view(pid, plan_id)}
 
     def visual_view(self, pid, plan_id):
@@ -319,29 +328,35 @@ class Packages:
         self.mutable(pid, plan_id)
         plan, meta, folder, doc = self.context(pid, plan_id)
         if doc["state"] == "stale":
-            doc = record.new(self.config, plan, meta)
-        for name in ("title", "headline", "selected"):
+            doc = record.new(self.config, plan, meta, pid)
+        doc = deepcopy(doc)
+        for name in ("title", "selected"):
             value = getattr(body, name)
             if value is not None:
                 doc[name] = nfc(value).strip()
         problem = theme_plan._title_problem(doc["title"])
         if problem:
             raise PackageError(problem)
-        if doc["selected"] not in thumbnail.TEMPLATES:
-            raise PackageError("unknown thumbnail template")
-        for template in thumbnail.TEMPLATES.values():
-            thumbnail.fit(doc["headline"], template)
+        if doc["selected"] not in record.STYLES:
+            raise PackageError("unknown thumbnail style")
+        settings = dict(doc["settings"])
+        for name in ("title_lines", "series", "speaker", "palette", "background", "focus_x"):
+            value = getattr(body, name)
+            if value is not None:
+                settings[name] = value
+        doc["settings"] = record.normalize_settings(settings)
         if body.asset_ids is not None:
-            if any(t not in thumbnail.TEMPLATES for t in body.asset_ids):
-                raise PackageError("unknown asset template")
+            if any(t not in record.STYLES for t in body.asset_ids):
+                raise PackageError("unknown asset style")
             for entry in doc["thumbnails"]:
-                if entry["template"] in body.asset_ids:
-                    ids = body.asset_ids[entry["template"]]
+                if entry["style"] in body.asset_ids:
+                    ids = body.asset_ids[entry["style"]]
                     if len(ids) > 1:
                         raise PackageError("mỗi thumbnail dùng tối đa một ảnh")
                     for ident in ids:
                         assets.usable(self.config.packaging.asset_dir, ident, kind="image")
                     entry["asset_ids"] = ids
+        thumbnail.check(doc, self.config.packaging.asset_dir)  # fit / palette / blur: rejected before any ffmpeg
         doc.update(state="draft", approved_at=None, updated_at=utc_now())
         record.write(folder, doc)
         return doc
@@ -352,7 +367,8 @@ class Packages:
             return job, False
         plan, meta, folder, doc = self.context(pid, plan_id)
         if doc["state"] == "stale":
-            doc = record.new(self.config, plan, meta)
+            doc = record.new(self.config, plan, meta, pid)
+        thumbnail.check(doc, self.config.packaging.asset_dir)
         # A cache hit preserves explicit approval; a changed record becomes draft via edit().
         record.write(folder, doc)
         return self.runner.submit(render_key(pid, plan_id), KIND, ThumbnailTarget(self, pid, plan, doc))
@@ -372,9 +388,15 @@ class Packages:
 
 
 class EditIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     title: StrictStr | None = Field(default=None, max_length=120)
-    headline: StrictStr | None = Field(default=None, max_length=300)
     selected: StrictStr | None = Field(default=None, max_length=20)
+    title_lines: list[StrictStr] | None = Field(default=None, max_length=3)
+    series: StrictStr | None = Field(default=None, max_length=record.MAX_SERIES * 2)
+    speaker: StrictStr | None = Field(default=None, max_length=record.MAX_SPEAKER * 2)
+    palette: StrictStr | None = Field(default=None, max_length=20)
+    background: StrictStr | None = Field(default=None, max_length=10)
+    focus_x: StrictFloat | StrictInt | None = None
     asset_ids: dict[StrictStr, list[StrictStr]] | None = None
 
 
@@ -528,18 +550,22 @@ def register(app: FastAPI, service: Packages):
             _, _, folder, doc = service.context(pid, match[1])
             if doc["state"] == "stale" or doc["revision"] != int(match[2]):
                 return missing()
-            entry = next((e for e in doc["thumbnails"] if e["file"] == name), None)
-            if entry is None:
+            found = next(((e, shape) for e in doc["thumbnails"] for shape, f in e["files"].items()
+                          if f and f["file"] == name), None)
+            if found is None:
                 return missing()
-            if inline != 1 and (doc["state"] != "approved" or entry["template"] != doc["selected"]):
+            entry, shape = found
+            if inline != 1 and (doc["state"] != "approved" or entry["style"] != doc["selected"]):
                 return missing()
             for ident in entry["asset_ids"]:
                 assets.usable(service.config.packaging.asset_dir, ident, kind="image")
-            if not thumbnail.reusable(folder, entry, thumbnail.key(doc, entry)):
+            if not thumbnail.reusable(folder, entry["files"][shape], thumbnail.key(doc, entry, shape)):
                 return missing()
             headers = {"Cache-Control": "no-store"}
             if inline != 1:
-                headers["Content-Disposition"] = content_disposition(truncate_utf8(clean_part(doc["title"])) + ".jpg")
+                thumbnail.ready(folder, doc, service.config.packaging.asset_dir)  # both shapes of the approved style
+                suffix = " - ngang" if shape == "landscape" else " - dọc"
+                headers["Content-Disposition"] = content_disposition(truncate_utf8(clean_part(doc["title"])) + suffix + ".jpg")
             return FileResponse(folder / name, media_type="image/jpeg", headers=headers)
         except (PackageError, Unavailable, MissingPlan, BrokenArtifact, theme_plan.PlanError,
                 theme_index.IndexError, OSError, ValueError, KeyError, TypeError):

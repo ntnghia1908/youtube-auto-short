@@ -1,9 +1,12 @@
 """PKG1: authenticated HTTP routes plus socket-free service/job verification."""
 import asyncio
+import hashlib
 import json
 import os
 import shutil
+import subprocess
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -36,6 +39,17 @@ def setup(theme_setup, tmp_path):
 
 
 @pytest.fixture
+def photo_asset(setup, tmp_path):
+    path = tmp_path / "speaker.jpg"
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=0x3b5670:s=800x1000",
+                    "-frames:v", "1", "-threads", "1", str(path)], check=True)
+    asset_dir = setup.package.config.packaging.asset_dir
+    entry = assets.add(asset_dir, path, kind="image", source="local:test", license="CC0")
+    assets.approve(asset_dir, entry["id"])
+    return entry["id"]
+
+
+@pytest.fixture
 def service(tmp_path):
     """Reuse the TC2 synthetic source without starting TestClient or any socket."""
     cfg = replace(fx.seed(tmp_path / "scratch"), packaging=PackagingConfig(tmp_path / "assets"))
@@ -60,7 +74,8 @@ def test_service_title_validation_job_lane_dedup_cache_and_approval(service):
     for title in ("SỐC! Bí mật", "Tu học 😀", "“Tu học”"):
         with pytest.raises(PackageError):
             s.package.edit(PID, pid, web.EditIn(title=title))
-    s.package.edit(PID, pid, web.EditIn(title="Chuyên tâm tu học", headline="Niệm Phật vãng sanh — buông xả"))
+    assert view["package"]["settings"]["title_lines"][0] == "Tuyển tập khai thị" and view["package"]["settings"]["minutes"] == 6
+    s.package.edit(PID, pid, web.EditIn(title="Chuyên tâm tu học", title_lines=["Tuyển tập khai thị", "Niệm Phật vãng sanh", ""]))
     first, created = s.package.render(PID, pid)
     duplicate, again = s.package.render(PID, pid)
     assert created and not again and duplicate.id == first.id and first.kind == "theme_package"
@@ -71,7 +86,9 @@ def test_service_title_validation_job_lane_dedup_cache_and_approval(service):
         assert first.status == "done", first.error
         doc = s.package.approve(PID, pid)
         assert doc["state"] == "approved" and doc["approved_at"]
-        assert s.package.view(PID, pid)["package"]["download_url"].endswith(".jpg")
+        urls = s.package.view(PID, pid)["package"]["download_urls"]
+        assert set(urls) == {"landscape", "vertical"} and all(u.endswith(".jpg") for u in urls.values())
+        assert s.package.view(PID, pid)["package"]["download_url"] == urls["landscape"]
         s.package.media_runner = lambda _: pytest.fail("cache called media runner")
         second, _ = s.package.render(PID, pid)
         assert s.runner.wait_idle(5)
@@ -111,7 +128,7 @@ def test_service_stale_preserves_old_record(service, changed):
         path.write_bytes(b"tampered without updating metadata")
     view = s.package.view(PID, pid)
     assert view["package"]["state"] == "stale" and view["package"]["download_url"] is None
-    assert all(t["preview_url"] is None for t in view["package"]["thumbnails"])
+    assert all(u is None for t in view["package"]["thumbnails"] for u in t["preview_urls"].values())
     assert (folder / "package.json").read_bytes() == before
     with pytest.raises(web.Unavailable):
         s.package.approve(PID, pid)
@@ -146,9 +163,11 @@ def test_http_titles_and_validation(setup, title):
     assert result.json()["description"] == "00:00 Tu học\n\nMô tả"
     assert before == snapshot(s.root)
     assert s.c.put(url, json={"title": title}).status_code == 400
-    assert s.c.put(url, json={"title": "Chuyên tâm tu học", "headline": "Niệm Phật"}).status_code == 200
-    assert s.c.put(url, json={"headline": "niệm Phật " * 80}).status_code == 422
+    assert s.c.put(url, json={"title": "Chuyên tâm tu học", "title_lines": ["Tuyển tập khai thị", "Niệm Phật", ""]}).status_code == 200
+    assert s.c.put(url, json={"title_lines": ["a", "b", "c", "d"]}).status_code == 422
+    assert s.c.put(url, json={"headline": "Niệm Phật"}).status_code == 422  # PKG1 field is gone
     assert s.c.put(url, json={"selected": "../../bad"}).status_code == 400
+    assert s.c.put(url, json={"selected": "classic"}).status_code == 400
 
 
 @pytest.mark.parametrize("changed", ["revision", "tc3", "thumbnail"])
@@ -164,14 +183,25 @@ def test_http_approve_download_and_stale(setup, changed):
     try:
         assert s.runner.wait_idle(5)
         view = s.c.get(url).json()["package"]
-        preview = view["thumbnails"][0]["preview_url"]
+        assert [t["style"] for t in view["thumbnails"]] == ["A", "B", "C"]
+        assert all(u for t in view["thumbnails"] for u in t["preview_urls"].values())  # both shapes of every style
+        previews = view["thumbnails"][0]["preview_urls"]
+        preview = previews["landscape"]
         download = preview.split("?")[0]
         assert s.c.get(preview).status_code == 200
         assert s.c.get(download).status_code == 404
+        assert view["download_urls"] is None
         assert s.c.post(url + "/approve").status_code == 200
-        result = s.c.get(download)
-        assert result.status_code == 200 and result.headers["content-type"] == "image/jpeg"
-        assert "filename*=UTF-8" in result.headers["content-disposition"]
+        urls = s.c.get(url).json()["package"]["download_urls"]
+        assert set(urls) == {"landscape", "vertical"}
+        for shape, link in urls.items():
+            result = s.c.get(link)
+            assert result.status_code == 200 and result.headers["content-type"] == "image/jpeg"
+            assert "filename*=UTF-8" in result.headers["content-disposition"]
+            assert ("%20-%20ngang" if shape == "landscape" else "%20-%20d%E1%BB%8Dc") in result.headers["content-disposition"]
+        # only the approved style downloads; the others stay preview-only
+        other = view["thumbnails"][1]["preview_urls"]["landscape"].split("?")[0]
+        assert s.c.get(other).status_code == 404 and s.c.get(other + "?inline=1").status_code == 200
         if changed == "revision":
             assert s.c.put(plan_path(plan), json={"revision": plan["revision"], "title": "Tu học mỗi ngày",
                         "clip_ids": [c["id"] for c in plan["clips"]]}).status_code == 200
@@ -179,9 +209,61 @@ def test_http_approve_download_and_stale(setup, changed):
             path.write_bytes(b"changed")
         else:
             folder = record.directory(s.cfg.render.output_dir, PID, plan["plan_id"], plan["revision"])
-            (folder / view["thumbnails"][0]["file"]).write_bytes(b"changed")
-        assert s.c.get(download).status_code == 404
+            (folder / view["thumbnails"][0]["files"]["vertical"]["file"]).write_bytes(b"changed")
+        assert s.c.get(download).status_code == 404 and s.c.get(urls["vertical"]).status_code == 404
         assert s.c.get(url).json()["package"]["state"] == "stale"
+    finally:
+        s.runner.stop()
+
+
+def test_http_edit_style_settings_rebuild_only_what_changed_and_reject_before_ffmpeg(setup, photo_asset):
+    s = setup
+    plan = approve(s, create(s))
+    fake_output(s, plan)
+    url = plan_path(plan) + "/package"
+    calls = []
+    def counted(cmd):
+        calls.append(cmd)
+        if "-filter_complex" in cmd:
+            Path(cmd[-1]).write_bytes(bytes([20] * 12))
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        return fake_media(cmd)
+    s.package.media_runner = counted
+    graphs = lambda: [c for c in calls if "-filter_complex_script" in c]
+    body = {"title_lines": ["Tuyển tập khai thị", "Tu hành", "không phải hình thức"], "series": "Thái Thượng Cảm Ứng Thiên",
+            "speaker": "Pháp Sư Tịnh Không", "selected": "B", "palette": "xanh-ngoc", "focus_x": 0.25,
+            "asset_ids": {"A": [photo_asset], "B": [photo_asset], "C": []}}
+    result = s.c.put(url, json=body)
+    assert result.status_code == 200 and result.json()["selected"] == "B"
+    assert result.json()["settings"]["title_lines"] == body["title_lines"] and result.json()["settings"]["palette"] == "xanh-ngoc"
+    s.runner.start()
+    try:
+        assert s.c.post(url + "/thumbnails").status_code == 202 and s.runner.wait_idle(5)
+        assert len(graphs()) == 6
+        view = s.c.get(url).json()["package"]
+        assert view["thumbnails"][0]["asset_ids"] == [photo_asset] and view["thumbnails"][2]["asset_ids"] == []
+        # a palette / background change touches style A only
+        calls.clear()
+        assert s.c.put(url, json={"palette": "do-son", "background": "blur"}).status_code == 200
+        unchanged = s.c.get(url).json()["package"]["thumbnails"]
+        assert unchanged[0]["preview_urls"] == {"landscape": None, "vertical": None}
+        assert all(all(t["preview_urls"].values()) for t in unchanged[1:])
+        assert s.c.post(url + "/thumbnails").status_code == 202 and s.runner.wait_idle(5)
+        assert len(graphs()) == 2
+        # identical rebuild: no ffmpeg at all
+        calls.clear()
+        assert s.c.post(url + "/thumbnails").status_code == 202 and s.runner.wait_idle(5)
+        assert calls == []
+        # invalid settings never reach ffmpeg
+        calls.clear()
+        for bad in ({"palette": "khong-co"}, {"background": "gradient"}, {"title_lines": ["x" * 41]},
+                    {"title_lines": ["Thiền 🧘"]}, {"title_lines": ["W" * 40]}, {"series": "Đ" * 101},
+                    {"focus_x": 2}, {"title_lines": ["", " "]}, {"asset_ids": {"A": ["a" * 64]}},
+                    {"asset_ids": {"classic": []}}, {"asset_ids": {"A": [photo_asset, photo_asset]}}):
+            assert s.c.put(url, json=bad).status_code == 400, bad
+        assert s.c.put(url, json={"asset_ids": {"A": []}}).status_code == 400  # blur needs an image
+        assert s.c.put(url, json={"background": "plain", "asset_ids": {"A": []}}).status_code == 200
+        assert calls == []
     finally:
         s.runner.stop()
 
@@ -196,7 +278,7 @@ def test_http_auth_ids_and_static_page(setup):
     for method, suffix, body in [("GET", "", None), ("PUT", "", {}), ("POST", "/thumbnails", None), ("POST", "/approve", None)]:
         result = anon.request(method, url + suffix, json=body)
         assert result.status_code == 401 and result.headers["cache-control"] == "no-store"
-    file = f"/files/playlists/{PID}/theme-pkg/{plan['plan_id']}-r1/classic-{'a' * 64}.jpg"
+    file = f"/files/playlists/{PID}/theme-pkg/{plan['plan_id']}-r1/A-landscape-{'a' * 64}.jpg"
     assert anon.get(file).status_code == 401
     for suffix in ("/variants", "/preview"):
         assert anon.post(url + suffix, json={"visual": None, "music": {"asset_id": "a" * 64}}).status_code == 401
@@ -206,17 +288,25 @@ def test_http_auth_ids_and_static_page(setup):
     for pid, ident in [("bad!", plan["plan_id"]), ("PLunknown", plan["plan_id"]), (PID, "bad!"), (PID, "12345678")]:
         result = s.c.get(f"/api/playlists/{pid}/theme-plans/{ident}/package")
         assert result.status_code == 404 and result.headers["cache-control"] == "no-store"
-    for suffix in ("classic-invalid.jpg", "package.json", "..%5Csecret.jpg"):
+    for suffix in ("A-landscape-invalid.jpg", "classic-" + "a" * 64 + ".jpg", "A-diagonal-" + "a" * 64 + ".jpg", "package.json", "..%5Csecret.jpg"):
         assert s.c.get(file.rsplit("/", 1)[0] + "/" + suffix).status_code == 404
     _, _, folder, doc = s.package.context(PID, plan["plan_id"])
     doc = thumbnail.build(folder, doc, s.package.config.packaging.asset_dir, run=fake_media)
     record.write(folder, doc)
-    selected = folder / doc["thumbnails"][0]["file"]
+    selected = folder / doc["thumbnails"][0]["files"]["landscape"]["file"]
     selected.unlink()
     selected.symlink_to(folder.parent.parent / f"{plan['plan_id']}-r1.mp4")
     assert s.c.get(file.rsplit("/", 1)[0] + "/" + selected.name + "?inline=1").status_code == 404
     assert "Đóng gói" in s.c.get("/static/theme_plan.js").text
-    assert "pkg-approve" in s.c.get("/static/package.html").text
+    page = s.c.get("/static/package.html").text
+    for control in ("pkg-approve", "pkg-line-0", "pkg-line-2", "pkg-palette", "pkg-background", "pkg-download-landscape",
+                    "pkg-download-vertical", "pkg-grid", "pkg-review", "pkg-other-image", "pkg-custom", "pkg-build"):
+        assert f'id="{control}"' in page
+    custom = page[page.index('<details id="pkg-custom"'):]  # PKG3.1: PKG3 controls live in the closed "Tùy chỉnh"
+    assert "open" not in custom.split(">", 1)[0] and all(f'id="{c}"' in custom for c in ("pkg-line-0", "pkg-palette", "pkg-save", "pkg-thumbnails"))
+    script = s.c.get("/static/package.js").text
+    assert "preview_urls" in script and "download_urls" in script and "classic" not in script
+    assert "autoBuilt" in script and "image_order" in script and "pkg-badge" in script
 
 
 def test_visual_service_job_cache_approve_preview_stale_and_delete(service):
@@ -565,3 +655,35 @@ def test_music_routes_auth_middleware_socket_free(service):
                 assert response.status_code == (204 if signed_in else 401)
                 assert called is signed_in
     asyncio.run(check())
+
+
+def test_default_asset_is_deterministic_empty_safe_and_keeps_existing(service, tmp_path):
+    s = service
+    plan, meta = s.plan, {"sha256": "a" * 64, "duration": 61.0}
+    assert [t["asset_ids"] for t in record.new(s.cfg, plan, meta)["thumbnails"]] == [[], [], []]  # empty library
+    asset_dir = s.cfg.packaging.asset_dir
+    ids = []
+    for n in range(3):
+        path = tmp_path / f"p{n}.jpg"
+        subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", f"color=c=0x{n}b5670:s=64x80",
+                        "-frames:v", "1", "-threads", "1", str(path)], check=True)
+        entry = assets.add(asset_dir, path, kind="image", source="local:test", license="CC0")
+        assets.approve(asset_dir, entry["id"])
+        ids.append(entry["id"])
+    ordered = sorted(ids)
+    expected = [ordered[int(hashlib.sha256(plan["plan_id"].encode()).hexdigest(), 16) % 3]]
+    doc = record.new(s.cfg, plan, meta)
+    assert [t["asset_ids"] for t in doc["thumbnails"]] == [expected] * 3
+    assert record.new(s.cfg, plan, meta)["thumbnails"] == doc["thumbnails"]
+    # a stored record keeps its own asset_ids when the library changes
+    _, _, folder, stored = s.package.context(PID, plan["plan_id"])
+    stored["thumbnails"][1]["asset_ids"] = []
+    record.write(folder, stored)
+    _, _, _, again = s.package.context(PID, plan["plan_id"])
+    assert again["thumbnails"][1]["asset_ids"] == []
+    view = s.package.view(PID, plan["plan_id"])
+    assert view["image_order"] == ordered and view["duration"] == meta_duration(s)
+
+
+def meta_duration(s):
+    return s.package.context(PID, s.plan["plan_id"])[1].get("duration")
