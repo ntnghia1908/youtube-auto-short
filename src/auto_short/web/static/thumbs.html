@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Thumbnail cả bộ — Auto Short</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar"><a class="brand" href="/">&larr; Auto Short</a>
+<form method="post" action="/logout"><button class="btn link" type="submit">Đăng xuất</button></form></header>
+<main class="container">
+<section class="card">
+<a id="thumbs-back" href="/">&larr; Về bộ kinh</a>
+<h2 id="thumbs-title">Thumbnail cả bộ</h2>
+<form id="thumbs-settings">
+<label>Kiểu
+<select id="thumbs-style">
+<option value="A">A — Nền tối, chữ vàng serif</option>
+<option value="B">B — Viền vàng, chữ trắng Anton</option>
+<option value="C">C — Nền giấy thủy mặc, chữ nâu</option>
+</select></label>
+<label>Các dòng tiêu đề (1–3 dòng, tối đa 40 ký tự mỗi dòng)
+<textarea id="thumbs-lines" rows="3" aria-label="Các dòng tiêu đề"></textarea></label>
+<label>Người giảng / credit <input id="thumbs-credit" type="text" maxlength="60"></label>
+<fieldset><legend>Ảnh dùng chung cho cả bộ</legend>
+<div id="thumbs-assets" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:8px"></div>
+</fieldset>
+<label>Vị trí lấy ảnh <input id="thumbs-focus" type="range" min="0" max="1" step="0.01" value="0.5">
+<output id="thumbs-focus-value">0.50</output></label>
+<div class="actions">
+<button id="thumbs-preview" class="btn" type="button">Xem trước</button>
+<button id="thumbs-build" class="btn primary" type="submit">Dựng cả bộ</button>
+<a id="thumbs-zip" class="btn" download>Tải zip</a>
+<button id="thumbs-refresh" class="btn" type="button">Tải lại trạng thái</button>
+</div>
+</form>
+<p id="thumbs-status" role="status"></p>
+<p id="thumbs-msg" class="small" role="status"></p>
+<div id="thumbs-preview-images" class="actions" style="align-items:flex-start"></div>
+</section>
+<div id="thumbs-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:16px"></div>
+</main>
+<script src="/static/app.js"></script>
+<script src="/static/thumbs.js"></script>
+</body>
+</html>

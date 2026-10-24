@@ -148,6 +148,33 @@ class Font:
     def width(self, text: str, size: float) -> float:
         return self.width_units(text) * size / self.units_per_em
 
+    def ink_bounds(self, text: str, size: float) -> tuple[float, float]:
+        """(top, bottom) pixel offsets from a baseline, including composite Vietnamese accents.
+
+        hhea ascender/descender can exclude stacked accents. TrueType glyf boxes include the
+        complete composite outline; fonts without glyf use the conservative global head box.
+        Hinting/raster rounding is left to the caller's pixel padding.
+        """
+        self.width_units(text)  # same explicit missing-glyph error as width measurement
+        try:
+            if "glyf" not in self._tables or "loca" not in self._tables:
+                _, ymin, _, ymax = struct.unpack_from(">hhhh", self._data, self._off("head") + 36)
+            else:
+                long_loca = struct.unpack_from(">h", self._data, self._off("head") + 50)[0] == 1
+                stride, fmt = (4, ">II") if long_loca else (2, ">HH")
+                ymin, ymax = 0, 0
+                for ch in nfc(text):
+                    glyph = self._cmap[ord(ch)]
+                    start, end = struct.unpack_from(fmt, self._data, self._off("loca") + glyph * stride)
+                    if start == end:
+                        continue  # spaces / empty outlines
+                    offset = self._off("glyf") + start * (1 if long_loca else 2)
+                    _, lo, _, hi = struct.unpack_from(">hhhh", self._data, offset + 2)
+                    ymin, ymax = min(ymin, lo), max(ymax, hi)
+            return -ymax * size / self.units_per_em, -ymin * size / self.units_per_em
+        except (struct.error, KeyError) as exc:
+            raise TextError(f"cannot measure glyph bounds in {self.path}") from exc
+
 
 def check_glyphs(font: Font, texts: list[str]) -> None:
     missing: list[str] = []

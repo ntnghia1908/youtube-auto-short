@@ -768,9 +768,24 @@ const AutoShort = (() => {
 
   function fmtGb(n) { return n >= 1e9 ? (n / 1e9).toFixed(1).replace(".", ",") + " GB" : Math.round(n / 1e6) + " MB"; }
 
+  let thumbnailLinksFor = null;
+  function episodeThumbnailLinks(box) {
+    if (thumbnailLinksFor === episodeId) return;
+    thumbnailLinksFor = episodeId;
+    const links = el("div", { class: "actions" });
+    box.after(links);
+    for (const [shape, label] of [["landscape", "Thumbnail ngang"], ["vertical", "Thumbnail dọc"]]) {
+      const url = `/files/episodes/${encodeURIComponent(episodeId)}/thumbs/${shape}.jpg`;
+      fetch(url + "?inline=1").then((r) => {
+        if (r.ok) links.append(el("a", { href: url, download: "", class: "btn small", text: label }));
+      }).catch(() => {});
+    }
+  }
+
   function renderHdVideo(d) {
     const box = $("#hd-video");
     if (!box) return;
+    episodeThumbnailLinks(box);
     const h = d.hd_video;
     box.hidden = !h;
     if (!h) return;
@@ -2744,6 +2759,7 @@ const AutoShort = (() => {
 
   function initPlaylist() {
     playlistId = decodeURIComponent(location.pathname.split("/").filter(Boolean)[1] || "");
+    $("#pl-thumbs").href = `/playlists/${encodeURIComponent(playlistId)}/thumbs`;
     const savedFilter = store("autoShort.plFilter");
     if (PL_FILTERS.includes(savedFilter)) plFilter = savedFilter;
     document.querySelectorAll("#pl-filters [data-filter]").forEach((b) => b.addEventListener("click", () => {

@@ -331,6 +331,11 @@ class PostConfig:
 
 
 @dataclass(frozen=True)
+class PackagingConfig:
+    asset_dir: Path = field(default_factory=lambda: Path("~/.local/share/auto-short/packaging").expanduser())
+
+
+@dataclass(frozen=True)
 class Config:
     workspace: WorkspaceConfig = field(default_factory=WorkspaceConfig)
     ingest: IngestConfig = field(default_factory=IngestConfig)
@@ -345,6 +350,7 @@ class Config:
     storage: StorageConfig = field(default_factory=StorageConfig)
     enhance: EnhanceConfig = field(default_factory=EnhanceConfig)
     compilation: CompilationConfig = field(default_factory=CompilationConfig)
+    packaging: PackagingConfig = field(default_factory=PackagingConfig)
 
 
 def _section(data: dict, name: str) -> dict:
@@ -797,6 +803,8 @@ def from_dict(data: dict) -> Config:
         storage=_storage(data),
         enhance=_enhance(data),
         compilation=_compilation(data),
+        packaging=PackagingConfig(asset_dir=Path(_str(_section(data, "packaging"), "asset_dir",
+            str(PackagingConfig().asset_dir), "packaging")).expanduser()),
     )
 
 

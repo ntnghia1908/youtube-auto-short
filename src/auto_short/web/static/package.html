@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Đóng gói — Auto Short</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar"><a class="brand" href="/">&larr; Auto Short</a>
+<nav class="topnav"><a href="/monitor">Theo dõi</a>
+<form method="post" action="/logout"><button class="btn link" type="submit">Đăng xuất</button></form></nav></header>
+<main class="container fv-page">
+<section class="card">
+<h2>Đóng gói video chủ đề</h2>
+<a id="pkg-back" href="/">&larr; Về video đã ghép</a>
+<p id="pkg-status" role="status"></p>
+<p id="pkg-msg" class="small" role="status"></p>
+<button id="pkg-refresh" class="btn small" type="button">Tải lại trạng thái</button>
+</section>
+<form id="pkg-form" hidden>
+<section class="card">
+<h3>Tiêu đề</h3>
+<div id="pkg-options" class="actions"></div>
+<label>Tiêu đề đăng video <input id="pkg-title" type="text" maxlength="80" required></label>
+<label>Dòng chữ lớn trên ảnh <input id="pkg-headline" type="text" maxlength="300" required></label>
+<p class="small muted">Tối đa 3 dòng. Chữ quá dài sẽ báo lỗi để bạn rút ngắn.</p>
+<div class="actions">
+<button id="pkg-save" class="btn small" type="button">Lưu thay đổi</button>
+<button id="pkg-build" class="btn primary small" type="button">Dựng 3 thumbnail</button>
+<button id="pkg-copy-title" class="btn small" type="button">Copy tiêu đề</button>
+<button id="pkg-copy-description" class="btn small" type="button">Copy mô tả</button>
+</div>
+</section>
+<section class="card">
+<h3>Chọn thumbnail</h3>
+<p class="small muted">Chọn ảnh đã duyệt trong kho hoặc dùng nền có sẵn. Góc phải dưới chừa cho nhãn thời lượng YouTube.</p>
+<div id="pkg-thumbnails"></div>
+<div class="actions">
+<button id="pkg-approve" class="btn primary" type="button">Duyệt bản đăng</button>
+<a id="pkg-download" class="btn" hidden download>Tải bản đăng</a>
+</div>
+</section>
+</form>
+</main>
+<script src="/static/app.js"></script>
+<script src="/static/package.js"></script>
+</body>
+</html>

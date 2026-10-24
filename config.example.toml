@@ -258,3 +258,7 @@ retry_backoff = [5, 15]
 # Khai thị compilations (docs/tasks/CP8.33-khaithi-compilation.md): web "Yêu thích" page joins hearted khai thị into one
 # long vertical video (stream copy). Execution-only.
 max_minutes = 720            # longest compilation, 1-720 (YouTube's limit is 12 h); a longer request is refused
+
+[packaging]
+# PKG1: local image / loop / music library, imported and approved manually by CLI.
+asset_dir = "~/.local/share/auto-short/packaging"
