@@ -80,4 +80,4 @@ Trên 8080 (pin commit branch): mở tab Bài đăng một tập Địa Tạng c
 - Review: ORCHESTRATOR 2026-10-24 — ACCEPTED, không có blocking finding. Codex 1 vòng, 103k tokens, không vòng sửa.
 - Important findings / decisions: bỏ kiểm thứ tự theo Short lân cận (chỉ loại thêm 2/264 trên dữ liệu thật); dữ liệu đã sửa một lần trước code (xem Bối cảnh).
 - Known limitations: ~106 bài `ai` vẫn không gióng được (chuỗi khớp ngắn / mơ hồ) — UI cảnh báo khi copy. Vùng gióng có thể lệch một hai câu ở đầu / cuối khi phụ đề rất lỗi (T11 k03 chỉnh tay).
-- PR:
+- PR: #139
