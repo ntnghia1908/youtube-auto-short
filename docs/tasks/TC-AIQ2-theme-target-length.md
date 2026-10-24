@@ -102,11 +102,18 @@ Không chạm database, security model hoặc public API contract; manual test s
 
 ## Result
 
-- Main changes:
-- Tests:
-- Diff + / − (app, test):
-- Helper mới (đã tìm, lý do không tái dùng):
-- Review:
-- Important findings / decisions:
-- Known limitations:
+- Main changes: `tc2-v5` — prompt + payload `target_seconds` 1800–2400 s, cho clip dùng lại giữa theme, cấm độn; vòng bổ sung `_fill_theme` một lần / theme `short` (schema `add_ids` enum ứng viên, chỉ nối cuối nên clip vòng 1 không bị cắt), lỗi → giữ vòng 1 + `fill_error`; không còn ứng viên → không gọi AI; `filled_count`; speaker / `proposal_id` theo clip cuối; `prompt_sha256` gồm cả prompt fill.
+- Tests (ORCHESTRATOR, 2026-10-24, ngoài sandbox, PYTHONPATH worktree): targeted plan + web **153 passed**; full `-n auto` **2264 passed, 1 skipped**; framework-check, `git diff --check` PASS.
+  | AC | Test |
+  |---|---|
+  | 1 | `test_proposal_basic_and_truncated_to_max`, `test_planner_payload_groups_by_content_and_counts_selected_episodes` |
+  | 2 | `test_fill_appends_valid_clips_and_truncates`, `test_fill_payload_enum_order_and_final_speaker`, `test_fill_once_per_short_theme_and_skip_ok` |
+  | 3 | `test_fill_errors_preserve_first_round_and_other_themes`, `test_fill_parse_failure_retries_without_thinking`, `test_fill_without_candidates_remains_short` |
+  | 4 | full suite + checks trên |
+  | 5 | chưa chạy — cần pin 8080 vào commit branch (HUMAN LEAD duyệt restart) |
+- Diff + / − (app, test): app +68 / −12; test +159 / −4.
+- Helper mới (đã tìm, lý do không tái dùng): `_chat_json` — tách retry JSON có sẵn của vòng 1 để hai vòng dùng chung; `_fill_theme` tái dùng `_validate_theme`, `_build_proposal`, `speaker_for_clips`.
+- Review: Codex IMPLEMENTER 2 vòng (≈ 138k tokens): F1 (không còn ứng viên vẫn gọi AI với `enum: []`) sửa ở vòng 2. ORCHESTRATOR review diff: `ChatError` vòng 1 vẫn propagate (không phải `ValueError`); ACCEPTED.
+- Important findings / decisions: D2 accepted.
+- Known limitations: chưa có số đo thật (AC5).
 - PR:

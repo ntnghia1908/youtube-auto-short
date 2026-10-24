@@ -12,14 +12,21 @@ from test_theme_index import Fake as IndexFake, change, episode  # noqa: F401  (
 
 
 class Planner(IndexFake):
-    """Answers TC1 indexing calls like the TC1 fake and TC2 planning calls from ``themes``."""
+    """Answers TC1 indexing, TC2 grouping and per-theme fill requests separately."""
 
-    def __init__(self, themes=None, raw=None):
+    def __init__(self, themes=None, raw=None, fills=None):
         super().__init__()
         self.themes, self.raw, self.plan_calls = themes, raw, []
+        self.fills, self.fill_calls = list(fills) if fills is not None else None, []
 
     def chat(self, **kwargs):
         data = json.loads(kwargs['messages'][1]['content'])
+        if 'add_ids' in kwargs['format']['properties']:
+            self.fill_calls.append(kwargs)
+            output = self.fills.pop(0) if self.fills is not None else {'add_ids': []}
+            if isinstance(output, Exception):
+                raise output
+            return ChatResult(output if isinstance(output, str) else json.dumps(output))
         if 'clips' not in data:
             return super().chat(**kwargs)
         self.plan_calls.append(kwargs)
@@ -80,13 +87,21 @@ def test_proposal_basic_and_truncated_to_max(multi):
     c = p['clips'][0]
     assert c['render_sha256'] and c['input_fingerprint'] and c['topic'] == 'Tu học' and c['synopsis']
     saved = json.loads((tp._folder(cfg, 'PLtest') / 'theme_proposals.json').read_text())
-    assert saved['proposals'][0]['proposal_id'] == p['proposal_id'] and saved['provenance']['prompt_version'] == 'tc2-v4'
+    assert saved['proposals'][0]['proposal_id'] == p['proposal_id'] and saved['provenance']['prompt_version'] == 'tc2-v5'
+    assert p['filled_count'] == 0 and fake.fill_calls == []
     assert fake.plan_calls[0]['options']['num_predict'] == tp.NUM_PREDICT == 8192
     assert saved['provenance']['options'] == fake.plan_calls[0]['options']
     prompt = json.loads(fake.plan_calls[0]['messages'][1]['content'])
     assert {x['id'] for x in prompt['clips']} == set(ids(8))
     assert prompt['clips'][0]['synopsis'] == c['synopsis'] == 'Phải chuyên tâm tu học.'
     assert prompt['clips'][0]['key_messages'] == ['Phải chuyên tâm tu học.']
+    assert prompt['target_seconds'] == {'min': 1800, 'max': 2400}
+    assert 'episode_id' not in fake.plan_calls[0]['messages'][1]['content']
+    system = fake.plan_calls[0]['messages'][0]['content']
+    assert '1800–2400' in system and '6–8 clips' in system and 'total duration_s' in system
+    assert 'Prefer fewer complete themes over many short themes' in system
+    assert 'A clip may appear in several themes' in system
+    assert 'Never pad with off-topic clips' in system
 
 
 @pytest.mark.parametrize('reverse_records', [False, True])
@@ -122,7 +137,7 @@ def test_planner_payload_groups_by_content_and_counts_selected_episodes(multi, m
     assert p['episode_count'] == 3 and p['dropped_for_length'] == 2
     assert [c['id'] for c in p['clips']] == selected_ids[:6]  # keep AI listening order
     assert {c['episode_id'] for c in p['clips']} == {'episode0.kt', 'episode1.kt', 'episode2.kt'}
-    assert doc['provenance']['prompt_version'] == 'tc2-v4'
+    assert doc['provenance']['prompt_version'] == 'tc2-v5'
     # Reversing the same records cannot change the AI input or proposal.
     index['records'].reverse()
     again, other = proposal(cfg, themes)
@@ -135,6 +150,146 @@ def test_short_proposal_reports_shortfall(multi):
     doc, _ = proposal(cfg, [dict(label='Ngắn', rationale='Ít clip', clip_ids=ids(3))])
     p = doc['proposals'][0]
     assert p['status'] == 'short' and p['total_duration'] == 1050 and p['shortfall_seconds'] == 750
+
+
+@pytest.mark.parametrize('additions', [[], ids(4)[3:], ids(8)[3:]])
+def test_fill_appends_valid_clips_and_truncates(multi, additions):
+    cfg, *_ = multi
+    selected = [ids(3)[2], ids(3)[0], ids(3)[1]]  # retain the AI's listening order
+    raw = {**title_theme(), 'clip_ids': selected}
+    first, _ = proposal(cfg, [raw])  # default fill returns no relevant candidates
+    original = first['proposals'][0]
+    fake = Planner([raw], fills=[{'add_ids': additions}])
+    doc = tp.propose(cfg, 'PLtest', client=fake)
+    p = doc['proposals'][0]
+    expected = (selected + additions)[:6]
+    assert [c['id'] for c in p['clips']] == expected
+    assert p['clips'][:3] == original['clips'] and len(set(expected)) == len(expected)
+    assert p['total_duration'] == len(expected) * 350 <= tp.TARGET_MAX
+    assert p['filled_count'] == len(expected) - 3
+    assert p['dropped_for_length'] == max(0, len(selected + additions) - 6)
+    assert p['status'] == ('ok' if len(expected) >= 6 else 'short')
+    assert p['shortfall_seconds'] == max(0, tp.TARGET_MIN - len(expected) * 350)
+    assert p['proposal_id'] == hashing.config_hash({'label': raw['label'], 'clips': expected})[:12]
+    for field in ('label', 'rationale', 'titles', 'title_rejected', 'speaker'):
+        assert p[field] == original[field]
+    assert len(fake.plan_calls) == len(fake.fill_calls) == 1  # no further fill while still short
+    assert tp.read_proposals(cfg, 'PLtest')['proposals'] == doc['proposals']
+
+
+def test_fill_payload_enum_order_and_final_speaker(multi, monkeypatch):
+    cfg, ws, *_ = multi
+    index = tp.theme_index.build_index(cfg, 'PLtest', client=Planner())
+    for i, record in enumerate(index['records']):
+        record['identity']['episode_id'] = 'guest.kt' if i < 2 else ws.episode_id
+    # An unindexed record must not leak into the candidate list or schema.
+    index['records'][-1]['status'] = 'ai_error'
+    for eid, speaker in [('guest.kt', 'Thầy B'), (ws.episode_id, 'HT.Tịnh Không')]:
+        atomic_write_json(cfg.workspace.dir / eid / 'titles.json', {'header': {'fields': {'speaker': speaker}}})
+    monkeypatch.setattr(tp.theme_index, 'build_index', lambda *a, **kw: index)
+    selected = ['guest.kt/k02', 'guest.kt/k01']
+    raw = {**title_theme(), 'clip_ids': selected}
+    original, _ = proposal(cfg, [raw])
+    additions = ids(7)[2:]
+    fake = Planner([raw], fills=[{'add_ids': additions}])
+    doc = tp.propose(cfg, 'PLtest', client=fake)
+    call = fake.fill_calls[0]
+    payload = json.loads(call['messages'][1]['content'])
+    initial = json.loads(fake.plan_calls[0]['messages'][1]['content'])
+    by_id = {c['id']: c for c in initial['clips']}
+    candidates = [c for c in initial['clips'] if c['id'] not in selected]
+    assert payload == {'label': raw['label'], 'rationale': raw['rationale'],
+                       'target_seconds': {'min': 1800, 'max': 2400},
+                       'selected_clips': [by_id[cid] for cid in selected], 'candidates': candidates}
+    candidate_ids = [c['id'] for c in candidates]
+    assert candidate_ids == sorted(additions, key=hashing.config_hash)
+    assert 'episode_id' not in call['messages'][1]['content']
+    schema = call['format']
+    assert schema['required'] == ['add_ids'] and schema['additionalProperties'] is False
+    assert schema['properties']['add_ids']['items']['enum'] == candidate_ids
+    assert schema['properties']['add_ids']['uniqueItems'] is True
+    assert schema['properties']['add_ids']['maxItems'] == len(candidate_ids)
+    assert 'enum' not in tp.FILL_SCHEMA['properties']['add_ids']['items']
+    assert call['options'] == fake.plan_calls[0]['options']
+    assert call['model'] == cfg.selection.model and call['think'] == cfg.selection.think
+    p = doc['proposals'][0]
+    assert [c['id'] for c in p['clips']] == selected + additions[:4]
+    assert p['speaker'] == 'HT.Tịnh Không' and original['proposals'][0]['speaker'] == 'Thầy B'
+    assert p['titles'] == original['proposals'][0]['titles']  # preserve TC2.2's first-round titles
+    assert p['filled_count'] == 4 and p['episode_count'] == 2
+    index['records'].reverse()
+    other = Planner([raw], fills=[{'add_ids': additions}])
+    again = tp.propose(cfg, 'PLtest', client=other)
+    assert other.fill_calls == fake.fill_calls and again['proposals'] == doc['proposals']
+
+
+def test_fill_once_per_short_theme_and_skip_ok(multi):
+    cfg, *_ = multi
+    themes = [dict(label=f'Theme {n}', rationale='Cùng ý', clip_ids=ids(n)) for n in (3, 6, 2, 1, 4)]
+    fake = Planner(themes, fills=[{'add_ids': ids(6)[3:]}, {'add_ids': ids(6)[2:]},
+                                 {'add_ids': []}, {'add_ids': []}])
+    doc = tp.propose(cfg, 'PLtest', client=fake)
+    assert len(fake.plan_calls) == 1 and len(fake.fill_calls) == 4
+    assert [json.loads(c['messages'][1]['content'])['label'] for c in fake.fill_calls] == [
+        'Theme 3', 'Theme 2', 'Theme 1', 'Theme 4']
+    assert [p['status'] for p in doc['proposals']] == ['ok', 'ok', 'ok', 'short', 'short']
+    assert [p['filled_count'] for p in doc['proposals']] == [3, 0, 4, 0, 0]
+    assert all('fill_error' not in p for p in doc['proposals'])
+
+
+@pytest.mark.parametrize('outputs,reason', [
+    ([ChatError('refused')], 'refused'),
+    (['not json', 'not json'], 'Expecting value'),
+    (['not json', ChatError('retry refused')], 'retry refused'),
+    ([[]], 'schema'),
+    ([{'add_ids': 'not a list'}], 'schema'),
+    ([{'add_ids': [None]}], 'invalid clip_ids'),
+    ([{'add_ids': ['lecture.kt/unknown']}], 'unknown clip id'),
+    ([{'add_ids': [ids(4)[3]] * 2}], 'duplicate'),
+    ([{'add_ids': [ids(1)[0]]}], 'duplicate'),
+    ([{'clip_ids': ids(6)[3:]}], 'schema'),  # replacement attempting to omit the old clips
+    ([{'add_ids': [], 'clip_ids': []}], 'schema'),
+])
+def test_fill_errors_preserve_first_round_and_other_themes(multi, outputs, reason):
+    cfg, *_ = multi
+    themes = [dict(label=f'Theme {n}', rationale='Cùng ý', clip_ids=ids(n)) for n in (3, 6, 2)]
+    baseline, _ = proposal(cfg, themes)
+    fake = Planner(themes, fills=outputs + [{'add_ids': ids(6)[2:]}])
+    doc = tp.propose(cfg, 'PLtest', client=fake)
+    failed, ok, filled = doc['proposals']
+    assert reason in failed['fill_error'] and len(failed['fill_error']) <= 160
+    assert {k: v for k, v in failed.items() if k != 'fill_error'} == baseline['proposals'][0]
+    assert ok == baseline['proposals'][1]
+    assert filled['status'] == 'ok' and filled['filled_count'] == 4
+    assert [c['id'] for c in filled['clips']] == ids(6)
+    assert 'ai_error' not in doc and 'fill_error' not in filled
+    assert len(fake.fill_calls) == len(outputs) + 1
+    assert tp.read_proposals(cfg, 'PLtest')['proposals'] == doc['proposals']
+
+
+def test_fill_without_candidates_remains_short(episode):
+    cfg, *_ = episode
+    fake = Planner()
+    doc = tp.propose(cfg, 'PLtest', client=fake)
+    p = doc['proposals'][0]
+    assert fake.fill_calls == [] and p['status'] == 'short' and p['filled_count'] == 0
+    assert p['shortfall_seconds'] == 1450 and 'fill_error' not in p
+
+
+@pytest.mark.parametrize('raw', ['', 'not json'])
+def test_fill_parse_failure_retries_without_thinking(multi, raw):
+    cfg, *_ = multi
+    cfg = replace(cfg, selection=replace(cfg.selection, think=True))
+    themes = [dict(label='Tu học', rationale='Cùng ý', clip_ids=ids(3))]
+    fake = Planner(themes, fills=[raw, {'add_ids': ids(6)[3:]}])
+    doc = tp.propose(cfg, 'PLtest', client=fake)
+    assert len(fake.plan_calls) == 1 and len(fake.fill_calls) == 2
+    assert fake.fill_calls[0]['think'] is True
+    assert fake.fill_calls[1] == {**fake.fill_calls[0], 'think': False}
+    p = doc['proposals'][0]
+    assert p['status'] == 'ok' and p['filled_count'] == 3 and 'fill_error' not in p
+    assert doc['provenance']['think_used'] is False
+    assert tp.read_proposals(cfg, 'PLtest')['provenance']['think_used'] is False
 
 
 def test_unknown_or_duplicate_ids_reject_only_that_theme(multi):
