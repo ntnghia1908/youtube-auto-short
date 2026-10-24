@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: DRAFT
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -11,13 +11,13 @@
 - Implementer: codex — module mới, spec rõ; Sonnet `implementer` nếu quota Codex ≥ ngưỡng
 - Human Lead: HUMAN LEAD
 - Authorization mode: boundary
-- Authorization source: `docs/decisions/PKG-video-packaging-authorization.md` (chờ G1, G3, G5, G6)
+- Authorization source: `docs/decisions/PKG-video-packaging-authorization.md` (G1, G3, G5, G6 ACCEPTED)
 - Parallel group: —
-- Owned paths: `src/auto_short/packaging/visual.py`, `src/auto_short/packaging/variant.py` (mới), mở rộng `packaging/record.py`, `web/packaging.py`, `web/static/package.{html,js}`, `tests/test_packaging_visual.py`, `tests/test_web_packaging.py`, contract này
+- Owned paths: `src/auto_short/packaging/visual.py`, `src/auto_short/packaging/variant.py` (mới), mở rộng `packaging/record.py`, `web/packaging.py`, `web/static/package.{html,js}`, `web/jobs.py` (chỉ tổng quát hóa hủy job, xem Implementation approach), `tests/test_packaging_visual.py`, `tests/test_web_packaging.py`, test hủy job trong `tests/test_web_jobs*.py`, contract này
 - Dependencies: PKG1 (kho asset, `record.py`, trang đóng gói)
-- Base commit / branch: điền khi authorize / `feature/vis1-ambient`
-- Human Lead approval: pending
-- Implementation authorized: NO
+- Base commit / branch: `9db5a6a` (main sau #132) / `feature/vis1-ambient`
+- Human Lead approval: boundary PKG ACCEPTED 2026-10-24
+- Implementation authorized: YES
 
 ## Goal
 
@@ -43,6 +43,16 @@ Từ một video TC3 đã xuất, HUMAN LEAD chọn một ảnh hoặc loop đã
 - Audio không qua filter nào → kiểm "lời giảng nguyên vẹn" bằng hash gói audio: `ffmpeg -map 0:a -c copy -f streamhash` của TC3 và variant phải bằng nhau (chính xác, mạnh hơn `audio.compare`).
 - Kiểm hình: `ffprobe` 1920×1080, SAR 1:1, |duration video − audio| ≤ 1 khung + 1 GOP lặp; `blackdetect` (d=0.1) không có đoạn đen; điểm nối loop: chênh lệch khung cuối / đầu thấp (`ssim` ≥ 0,97 trên clip lặp).
 - Dung lượng: CRF clip lặp chọn sao cho 40 phút ≈ ≤ 1 GB; ghi số đo thật vào Result.
+
+Quyết định ORCHESTRATOR khi authorize (2026-10-24, trong boundary):
+
+- Spec chuẩn hóa: `asset_id` (sha ảnh / loop đã duyệt) hoặc `generated:<preset>`; `motion` `kenburns` | `none` (loop / nền tạo sẵn chỉ `none`); `fit` `cover` | `blur` (ảnh / loop không 16:9: `blur` = ảnh nguyên vẹn giữa nền chính nó phóng to làm mờ — kho có ~85 % ảnh không 16:9, ảnh người giảng không được cắt mất đầu); `loop_seconds` số nguyên chẵn (GOP 2 giây, mỗi vòng lặp bắt đầu bằng IDR); `crossfade` giây.
+- Clip lặp cache riêng `loop-<key12>.mp4` (key không gồm TC3) để xem thử và bản đầy đủ dùng chung; xem thử `preview-<key12>.mp4` chỉ giữ bản mới nhất mỗi plan-rev, không có sidecar variant.
+- R6: variant dựng xong là bản nháp; nút **Duyệt** ghi `approved_at`; chỉ variant đã duyệt, không stale mới tải "bản đăng" (attachment). Xem inline trên trang được khi chưa stale.
+- Hủy job: tổng quát hóa `JobRunner.cancel_vertical` thành hủy theo `(kind, keys)` dùng chung cơ chế hiện có (bỏ khỏi hàng đợi / KeyboardInterrupt lane thread + SIGINT ffmpeg con); `cancel_vertical` giữ nguyên hành vi và hook `on_vertical_failed`. Không đổi thứ tự ưu tiên / làn.
+- Kiểm `blackdetect` + `ssim` nối trên clip lặp; bản đầy đủ: ffprobe + streamhash audio + giải mã toàn bộ video (`-f null`, bắt lỗi ghép stream copy) — fail thì fallback encode lại.
+- Từ chối dựng khi ổ còn < 3 GB (G6).
+- Variant revision cũ (thư mục `<plan>-r<rev cũ>`) vẫn liệt kê dạng `stale`, xóa tay được.
 
 ## Phải giữ nguyên
 
@@ -77,11 +87,12 @@ Chạm public API (route mới, sau đăng nhập), không chạm security model
 
 ## Result
 
-- Main changes:
-- Tests:
-- Diff + / − (app, test):
-- Helper mới (đã tìm, lý do không tái dùng):
-- Review:
-- Important findings / decisions:
-- Known limitations:
+- Main changes: `packaging/variant.py` (spec chuẩn hóa, key variant / loop, sidecar `variant-<key12>.json`, stale, liệt kê cả revision cũ, xóa); `packaging/visual.py` (clip lặp encode một lần: ảnh Ken Burns chu kỳ cos đầu = cuối, `fit` cover / blur, loop / preset `gradients` nối `xfade`; ghép `-stream_loop` + `-c:v copy` + audio TC3 `-c:a copy`; kiểm ffprobe, streamhash audio, giải mã toàn bộ + `blackdetect`, SSIM điểm nối; fallback encode lại; ghi qua `.tmp-*` + `os.replace` có rollback); `web/packaging.py` (job `theme_package` key theo variant / preview, route variants / preview / approve / cancel / delete, tải variant đã duyệt, inline khi chưa stale); `web/jobs.py` (`cancel(kind, keys)`, `cancel_vertical` thành wrapper giữ hook); trang `package.html/js` mục "Hình ambient".
+- Tests: targeted `tests/test_packaging_visual.py tests/test_web_packaging.py tests/test_web_jobs.py` 53 passed (ORCHESTRATOR, ngoài sandbox); `-m slow tests/test_packaging_visual.py` 2 passed (Codex); full suite `-n auto` 2383 passed, 1 skipped; `node scripts/framework-check.mjs` PASS.
+- Chạy thật (ORCHESTRATOR, 2026-10-24): TC3 tổng hợp 41,5 phút (TC3 `bddcede7d89d-r2` ghép 2 lần, thư mục nháp — chưa có TC3 thật 30–40 phút), ảnh 67, Ken Burns, `fit=blur`, vòng 40 s: dựng **149 s** (wall 156 s, CPU user 777 s), **278 MB** (CRF 23, giữ nguyên), `method=copy`, SSIM điểm nối **0,994**, không đoạn đen, streamhash audio = TC3 (kiểm độc lập bằng ffmpeg). Lần chạy đầu fail ở `variant.validate` vì file nháp đặt tên sai mẫu `<plan>-r<rev>.mp4` → thư mục `pkg/` sạch (AC4 thật). Đoạn mẫu (50 s đầu có điểm nối giây 40, 30 s phút 20) đã gửi HUMAN LEAD.
+- Diff + / − (app, test): app +733 / −16, test +470 / −0 (lượt 1); vòng sửa app +69 / −43, test +118 / −11.
+- Helper mới (đã tìm, lý do không tái dùng): spec / key / sidecar variant, graph ambient, `audio_hash` (streamhash), `check_loop`, publish có rollback — Codex tìm `rg` trong packaging / compilation / theme_render / render, không có helper tương đương; tái dùng `assets.usable`, `record.directory/fingerprint`, `render.stage._run/probe_media`, hashing, `atomic_write_json`, cơ chế signal của runner.
+- Review: ORCHESTRATOR review diff (visual / variant / web / jobs). Codex reviewer thứ hai (`exec review --commit 87a216d`, read-only) — 3 finding, ORCHESTRATOR xác nhận cả ba, Codex sửa 1 vòng (resume, 188k tokens): [P1] xóa / duyệt / hủy nhầm revision khi hai revision trùng key12 → route `/variants/r{revision}/{key12}`, khóa job có revision, không fallback; [P2] loop video ngắn hơn `loop_seconds + crossfade` có chỗ nối trong không crossfade → từ chối trước ffmpeg, bỏ `-stream_loop` ở input asset; [P2] poll băm lại mọi mp4 mỗi 2 s → cache `hashing.fingerprint` trong service (route tải vẫn kiểm SHA đầy đủ). Sau vòng sửa: targeted 61 passed, full suite 2391 passed, 1 skipped.
+- Important findings / decisions: Codex IMPLEMENTER 23 phút, 132k tokens, 1 lượt, 0 vòng sửa. Chạy song song PKG2.1 + FIX-theme-index-summary (pilot worktree-isolation, HUMAN LEAD 2026-10-24).
+- Known limitations: preview nhận diện trong bộ nhớ phiên web (restart web → dựng xem thử lại); vòng lặp rất ngắn bị giới hạn crossfade theo độ dài vòng (UI 20–60 s không gặp); `-threads 2` cho libx264 (để chừa CPU cho làn khác) — fallback encode lại 40 phút sẽ chậm hơn copy nhiều, chưa đo vì copy pass.
 - PR:

@@ -56,12 +56,13 @@
     }
     $("pkg-download").href = doc.download_url || "#";
     lock();
+    drawVisual();
   }
   async function load() {
     clearTimeout(timer);
     try { view = await api(base); draw(); }
     catch (e) { say(e.message, true); }
-    if (active()) timer = setTimeout(load, 2000);
+    if (active() || visualActive()) timer = setTimeout(load, 2000);
   }
   async function save() {
     if (!dirty) return;
@@ -92,5 +93,85 @@
     ["pkg-copy-description", () => view.description]]) {
     $(id).addEventListener("click", async () => say(await copyText(value()) ? "Đã copy." : "Không copy được."));
   }
+  let visualPending = false;
+  const visualActive = () => view && ((view.preview.job && view.preview.job.active) ||
+    view.variants.some((v) => v.job && v.job.active));
+  const sourceLabel = (id) => {
+    const source = view.visual_sources.find((s) => s.id === id);
+    const presets = { "generated:warm": "Vàng ấm", "generated:dawn": "Bình minh", "generated:soft": "Ánh sáng mềm" };
+    if (presets[id]) return `${presets[id]} · Nền tạo sẵn`;
+    return source ? `${source.tags.join(", ") || id.slice(0, 12)} · ${source.license}` : id.slice(0, 12);
+  };
+  function visualSpec() {
+    return { visual: { mode: "ambient", asset_id: $("visual-source").value, motion: $("visual-motion").value,
+      fit: $("visual-fit").value, loop_seconds: Number($("visual-length").value), crossfade: Number($("visual-fade").value) } };
+  }
+  function motionOptions() {
+    const source = view.visual_sources.find((s) => s.id === $("visual-source").value);
+    $("visual-motion").disabled = !source || source.kind !== "image";
+    if ($("visual-motion").disabled) $("visual-motion").value = "none";
+  }
+  function play(url) {
+    if (!url) return;
+    const player = $("visual-player");
+    player.hidden = false;
+    if (player.getAttribute("src") !== url) player.src = url;
+  }
+  function drawVisual() {
+    $("visual-section").hidden = false;
+    const select = $("visual-source"), chosen = select.value;
+    select.replaceChildren(...view.visual_sources.map((s) => el("option", { value: s.id, text: sourceLabel(s.id) })));
+    if (view.visual_sources.some((s) => s.id === chosen)) select.value = chosen;
+    motionOptions();
+    for (const id of ["visual-preview", "visual-build"]) $(id).disabled = visualPending;
+    const previewJob = view.preview.job;
+    $("visual-cancel-preview").hidden = !(previewJob && previewJob.active);
+    if (previewJob && previewJob.error) $("visual-msg").textContent = previewJob.error;
+    if (view.preview.url && (!$("visual-player").getAttribute("src") ||
+        $("visual-player").getAttribute("src").includes("preview-"))) play(view.preview.url);
+    if (!view.preview.url && $("visual-player").getAttribute("src")?.includes("preview-")) {
+      $("visual-player").pause(); $("visual-player").removeAttribute("src"); $("visual-player").hidden = true;
+    }
+    const playing = $("visual-player").getAttribute("src");
+    if (playing && playing.includes("variant-") && !view.variants.some((v) => v.inline_url === playing)) {
+      $("visual-player").pause(); $("visual-player").removeAttribute("src"); $("visual-player").hidden = true;
+    }
+    const states = { draft: "Bản nháp", approved: "Đã duyệt", stale: "Cũ — dựng lại", building: "Đang dựng" };
+    const seconds = (n) => {
+      if (n == null) return "—";
+      const rounded = Math.round(n);
+      return `${Math.floor(rounded / 60)}:${String(rounded % 60).padStart(2, "0")}`;
+    };
+    $("visual-variants").replaceChildren(...view.variants.map((v) => {
+      const actions = el("td");
+      const button = (text, action) => {
+        const b = el("button", { type: "button", class: "btn small", text });
+        b.disabled = visualPending; b.addEventListener("click", action); actions.append(b);
+      };
+      const path = `/variants/r${v.revision}/${v.key12}`;
+      if (v.inline_url) button("Xem", () => play(v.inline_url));
+      if (v.state === "draft" && v.size != null) button("Duyệt", () => performVisual(() => request(path + "/approve", "POST")));
+      if (v.download_url) actions.append(el("a", { href: v.download_url, class: "btn small", text: "Tải bản đăng", download: "" }));
+      if (v.job && v.job.active) button("Hủy", () => performVisual(() => request(path + "/cancel", "POST")));
+      else if (v.size == null) button("Dựng lại", () => performVisual(() => request("/variants", "POST", v.spec)));
+      else button("Xóa", () => { if (confirm("Xóa bản ambient này?")) performVisual(() => request(path, "DELETE")); });
+      const size = v.size == null ? "—" : v.size >= 1e9 ? `${(v.size / 1e9).toFixed(2)} GB` : `${(v.size / 1e6).toFixed(1)} MB`;
+      const row = el("tr", {}, ...[sourceLabel(v.spec.visual.asset_id), `r${v.revision} · ${states[v.state]}`, size, seconds(v.duration),
+        seconds(v.build_seconds), v.method || "—"].map((text) => el("td", { text })), actions);
+      if (v.job && v.job.error) row.firstChild.append(el("p", { class: "error small", text: v.job.error }));
+      return row;
+    }));
+  }
+  async function performVisual(action) {
+    if (visualPending) return;
+    visualPending = true; drawVisual(); $("visual-msg").textContent = "";
+    try { await action(); }
+    catch (e) { $("visual-msg").textContent = e.message; }
+    finally { visualPending = false; await load(); }
+  }
+  $("visual-source").addEventListener("change", motionOptions);
+  $("visual-preview").addEventListener("click", () => performVisual(() => request("/preview", "POST", visualSpec())));
+  $("visual-build").addEventListener("click", () => performVisual(() => request("/variants", "POST", visualSpec())));
+  $("visual-cancel-preview").addEventListener("click", () => performVisual(() => request(`/variants/r${view.preview.revision}/preview/cancel`, "POST")));
   load();
 })();
