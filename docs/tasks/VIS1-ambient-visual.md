@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -87,11 +87,12 @@ Chạm public API (route mới, sau đăng nhập), không chạm security model
 
 ## Result
 
-- Main changes:
-- Tests:
-- Diff + / − (app, test):
-- Helper mới (đã tìm, lý do không tái dùng):
-- Review:
-- Important findings / decisions:
-- Known limitations:
+- Main changes: `packaging/variant.py` (spec chuẩn hóa, key variant / loop, sidecar `variant-<key12>.json`, stale, liệt kê cả revision cũ, xóa); `packaging/visual.py` (clip lặp encode một lần: ảnh Ken Burns chu kỳ cos đầu = cuối, `fit` cover / blur, loop / preset `gradients` nối `xfade`; ghép `-stream_loop` + `-c:v copy` + audio TC3 `-c:a copy`; kiểm ffprobe, streamhash audio, giải mã toàn bộ + `blackdetect`, SSIM điểm nối; fallback encode lại; ghi qua `.tmp-*` + `os.replace` có rollback); `web/packaging.py` (job `theme_package` key theo variant / preview, route variants / preview / approve / cancel / delete, tải variant đã duyệt, inline khi chưa stale); `web/jobs.py` (`cancel(kind, keys)`, `cancel_vertical` thành wrapper giữ hook); trang `package.html/js` mục "Hình ambient".
+- Tests: targeted `tests/test_packaging_visual.py tests/test_web_packaging.py tests/test_web_jobs.py` 53 passed (ORCHESTRATOR, ngoài sandbox); `-m slow tests/test_packaging_visual.py` 2 passed (Codex); full suite `-n auto` 2383 passed, 1 skipped; `node scripts/framework-check.mjs` PASS.
+- Chạy thật (ORCHESTRATOR, 2026-10-24): TC3 tổng hợp 41,5 phút (TC3 `bddcede7d89d-r2` ghép 2 lần, thư mục nháp — chưa có TC3 thật 30–40 phút), ảnh 67, Ken Burns, `fit=blur`, vòng 40 s: dựng **149 s** (wall 156 s, CPU user 777 s), **278 MB** (CRF 23, giữ nguyên), `method=copy`, SSIM điểm nối **0,994**, không đoạn đen, streamhash audio = TC3 (kiểm độc lập bằng ffmpeg). Lần chạy đầu fail ở `variant.validate` vì file nháp đặt tên sai mẫu `<plan>-r<rev>.mp4` → thư mục `pkg/` sạch (AC4 thật). Đoạn mẫu (50 s đầu có điểm nối giây 40, 30 s phút 20) đã gửi HUMAN LEAD.
+- Diff + / − (app, test): app +733 / −16; test +470 / −0.
+- Helper mới (đã tìm, lý do không tái dùng): spec / key / sidecar variant, graph ambient, `audio_hash` (streamhash), `check_loop`, publish có rollback — Codex tìm `rg` trong packaging / compilation / theme_render / render, không có helper tương đương; tái dùng `assets.usable`, `record.directory/fingerprint`, `render.stage._run/probe_media`, hashing, `atomic_write_json`, cơ chế signal của runner.
+- Review: ORCHESTRATOR review diff (visual / variant / web / jobs); Codex reviewer thứ hai: xem dưới.
+- Important findings / decisions: Codex IMPLEMENTER 23 phút, 132k tokens, 1 lượt, 0 vòng sửa. Chạy song song PKG2.1 + FIX-theme-index-summary (pilot worktree-isolation, HUMAN LEAD 2026-10-24).
+- Known limitations: preview nhận diện trong bộ nhớ phiên web (restart web → dựng xem thử lại); vòng lặp rất ngắn bị giới hạn crossfade theo độ dài vòng (UI 20–60 s không gặp); `-threads 2` cho libx264 (để chừa CPU cho làn khác) — fallback encode lại 40 phút sẽ chậm hơn copy nhiều, chưa đo vì copy pass.
 - PR:

@@ -42,6 +42,21 @@
 </div>
 </section>
 </form>
+<section id="visual-section" class="card" hidden>
+<h3>Hình ambient</h3>
+<p class="small muted">Bản Original vẫn là video đã ghép. Bản ambient giữ nguyên tiếng giảng; dựng xong cần duyệt trước khi tải bản đăng.</p>
+<label>Nguồn <select id="visual-source"></select></label>
+<label>Chuyển động <select id="visual-motion"><option value="none">Không</option><option value="kenburns">Ken Burns chậm (ảnh)</option></select></label>
+<label>Khung <select id="visual-fit"><option value="cover">Cắt đầy</option><option value="blur">Nền mờ — giữ nguyên ảnh</option></select></label>
+<label>Độ dài vòng lặp <select id="visual-length"><option value="20">20 giây</option><option value="30">30 giây</option><option value="40" selected>40 giây</option><option value="60">60 giây</option></select></label>
+<label>Crossfade (giây) <input id="visual-fade" type="number" min="0.5" max="5" step="0.1" value="2"></label>
+<div class="actions"><button id="visual-preview" class="btn small" type="button">Xem thử 20 giây</button>
+<button id="visual-build" class="btn primary small" type="button">Dựng cả bài</button>
+<button id="visual-cancel-preview" class="btn small" type="button" hidden>Hủy xem thử</button></div>
+<p id="visual-msg" class="small" role="status"></p>
+<video id="visual-player" controls preload="metadata" style="width:100%;max-height:540px" hidden></video>
+<div style="overflow-x:auto"><table><thead><tr><th>Nguồn</th><th>Trạng thái</th><th>Dung lượng</th><th>Thời lượng</th><th>Thời gian dựng</th><th>Phương pháp</th><th>Thao tác</th></tr></thead><tbody id="visual-variants"></tbody></table></div>
+</section>
 </main>
 <script src="/static/app.js"></script>
 <script src="/static/package.js"></script>

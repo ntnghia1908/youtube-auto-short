@@ -644,16 +644,17 @@ class JobRunner:
             return self._latest.get(vertical_key(episode_id))
 
     def cancel_vertical(self, episode_ids=None) -> list[Job]:
-        """CP8.32 V4: cancel the active vertical jobs of these video ids (None = all); no other kind is ever touched.
-        A waiting job leaves its lane queue at once; a running one gets the stop mechanism (KeyboardInterrupt on its lane
-        thread + SIGINT to the child processes of THAT thread only: ffmpeg / yt-dlp's ffmpeg), ends ``cancelled`` within
-        seconds (a yt-dlp socket read can take a few seconds to notice). Files are cleaned by the job's own unwinding and
-        ``on_vertical_failed``. Returns the jobs that were cancelled / are being cancelled."""
+        """CP8.32: preserve cancellation by episode id and the vertical cleanup hook."""
+        keys = None if episode_ids is None else {job_key(KIND_VERTICAL, ident) for ident in episode_ids}
+        return self.cancel(KIND_VERTICAL, keys)
+
+    def cancel(self, kind, keys=None) -> list[Job]:
+        """Cancel matching queued/running jobs through their existing lane stop mechanism."""
         done: list[Job] = []
         running: list[Job] = []
         with self._lock:
-            for job in [j for j in self._jobs.values() if j.kind == KIND_VERTICAL and j.active and not j.cancel_requested
-                        and (episode_ids is None or j.episode_id in episode_ids)]:
+            for job in [j for j in self._jobs.values() if j.kind == kind and j.active and not j.cancel_requested
+                        and (keys is None or j.key in keys)]:
                 slot = next((sl for sl, cur in self._current.items() if cur is job), None)
                 if slot is not None:
                     job.cancel_requested = True
@@ -672,7 +673,7 @@ class JobRunner:
             self._lock.notify_all()
         for job in done:
             log.info("web: job %s [%s] cancelled while waiting", job.id, job.episode_id)
-            if self.on_vertical_failed is not None:
+            if job.kind == KIND_VERTICAL and self.on_vertical_failed is not None:
                 try:
                     self.on_vertical_failed(job)
                 except Exception:

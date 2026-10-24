@@ -145,3 +145,61 @@ def test_pipeline_target_success_and_failure(cfg):
         assert str(exc) == "ollama preflight: cannot reach Ollama" and job.stage == "preflight"
     else:  # pragma: no cover
         raise AssertionError("expected JobFailed")
+
+
+def test_cancel_kind_keys_waiting_running_and_vertical_wrapper(monkeypatch):
+    from auto_short.web import jobs
+    r = JobRunner()
+    hooks, signals = [], []
+    r.on_vertical_failed = hooks.append
+    monkeypatch.setattr(r, "_signal_running_locked", lambda slot, job: signals.append(job) or True)
+    a, _ = r.submit("theme-package:a:variant:1", "theme_package", lambda j: None)
+    b, _ = r.submit("theme-package:b:variant:2", "theme_package", lambda j: None)
+    other, _ = r.submit("other", KIND_PIPELINE, lambda j: None)
+    waiting, _ = r.submit("theme-package:c:preview", "theme_package", lambda j: None)
+    # Reproduce a lane owning a job, without sending process/thread signals in the test.
+    with r._lock:
+        for queue in r._queues.values():
+            if a in queue:
+                queue.remove(a)
+        slot = next(iter(r._current))
+        r._current[slot] = a
+    assert r.cancel("theme_package", {a.key, waiting.key}) == [waiting, a]
+    assert waiting.status == jobs.CANCELLED and a.cancel_requested and signals == [a]
+    assert b.active and other.active and not hooks
+    assert r.cancel("theme_package", {a.key}) == []
+    r.cancel("theme_package")
+    assert b.status == jobs.CANCELLED and other.active
+    vertical, _ = r.submit("episode", jobs.KIND_VERTICAL, lambda j: None)
+    ignored, _ = r.submit("another", jobs.KIND_VERTICAL, lambda j: None)
+    assert r.cancel_vertical({"episode"}) == [vertical]
+    assert hooks == [vertical] and ignored.active
+    assert r.cancel_vertical() == [ignored]
+    assert hooks == [vertical, ignored]
+    assert all(entry["episode_id"] not in (waiting.episode_id, b.episode_id, "episode", "another")
+               for entries in r._snapshot_locked()["lanes"].values() for entry in entries)
+
+
+def test_cancel_kind_interrupts_live_target_and_runs_finally():
+    from auto_short.web.jobs import CANCELLED, RENDER, Step
+    r, started, cleaned, hooks = JobRunner(), threading.Event(), threading.Event(), []
+    r.on_vertical_failed = hooks.append
+    class Target:
+        def __call__(self, job):
+            try:
+                started.set()
+                while True:
+                    time.sleep(.01)
+            finally:
+                cleaned.set()
+        def lane_steps(self):
+            return [Step(RENDER, self)]
+    r.start()
+    try:
+        job, _ = r.submit("theme-package:plan:variant:abcdef", "theme_package", Target())
+        assert started.wait(5)
+        assert r.cancel("theme_package", {job.key}) == [job]
+        assert cleaned.wait(5) and r.wait_idle(5)
+        assert job.status == CANCELLED and job.error is None and not hooks
+    finally:
+        r.stop()
