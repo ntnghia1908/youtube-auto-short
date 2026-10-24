@@ -8,8 +8,11 @@
   const plan = encodeURIComponent(decodeURIComponent(parts[3] || ""));
   const base = `/api/playlists/${pid}/theme-plans/${plan}/package`;
   let view = null, dirty = false, pending = false, timer = null;
-  const names = { classic: "Cổ điển", minimal: "Tối giản", scenic: "Phong cảnh" };
+  const names = { A: "Kiểu A — nền tối, chữ vàng", B: "Kiểu B — khung vàng, chữ trắng", C: "Kiểu C — giấy, chữ nâu" };
+  const shapes = { landscape: "Ngang 16:9", vertical: "Dọc 9:16" };
   const active = () => view && view.job && view.job.active;
+  const selectedStyle = () => { const r = $("pkg-form").querySelector('input[name="style"]:checked'); return r ? r.value : "A"; };
+  function styleControls() { $("pkg-style-a").hidden = selectedStyle() !== "A"; }
   function say(message, error = false) {
     $("pkg-msg").textContent = message;
     $("pkg-msg").className = "small" + (error ? " error" : "");
@@ -19,7 +22,11 @@
   function lock() {
     const busy = pending || active();
     for (const c of $("pkg-form").querySelectorAll("input, select, button")) c.disabled = !!busy;
-    $("pkg-download").hidden = !!busy || dirty || !view || !view.package.download_url;
+    for (const shape of Object.keys(shapes)) {
+      const link = $("pkg-download-" + shape), urls = view && view.package.download_urls;
+      link.hidden = !!busy || dirty || !urls;
+      link.href = urls ? urls[shape] : "#";
+    }
   }
   function edited() { dirty = true; lock(); }
   function draw() {
@@ -30,7 +37,14 @@
       (view.job ? ` · ${view.job.active ? "Đang dựng thumbnail…" : view.job.status}${view.job.error ? ": " + view.job.error : ""}` : "");
     if (!dirty) {
       $("pkg-title").value = doc.title;
-      $("pkg-headline").value = doc.headline;
+      const s = doc.settings;
+      for (let i = 0; i < 3; i++) $("pkg-line-" + i).value = s.title_lines[i] || "";
+      $("pkg-series").value = s.series;
+      $("pkg-speaker").value = s.speaker;
+      $("pkg-focus").value = s.focus_x;
+      $("pkg-palette").value = s.palette;
+      $("pkg-background").value = s.background;
+      $("pkg-minutes").textContent = `Khung thời lượng: ${s.minutes} phút (theo video đã ghép).`;
       $("pkg-options").replaceChildren();
       doc.title_options.forEach((title, i) => {
         const b = el("button", { type: "button", class: "btn small",
@@ -39,22 +53,30 @@
         $("pkg-options").append(b);
       });
       const cards = doc.thumbnails.map((t) => {
-        const radio = el("input", { type: "radio", name: "template", value: t.template });
-        radio.checked = doc.selected === t.template;
-        const label = el("label", { class: "inline" }, radio, document.createTextNode(" " + names[t.template]));
-        const select = el("select", { "aria-label": "Ảnh " + names[t.template], "data-template": t.template },
-          el("option", { value: "", text: "Nền có sẵn" }));
+        const radio = el("input", { type: "radio", name: "style", value: t.style });
+        radio.checked = doc.selected === t.style;
+        const label = el("label", { class: "inline" }, radio, document.createTextNode(" " + names[t.style]));
+        const select = el("select", { "aria-label": "Ảnh " + names[t.style], "data-style": t.style },
+          el("option", { value: "", text: "Không ảnh" }));
         for (const asset of view.assets) select.append(el("option", { value: asset.id,
           text: `${asset.tags.join(", ") || asset.id.slice(0, 12)} · ${asset.license}` }));
         select.value = t.asset_ids[0] || "";
         const box = el("article", { class: "tp-plan" }, label, select);
-        if (t.preview_url) box.append(el("img", { src: t.preview_url, alt: "Thumbnail " + names[t.template],
-          width: "1280", height: "720", style: "display:block;max-width:100%;height:auto" }));
+        const previews = el("div", { style: "display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap" });
+        for (const [shape, text] of Object.entries(shapes)) {
+          const url = t.preview_urls[shape];
+          previews.append(url ? el("figure", { style: "margin:0" },
+            el("img", { src: url, alt: `${names[t.style]} · ${text}`, loading: "lazy",
+              style: shape === "landscape" ? "display:block;max-width:100%;width:480px;height:auto"
+                : "display:block;max-width:100%;width:216px;height:auto" }),
+            el("figcaption", { class: "small muted", text })) : el("p", { class: "small muted", text: `${text}: chưa dựng` }));
+        }
+        box.append(previews);
         return box;
       });
       $("pkg-thumbnails").replaceChildren(...cards);
+      styleControls();
     }
-    $("pkg-download").href = doc.download_url || "#";
     lock();
     drawVisual();
   }
@@ -68,10 +90,12 @@
     if (!dirty) return;
     const asset_ids = {};
     for (const select of $("pkg-thumbnails").querySelectorAll("select")) {
-      asset_ids[select.dataset.template] = select.value ? [select.value] : [];
+      asset_ids[select.dataset.style] = select.value ? [select.value] : [];
     }
-    await request("", "PUT", { title: $("pkg-title").value, headline: $("pkg-headline").value,
-      selected: $("pkg-form").querySelector('input[name="template"]:checked').value, asset_ids });
+    await request("", "PUT", { title: $("pkg-title").value, selected: selectedStyle(),
+      title_lines: [0, 1, 2].map((i) => $("pkg-line-" + i).value), series: $("pkg-series").value,
+      speaker: $("pkg-speaker").value, focus_x: Number($("pkg-focus").value),
+      palette: $("pkg-palette").value, background: $("pkg-background").value, asset_ids });
     dirty = false;
   }
   async function perform(action) {
@@ -84,7 +108,7 @@
   $("pkg-back").href = `/playlists/${pid}/favorites`;
   $("pkg-form").addEventListener("submit", (e) => e.preventDefault());
   $("pkg-form").addEventListener("input", edited);
-  $("pkg-form").addEventListener("change", edited);
+  $("pkg-form").addEventListener("change", (e) => { if (e.target.name === "style") styleControls(); edited(); });
   $("pkg-refresh").addEventListener("click", load);
   $("pkg-save").addEventListener("click", () => perform(async () => { await save(); say("Đã lưu."); }));
   $("pkg-build").addEventListener("click", () => perform(async () => { await save(); await request("/thumbnails", "POST"); }));
