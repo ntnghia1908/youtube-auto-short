@@ -112,4 +112,4 @@ Task không chạm database, security model; thêm route nội bộ web (cookie 
 - Implementer: Codex `gpt-6.1-sol` high, 1 lượt, 159k tokens, 0 vòng sửa.
 - Important findings / decisions: tick theo `index` khi cùng clip có nhiều phiên bản (merge chỉ append). Câu cảnh báo đếm như tab Bộ nhớ (clip còn rendered); snapshot giữ mọi bài chưa tick.
 - Known limitations: bài giữ lại không tính vào “ảnh ít dùng nhất” / chia lại ảnh; không sửa chữ; xóa không qua web (CLI) dùng hashtag mặc định config.
-- PR:
+- PR: #128 (draft)
