@@ -24,7 +24,8 @@ Ghi chú vận hành ít dùng, tách từ `current-state.md` (CHG-current-state
 
 - VM 32 nhân, 125 GB RAM; IP DHCP, hiện `10.8.102.102` (đổi 2026-10-08; trước đó `.100`, `.101`) — nên xin IP cố định. ssh config máy 3090 / 3050 phải theo IP hiện hành.
 - `setup-gpu-node-v4.ps1` mặc định `-ServerHost 10.8.102.101` (cũ) → chạy với `-ServerHost <IP hiện hành>`.
-- Enhance: worker trên 3090 + 3050, `[enhance] face = "gfpgan_v1.4"`, `lease_hours = 12`; ước ≈ 6 h / tập (3090), ≈ 13 h (3050); 3090 GPU 100 % — thêm worker không nhanh hơn.
+- Enhance: worker trên 3090 (+ A100 mượn), `[enhance] face = "gfpgan_v1.4"`, `lease_hours = 12`; ước ≈ 6 h / tập (3090); 3090 GPU 100 % — thêm worker không nhanh hơn.
+- 3050 thôi làm enhance từ 2026-10-24 (HUMAN LEAD; máy giữ cho việc GPU khác sau này): token `rtx3050` đã gỡ khỏi `enhance-tokens.env` (backup `~/.cache/enhance-tokens.env.bak-pre-drop-3050-20261024`), hiệu lực từ lần restart web kế tiếp. Dùng lại: chép dòng token từ backup rồi restart web.
 
 ## A100 mượn (Slurm khoa, từ 2026-10-24, vài ngày)
 
