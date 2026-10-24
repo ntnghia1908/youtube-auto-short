@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: FEATURE
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -15,7 +15,7 @@
 - Parallel group: —
 - Owned paths: `src/auto_short/post/kept.py` (mới), `src/auto_short/review/delete.py`, `src/auto_short/web/app.py` / router liên quan (route mới + `post_unticked` ở view tập), `src/auto_short/web/static/app.js`, `src/auto_short/web/static/index.html`, tests mới `tests/test_post_kept.py` + tests delete / web liên quan, `docs/decisions/CP8.3-web-contract.md` (§ Xóa tập), `docs/decisions/CP8.15-community-post-contract.md` (pointer P7), contract này
 - Dependencies: none
-- Base commit / branch: `a94995a` / `feature/cp8.38-delete-keep-posts`, worktree `.claude/worktrees/cp8.38-delete-keep-posts`
+- Base commit / branch: `34b2629` / `feature/cp8.38-delete-keep-posts`, worktree `.claude/worktrees/cp8.38-delete-keep-posts` (delegation HUMAN LEAD 2026-10-24)
 - Human Lead approval: accepted (HUMAN LEAD 2026-10-24 “duyệt contract CP8.38”)
 - Implementation authorized: YES
 
@@ -91,11 +91,25 @@ Task không chạm database, security model; thêm route nội bộ web (cookie 
 
 ## Result
 
-- Main changes:
+- Main changes: `post/kept.py` mới (snapshot `_deleted/<id>.posts.json`: build / merge D3 / read / tick / remove); `review/delete.py` ghi snapshot sau bia mộ, trước `rmtree` (lỗi → không xóa); route xóa (`web/routes/episodes.py`) tính `copy_text` bằng `WebContext.post_entry_view` dưới `post_lock`, view tập thêm `post_unticked`; `web/routes/status.py` thêm `GET /api/kept-posts`, `POST /api/kept-posts/{id}/{clip}/posted[?index=n]`, `DELETE /api/kept-posts/{id}`; trang chủ mục “Bài đăng của tập đã xóa”; hai confirm dùng `keptPostsWarning`. CP8.3 § Xóa tập + pointer CP8.15 P7.
 - Tests:
-- Diff + / − (app, test):
-- Helper mới (đã tìm, lý do không tái dùng):
-- Review:
-- Important findings / decisions:
-- Known limitations:
+
+  | AC | Test |
+  |---|---|
+  | AC1 | `test_post_kept.py::test_delete_keeps_only_unticked_complete_snapshot`, web `test_kept_posts_delete_copy_tick_and_remove` |
+  | AC2 | `test_delete_without_usable_unticked_posts`, web `test_episode_post_unticked_zero_and_delete_without_kept_file` |
+  | AC3 | `test_failed_atomic_write_preserves_workspace_and_output`, web `test_delete_route_write_failure_keeps_files_and_undoes_favorites` |
+  | AC4 | `test_second_delete_merges_versions_preserves_ticks_and_deduplicates` |
+  | AC5 | web `test_kept_post_route_validation_sorting_and_version_ticks`, `test_kept_posts_delete_copy_tick_and_remove` |
+  | AC6 | web hai test trên (đếm `post_unticked`); câu confirm: manual |
+  | AC7 | `node --check` + manual điện thoại |
+  | AC8 | tham số `.kt` của AC1 (lõi + web) |
+
+  ORCHESTRATOR 2026-10-24: `tests/test_post_kept.py` + `tests/test_web_kept_posts_cp838.py` 28 passed; full suite `PYTHONPATH=src python -m pytest -q` **2245 passed, 1 skipped** (10 phút 20); `node --check app.js` PASS. Chạy thật trên bản sao `work/W2d-xS4ttTw` (13 bài chưa đăng, config thật): 13 bài giữ lại, `copy_text` đúng P4, workspace / output bị xóa, bia mộ có.
+- Diff + / − (app, test): app +311 / −5, test +364 / −0.
+- Helper mới (đã tìm, lý do không tái dùng): nhóm hàm `post/kept.py` (schema / vòng đời D2–D4 khác bia mộ và P7); `loadKeptPosts`, `keptPostsWarning` (JS); `tests/kept_post_helpers.py`. Tái dùng `tombstone_dir`, `atomic_write_json`, `read_posts`, `list_titles`, `compose_copy_text`, helper `WebContext`, `copyTitleButton`, route `/files/post-images`.
+- Review: ORCHESTRATOR đọc diff backend + JS: không blocking. Một sửa test: `test_delete_blocked_by_queued_job_keeps_posts_in_workspace` gửi link với `EID` 12 ký tự (422, không phải YouTube id) → đổi sang xếp job thẳng vào runner đang tạm ngưng; vẫn kiểm 409 + bài còn trong workspace.
+- Implementer: Codex `gpt-6.1-sol` high, 1 lượt, 159k tokens, 0 vòng sửa.
+- Important findings / decisions: tick theo `index` khi cùng clip có nhiều phiên bản (merge chỉ append). Câu cảnh báo đếm như tab Bộ nhớ (clip còn rendered); snapshot giữ mọi bài chưa tick.
+- Known limitations: bài giữ lại không tính vào “ảnh ít dùng nhất” / chia lại ảnh; không sửa chữ; xóa không qua web (CLI) dùng hashtag mặc định config.
 - PR:

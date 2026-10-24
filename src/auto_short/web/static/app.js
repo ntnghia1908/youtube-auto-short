@@ -267,6 +267,7 @@ const AutoShort = (() => {
     loadEpisodes();
     loadPlaylists();
     loadDeleted();
+    loadKeptPosts();
     checkDisk();
   }
 
@@ -290,6 +291,77 @@ const AutoShort = (() => {
         el("span", { class: "ep-state muted", text: `${t.episode_id} · ${t.complete ? "✔ Xong · " : "chưa xong · "}` +
           `${t.shorts} Short, đã đăng ${t.published}/${t.shorts} · xóa lúc ${fmtTime(t.deleted_at)}` }),
         btn);
+    }));
+  }
+
+  // CP8.38: independent of tombstones and of any newly recreated workspace.
+  async function loadKeptPosts() {
+    const box = $("#kept-posts-box");
+    let data;
+    try { data = await api("/api/kept-posts"); } catch (_) { return; }
+    box.hidden = !data.episodes.length;
+    const updateCount = () => {
+      $("#kept-posts-count").textContent = data.episodes.reduce((n, ep) =>
+        n + ep.posts.filter((p) => !p.posted_at).length, 0);
+    };
+    updateCount();
+    $("#kept-posts").replaceChildren(...data.episodes.map((ep) => {
+      const group = el("section", { style: "min-width:0;display:grid;gap:.6rem" });
+      const name = ep.title || ep.episode_id;
+      const remove = el("button", { class: "btn", type: "button", text: "Bỏ khỏi danh sách",
+        style: "min-height:40px;white-space:normal" });
+      remove.addEventListener("click", async () => {
+        const n = ep.posts.filter((p) => !p.posted_at).length;
+        if (!confirm(`Bỏ mọi bài giữ lại của "${name}" (${ep.episode_id}) khỏi danh sách?\n` +
+          `Sẽ mất ${n} bài chưa đăng. KHÔNG khôi phục được.`)) return;
+        remove.disabled = true;
+        try {
+          await api(`/api/kept-posts/${encodeURIComponent(ep.episode_id)}`, { method: "DELETE" });
+          await loadKeptPosts();
+        } catch (e) { remove.disabled = false; alert(e.message); }
+      });
+      group.append(el("h3", { text: `${name} (${ep.episode_id})` }), remove);
+      ep.posts.forEach((p, index) => {
+        const card = el("article", { class: "post-card", style: "min-width:0;grid-template-columns:minmax(0,1fr)" });
+        const text = el("textarea", { class: "post-textarea", readonly: true,
+          "aria-label": `Bài đăng ${p.clip_id}` });
+        text.value = p.copy_text;
+        const copy = copyTitleButton(p.copy_text);
+        copy.querySelector("button").style.minHeight = "40px";
+        copy.querySelector("button").title = "Copy bài đăng";
+        const tick = el("input", { type: "checkbox", checked: p.posted_at !== null });
+        const label = el("label", { class: "publish-label", style: "min-height:40px" }, tick, " Đã đăng bài");
+        tick.addEventListener("change", async () => {
+          const value = tick.checked;
+          tick.disabled = true;
+          try {
+            const result = await api(`/api/kept-posts/${encodeURIComponent(ep.episode_id)}/` +
+              `${encodeURIComponent(p.clip_id)}/posted?index=${index}`, {
+                method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value }),
+              });
+            p.posted_at = result.posted_at;
+            updateCount();
+          } catch (e) { tick.checked = p.posted_at !== null; alert(e.message); }
+          finally { tick.disabled = false; }
+        });
+        card.append(el("strong", { text: `${p.clip_id} · ${p.short_title || "Bài đăng"}` }), text);
+        if (p.image && !p.image_missing) {
+          const image = el("img", { src: `/files/post-images/${encodeURIComponent(p.image)}`, alt: "Ảnh bài đăng",
+            loading: "lazy", style: "max-width:100%;max-height:240px;object-fit:contain" });
+          const missing = el("span", { class: "muted small", text: "Không có ảnh", hidden: true });
+          image.addEventListener("error", () => { image.hidden = true; missing.hidden = false; });
+          card.append(image, missing, el("a", { class: "btn", text: "Tải ảnh", style: "min-height:40px",
+            href: `/files/post-images/${encodeURIComponent(p.image)}?download=1` }));
+        } else {
+          card.append(el("span", { class: "muted small", text: "Không có ảnh" }));
+        }
+        if (p.link) card.append(/^https?:\/\//i.test(p.link)
+          ? el("a", { href: p.link, text: p.link, target: "_blank", rel: "noopener noreferrer" })
+          : el("span", { text: p.link }));
+        card.append(el("div", { class: "edit-actions" }, copy, label));
+        group.append(card);
+      });
+      return group;
     }));
   }
 
@@ -441,6 +513,7 @@ const AutoShort = (() => {
     const ok = confirm(`Xóa toàn bộ tập "${name}" (${episodeId})?\n\n` +
       `Sẽ xóa video nguồn đã tải, mọi ${noun()} và dữ liệu xử lý của tập này. ` +
       "KHÔNG khôi phục được. (Gửi lại link sau đó = chạy lại từ đầu, AI có thể chọn clip / tiêu đề khác.)" +
+      keptPostsWarning(d.post_unticked) +
       (d.favorites_count ? `\n\n${d.favorites_count} ${d.kind === "khaithi" ? "khai thị" : "Short"} yêu thích sẽ được giữ lại trong mục Yêu thích.` : ""));
     if (!ok) return;
     const btn = $("#delete-episode");
@@ -2514,17 +2587,20 @@ const AutoShort = (() => {
     return `Lỗi / dở dang, không hoạt động ${r.age_days} ngày.`;
   }
 
+  function keptPostsWarning(n) {
+    return n > 0 ? `\n\nCòn ${n} bài đăng chưa đăng — sẽ được giữ trong mục ‘Bài đăng của tập đã xóa’ ở trang chủ.` : "";
+  }
+
   async function runAction(r, a, btn) {
     const name = r.title || r.episode_id;
     const ids = a.episodes || [r.episode_id];
     const parts = ids.length > 1 ? ` (${ids.length} phần: Short + khai thị)` : "";
-    const postWarn = r.post_unticked ? `\n\nCòn ${r.post_unticked} bài đăng chưa đăng — xóa cả tập sẽ mất bài đã soạn.` : "";
     const msg = a.action === "archive"
       ? `Dọn video nguồn của "${name}" (${r.episode_id})${parts}? Giải phóng ${fmtBytes(a.frees)}.\n\n` +
         "Short vẫn xem / tải được. Muốn sửa sau khi dọn cần bấm Khôi phục nguồn; " +
         "chỉ khôi phục được khi lấy lại đúng bản gốc."
       : `Xóa toàn bộ tập "${name}" (${r.episode_id})${parts}? Giải phóng ${fmtBytes(a.frees)}.\n\n` +
-        "Sẽ xóa video nguồn đã tải, mọi Short và dữ liệu xử lý. KHÔNG khôi phục được." + postWarn;
+        "Sẽ xóa video nguồn đã tải, mọi Short và dữ liệu xử lý. KHÔNG khôi phục được." + keptPostsWarning(r.post_unticked);
     if (!confirm(msg)) return;
     btn.disabled = true;
     const out = $("#rec-msg");

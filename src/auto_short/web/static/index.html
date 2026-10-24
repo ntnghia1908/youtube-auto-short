@@ -65,6 +65,10 @@
       <ul id="deleted" class="episode-list"></ul>
     </details>
   </section>
+  <details id="kept-posts-box" class="card deleted-box" style="min-width:0;overflow-wrap:anywhere" hidden>
+    <summary>Bài đăng của tập đã xóa (<span id="kept-posts-count">0</span> chưa đăng)</summary>
+    <div id="kept-posts" style="display:grid;grid-template-columns:minmax(0,1fr);gap:1rem"></div>
+  </details>
 </main>
 <script src="/static/app.js"></script>
 <script>AutoShort.initIndex();</script>
