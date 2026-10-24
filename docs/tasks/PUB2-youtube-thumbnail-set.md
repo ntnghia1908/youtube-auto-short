@@ -81,4 +81,8 @@ Chạm security model (token OAuth ghi lên kênh) → manual test là gate trư
 
 ## Result
 
-- Main changes:
+- Main changes: package `auto_short.publish` (`youtube.py` device flow / refresh / list / `thumbnails.set` qua một `transport`, chặn redirect, token mode 600; `thumbs.py` plan / apply + nhật ký; `__main__.py` CLI `auth`, `thumbs`); `tests/test_publish_thumbs.py`.
+- Review vòng 1 (ORCHESTRATOR): playlist Địa Tạng không có `series` lưu → chạy thử lỗi nếu không gõ `--series`. Sửa: `--series` → `stored_series` → series header tập đầu hợp lệ; CLI in bộ kinh đã dùng.
+- Verification: `tests/test_publish_thumbs.py` + `test_packaging_episode.py` 115 passed; full suite 2479 passed, 1 skipped. Ghép trên dữ liệu thật (video giả, không mạng): bộ kinh "Kinh Địa Tạng Bồ Tát Bổn Nguyện", sai bộ / sai mẫu bị bỏ qua. Tập đã xóa video trên VM báo "ảnh đã cũ" trên main → cần #138 (PKG2.2) trước khi chạy thật.
+- Chưa chạy: `auth` / chạy thử / `--apply` với kênh (chờ HUMAN LEAD chép OAuth client và merge #138).
+- IMPLEMENTER: Codex gpt-6.1-sol, 2 vòng (high 77k tokens + medium; tổng 147k tokens).
