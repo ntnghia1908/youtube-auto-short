@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -88,7 +88,7 @@ Chạm public API (route mới, sau đăng nhập), không chạm security model
 
 ## Result
 
-- IMPLEMENTER: READY để ORCHESTRATOR review; chưa commit / push / tạo PR. Chỉ sửa owned paths; không sửa `visual.py`, `theme_render/audio.py` hay test VIS1 cũ.
+- IMPLEMENTER (Codex): READY; chỉ sửa owned paths; không sửa `visual.py`, `theme_render/audio.py` hay test VIS1 cũ.
 - Main changes:
   - Thêm `packaging/music.py`: đo loudness / true peak thật, giải mã nhạc về PCM stereo 48 kHz để lấy thời lượng chính xác (kể cả padding MP3), tạo đơn vị lặp L−C bằng crossfade equal-power `qsin`, lặp bằng `-stream_loop -1`. Giọng gain 1, `amix normalize=0:duration=first`, AAC encode một lần; video copy và đối chiếu streamhash.
   - Spec / key VIS1 không đổi khi `music: null`; hỗ trợ Original + nhạc và ambient có sẵn + nhạc. Dùng chung record / cache / listing / duyệt / xóa; stale theo TC3, nhạc và bản VIS1 nguồn. Xóa nhạc không đụng loop VIS1.
@@ -116,7 +116,9 @@ Chạm public API (route mới, sau đăng nhập), không chạm security model
   - Tái dùng `_call`, `_run`, `probe_media`, `audio.compare` + các ngưỡng của nó, asset approval / SHA, key / reference / read / write / reusable, hashing và workspace helpers. `measure`, `loop_unit`, `music_filter`, `check_audio` mới vì VIS1 chỉ copy audio, không có đo ebur128 / mix nhạc / kiểm AAC theo một khung.
   - `video_hash` mới vì `visual.audio_hash` cố định map audio; `video_source` giải quyết dependency VIS1 có sẵn. `encoding`, `normalize_music`, `_validate_music`, `Packages.variant_key` chỉ bổ sung nhánh music / bitrate; validation trường chung vẫn dùng cùng đường VIS1.
   - Publish + rollback theo đúng protocol VIS1; closure publish của `visual.build` không import được, và `visual.py` ngoài ownership. Không tách helper ra file ngoài owned paths. Fixture `synthetic` tái dùng qua import giữa hai test file theo pattern test hiện có.
-- Review: IMPLEMENTER tự rà diff theo contract / R1–R9 và kiểm source TC3 / VIS1 chỉ làm input; review độc lập của ORCHESTRATOR còn chờ. Không gọi agent khác hoặc dịch vụ mạng thật.
+- Review: IMPLEMENTER tự rà diff theo contract / R1–R9 và kiểm source TC3 / VIS1 chỉ làm input. ORCHESTRATOR review diff `music.py` (đơn vị lặp body [C, L−C] + seam đuôi / đầu, pha / fade xem thử theo timeline tuyệt đối, rollback publish), `variant.py` (spec VIS1 cũ giữ key, `_validate_music`, stale theo nhạc / VIS1 nguồn, xóa không đụng `loop-*`), web (key theo `[render] audio_bitrate`, route `.m4a` kiểm sha): không có finding blocking. ORCHESTRATOR chạy ngoài sandbox: `tests/test_packaging_music.py tests/test_packaging_visual.py tests/test_web_packaging.py` **81 passed, 2 deselected** (130 s, gồm HTTP); full suite `-n auto` **2418 passed, 1 skipped**; framework-check PASS.
+- Chạy thật (ORCHESTRATOR, 2026-10-24, thư mục tạm ngoài `output/`): TC3 `bddcede7d89d-r2` (41 phút, I −14,1 LUFS, TP −0,5 dBTP) + nhạc CC0 "The Budding of Consciousness" (Yoiyami, OpenGameArt; HUMAN LEAD chọn theo G3; nạp kho bản cắt 0–217 s bỏ fade cuối để điểm nối vòng lặp không hụt; asset `6a5f3380fb46…`). Original + nhạc −20 LU: dựng **131 s**, 312 MB, gain nhạc −15,8 dB, TP mix −0,4 ≤ ngưỡng 0,0 dBTP, corr 0,9975 lag 0, chênh audio 8,7 ms, streamhash hình = TC3. Xem thử 3 × 30 s: 35–68 s mỗi mức; mẫu −18 / −22 / −26 LU đã gửi HUMAN LEAD. Mốc tham chiếu: bản khai thị có nhạc HUMAN LEAD gửi (KhaiThi023) đo nhạc ≈ 22–26 LU dưới giọng.
+- Codex: 20 phút, 138.666 tokens, 0 vòng sửa.
 - Important findings / decisions: đo true peak nhánh TC3 nóng bằng media thật; không limiter / loudnorm / tự hạ giọng. Decode PCM trước khi chọn đuôi loop để không dùng nhầm duration chứa encoder padding. Preview dùng cùng gain và timeline fade / pha vòng lặp toàn bài, không cần dựng hình ambient.
-- Known limitations: HTTP suite đầy đủ, full suite và manual nghe thật chưa được xác nhận. Metadata preview ở bộ nhớ server như VIS1; sau restart cần nghe thử lại. Chưa đo hiệu năng trên TC3 dài thật.
-- PR: không tạo theo yêu cầu.
+- Known limitations: metadata xem thử ở bộ nhớ server như VIS1 — sau restart cần nghe thử lại; một ô xem thử chung với xem thử hình ambient mỗi plan. Tên file tải "bản đăng" giống nhau giữa variant có / không nhạc (đổi tên khi lưu). Mức mặc định −20 LU chờ HUMAN LEAD chọn bằng tai (manual checklist). Nhạc chỉ có 1 bản trong kho.
+- PR: base `feature/vis1-ambient` (#133); rebase lên main sau khi #133 merge.
