@@ -12,7 +12,7 @@ Ngân sách token của file: xem `docs/ai/workflow.md` §10.
 
 Cập nhật 2026-10-24.
 
-- Web 8080 (tmux `youtube:web`, worktree `~/projects/youtube-auto-short-web`) chạy `e1daf77` (branch tạm `web/tc-aiq2-pkg` = PR #131 TC-AIQ2 + PR #132 PKG1/PKG2, detached; restart 2026-10-24 10:24 UTC). Sau khi merge #131 / #132: trỏ lại main, xóa branch tạm. Restart: hỏi HUMAN LEAD rồi `~/.local/bin/auto-short-web-restart` (mật khẩu ở `~/.local/share/auto-short/web.env`, từ chối khi làn bận).
+- Web 8080 (tmux `youtube:web`, worktree `~/projects/youtube-auto-short-web`): checkout đã detach sang `b29a027` (branch tạm local `web/vis1-pkg21-fix` = main + #131 TC-AIQ2 + #133 VIS1 + #134 PKG2.1 + #135 FIX; full suite 2441 passed) nhưng **server chưa restart** lúc 2026-10-24 ~11:40 UTC vì làn AI bận (job "AI gợi ý chủ đề" Kinh Vô Lượng Thọ). Server cũ vẫn chạy code `e1daf77` đã nạp. Nếu `pgrep -f '[a]uto-short web --config'` cho thấy server khởi động trước ~11:40: chạy `~/.local/bin/auto-short-web-restart` khi hàng đợi trống (HUMAN LEAD đã duyệt ghim). Sau khi merge: trỏ lại main, xóa branch tạm. Restart: script từ chối khi làn bận (mật khẩu `~/.local/share/auto-short/web.env`).
 - Thư mục dự án chuyển sang `~/projects/` ngày 2026-10-19; backup JSON trước khi chuyển: xem ops-notes.
 - `config.toml` (không trong git) `[storage]`: `auto_archive = true`, `auto_archive_grace_minutes = 7200`.
 - Kho nguồn ghép chủ đề `work/_theme_sources/` (13 video, tải dần bằng `python -m auto_short.theme_render.sources`).
@@ -24,8 +24,8 @@ Cập nhật 2026-10-24.
 ## Next proposed action
 
 1. HUMAN LEAD đăng 13 bài tập 10 Thập Thiện `W2d-xS4ttTw` (xử lý lại 2026-10-24).
-2. TC-AIQ2 (`docs/tasks/TC-AIQ2-theme-target-length.md`, READY, PR #131): chạy thật 4/5 chủ đề đạt 30–40 phút; HUMAN LEAD chấm ngữ nghĩa trên 8080 rồi merge #130 → #131.
-3. Đóng gói (boundary `docs/decisions/PKG-video-packaging-authorization.md` ACCEPTED, G1–G8): branch `feature/pkg1-thumbnail` (worktree `.claude/worktrees/cp8.38-delete-keep-posts`). PKG1 + PKG2 READY (PKG2 vòng 2: 3 kiểu A/B/C theo bộ kinh; Codex review thứ hai đã xử lý). Kho ảnh `~/.local/share/auto-short/packaging`: 129 ảnh bài đăng đã duyệt (tag = tên file). Còn: HUMAN LEAD push / PR, ghim 8080, manual test; đặt Địa Tạng kiểu A + ảnh 67 trên trang thumbnail. Sau đó: VIS1 → AUD1. PUB1 / PKG1.1: bỏ.
+2. TC-AIQ2 (`docs/tasks/TC-AIQ2-theme-target-length.md`, READY, PR #131): HUMAN LEAD chấm ngữ nghĩa trên 8080 rồi merge #130 → #131.
+3. Đóng gói (boundary `docs/decisions/PKG-video-packaging-authorization.md` ACCEPTED): PKG1 + PKG2 đã merge (#132). READY, chờ HUMAN LEAD manual test trên 8080 + merge: **#133 VIS1** (`feature/vis1-ambient`, worktree `.claude/worktrees/cp8.38-delete-keep-posts`; bản 41,5 phút 149 s / 278 MB, streamhash audio = TC3), **#134 PKG2.1** trang thumbnail cả bộ (`feature/pkg2.1-thumbs-ui`, worktree `.claude/worktrees/agent-a87973c3bdd98c4f3`), **#135 FIX-theme-index-summary** (`fix/theme-index-summary`, worktree `.claude/worktrees/agent-a556bd787b934c77e`). Tiếp theo: AUD1 (`docs/tasks/AUD1-background-music.md`, sau VIS1). Sau khi tích hợp êm: PR docs bỏ câu "số writer thực tế là 1" (project-profile §7, framework-migration-notes) — pilot 3 IMPLEMENTER song song 2026-10-24 (Codex + 2 Sonnet, worktree riêng) không xung đột; HUMAN LEAD duyệt nội dung trước. PUB1 / PKG1.1: bỏ.
 4. Cũ, vẫn mở: HTTPS cho 8080; FIX `setup-enhance-worker.ps1` (S1); CP14 Whisper GPU tạm gác.
 
 Đây là PROPOSED, không authorize implementation tiếp theo.
