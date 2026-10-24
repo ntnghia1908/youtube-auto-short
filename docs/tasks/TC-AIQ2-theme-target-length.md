@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: DRAFT
+- Status: IN_PROGRESS
 - Type: CHANGE
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -14,9 +14,9 @@
 - Parallel group: —
 - Owned paths: `src/auto_short/theme_plan/__init__.py`, `tests/test_theme_plan.py`, file này
 - Dependencies: TC-AIQ (#127, đã merge)
-- Base commit / branch: `2e0d125` (origin/main) / `feature/tc-aiq2`
-- Human Lead approval: inherited from boundary (§1); D2 pending — chuyển `Implementation authorized` sang YES khi HUMAN LEAD chốt D2
-- Implementation authorized: NO
+- Base commit / branch: `2e0d125` (origin/main) + contract từ `docs/current-state-after-cp838-test` (#130) / `feature/tc-aiq2`
+- Human Lead approval: inherited from boundary (§1); D2 accepted 2026-10-24 (chat "Bật")
+- Implementation authorized: YES
 
 Lifecycle: `boundary` mode = `DRAFT → IN_PROGRESS → READY`. DONE suy ra từ Git sau khi merge.
 
@@ -55,7 +55,7 @@ Chạy "Đề xuất chủ đề" trên playlist thật cho đa số theme `ok` 
 
 - Boundary TC1–TC3 §2 / §4 (30–40 phút, 5–10 clip, không độn / lặp, báo shortfall); `docs/tasks/TC2-theme-compilation-planner.md`; `docs/tasks/TC-AIQ-theme-ai-quality.md`.
 - Local S1: clip được dùng lại giữa các theme (HUMAN LEAD chọn một proposal để tạo plan; trùng giữa theme đã được validator cho phép, chỉ cấm trùng trong một theme).
-- **D2 (HUMAN LEAD — pending):** bật vòng bổ sung. Chi phí: tối đa `MAX_THEMES` = 5 lần gọi qwen3:30b thêm cho mỗi lần "Đề xuất chủ đề" (ước 1–3 phút / lần với `think`, tức job từ vài phút lên tới ≈ 10–15 phút khi mọi theme đều short). Không bật → chỉ đổi prompt, rẻ nhưng qwen3 dễ phớt lờ yêu cầu số lượng. Đề xuất: bật.
+- **D2 (HUMAN LEAD — ACCEPTED 2026-10-24):** bật vòng bổ sung. Chi phí: tối đa `MAX_THEMES` = 5 lần gọi qwen3:30b thêm cho mỗi lần "Đề xuất chủ đề" (ước 1–3 phút / lần với `think`, tức job từ vài phút lên tới ≈ 10–15 phút khi mọi theme đều short). Không bật → chỉ đổi prompt, rẻ nhưng qwen3 dễ phớt lờ yêu cầu số lượng. Đề xuất: bật.
 
 ## Implementation approach
 

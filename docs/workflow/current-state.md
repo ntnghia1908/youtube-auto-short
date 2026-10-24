@@ -23,7 +23,7 @@ Cập nhật 2026-10-24.
 ## Next proposed action
 
 1. HUMAN LEAD đăng 13 bài tập 10 Thập Thiện `W2d-xS4ttTw` (xử lý lại 2026-10-24).
-2. TC-AIQ2 (`docs/tasks/TC-AIQ2-theme-target-length.md`, DRAFT): đề xuất chủ đề TC2 đủ 30–40 phút thay vì 3 clip; chờ HUMAN LEAD chốt D2 (vòng AI bổ sung).
+2. TC-AIQ2 (`docs/tasks/TC-AIQ2-theme-target-length.md`, IN_PROGRESS, D2 accepted): đề xuất chủ đề TC2 đủ 30–40 phút thay vì 3 clip.
 3. Cũ, vẫn mở: HTTPS cho 8080; FIX `setup-enhance-worker.ps1` (S1); CP14 Whisper GPU tạm gác.
 
 Đây là PROPOSED, không authorize implementation tiếp theo.
