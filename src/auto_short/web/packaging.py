@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictFloat, StrictInt, Stric
 
 from .. import theme_index, theme_plan
 from ..hashing import config_hash, sha256_file
-from ..packaging import PackageError, assets, record, thumbnail, variant, visual
+from ..packaging import PackageError, assets, music, record, thumbnail, variant, visual
 from ..render.stage import RenderError
 from ..render.text import TextError, nfc
 from ..review.names import clean_part, content_disposition, truncate_utf8
@@ -85,8 +85,10 @@ class VisualTarget:
                 variant.source(self.visual, s.config.packaging.asset_dir)
 
             check()
-            result = visual.build(folder, path, meta, self.visual, s.config.packaging.asset_dir,
-                                  run=s.media_runner, preview=self.preview, before_publish=check, publish_lock=s.lock)
+            builder = music.build if "music" in self.visual else visual.build
+            options = dict(audio_bitrate=s.config.render.audio_bitrate) if "music" in self.visual else {}
+            result = builder(folder, path, meta, self.visual, s.config.packaging.asset_dir,
+                             run=s.media_runner, preview=self.preview, before_publish=check, publish_lock=s.lock, **options)
             if self.preview:
                 with s.lock:
                     s.previews[(pid, plan_id)] = result
@@ -94,7 +96,8 @@ class VisualTarget:
                 MissingPlan, BrokenArtifact, OSError, ValueError, TypeError, KeyError) as exc:
             raise JobFailed(safe(str(exc))) from exc
         job.stage = None
-        job.summary = "Đã dựng xem thử 20 giây" if self.preview else "Đã dựng hình ambient"
+        job.summary = ("Đã dựng 3 đoạn nghe thử" if self.preview else "Đã dựng bản có nhạc") if "music" in self.visual else (
+            "Đã dựng xem thử 20 giây" if self.preview else "Đã dựng hình ambient")
 
     def lane_steps(self):
         return [Step(RENDER, self)]
@@ -179,7 +182,7 @@ class Packages:
         plan, meta, folder, _ = self.context(pid, plan_id, require_output=False)
         rows = []
         with self.lock:
-            entries = variant.listing(folder, plan, meta, cache=self.variant_cache)
+            entries = variant.listing(folder, plan, meta, cache=self.variant_cache, asset_dir=self.config.packaging.asset_dir)
         for location, doc, state in entries:
             ident = doc["key"][:12]
             revision = int(record.REVISION.fullmatch(location.name)[2])
@@ -199,7 +202,7 @@ class Packages:
                     or target.pid != pid or target.plan["plan_id"] != plan_id \
                     or self.runner.latest(job.key) is not job or (not job.active and job.status != "failed"):
                 continue
-            ident = variant.key(target.visual, target.meta["sha256"])[:12]
+            ident = self.variant_key(target.visual, target.meta)[:12]
             revision = target.plan["revision"]
             if not job.active and any((r["revision"], r["key12"]) == (revision, ident) for r in rows):
                 continue
@@ -218,25 +221,49 @@ class Packages:
             except PackageError:
                 continue
         preview = self.previews.get((pid, plan_id))
-        url, ident = None, None
+        url, ident, audio_urls = None, None, []
         if preview is not None and meta is not None:
             ident = preview["key"][:12]
             path = folder / f"preview-{ident}.mp4"
+            if "previews" in preview:
+                path = folder / preview["previews"][0]["file"]
             if preview["tc3"] == variant.reference(path.with_name(f"{plan_id}-r{plan['revision']}.mp4"), meta) \
                     and path.is_file() and not path.is_symlink():
                 try:
                     variant.source(preview["spec"], self.config.packaging.asset_dir)
-                    url = f"/files/playlists/{pid}/theme-pkg/{folder.name}/{path.name}?inline=1"
+                    base = f"/files/playlists/{pid}/theme-pkg/{folder.name}/"
+                    if "previews" in preview:
+                        if all((folder / p["file"]).is_file() and not (folder / p["file"]).is_symlink()
+                               for p in preview["previews"]):
+                            audio_urls = [base + p["file"] + "?inline=1" for p in preview["previews"]]
+                    else:
+                        url = base + path.name + "?inline=1"
                 except PackageError:
                     pass
-        return dict(variants=rows, visual_sources=safe(sources), preview=dict(url=url, key12=ident, revision=plan["revision"],
+        music_sources = []
+        for asset in assets.list_assets(self.config.packaging.asset_dir):
+            if asset["kind"] == "music":
+                try:
+                    assets.usable(self.config.packaging.asset_dir, asset["id"], kind="music")
+                    music_sources.append({k: asset[k] for k in ("id", "tags", "license", "duration")})
+                except PackageError:
+                    pass
+        return dict(variants=rows, visual_sources=safe(sources), music_sources=safe(music_sources),
+                    preview=dict(url=url, audio_urls=audio_urls, key12=ident, revision=plan["revision"],
                     job=job_view(self.runner.latest(visual_key(pid, plan_id, plan["revision"])))))
+
+    def variant_key(self, spec, meta):
+        settings = music.encoding(self.config.render.audio_bitrate) if "music" in spec else None
+        return variant.key(spec, meta["sha256"], settings=settings)
 
     def render_visual(self, pid, plan_id, spec, *, preview=False):
         spec = variant.normalize(spec)
         plan, meta, folder, _ = self.context(pid, plan_id)
         variant.source(spec, self.config.packaging.asset_dir)
-        ident = variant.key(spec, meta["sha256"])[:12]
+        if "music" in spec and not preview:
+            path, _ = self.plans.output(pid, plan, verify=True)
+            music.video_source(folder, path, meta, spec)
+        ident = self.variant_key(spec, meta)[:12]
         key = visual_key(pid, plan_id, plan["revision"], None if preview else ident)
         job = self.runner.latest(key)
         if job is not None and job.active:
@@ -247,7 +274,7 @@ class Packages:
             except PackageError:
                 cached = None
             with self.lock:
-                state = variant.status(folder, cached, plan, meta, cache=self.variant_cache) if cached else "stale"
+                state = variant.status(folder, cached, plan, meta, cache=self.variant_cache, asset_dir=self.config.packaging.asset_dir) if cached else "stale"
             if state != "stale":
                 return dict(variant=next(v for v in self.visual_view(pid, plan_id)["variants"]
                                          if (v["revision"], v["key12"]) == (plan["revision"], ident)), created=False), 200
@@ -263,7 +290,7 @@ class Packages:
         if doc is None:
             raise MissingPlan()
         with self.lock:
-            state = variant.status(folder, doc, plan, meta, cache=self.variant_cache) \
+            state = variant.status(folder, doc, plan, meta, cache=self.variant_cache, asset_dir=self.config.packaging.asset_dir) \
                 if revision == plan["revision"] else "stale"
         return folder, doc, state
 
@@ -273,8 +300,9 @@ class Packages:
             target = job.target
             if job.active and job.kind == KIND and isinstance(target, VisualTarget) and target.pid == pid \
                     and target.plan["plan_id"] == plan_id and target.plan["revision"] == revision \
-                    and variant.key(target.visual) == doc["loop_key"]:
-                raise Unavailable("đang dựng hình ambient; hãy hủy hoặc chờ hoàn tất")
+                    and (self.variant_key(target.visual, target.meta) == doc["key"]
+                         or (doc.get("loop_key") and target.visual["visual"] == doc["spec"]["visual"])):
+                raise Unavailable("đang dựng variant; hãy hủy hoặc chờ hoàn tất")
         if delete:
             variant.delete(folder, doc)
             with self.lock:
@@ -360,9 +388,19 @@ class VisualIn(BaseModel):
     crossfade: StrictFloat | StrictInt = Field(default=2, ge=.5, le=5)
 
 
+class MusicIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    asset_id: StrictStr = Field(max_length=64)
+    level_lu: StrictFloat | StrictInt = Field(default=-20, ge=-30, le=-12)
+    fade_in: StrictFloat | StrictInt = Field(default=3, ge=0, le=10)
+    fade_out: StrictFloat | StrictInt = Field(default=5, ge=0, le=15)
+    loop_crossfade: StrictFloat | StrictInt = Field(default=3, ge=.5, le=8)
+
+
 class VariantIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    visual: VisualIn
+    visual: VisualIn | None
+    music: MusicIn | None = None
 
 
 def register(app: FastAPI, service: Packages):
@@ -448,7 +486,7 @@ def register(app: FastAPI, service: Packages):
             # A running build does not have a sidecar yet.
             job = service.runner.latest(visual_key(pid, plan_id, revision, key12))
             if job is not None and job.active:
-                raise Unavailable("đang dựng hình ambient; hãy hủy hoặc chờ hoàn tất")
+                raise Unavailable("đang dựng variant; hãy hủy hoặc chờ hoàn tất")
             return response(service.change_variant(pid, plan_id, revision, key12, delete=True))
         return invoke(pid, action, write=True)
 
@@ -457,32 +495,36 @@ def register(app: FastAPI, service: Packages):
         missing = lambda: response({"detail": "không có file này"}, 404)
         match = record.REVISION.fullmatch(plan_rev)
         media = variant.MEDIA_NAME.fullmatch(name)
+        music_preview = variant.MUSIC_PREVIEW.fullmatch(name)
         if match is None or (record.FILE_NAME.fullmatch(name) is None and
-                             (media is None or media[1] == "loop")) or service.checked(pid) is not None:
+                             (music_preview is None and (media is None or media[1] == "loop"))) or service.checked(pid) is not None:
             return missing()
         try:
-            if media:
+            if media or music_preview:
                 plan, meta, folder, _ = service.context(pid, match[1])
                 if folder.name != plan_rev:
                     return missing()
-                if media[1] == "variant":
+                if media and media[1] == "variant":
                     doc = variant.read(folder, media[2])
-                    if doc is None or variant.status(folder, doc, plan, meta) == "stale" \
+                    if doc is None or variant.status(folder, doc, plan, meta, asset_dir=service.config.packaging.asset_dir) == "stale" \
                             or (inline != 1 and not doc["approved_at"]):
                         return missing()
                 else:
                     doc = service.previews.get((pid, match[1]))
                     path = folder / name
-                    if inline != 1 or doc is None or doc["key"][:12] != media[2] \
+                    preview_key = music_preview[1] if music_preview else media[2]
+                    entry = next((p for p in doc.get("previews", []) if p["file"] == name), None) if doc else None
+                    digest = entry["sha256"] if entry else doc.get("sha256") if doc and not music_preview else None
+                    if inline != 1 or doc is None or doc["key"][:12] != preview_key \
                             or any(doc["tc3"][k] != meta[k] for k in ("sha256", "revision", "plan_fingerprint")) \
-                            or not path.is_file() or path.is_symlink() or sha256_file(path) != doc["sha256"]:
+                            or not path.is_file() or path.is_symlink() or sha256_file(path) != digest:
                         return missing()
                 variant.source(doc["spec"], service.config.packaging.asset_dir)
                 headers = {"Cache-Control": "no-store"}
                 if inline != 1:
                     title = meta["download_name"].removesuffix(".mp4")
                     headers["Content-Disposition"] = content_disposition(truncate_utf8(clean_part(title)) + ".mp4")
-                return FileResponse(folder / name, media_type="video/mp4", headers=headers)
+                return FileResponse(folder / name, media_type="audio/mp4" if music_preview else "video/mp4", headers=headers)
             _, _, folder, doc = service.context(pid, match[1])
             if doc["state"] == "stale" or doc["revision"] != int(match[2]):
                 return missing()

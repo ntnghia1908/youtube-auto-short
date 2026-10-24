@@ -88,11 +88,35 @@ Chạm public API (route mới, sau đăng nhập), không chạm security model
 
 ## Result
 
+- IMPLEMENTER: READY để ORCHESTRATOR review; chưa commit / push / tạo PR. Chỉ sửa owned paths; không sửa `visual.py`, `theme_render/audio.py` hay test VIS1 cũ.
 - Main changes:
-- Tests:
-- Diff + / − (app, test):
+  - Thêm `packaging/music.py`: đo loudness / true peak thật, giải mã nhạc về PCM stereo 48 kHz để lấy thời lượng chính xác (kể cả padding MP3), tạo đơn vị lặp L−C bằng crossfade equal-power `qsin`, lặp bằng `-stream_loop -1`. Giọng gain 1, `amix normalize=0:duration=first`, AAC encode một lần; video copy và đối chiếu streamhash.
+  - Spec / key VIS1 không đổi khi `music: null`; hỗ trợ Original + nhạc và ambient có sẵn + nhạc. Dùng chung record / cache / listing / duyệt / xóa; stale theo TC3, nhạc và bản VIS1 nguồn. Xóa nhạc không đụng loop VIS1.
+  - Tái dùng VisualTarget / job key / hủy / làn render; thêm body music, preview 3 đoạn và route `.m4a` inline có kiểm SHA. Trang Đóng gói có Voice Only mặc định, chọn hình đã dựng, mức / fade / crossfade, ba thẻ audio; tải bản đăng vẫn cần duyệt.
+- AC → test (tên trong `tests/test_packaging_music.py`, trừ nơi ghi khác):
+
+  | AC | Test |
+  |---|---|
+  | AC1 | `test_voice_only_legacy_keys_music_controls_and_strict_spec`; `test_real_mix_loudness_voice_video_and_cache` (đo riêng bed nhạc, sai số ≤ 1 LU); `test_true_peak_margin_for_hot_tc3` |
+  | AC2 | `test_bad_mix_rejected` — nhạc +0 LU vượt qua lớp spec bằng runner tiêm lỗi và giọng đảo thời gian đều fail đúng gate `audio.compare`; thêm sai video / duration / peak |
+  | AC3 | `test_loop_seams_have_continuous_twenty_ms_rms` — sine liên tục, RMS hai phía 20 ms tại đầu crossfade / điểm wrap qua hai vòng |
+  | AC4 | `test_voice_only_legacy_keys_music_controls_and_strict_spec`; `test_real_mix_loudness_voice_video_and_cache`; `test_ambient_video_copy_stale_delete_isolation` |
+  | AC5 | `test_failure_and_interrupt_cleanup_preserve_sources` — lỗi / KeyboardInterrupt tại loop, mix, publish; rollback cả preview có sẵn và giữ SHA TC3 / VIS1; `test_ambient_dependency_disk_and_asset_gates` |
+  | AC6 | `test_preview_three_positions_fades_and_replacement` (TC3 ~24 s và ~64 s); `tests/test_web_packaging.py::test_music_registered_endpoints_socket_free`; `test_music_routes_auth_middleware_socket_free` cùng file web |
+
+- Tests / verification trong môi trường hiện tại (Python: `/home/ntnghia/miniconda3/envs/auto-short/bin/python`):
+  - `PYTHONPATH=src python -m pytest -q -x tests/test_packaging_music.py tests/test_packaging_visual.py`: **48 passed, 2 deselected**, 113.41 s. Hai test VIS1 slow bị loại theo cấu hình pytest hiện hành.
+  - `PYTHONPATH=src timeout 600 python -m pytest -q -x tests/test_web_packaging.py`: **chưa PASS**, treo sau 6 test, timeout **exit 124**. Probe socket loopback trả `PermissionError: [Errno 1] Operation not permitted`; ORCHESTRATOR cần chạy lại HTTP suite ngoài sandbox.
+  - `PYTHONPATH=src python -m pytest -q -x tests/test_web_packaging.py -k 'not http'`: **25 passed, 8 deselected**, 14.49 s; có job nhạc thật, route gọi trực tiếp và middleware auth thật. Một warning deprecation TestClient có sẵn, không thêm dependency.
+  - `node scripts/framework-check.mjs`: PASS. `node --check src/auto_short/web/static/package.js`: PASS. `git diff --check`: PASS.
+  - Không chạy full suite theo chỉ định giao việc. Chưa chạy TC3 thật 30–40 phút / nghe loa và tai nghe; ORCHESTRATOR + HUMAN LEAD phụ trách, cần nhạc đã duyệt.
+- Diff + / − (app, test): app **+450 / −34**; test **+420 / −1** (tính cả hai file mới chưa tracked, không tính contract). Không đổi `tests/test_packaging_visual.py`.
 - Helper mới (đã tìm, lý do không tái dùng):
-- Review:
-- Important findings / decisions:
-- Known limitations:
-- PR:
+  - Đã đọc `visual.py`, `variant.py`, `assets.py`, `theme_render/audio.py`, `render/stage.py`; tìm bằng `rg -n 'lufs|ebur128|true_peak|streamhash|before_publish|publish_lock' src/auto_short/packaging src/auto_short/theme_render` và tra `probe_media`, `_run`, `audio_bitrate`.
+  - Tái dùng `_call`, `_run`, `probe_media`, `audio.compare` + các ngưỡng của nó, asset approval / SHA, key / reference / read / write / reusable, hashing và workspace helpers. `measure`, `loop_unit`, `music_filter`, `check_audio` mới vì VIS1 chỉ copy audio, không có đo ebur128 / mix nhạc / kiểm AAC theo một khung.
+  - `video_hash` mới vì `visual.audio_hash` cố định map audio; `video_source` giải quyết dependency VIS1 có sẵn. `encoding`, `normalize_music`, `_validate_music`, `Packages.variant_key` chỉ bổ sung nhánh music / bitrate; validation trường chung vẫn dùng cùng đường VIS1.
+  - Publish + rollback theo đúng protocol VIS1; closure publish của `visual.build` không import được, và `visual.py` ngoài ownership. Không tách helper ra file ngoài owned paths. Fixture `synthetic` tái dùng qua import giữa hai test file theo pattern test hiện có.
+- Review: IMPLEMENTER tự rà diff theo contract / R1–R9 và kiểm source TC3 / VIS1 chỉ làm input; review độc lập của ORCHESTRATOR còn chờ. Không gọi agent khác hoặc dịch vụ mạng thật.
+- Important findings / decisions: đo true peak nhánh TC3 nóng bằng media thật; không limiter / loudnorm / tự hạ giọng. Decode PCM trước khi chọn đuôi loop để không dùng nhầm duration chứa encoder padding. Preview dùng cùng gain và timeline fade / pha vòng lặp toàn bài, không cần dựng hình ambient.
+- Known limitations: HTTP suite đầy đủ, full suite và manual nghe thật chưa được xác nhận. Metadata preview ở bộ nhớ server như VIS1; sau restart cần nghe thử lại. Chưa đo hiệu năng trên TC3 dài thật.
+- PR: không tạo theo yêu cầu.
