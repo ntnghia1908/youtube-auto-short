@@ -12,7 +12,7 @@ Ngân sách token của file: xem `docs/ai/workflow.md` §10.
 
 Cập nhật 2026-10-24.
 
-- Web 8080 (tmux `youtube:web`, worktree `~/projects/youtube-auto-short-web`) chạy `965044c` (`feature/tc-aiq2`, PR #131 = main + TC-AIQ2; restart 2026-10-24). Restart: hỏi HUMAN LEAD rồi `~/.local/bin/auto-short-web-restart` (mật khẩu ở `~/.local/share/auto-short/web.env`, từ chối khi làn bận).
+- Web 8080 (tmux `youtube:web`, worktree `~/projects/youtube-auto-short-web`) chạy `e1daf77` (branch tạm `web/tc-aiq2-pkg` = PR #131 TC-AIQ2 + PR #132 PKG1/PKG2, detached; restart 2026-10-24 10:24 UTC). Sau khi merge #131 / #132: trỏ lại main, xóa branch tạm. Restart: hỏi HUMAN LEAD rồi `~/.local/bin/auto-short-web-restart` (mật khẩu ở `~/.local/share/auto-short/web.env`, từ chối khi làn bận).
 - Thư mục dự án chuyển sang `~/projects/` ngày 2026-10-19; backup JSON trước khi chuyển: xem ops-notes.
 - `config.toml` (không trong git) `[storage]`: `auto_archive = true`, `auto_archive_grace_minutes = 7200`.
 - Kho nguồn ghép chủ đề `work/_theme_sources/` (13 video, tải dần bằng `python -m auto_short.theme_render.sources`).
