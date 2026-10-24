@@ -148,7 +148,7 @@
         const b = el("button", { type: "button", class: "btn small", text });
         b.disabled = visualPending; b.addEventListener("click", action); actions.append(b);
       };
-      const path = `/variants/${v.key12}`;
+      const path = `/variants/r${v.revision}/${v.key12}`;
       if (v.inline_url) button("Xem", () => play(v.inline_url));
       if (v.state === "draft" && v.size != null) button("Duyệt", () => performVisual(() => request(path + "/approve", "POST")));
       if (v.download_url) actions.append(el("a", { href: v.download_url, class: "btn small", text: "Tải bản đăng", download: "" }));
@@ -156,7 +156,7 @@
       else if (v.size == null) button("Dựng lại", () => performVisual(() => request("/variants", "POST", v.spec)));
       else button("Xóa", () => { if (confirm("Xóa bản ambient này?")) performVisual(() => request(path, "DELETE")); });
       const size = v.size == null ? "—" : v.size >= 1e9 ? `${(v.size / 1e9).toFixed(2)} GB` : `${(v.size / 1e6).toFixed(1)} MB`;
-      const row = el("tr", {}, ...[sourceLabel(v.spec.visual.asset_id), states[v.state], size, seconds(v.duration),
+      const row = el("tr", {}, ...[sourceLabel(v.spec.visual.asset_id), `r${v.revision} · ${states[v.state]}`, size, seconds(v.duration),
         seconds(v.build_seconds), v.method || "—"].map((text) => el("td", { text })), actions);
       if (v.job && v.job.error) row.firstChild.append(el("p", { class: "error small", text: v.job.error }));
       return row;
@@ -172,6 +172,6 @@
   $("visual-source").addEventListener("change", motionOptions);
   $("visual-preview").addEventListener("click", () => performVisual(() => request("/preview", "POST", visualSpec())));
   $("visual-build").addEventListener("click", () => performVisual(() => request("/variants", "POST", visualSpec())));
-  $("visual-cancel-preview").addEventListener("click", () => performVisual(() => request("/variants/preview/cancel", "POST")));
+  $("visual-cancel-preview").addEventListener("click", () => performVisual(() => request(`/variants/r${view.preview.revision}/preview/cancel`, "POST")));
   load();
 })();

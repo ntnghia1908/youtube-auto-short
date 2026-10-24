@@ -250,3 +250,24 @@ def test_failed_checks_never_publish(inputs, check):
     assert sha256_file(s.tc3) == s.meta["sha256"]
     if check == "audio":
         assert any("veryfast" in args for args in media.calls)
+
+
+@pytest.mark.parametrize("duration,seconds,accepted", [(4, 20, False), (22, 20, True), (4, 2, True)])
+@pytest.mark.parametrize("preview", [False, True])
+def test_loop_duration_gate_precedes_runner(inputs, duration, seconds, accepted, preview):
+    s, probe = inputs, Media()
+    probe.duration = duration
+    source = s.tc3.parent / "source.mp4"
+    source.write_bytes(b"approved loop")
+    entry = assets.add(s.assets, source, kind="loop", source="synthetic", license="CC0", run=probe)
+    assets.approve(s.assets, entry["id"])
+    spec = {"visual": {"asset_id": entry["id"], "loop_seconds": seconds, "crossfade": 2}}
+    run = Media()
+    if not accepted:
+        with pytest.raises(PackageError, match="Loop dài 4 giây, cần ít nhất 22 giây; hãy chọn vòng ngắn hơn"):
+            build(s, spec=spec, run=run, preview=preview)
+        assert run.calls == []
+    else:
+        build(s, spec=spec, run=run, preview=preview)
+        encode = next(args for args in run.calls if "slow" in args)
+        assert "-stream_loop" not in encode and str(s.assets / entry["file"]) in encode

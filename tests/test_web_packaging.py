@@ -1,14 +1,15 @@
 """PKG1: authenticated HTTP routes plus socket-free service/job verification."""
 import json
+import os
 from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
-from auto_short import theme_plan as tp
+from auto_short import hashing, theme_plan as tp
 from auto_short.config import PackagingConfig
-from auto_short.packaging import PackageError, record, thumbnail
+from auto_short.packaging import PackageError, record, thumbnail, variant, visual
 from auto_short.web import packaging as web
 from auto_short.web.jobs import RENDER
 from auto_short.workspace import atomic_write_json
@@ -226,7 +227,7 @@ def test_visual_service_job_cache_approve_preview_stale_and_delete(service):
         assert s.runner.wait_idle(5) and job.status == "done", job.error
         row = s.package.view(PID, ident)["variants"][0]
         assert row["state"] == "draft" and row["inline_url"] and row["download_url"] is None
-        s.package.change_variant(PID, ident, key12)
+        s.package.change_variant(PID, ident, s.plan["revision"], key12)
         assert s.package.view(PID, ident)["variants"][0]["download_url"]
         s.package.media_runner = lambda _: pytest.fail("cache used ffmpeg")
         cached, code = s.package.render_visual(PID, ident, SPEC)
@@ -242,8 +243,8 @@ def test_visual_service_job_cache_approve_preview_stale_and_delete(service):
         row = s.package.view(PID, ident)["variants"][0]
         assert row["state"] == "stale" and row["inline_url"] is None and row["download_url"] is None
         with pytest.raises(web.Unavailable):
-            s.package.change_variant(PID, ident, key12)
-        s.package.change_variant(PID, ident, key12, delete=True)
+            s.package.change_variant(PID, ident, s.plan["revision"], key12)
+        s.package.change_variant(PID, ident, s.plan["revision"], key12, delete=True)
         assert s.package.view(PID, ident)["variants"] == []
     finally:
         s.runner.stop()
@@ -280,7 +281,7 @@ def test_http_visual_lifecycle_and_strict_routes(setup):
     assert s.c.post(url + "/variants", json=SPEC).status_code == 202
     assert s.c.post(url + "/variants", json=SPEC).status_code == 200
     row = s.c.get(url).json()["variants"][0]
-    path = "/variants/" + row["key12"]
+    path = f"/variants/r{row['revision']}/{row['key12']}"
     assert s.c.delete(url + path).status_code == 409
     assert s.c.post(url + path + "/cancel").status_code == 200
     assert s.c.post(url + "/variants", json=SPEC).status_code == 202
@@ -323,6 +324,8 @@ def test_visual_registered_endpoints_socket_free(service):
     def endpoint(path, method="POST"):
         return next(r.endpoint for r in s.app.routes if getattr(r, "path", None) == path and method in r.methods)
     def call(path, method="POST", **kwargs):
+        if "{revision}" in path:
+            kwargs.setdefault("revision", s.plan["revision"])
         return endpoint(prefix + path, method)(PID, ident, **kwargs)
     def data(result):
         return json.loads(result.body)
@@ -331,8 +334,8 @@ def test_visual_registered_endpoints_socket_free(service):
     assert call("/variants", body=body).status_code == 202
     row = s.package.visual_view(PID, ident)["variants"][0]
     key = row["key12"]
-    assert call("/variants/{key12}", "DELETE", key12=key).status_code == 409
-    assert call("/variants/{key12}/cancel", key12=key).status_code == 200
+    assert call("/variants/r{revision}/{key12}", "DELETE", key12=key).status_code == 409
+    assert call("/variants/r{revision}/{key12}/cancel", key12=key).status_code == 200
     assert call("/variants", body=body).status_code == 202
     s.runner.start()
     try:
@@ -342,7 +345,7 @@ def test_visual_registered_endpoints_socket_free(service):
         def file(name=None, inline=0):
             return file_route(PID, f"{ident}-r1", name or f"variant-{key}.mp4", inline)
         assert file().status_code == 404 and file(inline=1).status_code == 200
-        assert call("/variants/{key12}/approve", key12=key).status_code == 200
+        assert call("/variants/r{revision}/{key12}/approve", key12=key).status_code == 200
         assert file().headers["content-type"] == "video/mp4"
         assert "attachment" in file().headers["content-disposition"]
         assert data(call("/variants", body=body))["variant"]["state"] == "approved"
@@ -355,8 +358,8 @@ def test_visual_registered_endpoints_socket_free(service):
         tc3, _ = fake_output(s, s.plan)
         tc3.write_bytes(b"tampered")
         assert file().status_code == 404 and file(inline=1).status_code == 404
-        assert call("/variants/{key12}/approve", key12=key).status_code == 409
-        assert call("/variants/{key12}", "DELETE", key12=key).status_code == 200
+        assert call("/variants/r{revision}/{key12}/approve", key12=key).status_code == 409
+        assert call("/variants/r{revision}/{key12}", "DELETE", key12=key).status_code == 200
     finally:
         s.runner.stop()
 
@@ -366,3 +369,86 @@ def test_visual_registered_endpoints_socket_free(service):
 def test_visual_body_is_strict_and_bounded(body):
     with pytest.raises(ValueError):
         web.VariantIn(visual=body)
+
+
+def test_visual_mutations_are_scoped_to_revision(service):
+    s, ident = service, service.plan["plan_id"]
+    prefix = "/api/playlists/{pid}/theme-plans/{plan_id}/package/variants/r{revision}/{key12}"
+    def mutate(revision, key12, action="", method="POST"):
+        endpoint = next(r.endpoint for r in s.app.routes if getattr(r, "path", None) == prefix + action and method in r.methods)
+        return endpoint(PID, ident, revision, key12)
+
+    old_plan, old_meta, old_folder, _ = s.package.context(PID, ident)
+    old_tc3, _ = s.package.plans.output(PID, old_plan, verify=True)
+    old_doc = visual.build(old_folder, old_tc3, old_meta, SPEC, s.cfg.packaging.asset_dir, run=Media())
+    key12 = old_doc["key"][:12]
+    assert mutate(old_plan["revision"], key12, "/approve").status_code == 200
+    current = tp.update_plan(s.cfg, PID, ident, revision=old_plan["revision"], title="Tu học mỗi ngày",
+                             clip_ids=[c["id"] for c in old_plan["clips"]])
+    current = tp.approve_plan(s.cfg, PID, ident, revision=current["revision"], duration_override=True)
+    current_tc3, current_meta = fake_output(s, current)
+    folder = record.directory(s.cfg.render.output_dir, PID, ident, current["revision"])
+    doc = visual.build(folder, current_tc3, current_meta, SPEC, s.cfg.packaging.asset_dir, run=Media())
+    assert doc["key"] == old_doc["key"] and current_tc3.read_bytes() == old_tc3.read_bytes()
+    assert mutate(old_plan["revision"], key12, "/approve").status_code == 409
+    assert mutate(current["revision"], key12, "/approve").status_code == 200
+    rows = s.package.view(PID, ident)["variants"]
+    assert {(r["revision"], r["state"]) for r in rows} == {(old_plan["revision"], "stale"), (current["revision"], "approved")}
+    cached, code = s.package.render_visual(PID, ident, SPEC)
+    assert code == 200 and cached["variant"]["revision"] == current["revision"]
+    assert cached["variant"]["state"] == "approved"
+    before = {p.name: p.read_bytes() for p in folder.iterdir()}
+    jobs = {}
+    for plan, meta in ((old_plan, old_meta), (current, current_meta)):
+        for preview in (False, True):
+            key = web.visual_key(PID, ident, plan["revision"], None if preview else key12)
+            target = web.VisualTarget(s.package, PID, plan, meta, variant.normalize(SPEC), preview)
+            jobs[plan["revision"], preview], _ = s.runner.submit(key, web.KIND, target)
+    try:
+        rows = s.package.view(PID, ident)["variants"]
+        assert {(r["revision"], r["key12"]) for r in rows} == {(old_plan["revision"], key12), (current["revision"], key12)}
+        assert mutate(old_plan["revision"], key12, "/cancel").status_code == 200
+        assert jobs[old_plan["revision"], False].status == "cancelled"
+        assert jobs[old_plan["revision"], True].active
+        assert mutate(old_plan["revision"], "preview", "/cancel").status_code == 200
+        assert jobs[old_plan["revision"], True].status == "cancelled"
+        assert all(jobs[current["revision"], preview].active for preview in (False, True))
+        assert mutate(current["revision"] + 1, key12, method="DELETE").status_code == 404
+        assert mutate(old_plan["revision"], key12, method="DELETE").status_code == 200
+        assert not list(old_folder.iterdir())
+        assert before == {p.name: p.read_bytes() for p in folder.iterdir()}
+        assert all(jobs[current["revision"], preview].active for preview in (False, True))
+    finally:
+        s.runner.cancel(web.KIND)
+
+
+def test_visual_view_caches_fingerprints_and_download_hashes_fully(service, monkeypatch):
+    s, ident = service, service.plan["plan_id"]
+    plan, meta, folder, _ = s.package.context(PID, ident)
+    tc3, _ = s.package.plans.output(PID, plan, verify=True)
+    docs = [visual.build(folder, tc3, meta, spec, s.cfg.packaging.asset_dir, run=Media())
+            for spec in (SPEC, {"visual": {**SPEC["visual"], "asset_id": "generated:dawn"}})]
+    counts, original = {}, hashing.sha256_file
+    def sha(path):
+        if path.name.startswith("variant-") and path.suffix == ".mp4":
+            counts[path] = counts.get(path, 0) + 1
+        return original(path)
+    monkeypatch.setattr(hashing, "sha256_file", sha)
+    monkeypatch.setattr(variant, "sha256_file", sha)
+    files = [folder / f"variant-{d['key'][:12]}.mp4" for d in docs]
+    for _ in range(2):
+        assert all(v["state"] == "draft" for v in s.package.view(PID, ident)["variants"])
+    assert counts == {path: 1 for path in files}
+    st = files[0].stat()
+    os.utime(files[0], ns=(st.st_atime_ns, st.st_mtime_ns + 1000000))
+    assert all(v["state"] == "draft" for v in s.package.view(PID, ident)["variants"])
+    assert counts == {files[0]: 2, files[1]: 1}
+    files[0].write_bytes(files[0].read_bytes() + b"changed")
+    rows = s.package.view(PID, ident)["variants"]
+    assert next(v for v in rows if v["key12"] == docs[0]["key"][:12])["state"] == "stale"
+    assert counts == {files[0]: 3, files[1]: 1}
+    download = next(r.endpoint for r in s.app.routes if getattr(r, "path", None) ==
+                    "/files/playlists/{pid}/theme-pkg/{plan_rev}/{name}")
+    for _ in range(2):
+        assert download(PID, folder.name, files[1].name, inline=1).status_code == 200
+    assert counts[files[1]] == 3

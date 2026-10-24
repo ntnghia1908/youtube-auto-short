@@ -5,7 +5,7 @@ import json
 import math
 import re
 
-from ..hashing import config_hash, sha256_file
+from ..hashing import config_hash, fingerprint, sha256_file
 from ..workspace import atomic_write_json
 from . import PackageError, assets, record
 
@@ -48,6 +48,10 @@ def source(spec, asset_dir):
     if entry["kind"] not in ("image", "loop") or (entry["kind"] == "loop" and v["motion"] != "none"):
         raise PackageError("Ken Burns chỉ dùng cho ảnh; nguồn phải là ảnh hoặc loop")
     _, path = assets.usable(asset_dir, v["asset_id"], kind=entry["kind"])
+    needed = v["loop_seconds"] + v["crossfade"]
+    if entry["kind"] == "loop" and entry["duration"] < needed:
+        raise PackageError(f"Loop dài {entry['duration']:g} giây, cần ít nhất {needed:g} giây; "
+                           "hãy chọn vòng ngắn hơn")
     return entry["kind"], path
 
 
@@ -122,20 +126,26 @@ def write(folder, doc):
     atomic_write_json(folder / f"variant-{doc['key'][:12]}.json", doc)
 
 
-def reusable(folder, doc):
+def reusable(folder, doc, *, cache=None):
     path = folder / f"variant-{doc['key'][:12]}.mp4"
-    return path.is_file() and not path.is_symlink() and path.stat().st_size == doc["size"] \
-        and sha256_file(path) == doc["sha256"]
+    if not path.is_file() or path.is_symlink():
+        return False
+    if cache is None:
+        return path.stat().st_size == doc["size"] and sha256_file(path) == doc["sha256"]
+    previous = cache.get(path.resolve())
+    current = fingerprint(path, (previous,) if previous is not None else ())
+    cache[current.path] = current
+    return current.size == doc["size"] and current.sha256 == doc["sha256"]
 
 
-def status(folder, doc, plan, meta):
+def status(folder, doc, plan, meta, *, cache=None):
     stale = meta is None or any(doc["tc3"][k] != meta[k] for k in ("sha256", "revision", "plan_fingerprint")) \
         or doc["tc3"]["plan_id"] != plan["plan_id"] or doc["tc3"]["revision"] != plan["revision"] \
-        or doc["tc3"]["plan_fingerprint"] != record.fingerprint(plan) or not reusable(folder, doc)
+        or doc["tc3"]["plan_fingerprint"] != record.fingerprint(plan) or not reusable(folder, doc, cache=cache)
     return "stale" if stale else "approved" if doc["approved_at"] else "draft"
 
 
-def listing(folder, plan, meta):
+def listing(folder, plan, meta, *, cache=None):
     result = []
     if folder.parent.is_dir():
         for candidate in sorted(folder.parent.glob(plan["plan_id"] + "-r*")):
@@ -148,7 +158,7 @@ def listing(folder, plan, meta):
                     continue
                 try:
                     doc = read(candidate, ident)
-                    state = status(candidate, doc, plan, meta) if candidate == folder else "stale"
+                    state = status(candidate, doc, plan, meta, cache=cache) if candidate == folder else "stale"
                     result.append((candidate, doc, state))
                 except PackageError:
                     continue

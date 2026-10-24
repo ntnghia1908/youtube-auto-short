@@ -26,8 +26,8 @@ def render_key(pid, plan_id):
     return f"theme-package:{pid}:{plan_id}:thumbnails"
 
 
-def visual_key(pid, plan_id, ident=None):
-    return f"theme-package:{pid}:{plan_id}:" + (f"variant:{ident}" if ident else "preview")
+def visual_key(pid, plan_id, revision, ident=None):
+    return f"theme-package:{pid}:{plan_id}:r{revision}:" + (f"variant:{ident}" if ident else "preview")
 
 
 class Unavailable(Exception):
@@ -110,6 +110,7 @@ class Packages:
         self.lock = threading.RLock()
         self.media_runner = media_runner
         self.previews = {}
+        self.variant_cache = {}  # FileFingerprint entries, accessed under self.lock
 
     def checked(self, pid):
         return self.plans.checked(pid)
@@ -177,15 +178,18 @@ class Packages:
     def visual_view(self, pid, plan_id):
         plan, meta, folder, _ = self.context(pid, plan_id, require_output=False)
         rows = []
-        for location, doc, state in variant.listing(folder, plan, meta):
+        with self.lock:
+            entries = variant.listing(folder, plan, meta, cache=self.variant_cache)
+        for location, doc, state in entries:
             ident = doc["key"][:12]
+            revision = int(record.REVISION.fullmatch(location.name)[2])
             try:
                 variant.source(doc["spec"], self.config.packaging.asset_dir)
             except PackageError:
                 state = "stale"
             url = f"/files/playlists/{pid}/theme-pkg/{location.name}/variant-{ident}.mp4"
-            job = self.runner.latest(visual_key(pid, plan_id, ident))
-            rows.append(dict(key12=ident, spec=doc["spec"], state=state, size=doc["size"], duration=doc["duration"],
+            job = self.runner.latest(visual_key(pid, plan_id, revision, ident))
+            rows.append(dict(revision=revision, key12=ident, spec=doc["spec"], state=state, size=doc["size"], duration=doc["duration"],
                              method=doc["checks"]["method"], build_seconds=doc["build_seconds"],
                              inline_url=url + "?inline=1" if state != "stale" else None,
                              download_url=url if state == "approved" else None, job=job_view(job)))
@@ -196,10 +200,12 @@ class Packages:
                     or self.runner.latest(job.key) is not job or (not job.active and job.status != "failed"):
                 continue
             ident = variant.key(target.visual, target.meta["sha256"])[:12]
-            if not job.active and any(r["key12"] == ident for r in rows):
+            revision = target.plan["revision"]
+            if not job.active and any((r["revision"], r["key12"]) == (revision, ident) for r in rows):
                 continue
-            rows = [r for r in rows if r["key12"] != ident]
-            rows.append(dict(key12=ident, spec=target.visual, state="building" if job.active else "draft", size=None, duration=None,
+            rows = [r for r in rows if (r["revision"], r["key12"]) != (revision, ident)]
+            rows.append(dict(revision=revision, key12=ident, spec=target.visual,
+                             state="building" if job.active else "draft", size=None, duration=None,
                              method=None, build_seconds=None, inline_url=None, download_url=None, job=job_view(job)))
         sources = [dict(id="generated:" + p, kind="generated", tags=[p], license="Nền tạo sẵn · license-free")
                    for p in variant.PRESETS]
@@ -223,15 +229,15 @@ class Packages:
                     url = f"/files/playlists/{pid}/theme-pkg/{folder.name}/{path.name}?inline=1"
                 except PackageError:
                     pass
-        return dict(variants=rows, visual_sources=safe(sources), preview=dict(url=url, key12=ident,
-                    job=job_view(self.runner.latest(visual_key(pid, plan_id)))))
+        return dict(variants=rows, visual_sources=safe(sources), preview=dict(url=url, key12=ident, revision=plan["revision"],
+                    job=job_view(self.runner.latest(visual_key(pid, plan_id, plan["revision"])))))
 
     def render_visual(self, pid, plan_id, spec, *, preview=False):
         spec = variant.normalize(spec)
         plan, meta, folder, _ = self.context(pid, plan_id)
         variant.source(spec, self.config.packaging.asset_dir)
         ident = variant.key(spec, meta["sha256"])[:12]
-        key = visual_key(pid, plan_id, None if preview else ident)
+        key = visual_key(pid, plan_id, plan["revision"], None if preview else ident)
         job = self.runner.latest(key)
         if job is not None and job.active:
             return dict(job=job_view(job), created=False), 200
@@ -240,30 +246,39 @@ class Packages:
                 cached = variant.read(folder, ident)
             except PackageError:
                 cached = None
-            if cached and variant.status(folder, cached, plan, meta) != "stale":
+            with self.lock:
+                state = variant.status(folder, cached, plan, meta, cache=self.variant_cache) if cached else "stale"
+            if state != "stale":
                 return dict(variant=next(v for v in self.visual_view(pid, plan_id)["variants"]
-                                         if v["key12"] == ident), created=False), 200
+                                         if (v["revision"], v["key12"]) == (plan["revision"], ident)), created=False), 200
         job, created = self.runner.submit(key, KIND, VisualTarget(self, pid, plan, meta, spec, preview))
         return dict(job=job_view(job), created=created), 202 if created else 200
 
-    def find_variant(self, pid, plan_id, ident):
+    def find_variant(self, pid, plan_id, revision, ident):
         if not variant.KEY12.fullmatch(ident):
             raise PackageError("invalid variant key")
-        plan, meta, folder, _ = self.context(pid, plan_id, require_output=False)
-        found = [r for r in variant.listing(folder, plan, meta) if r[1]["key"][:12] == ident]
-        if not found:
+        plan, meta, _, _ = self.context(pid, plan_id, require_output=False)
+        folder = record.directory(self.config.render.output_dir, pid, plan_id, revision)
+        doc = variant.read(folder, ident)
+        if doc is None:
             raise MissingPlan()
-        return next((r for r in found if r[0] == folder), found[0])
+        with self.lock:
+            state = variant.status(folder, doc, plan, meta, cache=self.variant_cache) \
+                if revision == plan["revision"] else "stale"
+        return folder, doc, state
 
-    def change_variant(self, pid, plan_id, ident, *, delete=False):
-        folder, doc, state = self.find_variant(pid, plan_id, ident)
+    def change_variant(self, pid, plan_id, revision, ident, *, delete=False):
+        folder, doc, state = self.find_variant(pid, plan_id, revision, ident)
         for job in self.runner.jobs():
             target = job.target
             if job.active and job.kind == KIND and isinstance(target, VisualTarget) and target.pid == pid \
-                    and target.plan["plan_id"] == plan_id and variant.key(target.visual) == doc["loop_key"]:
+                    and target.plan["plan_id"] == plan_id and target.plan["revision"] == revision \
+                    and variant.key(target.visual) == doc["loop_key"]:
                 raise Unavailable("đang dựng hình ambient; hãy hủy hoặc chờ hoàn tất")
         if delete:
             variant.delete(folder, doc)
+            with self.lock:
+                self.variant_cache.pop((folder / f"variant-{ident}.mp4").resolve(), None)
             return {"deleted": True}
         if state == "stale":
             raise Unavailable("cũ — dựng lại")
@@ -412,28 +427,29 @@ def register(app: FastAPI, service: Packages):
     def preview(pid: str, plan_id: str, body: VariantIn):
         return invoke(pid, lambda: response(*service.render_visual(pid, plan_id, body.model_dump(), preview=True)), write=True)
 
-    @app.post(base + "/variants/{key12}/approve")
-    def approve_variant(pid: str, plan_id: str, key12: str):
-        return invoke(pid, lambda: response(service.change_variant(pid, plan_id, key12)), write=True)
+    @app.post(base + "/variants/r{revision}/{key12}/approve")
+    def approve_variant(pid: str, plan_id: str, revision: int, key12: str):
+        return invoke(pid, lambda: response(service.change_variant(pid, plan_id, revision, key12)), write=True)
 
-    @app.post(base + "/variants/{key12}/cancel")
-    def cancel_variant(pid: str, plan_id: str, key12: str):
+    @app.post(base + "/variants/r{revision}/{key12}/cancel")
+    def cancel_variant(pid: str, plan_id: str, revision: int, key12: str):
         def action():
             service.plans.find(pid, plan_id)
+            record.directory(service.config.render.output_dir, pid, plan_id, revision)
             if key12 != "preview" and not variant.KEY12.fullmatch(key12):
                 raise PackageError("invalid variant key")
-            jobs = service.runner.cancel(KIND, {visual_key(pid, plan_id, None if key12 == "preview" else key12)})
+            jobs = service.runner.cancel(KIND, {visual_key(pid, plan_id, revision, None if key12 == "preview" else key12)})
             return response({"jobs": [job_view(j) for j in jobs]})
         return invoke(pid, action, write=True)
 
-    @app.delete(base + "/variants/{key12}")
-    def delete_variant(pid: str, plan_id: str, key12: str):
+    @app.delete(base + "/variants/r{revision}/{key12}")
+    def delete_variant(pid: str, plan_id: str, revision: int, key12: str):
         def action():
             # A running build does not have a sidecar yet.
-            job = service.runner.latest(visual_key(pid, plan_id, key12))
+            job = service.runner.latest(visual_key(pid, plan_id, revision, key12))
             if job is not None and job.active:
                 raise Unavailable("đang dựng hình ambient; hãy hủy hoặc chờ hoàn tất")
-            return response(service.change_variant(pid, plan_id, key12, delete=True))
+            return response(service.change_variant(pid, plan_id, revision, key12, delete=True))
         return invoke(pid, action, write=True)
 
     @app.get("/files/playlists/{pid}/theme-pkg/{plan_rev}/{name}")

@@ -168,7 +168,7 @@ def build(folder, tc3, meta, spec, asset_dir, *, run=None, preview=False, before
             if kind == "image":
                 inputs = ["-loop", "1", "-framerate", str(VISUAL_FPS), "-i", str(asset)]
             elif kind == "loop":
-                inputs = ["-stream_loop", "-1", "-i", str(asset)]
+                inputs = ["-i", str(asset)]
             _call(run, ["-y", "-filter_complex_threads", "1", *inputs, "-filter_complex", _graph(spec, kind),
                         "-map", "[out]", "-frames:v", str(spec["visual"]["loop_seconds"] * VISUAL_FPS),
                         "-an", *_encode("slow"), "-movflags", "+faststart", str(loop)])
