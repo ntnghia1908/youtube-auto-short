@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: CHANGE
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -75,11 +75,11 @@ Không chạm database, security model, public API ngoài (chỉ thêm trường
 
 ## Result
 
-- Main changes:
-- Tests:
-- Diff + / − (app, test):
-- Helper mới (đã tìm, lý do không tái dùng):
-- Review:
-- Important findings / decisions:
-- Known limitations:
+- Main changes: `record.default_asset_ids` (1 ảnh tất định theo plan_id cho cả 3 kiểu bản ghi mới); view thêm `duration`, `image_order`; trang Đóng gói: lưới 3 mẫu bấm-để-chọn, khung xem lại (ngang 640 px, dọc, cỡ YouTube 360 px + nhãn thời lượng), "Ảnh khác", tự dựng 1 lần khi chưa có ảnh, ô PKG3 thu vào `<details>` "Tùy chỉnh".
+- Tests: AC1 `test_default_asset_is_deterministic_empty_safe_and_keeps_existing`; AC2–AC4 server: test build / cache / edit-rebuild PKG3 hiện có + markup test; hành vi trình duyệt: xem trên 8080. AC5–AC6: test approve / download, PKG2 / PKG3 pass. Targeted 223 passed; full suite 2521 passed, 1 skipped (ORCHESTRATOR); `node --check` OK.
+- Diff + / − (app, test): app +107 / −34, test +38 / −2.
+- Helper mới (đã tìm, lý do không tái dùng): `record.default_asset_ids` (không có hàm chọn tất định); JS `clock` (h:mm:ss; `seconds()` của phần ambient chỉ m:ss và nằm trong `drawVisual`), `drawChoice`.
+- Review: ORCHESTRATOR — `view()` ban đầu gọi `episode.images` (băm sha256 129 ảnh, ~0,34 s mỗi lượt, 2 giây / lượt khi đang dựng) → đổi `image_order` lấy từ danh sách ảnh `view()` đã có, sắp theo id; PUT vẫn kiểm `usable`.
+- Important findings / decisions: bấm mẫu sau khi đã duyệt đưa bản ghi về nháp (như sửa PKG3).
+- Known limitations: bản ghi PKG3 đã có trước (asset_ids rỗng) giữ "không ảnh" cho tới khi bấm "Ảnh khác".
 - PR:
