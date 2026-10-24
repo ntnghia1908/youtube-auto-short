@@ -215,6 +215,8 @@ const ThemePlan = (() => {
       actions.append(retry);
       if (plan.output && plan.output.download_url) {
         appendOutput(actions, plan.output);
+        actions.append(el("a", { class: "btn small", text: "Đóng gói",
+          href: location.pathname.replace(/\/favorites\/?$/, "") + "/theme-plans/" + encodeURIComponent(plan.plan_id) + "/package" }));
       }
       drawClips();
     }

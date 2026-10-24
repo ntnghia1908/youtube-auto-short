@@ -62,6 +62,8 @@ from . import (
     monitor as monitor_mod,
     theme_index as theme_index_web,
     theme_plan as theme_plan_web,
+    packaging as packaging_web,
+    episode_thumbs as episode_thumbs_web,
 )
 from .auth import COOKIE_NAME, SessionSigner, load_or_create_secret
 from .storage import StorageCache, auto_archive_plan, episode_sizes, parse_time, video_id
@@ -361,7 +363,8 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             return image_search_target(config, url, search=post_search) if isinstance(url, str) and url else None
         if kind == KIND_COMPILATION:  # CP8.33 G5: the key is ``compilation:<playlist_id>:<cid>``, not an episode
             return compilations.rebuild(eid, spec)
-        if kind in (theme_plan_web.KIND_GENERATE, theme_plan_web.KIND_THEME_RENDER):
+        if kind in (theme_plan_web.KIND_GENERATE, theme_plan_web.KIND_THEME_RENDER,
+                    packaging_web.KIND, episode_thumbs_web.KIND):
             return None  # TC2: restart requires a fresh user request and plan audit
         if not ep.valid_episode_id(eid):
             return None
@@ -427,6 +430,8 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
 
     compilations = comp_web.Compilations(config, playlists, runner, lambda doc: ctx.playlist_docx_series(doc))
     theme_plans = theme_plan_web.ThemePlans(config, playlists, runner, preflight=preflight)
+    packages = packaging_web.Packages(theme_plans)
+    episode_thumbs = episode_thumbs_web.EpisodeThumbs(theme_plans)
     runner.configure_persistence(Path(config.workspace.dir) / QUEUE_FILE, _rebuild_job)
     runner.priority.attach(Path(config.workspace.dir) / PRIORITY_FILE)  # CP8.26 P1
     auto_vertical.attach(Path(config.workspace.dir) / WISH_FILE)  # CP8.35 D3
@@ -459,6 +464,8 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     app.state.playlists = playlists
     app.state.compilations = compilations
     app.state.theme_plans = theme_plans
+    app.state.packages = packages
+    app.state.episode_thumbs = episode_thumbs
     app.state.signer = signer
     download_table = dl_mod.DownloadTable()  # CP8.34 D3: progress of ``?dl=<token>`` downloads (memory only)
     app.state.downloads = download_table
@@ -575,6 +582,9 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
 
     theme_index_web.register(app, config, playlists, STATIC_DIR)  # TC-WEB1: GET-only TC1 preview
     theme_plan_web.register(app, theme_plans)  # TC2 phase C: planner and TC3 landscape jobs
+
+    packaging_web.register(app, packages)  # PKG1: offline thumbnails and manual approval
+    episode_thumbs_web.register(app, episode_thumbs)
 
     app.include_router(files_catchall.build(ctx))  # D4: catch-all is always registered last.
 
