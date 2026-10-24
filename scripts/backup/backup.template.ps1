@@ -1,24 +1,33 @@
-# Sao lưu bản HD ngang + bản dọc của Kinh Địa Tạng từ web 8080 về máy này (chạy qua đêm).
+# Sao lưu bản HD ngang + bản dọc ("[HD Mobile]") của @@SERIES@@ từ web 8080 về máy này (chạy qua đêm).
 # Chạy lại bao nhiêu lần cũng được: file đã tải và kiểm tra xong sẽ bỏ qua, file dở sẽ tải tiếp.
 #
-#   powershell -ExecutionPolicy Bypass -File .\kdt-backup.ps1 -Dest D:\KinhDiaTang_HD
+#   powershell -ExecutionPolicy Bypass -File .\backup.ps1 -Dest D:\@@DESTNAME@@
 #   bỏ bản dọc tập 1-10 đã có:        ... -SkipDoc "1-10"
 #   hoặc kiểm và nhận file đã tải:    ... -Have "C:\Users\<tên>\Downloads"
 #   chỉ tải thumbnail (không tải video): ... -ThumbsOnly
+#   Bước cuối (HD1 G6): báo cho VM từng file đã kiểm sha256 (POST /api/episodes/<id>/backup), rồi liệt kê tập đủ điều kiện
+#   (cả bản ngang lẫn bản dọc đã xác nhận) + dung lượng, hỏi MỘT lần "Giải phóng N tập (X GB) trên VM? (y/N)" rồi gọi
+#   POST /api/episodes/<id>/release. Script không xóa gì trên máy này.
+#   chạy qua đêm, không hỏi:          ... -Release
+#   chỉ xác nhận, không giải phóng:   ... -NoRelease
 #   Thumbnail: mỗi video đã có trong thư mục đích được tải kèm ảnh cùng tên, đuôi .jpg (tải lại mỗi lần chạy, ảnh nhỏ).
 #
 # Sinh tự động ngày @@GENERATED@@ (bảng sha256 bên dưới); file mới hơn bảng chỉ kiểm theo dung lượng.
 param(
     [string]$Server = "http://10.8.102.102:8080",
-    [string]$Dest = "D:\KinhDiaTang_HD",
-    [string]$Playlist = "PLOynZc0cJJfDMY5-Fd0su_Ea3TGdZ2wk4",
+    [string]$Dest = 'D:\@@DESTNAME@@',
+    [string]$Playlist = '@@PLAYLIST@@',
+    [string]$Series = '@@SERIES@@',   # tên bộ kinh trong tên file
     [int]$Retries = 30,
     [switch]$NoVertical,
     [switch]$ThumbsOnly,     # chỉ tải thumbnail cho video đã có trong thư mục đích
+    [switch]$Release,        # HD1 G6: giải phóng trên VM không hỏi (chạy qua đêm)
+    [switch]$NoRelease,      # HD1 G6: chỉ xác nhận sao lưu với VM, không giải phóng
     [string]$SkipDoc = "",   # tập không tải bản dọc, vd "1-10" hoặc "1-10,15"
     [string]$Have = ""       # thư mục chứa file đã tải từ web trước đây (tên gốc ..._TậpN_Doc.mp4 / _HD.mp4): kiểm sha rồi nhận vào
 )
 $ErrorActionPreference = "Stop"
+if ($Release -and $NoRelease) { throw "-Release và -NoRelease không đi cùng nhau" }
 
 # sha256 đã biết trên server: "<video_id>|HD" (enhance.json) và "<video_id>|Doc" (output/<id>/full/vertical.mp4)
 $KnownSha = @{
@@ -30,7 +39,7 @@ $qual = Split-Path -Qualifier $Dest -ErrorAction SilentlyContinue
 if (-not $qual -or -not ($drives | Where-Object { "$($_.Name):" -eq $qual })) {
     Write-Host "Ổ đích '$qual' không dùng được trên máy này. Các ổ hiện có:"
     $drives | ForEach-Object { Write-Host ("  {0}:  còn trống {1:N0} GB" -f $_.Name, ($_.Free / 1GB)) }
-    Write-Host "Chạy lại với -Dest <ổ còn >= 200 GB>\KinhDiaTang_HD"
+    Write-Host "Chạy lại với -Dest <ổ còn >= 200 GB>\@@DESTNAME@@"
     exit 2
 }
 New-Item -ItemType Directory -Force -Path $Dest | Out-Null
@@ -80,10 +89,48 @@ function Get-RemoteSize($url) {
     return -1
 }
 
-# Tên file backup: "[HD] Kinh Địa Tạng Bồ Tát Bổn Nguyện - Tập 1.mp4" / "[HD Dọc] ... - Tập 1.mp4"
+# Tên file backup: "[HD] <bộ kinh> - Tập 1.mp4" / "[HD Mobile] <bộ kinh> - Tập 1.mp4" (bản dọc; trước đây "[HD Dọc]")
 function BackupName([int]$n, [string]$kind) {
-    $tag = if ($kind -eq "Doc") { "[HD Dọc]" } else { "[HD]" }
-    return "$tag Kinh Địa Tạng Bồ Tát Bổn Nguyện - Tập $n.mp4"
+    $tag = if ($kind -eq "Doc") { "[HD Mobile]" } else { "[HD]" }
+    return "$tag $Series - Tập $n.mp4"
+}
+
+# POST JSON tới server (cookie đăng nhập đã có); trả @{ code = <HTTP>; body = <chuỗi JSON> }
+function Post-Json($path, $obj) {
+    $bodyFile = Join-Path $Dest ".post-body.json"
+    $outFile = Join-Path $Dest ".post-out.json"
+    [IO.File]::WriteAllText($bodyFile, ($obj | ConvertTo-Json -Compress), (New-Object Text.UTF8Encoding($false)))
+    for ($i = 1; $i -le 2; $i++) {
+        $code = & $curl -s -o $outFile -w "%{http_code}" -b $Jar -X POST -H "Content-Type: application/json" --data-binary "@$bodyFile" "$Server$path"
+        if ($code -eq "401" -and $i -eq 1) { Login; continue }
+        break
+    }
+    $text = if (Test-Path -LiteralPath $outFile) { Get-Content -Raw -Encoding UTF8 -LiteralPath $outFile } else { "" }
+    Remove-Item -LiteralPath $bodyFile, $outFile -Force -ErrorAction SilentlyContinue
+    return @{ code = [int]$code; body = $text }
+}
+
+# Đổi tên file "[HD Dọc] ..." cũ trong thư mục đích sang "[HD Mobile] ..." (cả .jpg, .part); dòng sha đã kiểm được giữ nguyên
+function Rename-LegacyMobile {
+    $n = 0
+    Get-ChildItem -LiteralPath $Dest -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "[[]HD Dọc[]] *" } | ForEach-Object {
+        $new = "[HD Mobile] " + $_.Name.Substring("[HD Dọc] ".Length)
+        $target = Join-Path $Dest $new
+        if (Test-Path -LiteralPath $target) { Log "Bỏ qua $($_.Name): đã có '$new'"; return }
+        Move-Item -LiteralPath $_.FullName -Destination $target
+        Log "Đổi tên $($_.Name) -> $new"
+        $n++
+    }
+    if ($n -and (Test-Path -LiteralPath $Sums)) {
+        $lines = Get-Content -LiteralPath $Sums -Encoding UTF8 | ForEach-Object {
+            $p = $_ -split "  ", 2
+            if ($p.Count -eq 2 -and $p[1].StartsWith("[HD Dọc] ")) {
+                $new = "[HD Mobile] " + $p[1].Substring("[HD Dọc] ".Length)
+                if (Test-Path -LiteralPath (Join-Path $Dest $new)) { "{0}  {1}" -f $p[0], $new } else { $_ }
+            } else { $_ }
+        }
+        Set-Content -LiteralPath $Sums -Value $lines -Encoding UTF8
+    }
 }
 
 $SkipSet = @{}
@@ -138,19 +185,23 @@ function Fetch($url, $file, $key) {
 
 Log "=== Bắt đầu: $Server -> $Dest"
 Login
+Rename-LegacyMobile
 $pl = Get-Json "/api/playlists/$Playlist"
 $free = (Get-PSDrive ((Resolve-Path $Dest).Drive.Name)).Free
 Log ("Ổ đích còn trống {0:N0} GB" -f ($free / 1GB))
 
 $done = @{}
 if (Test-Path -LiteralPath $Sums) { Get-Content -LiteralPath $Sums -Encoding UTF8 | ForEach-Object { $p = $_ -split "  ", 2; if ($p.Count -eq 2) { $done[$p[1]] = $true } } }
-$ok = 0; $skip = 0; $failed = @(); $notReady = @(); $rows = @(); $todo = @()
+$ok = 0; $skip = 0; $failed = @(); $notReady = @(); $rows = @(); $todo = @(); $releasedOnVm = @()
 foreach ($e in ($pl.entries | Sort-Object { [int]("0" + ($_.episode -replace "\D", "")) })) {
     $ep = "{0:D3}" -f [int]("0" + ($e.episode -replace "\D", ""))
     $items = @()
-    if ($e.hd_url) { $items += ,@("HD", $e.hd_url, $e.hd_name) } else { $notReady += "tập $ep HD" }
+    if ($e.hd_url) { $items += ,@("HD", $e.hd_url, $e.hd_name) }
+    elseif ($e.hd_released) { $releasedOnVm += "tập $ep" }  # đã giải phóng trên VM ở lần chạy trước
+    else { $notReady += "tập $ep HD" }
     if (-not $NoVertical -and -not $SkipSet[[int]$ep]) {
-        if ($e.vertical -and $e.vertical.ready -and $e.vertical.url) { $items += ,@("Doc", $e.vertical.url, $e.vertical.name) } else { $notReady += "tập $ep Dọc" }
+        if ($e.vertical -and $e.vertical.ready -and $e.vertical.url) { $items += ,@("Doc", $e.vertical.url, $e.vertical.name) }
+        elseif (-not $e.hd_released) { $notReady += "tập $ep Dọc" }
     }
     foreach ($it in $items) {
         $name = BackupName ([int]$ep) $it[0]
@@ -205,7 +256,7 @@ foreach ($t in $todo) {
     $eta = if ($speed -gt 0) { $ts = [TimeSpan]::FromSeconds($left / $speed); "{0}:{1:D2}" -f [math]::Floor($ts.TotalHours), $ts.Minutes } else { "?" }
     Log ("  TỔNG: {0:N1} / {1:N1} GB ({2:N0}%), {3}/{4} file, tốc độ TB {5:N1} MB/s, còn khoảng {6} (giờ:phút)" -f ($doneBytes / 1GB), ($total / 1GB), (100.0 * $doneBytes / [math]::Max([double]1, [double]$total)), $n, $todo.Count, ($speed / 1MB), $eta)
 }
-# Thumbnail cạnh video: "[HD] ... - Tập N.jpg" (16:9) / "[HD Dọc] ... - Tập N.jpg" (9:16), chỉ cho video đã có
+# Thumbnail cạnh video: "[HD] ... - Tập N.jpg" (16:9) / "[HD Mobile] ... - Tập N.jpg" (9:16), chỉ cho video đã có
 $thumbOk = 0; $thumbMissing = @()
 foreach ($e in $pl.entries) {
     $epNum = [int]("0" + ($e.episode -replace "\D", ""))
@@ -229,9 +280,54 @@ foreach ($e in $pl.entries) {
 Log "Thumbnail: tải $thumbOk ảnh, thiếu $($thumbMissing.Count) (chưa dựng trên server)"
 if ($thumbMissing) { Log ("Thiếu thumbnail: " + ($thumbMissing -join ", ")) }
 
-$Host.UI.RawUI.WindowTitle = "KĐT backup xong"
+# --- HD1 G6: xác nhận sao lưu với VM bằng sha256, rồi (hỏi một lần) giải phóng ---------------------------------------
+$confirmedN = 0; $refused = @(); $released = 0; $releaseFailed = @(); $eligible = @()
+if (-not $ThumbsOnly) {
+    $shaOf = @{}   # tên file -> sha256 đã kiểm (SHA256SUMS.txt: gồm cả file đã tải trước đây và file nhận qua -Have)
+    if (Test-Path -LiteralPath $Sums) { Get-Content -LiteralPath $Sums -Encoding UTF8 | ForEach-Object { $p = $_ -split "  ", 2; if ($p.Count -eq 2) { $shaOf[$p[1]] = $p[0] } } }
+    $okFiles = @{}   # "<video_id>|HD" / "<video_id>|Doc" đã được VM xác nhận -> dung lượng file
+    foreach ($r in $rows) {
+        $f = Join-Path $Dest $r.file
+        $sha = $shaOf[$r.file]
+        if (-not (Test-Path -LiteralPath $f) -or -not $sha) { continue }
+        $kind = if ($r.loai -eq "Doc") { "vertical" } else { "hd" }
+        $res = Post-Json "/api/episodes/$($r.video_id)/backup" @{ kind = $kind; sha256 = $sha }
+        if ($res.code -eq 200) { $confirmedN++; $okFiles["$($r.video_id)|$($r.loai)"] = (Get-Item -LiteralPath $f).Length }
+        else { $refused += "$($r.file) (HTTP $($res.code))"; Log "  VM không nhận xác nhận $($r.file): HTTP $($res.code) $($res.body)" }
+    }
+    Log "Xác nhận sao lưu với VM: $confirmedN file, bị từ chối $($refused.Count)"
+    foreach ($e in $pl.entries) {
+        if (-not $e.video_id) { continue }
+        $hdSize = $okFiles["$($e.video_id)|HD"]; $docSize = $okFiles["$($e.video_id)|Doc"]
+        if ($hdSize -and $docSize) { $eligible += [pscustomobject]@{ id = $e.video_id; ep = $e.episode; bytes = [int64]$hdSize + [int64]$docSize } }
+    }
+    if ($NoRelease) {
+        Log "-NoRelease: chỉ xác nhận, không giải phóng ($($eligible.Count) tập đủ điều kiện)."
+    } elseif ($eligible.Count -eq 0) {
+        Log "Không có tập nào đủ điều kiện giải phóng (cần cả bản ngang và bản dọc đã xác nhận)."
+    } else {
+        $gb = ($eligible | Measure-Object -Property bytes -Sum).Sum / 1GB
+        Log ("Đủ điều kiện giải phóng: tập " + (($eligible | ForEach-Object { $_.ep }) -join ", "))
+        $go = $Release
+        if (-not $go) {
+            $ans = Read-Host ("Giải phóng {0} tập ({1:N1} GB) trên VM? (y/N)" -f $eligible.Count, $gb)
+            $go = ($ans -match "^\s*[yY]")
+        }
+        if ($go) {
+            foreach ($x in $eligible) {
+                $res = Post-Json "/api/episodes/$($x.id)/release" @{}
+                if ($res.code -eq 200) { $released++; Log "  đã giải phóng tập $($x.ep) trên VM" }
+                else { $releaseFailed += "tập $($x.ep) (HTTP $($res.code))"; Log "  VM không giải phóng tập $($x.ep): HTTP $($res.code) $($res.body)" }
+            }
+            Log "Giải phóng: $released tập, lỗi $($releaseFailed.Count)"
+        } else { Log "Không giải phóng (chưa đồng ý)." }
+    }
+}
+
+$Host.UI.RawUI.WindowTitle = "Backup xong"
 $rows | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $Index
 Remove-Item (Join-Path $Dest ".api.json") -Force -ErrorAction SilentlyContinue
+if ($releasedOnVm) { Log ("Đã giải phóng trên VM từ trước: " + ($releasedOnVm -join ", ")) }
 Log "=== Xong: tải mới $ok, đã có $skip, lỗi $($failed.Count), chưa sẵn sàng trên server $($notReady.Count)"
 if ($failed) { Log ("Lỗi: " + ($failed -join ", ")) }
 if ($notReady) { Log ("Chưa sẵn sàng: " + ($notReady -join ", ")) }

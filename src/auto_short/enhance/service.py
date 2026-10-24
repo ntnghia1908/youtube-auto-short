@@ -640,6 +640,8 @@ class EnhanceService:
                 raise EnhanceError("enhance đang tắt ([enhance] enabled = false)", 409)
             if wanted and is_archived(self._dir(owner)):
                 raise EnhanceError("đã dọn video nguồn: không còn gì để enhance", 409)
+            if wanted and st.read(self._dir(owner)) and st.read(self._dir(owner)).get("released"):
+                raise EnhanceError(f"{st.RELEASED_MESSAGE}: không enhance lại", 409)
             doc = st.decide(self.config, owner, force=wanted, ffprobe=self.ffprobe, clock=self.clock())
             if doc is None:
                 raise EnhanceError("tập này không enhance được (nguồn không phải YouTube / thiếu video nguồn)", 409)
@@ -665,6 +667,8 @@ class EnhanceService:
                 raise EnhanceError("video này không (còn) enhance", 409)
             if is_archived(d):
                 raise EnhanceError("đã dọn video nguồn: không còn gì để enhance", 409)
+            if doc.get("released"):
+                raise EnhanceError(f"{st.RELEASED_MESSAGE}: không enhance lại", 409)
             if doc.get("state") != st.DONE:
                 raise EnhanceError("video đang chờ / đang enhance: chưa cần làm lại", 409)
             doc = st.decide(self.config, owner, force=True if doc.get("override") else None, ffprobe=self.ffprobe,
@@ -727,6 +731,8 @@ class EnhanceService:
         with self.lock:
             out.update(self._summary(eid, d, doc))
         out["hd_ready"] = st.hd_fingerprint(d) is not None
+        out["released"] = bool(doc.get("released"))
+        out["released_at"] = doc.get("released_at")
         out["can_enable"] = bool(self.enabled and not out["wanted"] and not is_archived(d))
         return out
 

@@ -327,6 +327,8 @@ def _run_vertical(episode_id: str, config: Config, *, run, force: bool, note: st
         ws = Workspace(config.workspace.dir, validate_episode_id(owner))
     except WorkspaceError as exc:
         raise RenderError(str(exc)) from exc
+    if enhance_state.is_released(ws.dir):
+        raise RenderError(f"{owner!r}: {enhance_state.RELEASED_MESSAGE}; không dựng bản dọc từ bản gốc")
     hd = enhance_state.effective_source(config, owner)
     if hd is None or hd.path is None:
         raise RenderError(f"chưa có bản HD của {owner!r} (cần enhance xong trước, hoặc video gốc ≥ "

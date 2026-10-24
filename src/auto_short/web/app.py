@@ -240,6 +240,8 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                 svc.clear_waiting(eid)
                 return "unparked"
             doc = enh_state.read(Path(config.workspace.dir) / eid)
+            if doc and doc.get("released"):
+                return "none"  # HD1 G3: the HD source is off the VM; the Shorts rendered from it stay as they are
             waiting = bool(doc and doc.get("waiting_hd"))
             current = runner.latest(eid)
             if current is not None and current.active:

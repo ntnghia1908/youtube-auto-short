@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field, StrictBool
 from ... import khaithi
 from ...compilation import CID_RE as CID_RE, CompilationError, Item
 from ...enhance import state as enh_state
+from ...review import backup as review_backup
 from ...enhance.state import EnhanceError
 from ...post import doc as post_doc, stage as post_stage, store as post_store
 from ...render import full as render_full
@@ -102,6 +103,8 @@ def build(ctx: WebContext) -> APIRouter:
         if e.get("state") not in (playlists_mod.RENDERED, playlists_mod.COMPLETE):
             return "skip", "chưa xong Short"
         src = ep.hd_source(ctx.config, vid)
+        if src is None and review_backup.view(ctx.config, vid)["released"]:
+            return "skip", enh_state.RELEASED_MESSAGE
         if src is None:
             return "skip", f"không có bản HD / video gốc < {ctx.config.enhance.min_height}p"
         if render_full.current(ctx.config, vid):
@@ -165,6 +168,9 @@ def build(ctx: WebContext) -> APIRouter:
             if e.get("video_id") and ep.hd_file(ctx.config, e["video_id"]) is not None:  # CP8.32: also the original >= 720p
                 e["hd_url"] = f"/api/episodes/{e['video_id']}/source-hd"
                 e["hd_name"] = ep.hd_download_name(ctx.config, e["video_id"])
+            if e.get("video_id"):  # HD1 G3: the HD / vertical files were moved to an external machine
+                bk = review_backup.view(ctx.config, e["video_id"])
+                e["hd_released"], e["hd_released_at"] = bk["released"], bk["released_at"]
             _vertical_fields(e)  # CP8.32 V3
             _download_fields(e)  # CP8.31 D3
         view["priority_count"] = sum(1 for e in view["entries"] if e["priority"])
