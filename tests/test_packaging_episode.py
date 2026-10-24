@@ -1,6 +1,9 @@
 """PKG2 AC1–4/6: real JPEG compositions, otherwise offline injected runners."""
 import json
 import subprocess
+import shutil
+import struct
+import zlib
 import unicodedata
 from pathlib import Path
 
@@ -94,16 +97,8 @@ def test_real_styles_dimensions_fonts_fit_and_portrait_masks(episodes, tmp_path,
         assert not Font(thumbnail.EPISODE_FONTS[line.font]).missing(line.text)
         assert line.x + line.width <= (640 if shape == "landscape" and style in ("A", "B") else thumbnail.EPISODE_SIZES[shape][0])
     assert thumbnail.episode_text(header, shape, settings)[-1].text.upper() == "TẬP 102"
-    lines = thumbnail.episode_text(header, shape, settings)
-    third, credit = lines[2:4]
-    bx, by, bw, bh = thumbnail.episode_badge(style, shape)
-    # Allow 1.25 em for Vietnamese accents/descenders plus the drawn shadow/stroke.
-    third_bottom = third.y + third.size * 1.25 + (7 if third.gold else 4 if style == "B" else 0)
-    assert third_bottom <= min(credit.y, by)
-    if credit.y < by:
-        assert credit.y + credit.size * 1.25 + (4 if style == "B" else 0) <= by
-    else:  # C landscape keeps the prototype's episode number above its credit.
-        assert by + bh <= credit.y
+    assert graph.count("y_align=baseline") == graph.count("drawtext=")
+    third = thumbnail.episode_text(header, shape, settings)[2]
     if style == "C":
         ribbon_x, ribbon_width = (70, 940) if shape == "vertical" else (540, 660)
         text_width = Font(thumbnail.EPISODE_FONTS[third.font]).width(third.text, third.size)
@@ -112,6 +107,95 @@ def test_real_styles_dimensions_fonts_fit_and_portrait_masks(episodes, tmp_path,
         assert left >= ribbon_x + 24
         assert left + text_width <= ribbon_x + ribbon_width - 24
         assert left + text_width / 2 == pytest.approx(ribbon_x + ribbon_width / 2)
+
+
+@pytest.mark.parametrize("style", ["A", "B", "C"])
+@pytest.mark.parametrize("shape", ["landscape", "vertical"])
+@pytest.mark.parametrize("middle", ["Địa Tạng", "Niệm", "Ỗ Ộ"])
+def test_episode_baselines_and_ink_bounds_do_not_overlap(episodes, style, shape, middle):
+    cfg = episodes
+    settings = dict(episode.read_settings(cfg, PID), style=style)
+    header = episode.header(cfg, IDS[0])
+    default = thumbnail.episode_text(header, shape, settings)
+    if middle != "Địa Tạng":
+        settings["title_lines"] = ["Kinh", middle, "Phật vãng sanh"]
+    lines = thumbnail.episode_text(header, shape, settings)
+    assert [line.y for line in lines] == [line.y for line in default]
+    boxes = []
+    for line in lines:
+        font = Font(thumbnail.EPISODE_FONTS[line.font])
+        top, bottom = font.ink_bounds(line.text, line.size)
+        assert font.width(line.text, line.size) <= line.width
+        # Include the actual gold stroke and offset shadow, or B's 4px shadow.
+        boxes.append((line.y + top - (3 if line.gold else 0),
+                      line.y + bottom + (7 if line.gold else 4 if style == "B" else 0)))
+    bx, by, bw, bh = thumbnail.episode_badge(style, shape)
+    assert by + 2 <= boxes[-1][0] and boxes[-1][1] <= by + bh - 2
+    regions = sorted([*boxes[:-1], (by, by + bh)])
+    assert all(bottom + 2 <= next_top for (_, bottom), (next_top, _) in zip(regions, regions[1:]))
+    if style == "C":
+        ribbon_top, ribbon_height = (480, 110) if shape == "vertical" else (268, 78)
+        assert ribbon_top + 2 <= boxes[2][0] and boxes[2][1] <= ribbon_top + ribbon_height - 2
+    if middle == "Địa Tạng":
+        tops = (130, 270, 494) if shape == "vertical" else {"A": (70, 150, 305), "B": (100, 180, 318), "C": (70, 150, 280)}[style]
+        for line, top in zip(lines[:3], tops):
+            assert abs(line.y + Font(thumbnail.EPISODE_FONTS[line.font]).ink_bounds(line.text, line.size)[0] - top) <= 2
+
+
+def test_real_accent_masks_match_baseline_metrics(episodes, tmp_path):
+    cfg = episodes
+    settings = dict(episode.read_settings(cfg, PID), title_lines=["Kinh", "Niệm", "Phật vãng sanh"])
+    lines = thumbnail.episode_text(episode.header(cfg, IDS[0]), "landscape", settings)[:3]
+    work = tmp_path / "ink"
+    work.mkdir()
+    shutil.copyfile(thumbnail.EPISODE_FONTS["serif"], work / "serif.ttf")
+    g = thumbnail._EpisodeGraph(work, 640, 420)
+    outputs = []
+    for line in lines:
+        base = g.add("color=c=black:s=640x420")
+        label = g.text(base, line, color="white")
+        outputs.extend(["-map", f"[{label}]", "-frames:v", "1", "-threads", "1", "-pix_fmt", "gray", "-f", "rawvideo", str(work / f"{len(outputs)}.gray")])
+    script = work / "graph.txt"
+    script.write_text(";".join(g.parts))
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-filter_complex_threads", "1", "-filter_complex_script", str(script), *outputs], check=True)
+    actual = []
+    for path, line in zip(sorted(work.glob("*.gray"), key=lambda p: int(p.stem)), lines):
+        data = path.read_bytes()
+        rows = [y for y in range(420) if max(data[y*640:(y+1)*640]) > 32]
+        assert rows
+        top, bottom = Font(thumbnail.EPISODE_FONTS[line.font]).ink_bounds(line.text, line.size)
+        assert abs(min(rows) - (line.y + top)) <= 2
+        assert abs(max(rows) + 1 - (line.y + bottom)) <= 2
+        actual.append((min(rows), max(rows) + 1))
+    assert all(bottom + 8 <= next_top for (_, bottom), (next_top, _) in zip(actual, actual[1:]))
+
+
+def test_real_transparent_portrait_preserves_original_alpha(episodes, tmp_path):
+    cfg = episodes
+    settings = dict(episode.read_settings(cfg, PID), style="C")
+    header = episode.header(cfg, IDS[0])
+    # Fully transparent black RGB around an opaque subject: the ellipse must not expose RGB black.
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+    raw = b"".join(b"\0" + b"".join(bytes((200, 40, 20, 255)) if 120 <= x < 260 and 150 <= y < 600
+                                   else bytes(4) for x in range(640)) for y in range(720))
+    image = tmp_path / "cutout.png"
+    image.write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 640, 720, 8, 6, 0, 0, 0))
+                      + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+    pixels = []
+    for name, portrait in (("background", None), ("portrait", image)):
+        work = tmp_path / name
+        work.mkdir()
+        path = thumbnail.build_episode(work, header, "landscape", portrait, "test.jpg", settings=settings)
+        pixels.append(subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-frames:v", "1", "-threads", "1",
+                                      "-pix_fmt", "rgb24", "-f", "rawvideo", "-"], capture_output=True, check=True).stdout)
+    at = (360 * 1280 + 300) * 3
+    background, portrait = [data[at:at+3] for data in pixels]
+    assert all(c > 180 for c in portrait)  # paper color, not the PNG's hidden black RGB
+    assert all(abs(a-b) <= 5 for a, b in zip(background, portrait))
+    at = (360 * 1280 + 150) * 3
+    red, green, blue = pixels[1][at:at+3]
+    assert red > green + 20 and red > blue + 20  # opaque subject still survives the mask
 
 
 def test_default_settings_truncates_long_series_at_word_boundary(episodes):

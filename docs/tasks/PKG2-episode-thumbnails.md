@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -136,3 +136,30 @@ HUMAN LEAD chê bố cục vòng 1 ("không đẹp"), gửi 6 thumbnail tham kh�
 - Kho ảnh thật: `python -m auto_short.packaging assets import-post-images --license "HUMAN LEAD G2 2026-10-24"` → 129 ảnh (tag = tên file), duyệt cả 129; ảnh 67 = `dc54dc63…`. Bản kho không tag trước vòng sửa đổi tên sang `~/.cache/packaging-assets-untagged-20261024`.
 - Chạy thật trên playlist Địa Tạng (workspace thật, output thư mục tạm; bản dọc giả lập bằng `vertical.json` thật + file sparse cùng kích thước, vì thumbnail không đọc nội dung video): settings mặc định `["Kinh", "Địa Tạng", "Bồ Tát Bổn Nguyện"]` + "CHỦ GIẢNG: PHÁP SƯ TỊNH KHÔNG"; kiểu A + ảnh 67 tập 10 / 12 / 88 / 102 (ngang + dọc) đạt; tập 102 kiểu B / C sau sửa: hết chồng chữ, dải C căn giữa. Ảnh đã gửi HUMAN LEAD. 88 / 102 tập đủ điều kiện (tập 1–9, 74, 76–78, 100 chưa có HD / bản dọc).
 - Codex: vòng 2 391 987 tokens, vòng sửa 616 781 tokens (effort medium); 1 vòng sửa.
+
+### Vòng sửa 2 — reviewer thứ hai (HEAD a4f5ce8)
+
+- Finding 1: drawtext `y_align=text` dịch baseline theo dấu trên, làm dòng giữa ngắn ("Niệm", "Ỗ Ộ") chạm dòng sau; fit bề rộng và ước lượng 1.25 em không đủ. Sửa: mọi pass chữ / bóng / mask của **bố cục tập** dùng `y_align=baseline`. Baseline mỗi slot được hiệu chỉnh bằng dòng tham chiếu cố định của thiết kế đã duyệt; không đổi theo chữ người dùng. `_fit_line` kiểm cả bề rộng lẫn biên mực trên/dưới, gồm padding raster / stroke / shadow; giảm cỡ đến khi nằm trọn trước dòng kế, credit, dải xanh hoặc trong ô tập. Chữ Địa Tạng mặc định có đỉnh mực lệch không quá 2px so với tops cũ trong test, giữ thứ tự riêng của C ngang. Ba template PKG1 / `_draw_text` mặc định không đổi.
+- Helper mới `Font.ink_bounds(text, size)`: offset đỉnh/đáy mực so với baseline từ `cmap` + `loca` + bbox `glyf` (gồm glyph composite / dấu tiếng Việt), fallback bbox toàn font `head` khi không có glyf. Đã đọc / tìm `rg -n 'ink_bounds|ascender|descender|def baselines' src/auto_short/render/text.py`: ascender/descender hhea có thể không bao dấu chồng trên; `baselines` hiện có dựa cap-height, không đo được biên mực. Không thêm dependency.
+- Finding 2: nhánh elip gán alpha độc lập khiến RGB đen của PNG trong suốt thành mảng đen. Sửa: nhân feather bằng `alpha(X,Y)` gốc thay vì 255. `EPISODE_LAYOUT_VERSION` **3 → 4** để vô hiệu cache trước hai sửa này.
+- Finding → test:
+
+  | Finding | Test sau sửa |
+  |---|---|
+  | Căn dọc / chiều cao | `test_episode_baselines_and_ink_bounds_do_not_overlap`: 18 ca (A/B/C × ngang/dọc × Địa Tạng/Niệm/Ỗ Ộ), baseline cố định, biên mực + hiệu ứng không chồng, credit / ô tập / dải C hợp lệ, default tops lệch ≤2px; test render 6 kiểu/khuôn hiện có kiểm mọi drawtext dùng baseline |
+  | Biên mực thực tế | `test_real_accent_masks_match_baseline_metrics`: ffmpeg thật render riêng 3 mask A ngang với "Niệm", đo hàng pixel mực, khớp bbox trong 2px và cách dòng sau ít nhất 8px |
+  | Alpha PNG | `test_real_transparent_portrait_preserves_original_alpha`: PNG RGBA đen trong suốt + chủ thể đỏ đục, render JPEG C ngang; pixel trong suốt ra nền giấy (mọi kênh >180, lệch nền không ảnh ≤5), chủ thể đỏ vẫn còn |
+
+- Verification sandbox, Python env `auto-short`, ffmpeg **6.1.1**:
+  - `PYTHONPATH=src python -m pytest -q -x tests/test_packaging_episode.py tests/test_packaging_thumbnail.py`: **80 passed in 20.42s**.
+  - `PYTHONPATH=src python -m pytest -q -x tests/test_web_packaging.py tests/test_web_episode_thumbs.py -k service`: **13 passed, 10 deselected in 4.38s**, một deprecation warning Starlette hiện có.
+  - `git diff --check`: **PASS**. Không chạy lại HTTP / full suite trong sandbox; kết quả ORCHESTRATOR ở mục trước thuộc bản trước vòng sửa 2, không claim PASS cho diff mới.
+- Numstat source / test so với `a4f5ce8`: `packaging/thumbnail.py` **+49/−15**, `render/text.py` **+27/−0**, `tests/test_packaging_episode.py` **+94/−10**; tổng app **+76/−15**, test **+94/−10** (không tính mục Result này).
+- Không commit / push / PR / mạng / agent khác. READY bàn giao IMPLEMENTER; chờ ORCHESTRATOR rà ảnh sau sửa và chạy verification ngoài sandbox.
+
+### Reviewer thứ hai + verification cuối (ORCHESTRATOR, 2026-10-24)
+
+- `codex exec review --base main` (read-only, PKG1 + PKG2): 2 finding P2 ở trên. ORCHESTRATOR tái hiện finding 1 bằng render thật ("Kinh / Niệm / Phật vãng sanh", kiểu A: dấu nặng dưới Ệ chạm dòng 3); cả hai đã sửa ở vòng sửa 2. Không finding nào còn mở.
+- Sau vòng sửa 2, ngoài sandbox: targeted (`tests/test_packaging_episode.py tests/test_web_episode_thumbs.py tests/test_packaging_thumbnail.py tests/test_web_packaging.py tests/test_render_text.py`) **116 passed**; `PYTHONPATH=src python -m pytest -q -n auto` **2348 passed, 1 skipped**; `node scripts/framework-check.mjs` **PASS**. Render lại Địa Tạng tập 102 A / B / C × 2 khuôn: không đổi so với bản đã gửi HUMAN LEAD; ca "Niệm" tự thu nhỏ, hết chồng.
+- Codex vòng sửa 2: 888 650 tokens (effort medium); tổng PKG2 vòng 2: 1 lượt thiết kế + 2 vòng sửa.
+- Còn lại: manual test checklist trên 8080 (ghim commit branch) — HUMAN LEAD.

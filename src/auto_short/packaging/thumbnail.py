@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import math
 import shutil
 import tempfile
 from copy import deepcopy
@@ -165,7 +166,7 @@ def _encode(work, graph, image, filename, runner):
     raise RenderError("thumbnail vượt quá 2 MB ở chất lượng JPEG tối thiểu")
 
 
-EPISODE_LAYOUT_VERSION = 3  # invalidate JPEGs before the B spacing / C ribbon fixes
+EPISODE_LAYOUT_VERSION = 4  # baseline/ink-height fitting and preservation of portrait alpha
 EPISODE_SIZES = {"landscape": (1280, 720), "vertical": (1080, 1920)}
 EPISODE_FONTS = {
     "serif": FONT.parent / "PlayfairDisplaySC-Bold.ttf",
@@ -207,13 +208,26 @@ class EpisodeLine:
     centered: bool = False
 
 
-def _fit_line(text, font_name, size, width):
+def _fit_line(text, font_name, size, width, *, reference, nominal_top, top, bottom, gold=False, shadow=0):
     font = Font(EPISODE_FONTS[font_name])
     check_glyphs(font, [text])
+    above, below = (5, 9) if gold else (2, 2 + shadow)  # stroke/shadow + 2px hinting allowance
+    # Fit the constant reference first: the slot baseline is independent of user text,
+    # including short titles which would otherwise choose a larger width-only font size.
+    for reference_size in range(size, 11, -1):
+        ink_top, ink_bottom = font.ink_bounds(reference, reference_size)
+        baseline = math.ceil(nominal_top - ink_top)
+        if font.width(reference, reference_size) <= width * 0.98 \
+                and baseline + ink_top - above >= top and baseline + ink_bottom + below <= bottom:
+            break
+    else:
+        raise TextError(f"font không vừa khung {width}px × {bottom - top}px")
     for fitted in range(size, 11, -1):
-        if font.width(text, fitted) <= width * 0.98:
-            return fitted
-    raise TextError(f"dòng chữ không vừa khung {width}px: {text!r}")
+        ink_top, ink_bottom = font.ink_bounds(text, fitted)
+        if font.width(text, fitted) <= width * 0.98 \
+                and baseline + ink_top - above >= top and baseline + ink_bottom + below <= bottom:
+            return fitted, baseline
+    raise TextError(f"dòng chữ không vừa khung {width}px × {bottom - top}px: {text!r}")
 
 
 def episode_text(header, shape, settings):
@@ -226,24 +240,43 @@ def episode_text(header, shape, settings):
     tops = (130, 270, 494) if vertical else {"A": (70, 150, 305), "B": (100, 180, 318), "C": (70, 150, 280)}[style]
     colors = {"A": "0xffefb0", "B": "white", "C": "0x5a3412"}
     lines = []
+    shadow = 4 if style == "B" else 0
+    title_padding = 5 if style == "A" else 2
+    credit_top = 720 if vertical else (425 if style == "B" else 400 if style == "A" else 530)
+    bx, by, bw, bh = episode_badge(style, shape)
+    references = ("KINH", "ĐỊA TẠNG", "BỒ TÁT BỔN NGUYỆN") if style != "C" else ("Kinh", "Địa Tạng", "Bồ Tát Bổn Nguyện")
     slots = (0, 1, 2) if len(settings["title_lines"]) == 3 else ((1, 2) if len(settings["title_lines"]) == 2 else (1,))
     for i, text in zip(slots, settings["title_lines"]):
         text = nfc(text).upper() if style in ("A", "B") else nfc(text)
         color = "0xf3dfa6" if style == "C" and i == 2 else colors[style]
         inset = 24 if style == "C" and i == 2 else 0
         line_width = width - 2 * inset
-        lines.append(EpisodeLine(text, font, _fit_line(text, font, sizes[i], line_width), x + inset, tops[i], line_width,
+        top = tops[i] - title_padding
+        bottom = (tops[i + 1] - title_padding if i < 2 else min(credit_top, by)) - 4
+        if inset:
+            ribbon_top, ribbon_height = (480, 110) if vertical else (268, 78)
+            top = max(top, ribbon_top + 6)
+            bottom = min(bottom, ribbon_top + ribbon_height - 6)
+        fitted, baseline = _fit_line(text, font, sizes[i], line_width, reference=references[i],
+                                     nominal_top=tops[i], top=top, bottom=bottom, gold=style == "A", shadow=shadow)
+        lines.append(EpisodeLine(text, font, fitted, x + inset, baseline, line_width,
                                  gold=style == "A", color=color, centered=bool(inset)))
     credit = settings["credit"]
     if credit:
         font = "sans" if style == "A" else "old"
-        lines.append(EpisodeLine(credit, font, _fit_line(credit, font, 42 if vertical else 26, width),
-                                 x, 720 if vertical else (425 if style == "B" else 400 if style == "A" else 530),
-                                 width, color={"A": "0xe8d6b0", "B": "0xd9c08a", "C": "0x4a3a2a"}[style]))
+        fitted, baseline = _fit_line(credit, font, 42 if vertical else 26, width,
+            reference="CHỦ GIẢNG: PHÁP SƯ TỊNH KHÔNG", nominal_top=credit_top,
+            top=credit_top - 2, bottom=by - 4 if credit_top < by else EPISODE_SIZES[shape][1] - 24,
+            shadow=shadow)
+        lines.append(EpisodeLine(credit, font, fitted, x, baseline, width,
+                                 color={"A": "0xe8d6b0", "B": "0xd9c08a", "C": "0x4a3a2a"}[style]))
     number = ("Tập " if style == "C" else "TẬP ") + header["episode"]
-    bx, by, bw, bh = episode_badge(style, shape)
-    lines.append(EpisodeLine(number, "old", _fit_line(number, "old", 90 if vertical else 88 if style == "C" else 64, bw - 24),
-                             bx + 12, by + (10 if vertical else 12), bw - 24, gold=style != "C", color="0x8a1c14", centered=True))
+    fitted, baseline = _fit_line(number, "old", 90 if vertical else 88 if style == "C" else 64, bw - 24,
+        reference="Tập 102" if style == "C" else "TẬP 102",
+        nominal_top=by + (10 if vertical or style == "C" else 8), top=by + 3, bottom=by + bh - 3,
+        gold=style != "C", shadow=shadow)
+    lines.append(EpisodeLine(number, "old", fitted, bx + 12, baseline, bw - 24,
+                             gold=style != "C", color="0x8a1c14", centered=True))
     return lines
 
 
@@ -270,7 +303,7 @@ class _EpisodeGraph:
         x = f"{line.x}+({line.width}-text_w)/2" if line.centered else str(line.x)
         self.parts.append(_draw_text(self.work, self.index, line.text, line.size, color or line.color,
                                      f"({x})+{dx}", line.y + dy, base,
-                                     font_file=self.work / (line.font + ".ttf"), options=options))
+                                     font_file=self.work / (line.font + ".ttf"), options=":y_align=baseline" + options))
         return f"text{self.index}"
 
     def gold_text(self, base, line):
@@ -279,8 +312,9 @@ class _EpisodeGraph:
         mask = self.add(f"color=c=black:s={self.width}x{self.height}")
         mask = self.text(mask, line, color="white")
         mask = self.add("format=gray", mask)
+        ink_top, ink_bottom = Font(EPISODE_FONTS[line.font]).ink_bounds(line.text, line.size)
         gradient = self.add(f"gradients=s={self.width}x{self.height}:c0=0xfff3b0:c1=0xb8862b:"
-                            f"x0=0:y0={line.y}:x1=0:y1={line.y + line.size}:nb_colors=2:speed=0.00001:seed=0,format=rgba")
+                            f"x0=0:y0={round(line.y + ink_top)}:x1=0:y1={round(line.y + ink_bottom)}:nb_colors=2:speed=0.00001:seed=0,format=rgba")
         fill = self.add("alphamerge", gradient, mask)
         return self.add("overlay=0:0", shadow, fill)
 
@@ -297,7 +331,7 @@ def _portrait(graph, shape, style, focus, white):
             f"crop={w}:{h}:'min(iw-{w},max(0,iw*{focus}-{w}/2))':0,format=rgba")
     mask = ",colorkey=0xffffff:0.12:0.08" if white else (
         ",geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
-        "a='255*clip(2.2*(1-hypot((X-W*0.56)/(W*0.52),(Y-H*0.58)/(H*0.62))),0,1)*clip(X/180,0,1)'")
+        "a='alpha(X,Y)*clip(2.2*(1-hypot((X-W*0.56)/(W*0.52),(Y-H*0.58)/(H*0.62))),0,1)*clip(X/180,0,1)'")
     return graph.add(crop + mask, "0:v"), x, y
 
 
