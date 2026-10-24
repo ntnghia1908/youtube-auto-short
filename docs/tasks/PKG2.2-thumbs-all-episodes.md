@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: CHANGE
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -70,8 +70,11 @@ Tất cả required verification phải chạy và PASS trước READY.
 
 Không chạm database, security model hay public API contract (route giữ nguyên) → manual test là điểm danh.
 
-- [ ] Trang `/playlists/PLOynZc0cJJfDMY5-Fd0su_Ea3TGdZ2wk4/thumbs`: tập 1–9 có ảnh ngang + dọc.
+- [ ] Trang (sau khi 8080 chạy code này) `/playlists/PLOynZc0cJJfDMY5-Fd0su_Ea3TGdZ2wk4/thumbs`: tập 1–9 có ảnh ngang + dọc.
 
 ## Result
 
-- Main changes:
+- Main changes: `episode.shapes()` (điều kiện HD / bản dọc) bị xóa; `context()` luôn trả cả `landscape` + `vertical`; cache key / tên file / zip / URL giữ nguyên. Test: thay test điều kiện cũ bằng test G8 (AC1–AC4, preview khi tập đầu không có video); cập nhật số lần ffmpeg / số file trong các test cũ vì tập fixture không có bản dọc giờ có cả hai khuôn. +107 / −60 dòng.
+- Verification: `tests/test_packaging_episode.py` + `tests/test_web_episode_thumbs.py` 99 passed (IMPLEMENTER); full suite `python -m pytest -q -n auto` 2449 passed, 1 skipped (ORCHESTRATOR, 2026-10-24).
+- AC5 chạy thật 2026-10-24 (`episode.build_playlist`, bộ `PLOynZc0cJJfDMY5-Fd0su_Ea3TGdZ2wk4`): 61 tập dựng mới, 41 tái dùng, 0 bỏ qua; 102 / 102 tập có cả ảnh ngang + dọc hợp lệ (tập 1–9 đã xóa video trên VM vẫn có, header từ `<id>.kt/titles.json`).
+- IMPLEMENTER: Sonnet subagent ≈ 3 phút, 58k tokens, 0 vòng sửa.

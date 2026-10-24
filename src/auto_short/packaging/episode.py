@@ -6,9 +6,7 @@ import re
 import tempfile
 from pathlib import Path
 
-from ..enhance import state as enhance_state
 from ..hashing import config_hash, sha256_file
-from ..render import full
 from ..render.stage import RenderError
 from ..render.text import TextError, nfc
 from ..titling.logic import TitlingError, resolve_header
@@ -93,17 +91,6 @@ def header(config, video_id):
     return result
 
 
-def shapes(config, video_id):
-    # Same owner + effective source decision as web.episodes.hd_file; archived originals have no path.
-    _no_symlinks(Path(config.workspace.dir) / enhance_state.owner_id(video_id))
-    src = enhance_state.effective_source(config, enhance_state.owner_id(video_id))
-    _no_symlinks(Path(config.render.output_dir) / full.owner_of(video_id) / full.FULL_DIR)
-    vertical = full.ready_file(config, video_id)
-    # G7: a vertical episode also gets the shared landscape thumbnail.
-    return (["landscape"] if (src is not None and src.path is not None) or vertical is not None else []) \
-        + (["vertical"] if vertical is not None else [])
-
-
 def images(config):
     usable = []
     for entry in sorted(assets.list_assets(config.packaging.asset_dir), key=lambda a: a["id"]):
@@ -129,9 +116,7 @@ def effective(settings, shape):
 def context(config, video_id, settings):
     """fields, formats, {shape: asset id}, {shape: image path}; assets are checked for both shapes."""
     fields = header(config, video_id)
-    formats = shapes(config, video_id)
-    if not formats:
-        raise PackageError("chưa có bản ngang HD hoặc bản dọc hoàn chỉnh")
+    formats = list(thumbnail.EPISODE_SIZES)  # G8: both shapes for every valid header, independent of video files
     idents, images = {}, {}
     for shape in thumbnail.EPISODE_SIZES:
         ident = idents[shape] = effective(settings, shape)["asset_id"]

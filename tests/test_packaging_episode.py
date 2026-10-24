@@ -213,7 +213,7 @@ def test_default_settings_truncates_long_series_at_word_boundary(episodes):
     assert episode.validate_settings(cfg, settings) == settings
 
 
-@pytest.mark.parametrize("missing", ["header", "number", "media"])
+@pytest.mark.parametrize("missing", ["header", "number"])
 def test_skips_missing_input_and_continues(episodes, missing):
     cfg = episodes
     if missing == "header":
@@ -221,19 +221,16 @@ def test_skips_missing_input_and_continues(episodes, missing):
         doc = episode.playlist(cfg, PID)
         doc.pop("series")
         atomic_write_json(cfg.workspace.dir / "_playlists" / f"{PID}.json", doc)
-    elif missing == "number":
-        atomic_write_json(cfg.workspace.dir / IDS[0] / "titles.json", dict(header=dict(fields=dict(series=SERIES))))
     else:
-        (cfg.workspace.dir / IDS[0] / "source.mp4").unlink()
-        (cfg.render.output_dir / IDS[0] / "full" / "vertical.mp4").unlink()
+        atomic_write_json(cfg.workspace.dir / IDS[0] / "titles.json", dict(header=dict(fields=dict(series=SERIES))))
     result = episode.build_playlist(cfg, PID, run=fake_media)
     assert result["built"] == 1 and len(result["skipped"]) == 1 and result["skipped"][0]["episode"] == IDS[0]
     doc = episode.read(cfg, IDS[0])
     assert doc["skipped_reason"] and not doc["files"]
-    assert episode.valid_files(cfg, IDS[1])
+    assert set(episode.valid_files(cfg, IDS[1])) == {"landscape", "vertical"}
 
 
-def test_header_kt_and_playlist_fallback_and_vertical_without_source(episodes):
+def test_header_kt_and_playlist_fallback(episodes):
     cfg = episodes
     path = cfg.workspace.dir / IDS[0] / "titles.json"
     dest = cfg.workspace.dir / (IDS[0] + ".kt") / "titles.json"
@@ -243,10 +240,6 @@ def test_header_kt_and_playlist_fallback_and_vertical_without_source(episodes):
     dest.unlink()
     assert episode.header(cfg, IDS[0])["series"] == SERIES
     assert episode.header(cfg, IDS[0])["episode"] == "101"
-    (cfg.workspace.dir / IDS[0] / "source.mp4").unlink()
-    assert episode.shapes(cfg, IDS[0]) == ["landscape", "vertical"]
-    (cfg.render.output_dir / IDS[0] / "full" / "vertical.mp4").write_bytes(b"incomplete")
-    assert episode.shapes(cfg, IDS[0]) == []
 
 
 @pytest.mark.parametrize("field,value", [("style", "B"), ("asset_id", "image"), ("focus_x", 0.8),
@@ -266,7 +259,7 @@ def test_playlist_settings_rebuild_all_and_cache(episodes, tmp_path, field, valu
         calls.append(cmd)
         return episode_media(cmd)
     assert episode.build_playlist(cfg, PID, run=counted) == dict(built=2, reused=0, skipped=[])
-    assert len([cmd for cmd in calls if "mjpeg" in cmd]) == 3
+    assert len([cmd for cmd in calls if "mjpeg" in cmd]) == 4
     assert all(episode.read(cfg, ident)["asset_id"] == settings["asset_id"] for ident in IDS)
     assert episode.build_playlist(cfg, PID, run=lambda _: pytest.fail("cached settings ran ffmpeg"))["reused"] == 2
     episode.write_settings(cfg, PID, dict(settings, asset_id=None))
@@ -362,7 +355,7 @@ def test_cache_sha_header_key_and_removal_of_old_files(episodes, tmp_path, monke
     assert not episode.valid_files(cfg, IDS[0])
     calls.clear()
     assert episode.build_playlist(cfg, PID, run=counted)["built"] == 2
-    assert len(calls) == 3
+    assert len(calls) == 4
 
 
 @pytest.mark.parametrize("failure_at", [1, 2])
@@ -390,7 +383,7 @@ def test_failure_keeps_previous_files_and_other_episode_and_no_partial_files(epi
     assert before == {p.name: p.read_bytes() for p in first.glob("*.jpg")}
     assert unchanged == {p.name: p.read_bytes() for p in second.iterdir()}
     assert {p.name for p in first.iterdir()} == {*before, "thumbs.json"}
-    assert len(episode.valid_files(cfg, IDS[1])) == 1
+    assert len(episode.valid_files(cfg, IDS[1])) == 2
     assert episode.build_playlist(cfg, PID, run=fake_media)["built"] == 1
 
 
@@ -424,23 +417,70 @@ def test_rejects_traversal_and_symlink_artifacts(episodes, tmp_path, attack):
             episode.read(cfg, IDS[0])
 
 
-@pytest.mark.parametrize("height,state,changed,expected", [(1080, None, False, True), (480, None, False, False),
-                                                         (480, "pending", False, False), (480, "done", False, True),
-                                                         (480, "done", True, False)])
-def test_hd_eligibility_uses_completed_enhance_or_high_resolution_original(episodes, height, state, changed, expected):
-    cfg = episodes
-    ident = IDS[1]  # no vertical file to independently qualify it
+def only_kt_header(cfg, ident):
+    """G8 fixture: the video is gone from the VM; only work/<id>.kt/titles.json is left."""
     folder = cfg.workspace.dir / ident
-    atomic_write_json(folder / "metadata.json", dict(title="Bài giảng", height=height))
-    if state:
-        path = folder / "source_hd.mp4"
-        path.write_bytes(b"finished HD")
-        atomic_write_json(folder / "enhance.json", dict(schema_version=1, state=state,
-                          source_hd_sha256=sha256_file(path), source_hd_size=path.stat().st_size,
-                          source_hd_mtime_ns=path.stat().st_mtime_ns))
-        if changed:
-            path.write_bytes(b"changed HD")
-    assert episode.shapes(cfg, ident) == (["landscape"] if expected else [])
+    kt = cfg.workspace.dir / (ident + ".kt")
+    kt.mkdir()
+    (folder / "titles.json").replace(kt / "titles.json")
+    shutil.rmtree(folder)
+    shutil.rmtree(cfg.render.output_dir / ident, ignore_errors=True)
+
+
+@pytest.mark.parametrize("ident", IDS)
+def test_g8_episode_without_any_video_builds_both_shapes(episodes, ident):  # AC1
+    cfg = episodes
+    only_kt_header(cfg, ident)
+    assert not (cfg.workspace.dir / ident).exists() and not (cfg.render.output_dir / ident).exists()
+    result = episode.build_playlist(cfg, PID, run=episode_media)
+    assert result == dict(built=2, reused=0, skipped=[])
+    doc = episode.read(cfg, ident)
+    assert set(doc["files"]) == {"landscape", "vertical"} and not doc["skipped_reason"]
+    assert set(episode.valid_files(cfg, ident)) == {"landscape", "vertical"}
+    assert episode.header(cfg, ident)["episode"] in {"101", "102"}
+
+
+def test_g8_existing_landscape_is_reused_and_only_vertical_is_built(episodes):  # AC2
+    cfg = episodes
+    only_kt_header(cfg, IDS[1])
+    settings = episode.read_settings(cfg, PID)
+    fields = episode.header(cfg, IDS[1])
+    folder = episode.directory(cfg, IDS[1])
+    folder.mkdir(parents=True)
+    key = episode.cache_key(fields, settings, "landscape")
+    name = f"landscape-{key}.jpg"
+    (folder / name).write_bytes(b"jpeg:existing")
+    old = dict(file=name, key=key, sha256=sha256_file(folder / name))
+    doc = dict(episode._new(IDS[1]), playlist_id=PID, header=fields, asset_id=None, asset_ids=dict(landscape=None),
+               files=dict(landscape=old))
+    atomic_write_json(folder / "thumbs.json", doc)
+    assert set(episode.valid_files(cfg, IDS[1])) == {"landscape"}
+    calls = []
+    def counted(cmd):
+        calls.append(cmd)
+        return episode_media(cmd)
+    assert episode.build_episode(cfg, IDS[1], pid=PID, run=counted) == "built"
+    assert len([cmd for cmd in calls if "mjpeg" in cmd]) == 1  # vertical only
+    after = episode.read(cfg, IDS[1])
+    assert after["files"]["landscape"] == old and (folder / name).read_bytes() == b"jpeg:existing"
+    assert set(after["files"]) == {"landscape", "vertical"}
+    assert set(episode.valid_files(cfg, IDS[1])) == {"landscape", "vertical"}
+
+
+def test_g8_invalid_header_without_video_is_still_skipped(episodes):  # AC3
+    cfg = episodes
+    only_kt_header(cfg, IDS[0])
+    atomic_write_json(cfg.workspace.dir / (IDS[0] + ".kt") / "titles.json", dict(header=dict(fields=dict(series=SERIES))))
+    result = episode.build_playlist(cfg, PID, run=episode_media)
+    assert result["built"] == 1 and [row["episode"] for row in result["skipped"]] == [IDS[0]]
+    assert "thiếu tên bộ kinh hoặc số tập hợp lệ" in result["skipped"][0]["reason"]
+    assert not episode.read(cfg, IDS[0])["files"] and episode.valid_files(cfg, IDS[0]) == {}
+
+
+def test_g8_preview_works_when_first_episode_has_no_video(episodes):
+    cfg = episodes
+    only_kt_header(cfg, IDS[0])
+    assert set(episode.preview(cfg, PID, run=episode_media)) == {"landscape", "vertical"}
 
 
 # PKG2.1: keys captured with the pre-PKG2.1 cache_key on this fixture (no per-shape settings).
@@ -509,19 +549,19 @@ def test_vertical_override_changes_only_vertical_key_and_rebuild(episodes, tmp_p
     def counted(cmd):
         calls.append(cmd)
         return episode_media(cmd)
-    assert episode.build_playlist(cfg, PID, run=counted) == dict(built=1, reused=1, skipped=[])
-    assert len([cmd for cmd in calls if "mjpeg" in cmd]) == 1  # only the 9:16 file of the first episode
+    assert episode.build_playlist(cfg, PID, run=counted) == dict(built=2, reused=0, skipped=[])
+    assert len([cmd for cmd in calls if "mjpeg" in cmd]) == 2  # only the 9:16 file of each episode
     after = episode.read(cfg, IDS[0])
     assert after["files"]["landscape"] == before["files"]["landscape"]
     assert after["files"]["vertical"]["key"] != before["files"]["vertical"]["key"]
     assert after["asset_id"] is None and after["asset_ids"] == dict(landscape=None, vertical=pool[0])
     assert set(episode.valid_files(cfg, IDS[0])) == {"landscape", "vertical"}
-    assert episode.read(cfg, IDS[1])["asset_ids"] == dict(landscape=None)
+    assert episode.read(cfg, IDS[1])["asset_ids"] == dict(landscape=None, vertical=pool[0])
     # Back to the shared look: only the vertical file is rebuilt, and it gets the original key again.
     episode.write_settings(cfg, PID, base)
     calls.clear()
-    assert episode.build_playlist(cfg, PID, run=counted)["built"] == 1
-    assert len([cmd for cmd in calls if "mjpeg" in cmd]) == 1
+    assert episode.build_playlist(cfg, PID, run=counted)["built"] == 2
+    assert len([cmd for cmd in calls if "mjpeg" in cmd]) == 2
     assert episode.read(cfg, IDS[0])["files"]["vertical"]["key"] == before["files"]["vertical"]["key"]
 
 
