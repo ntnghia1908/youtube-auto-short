@@ -2,19 +2,23 @@
 from __future__ import annotations
 
 import io
+import base64
 import hashlib
 import re
 import threading
 import zipfile
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field, StrictStr
 
-from ..packaging import PackageError, episode
+from ..packaging import PackageError, assets, episode
 from ..review.names import clean_part, content_disposition, truncate_utf8
 from ..titling.logic import TitlingError
+from ..render.stage import RenderError
+from ..render.text import TextError
 from .jobs import RENDER, JobFailed, Step
 from .theme_plan import job_view, response, safe
 
@@ -30,8 +34,8 @@ class Unavailable(Exception):
 
 
 class ThumbnailTarget:
-    def __init__(self, service, pid, video_id=None):
-        self.service, self.pid, self.video_id = service, pid, video_id
+    def __init__(self, service, pid):
+        self.service, self.pid = service, pid
 
     def __call__(self, job):
         job.stage = KIND
@@ -39,7 +43,7 @@ class ThumbnailTarget:
             job.summary = f"Đã dựng {result['built']}, dùng lại {result['reused']}, bỏ qua {len(result['skipped'])} tập"
         try:
             self.result = episode.build_playlist(self.service.config, self.pid, run=self.service.media_runner,
-                                                  progress=progress, video_id=self.video_id)
+                                                  progress=progress)
         except (PackageError, OSError, ValueError, KeyError, TypeError) as exc:
             raise JobFailed(safe(str(exc))) from exc
         job.stage = None
@@ -48,7 +52,7 @@ class ThumbnailTarget:
         return [Step(RENDER, self)]
 
     def spec(self):
-        return dict(playlist_id=self.pid, video_id=self.video_id)
+        return dict(playlist_id=self.pid)
 
 
 class EpisodeThumbs:
@@ -60,28 +64,30 @@ class EpisodeThumbs:
     def checked(self, pid):
         return self.plans.checked(pid)
 
-    def member(self, pid, video_id):
-        episode.directory(self.config, video_id)
-        if not any(isinstance(e, dict) and e.get("video_id") == video_id
-                   for e in episode.playlist(self.config, pid)["entries"]):
-            raise PackageError("tập không thuộc bộ kinh")
-
-    def render(self, pid, video_id=None):
-        job = self.runner.latest(render_key(pid))
-        if job is not None and job.active:
-            return job, False
-        return self.runner.submit(render_key(pid), KIND, ThumbnailTarget(self, pid, video_id))
-
-    def edit(self, pid, video_id, asset_id):
-        self.member(pid, video_id)
+    def mutable(self, pid):
         job = self.runner.latest(render_key(pid))
         if job is not None and job.active:
             raise Unavailable("đang dựng thumbnail; chờ hoàn tất")
-        episode.set_override(self.config, video_id, asset_id)
-        return self.render(pid, video_id)
+
+    def render(self, pid):
+        job = self.runner.latest(render_key(pid))
+        if job is not None and job.active:
+            return job, False
+        return self.runner.submit(render_key(pid), KIND, ThumbnailTarget(self, pid))
+
+    def save_settings(self, pid, settings):
+        self.mutable(pid)
+        return episode.write_settings(self.config, pid, settings)
+
+    def preview(self, pid, settings=None):
+        self.mutable(pid)
+        files = episode.preview(self.config, pid, settings=settings, run=self.media_runner)
+        return {"files": {shape: {"preview_url": "data:image/jpeg;base64," + base64.b64encode(data).decode("ascii")}
+                          for shape, data in files.items()}}
 
     def rows(self, pid):
         rows = []
+        settings = episode.read_settings(self.config, pid)
         seen = set()
         for entry in episode.playlist(self.config, pid)["entries"]:
             ident = entry.get("video_id") if isinstance(entry, dict) else None
@@ -91,8 +97,8 @@ class EpisodeThumbs:
             doc, files, reason = None, {}, None
             try:
                 doc = episode.read(self.config, ident)
-                fields, _, _, _ = episode.context(self.config, ident, doc or {})
-                files = episode.valid_files(self.config, ident, doc)
+                fields, _, _, _ = episode.context(self.config, ident, settings)
+                files = episode.valid_files(self.config, ident, doc, pid=pid)
                 reason = (doc or {}).get("skipped_reason")
                 if not files and reason is None:
                     reason = "chưa dựng hoặc đầu vào đã đổi — dựng lại"
@@ -100,7 +106,7 @@ class EpisodeThumbs:
                 fields = {}
                 reason = str(exc)
             row = safe(dict(video_id=ident, episode=fields.get("episode") or entry.get("episode"),
-                            header=fields, asset_id=(doc or {}).get("asset_id"), override=(doc or {}).get("override"),
+                            header=fields, asset_id=(doc or {}).get("asset_id"),
                             skipped_reason=reason, files=files))
             # safe() redacts absolute paths, so attach application URLs afterwards.
             for shape, file in row["files"].items():
@@ -111,8 +117,14 @@ class EpisodeThumbs:
 
     def view(self, pid):
         doc = episode.playlist(self.config, pid)
+        images = episode.images(self.config)
+        images.sort(key=lambda a: (0, int(a["tags"][0]), a["id"]) if a["tags"] and a["tags"][0].isdecimal()
+                    else (1, 0, a["id"]))
+        images = safe(images)
+        for number, asset in enumerate(images, 1):
+            asset.update(number=asset["tags"][0] if asset["tags"] else number, preview_url=f"/files/playlists/{pid}/thumbs/assets/{asset['id']}")
         return dict(playlist_id=pid, series=safe(doc.get("series") or doc.get("title") or pid),
-                    episodes=self.rows(pid), assets=safe(episode.images(self.config)),
+                    episodes=self.rows(pid), assets=images, settings=safe(episode.read_settings(self.config, pid)),
                     job=job_view(self.runner.latest(render_key(pid))), zip_url=f"/files/playlists/{pid}/thumbs.zip")
 
     def archive(self, pid):
@@ -125,7 +137,7 @@ class EpisodeThumbs:
                     continue
                 ident = row["video_id"]
                 doc = episode.read(self.config, ident)
-                for shape, entry in episode.valid_files(self.config, ident, doc).items():
+                for shape, entry in episode.valid_files(self.config, ident, doc, pid=pid).items():
                     number = int(doc["header"]["episode"])
                     name = f"T{number:03d}_{'ngang' if shape == 'landscape' else 'doc'}.jpg"
                     if name in names:
@@ -144,8 +156,12 @@ class EpisodeThumbs:
         return content.getvalue(), filename
 
 
-class EditIn(BaseModel):
-    asset_id: StrictStr | None = Field(max_length=64)
+class SettingsIn(BaseModel):
+    style: Literal["A", "B", "C"] = "A"
+    asset_id: StrictStr | None = Field(default=None, max_length=64)
+    focus_x: float = Field(default=0.5, ge=0, le=1, strict=True)
+    title_lines: list[StrictStr] = Field(min_length=1, max_length=3)
+    credit: StrictStr = Field(default="", max_length=60)
 
 
 def register(app: FastAPI, service: EpisodeThumbs):
@@ -167,7 +183,7 @@ def register(app: FastAPI, service: EpisodeThumbs):
             return action()
         except Unavailable as exc:
             return response({"detail": str(exc)}, 409)
-        except PackageError as exc:
+        except (PackageError, TextError, RenderError) as exc:
             return response({"detail": str(exc)}, 400)
         except (OSError, ValueError, KeyError, TypeError):
             return response({"detail": "dữ liệu thumbnail không hợp lệ"}, 422)
@@ -189,9 +205,25 @@ def register(app: FastAPI, service: EpisodeThumbs):
     def build(pid: str):
         return invoke(pid, lambda: submitted(service.render(pid)), write=True)
 
-    @app.put("/api/playlists/{pid}/thumbs/{video_id}")
-    def edit(pid: str, video_id: str, body: EditIn):
-        return invoke(pid, lambda: submitted(service.edit(pid, video_id, body.asset_id)), write=True)
+    @app.get("/api/playlists/{pid}/thumbs/settings")
+    def settings(pid: str):
+        return invoke(pid, lambda: response(episode.read_settings(service.config, pid)))
+
+    @app.put("/api/playlists/{pid}/thumbs/settings")
+    def edit(pid: str, body: SettingsIn):
+        return invoke(pid, lambda: response(service.save_settings(pid, body.model_dump())), write=True)
+
+    @app.post("/api/playlists/{pid}/thumbs/preview")
+    def preview(pid: str, body: SettingsIn | None = None):
+        return invoke(pid, lambda: JSONResponse(service.preview(pid, body.model_dump() if body else None),
+                                               headers={"Cache-Control": "no-store"}), write=True)
+
+    @app.get("/files/playlists/{pid}/thumbs/assets/{asset_id}")
+    def asset_image(pid: str, asset_id: str):
+        def action():
+            _, path = assets.usable(service.config.packaging.asset_dir, asset_id, kind="image")
+            return FileResponse(path, headers={"Cache-Control": "no-store"})
+        return invoke(pid, action)
 
     @app.get("/files/playlists/{pid}/thumbs.zip")
     def archive(pid: str):

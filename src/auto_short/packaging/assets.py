@@ -119,6 +119,6 @@ def import_post_images(config, *, license: str, run=None) -> list[dict]:
             name, _, source = line.partition("\t")
             if source.strip():
                 sources[name] = source
-    return [add(config.packaging.asset_dir, folder / image.name, kind="image", license=license,
+    return [add(config.packaging.asset_dir, folder / image.name, kind="image", license=license, tags=[Path(image.name).stem],
                 source=sources.get(image.name) or (folder / image.name).absolute().as_uri(), run=run)
             for image in list_images(folder)]

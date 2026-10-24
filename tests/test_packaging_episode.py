@@ -9,8 +9,8 @@ import pytest
 from auto_short.config import Config, PackagingConfig, RenderConfig, WorkspaceConfig
 from auto_short.hashing import sha256_file
 from auto_short.packaging import PackageError, assets, episode, thumbnail
-from auto_short.render.stage import _run, probe_media
-from auto_short.render.text import Font
+from auto_short.render.stage import RenderError, _run, probe_media
+from auto_short.render.text import Font, TextError
 from auto_short.workspace import atomic_write_json
 
 from test_packaging_thumbnail import fake_media
@@ -59,36 +59,74 @@ def add_images(cfg, tmp_path):
     return sorted(result)
 
 
-@pytest.mark.parametrize("with_image", [False, True])
-def test_real_episode_jpegs_dimensions_vietnamese_and_two_line_series(episodes, tmp_path, with_image):
+def episode_media(cmd):
+    if "rawvideo" in cmd:
+        Path(cmd[-1]).write_bytes(bytes([32] * 12))
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+    return fake_media(cmd)
+
+
+@pytest.mark.parametrize("style", ["A", "B", "C"])
+@pytest.mark.parametrize("shape", ["landscape", "vertical"])
+def test_real_styles_dimensions_fonts_fit_and_portrait_masks(episodes, tmp_path, style, shape):
     cfg = episodes
-    if with_image:
-        image = tmp_path / "portrait.jpg"
-        subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=0x3b5670:s=800x800",
-                        "-frames:v", "1", "-threads", "1", str(image)], check=True)
-        asset = assets.add(cfg.packaging.asset_dir, image, kind="image", source="local:test", license="CC0")
-        assets.approve(cfg.packaging.asset_dir, asset["id"])
-    path = cfg.workspace.dir / IDS[0] / "titles.json"
-    doc = json.loads(path.read_text())
-    doc["header"]["fields"]["series"] = unicodedata.normalize("NFD", SERIES)
-    atomic_write_json(path, doc)
-    summary = episode.build_playlist(cfg, PID)
-    assert summary == dict(built=2, reused=0, skipped=[])
-    assert not Font(thumbnail.FONT).missing(SERIES + " TẬP 102 HT. Tịnh Không")
-    for ident in IDS:
-        doc = episode.read(cfg, ident)
-        assert doc["schema_version"] == 1 and doc["header"]["series"] == SERIES
-        assert set(doc["files"]) == ({"landscape", "vertical"} if ident == IDS[0] else {"landscape"})
-        for shape, entry in doc["files"].items():
-            image = episode.directory(cfg, ident) / entry["file"]
-            assert image.read_bytes().startswith(b"\xff\xd8") and image.stat().st_size <= thumbnail.MAX_BYTES
-            stream = probe_media(image, _run)["video"]
-            assert (stream["width"], stream["height"]) == thumbnail.EPISODE_SIZES[shape]
-            lines = thumbnail.episode_text(doc["header"], shape)
-            assert 1 <= len(lines) - 2 <= 2
-            assert lines[-2][0] == "TẬP " + doc["header"]["episode"]
-            assert lines[-1][0] == "HT. Tịnh Không"
-            assert sha256_file(image) == entry["sha256"]
+    work = tmp_path / "render with spaces"
+    work.mkdir()
+    white = (style == "C") or (style == "A" and shape == "landscape")
+    image = tmp_path / "portrait.jpg"
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i",
+                    "color=c=" + ("white" if white else "0x3b5670") + ":s=800x1000,drawbox=x=250:y=150:w=300:h=700:color=0x987654:t=fill",
+                    "-frames:v", "1", "-threads", "1", str(image)], check=True)
+    settings = dict(episode.read_settings(cfg, PID), style=style)
+    header = episode.header(cfg, IDS[1])
+    settings["title_lines"][2] = unicodedata.normalize("NFD", settings["title_lines"][2])
+    path = thumbnail.build_episode(work, header, shape, image, "test.jpg", settings=settings)
+    assert path.read_bytes().startswith(b"\xff\xd8") and path.stat().st_size <= thumbnail.MAX_BYTES
+    stream = probe_media(path, _run)["video"]
+    assert (stream["width"], stream["height"]) == thumbnail.EPISODE_SIZES[shape]
+    graph = (work / "graph.txt").read_text()
+    assert ("colorkey=" in graph) == white
+    assert ("hypot(" in graph) == (not white)
+    assert ("alphamerge" in graph) == (style != "C")
+    assert "expansion=none" in graph
+    for line in thumbnail.episode_text(header, shape, settings):
+        assert Font(thumbnail.EPISODE_FONTS[line.font]).width(line.text, line.size) <= line.width
+        assert not Font(thumbnail.EPISODE_FONTS[line.font]).missing(line.text)
+        assert line.x + line.width <= (640 if shape == "landscape" and style in ("A", "B") else thumbnail.EPISODE_SIZES[shape][0])
+    assert thumbnail.episode_text(header, shape, settings)[-1].text.upper() == "TẬP 102"
+    lines = thumbnail.episode_text(header, shape, settings)
+    third, credit = lines[2:4]
+    bx, by, bw, bh = thumbnail.episode_badge(style, shape)
+    # Allow 1.25 em for Vietnamese accents/descenders plus the drawn shadow/stroke.
+    third_bottom = third.y + third.size * 1.25 + (7 if third.gold else 4 if style == "B" else 0)
+    assert third_bottom <= min(credit.y, by)
+    if credit.y < by:
+        assert credit.y + credit.size * 1.25 + (4 if style == "B" else 0) <= by
+    else:  # C landscape keeps the prototype's episode number above its credit.
+        assert by + bh <= credit.y
+    if style == "C":
+        ribbon_x, ribbon_width = (70, 940) if shape == "vertical" else (540, 660)
+        text_width = Font(thumbnail.EPISODE_FONTS[third.font]).width(third.text, third.size)
+        assert third.centered and third.width == ribbon_width - 48
+        left = third.x + (third.width - text_width) / 2
+        assert left >= ribbon_x + 24
+        assert left + text_width <= ribbon_x + ribbon_width - 24
+        assert left + text_width / 2 == pytest.approx(ribbon_x + ribbon_width / 2)
+
+
+def test_default_settings_truncates_long_series_at_word_boundary(episodes):
+    cfg = episodes
+    series = "Kinh Vô Lượng Thọ Bồ Tát Quảng Đại Viên Mãn Vô Ngại Đại Bi Tâm Đà La Ni Kinh"
+    doc = episode.playlist(cfg, PID)
+    doc["series"] = series
+    atomic_write_json(cfg.workspace.dir / "_playlists" / f"{PID}.json", doc)
+    settings = episode.read_settings(cfg, PID)
+    assert settings["title_lines"][:2] == ["Kinh", "Vô Lượng"]
+    assert len(settings["title_lines"]) == 3
+    assert all(0 < len(line) <= 40 for line in settings["title_lines"])
+    words = " ".join(settings["title_lines"]).split()
+    assert words == series.split()[:len(words)] and len(words) < len(series.split())
+    assert episode.validate_settings(cfg, settings) == settings
 
 
 @pytest.mark.parametrize("missing", ["header", "number", "media"])
@@ -127,38 +165,95 @@ def test_header_kt_and_playlist_fallback_and_vertical_without_source(episodes):
     assert episode.shapes(cfg, IDS[0]) == []
 
 
-def test_rotation_approved_assets_and_override_only_rebuilds_one_episode(episodes, tmp_path):
+@pytest.mark.parametrize("field,value", [("style", "B"), ("asset_id", "image"), ("focus_x", 0.8),
+                                       ("title_lines", ["Kinh", "Hoa Nghiêm"]), ("credit", "CHỦ GIẢNG: TỊNH KHÔNG")])
+def test_playlist_settings_rebuild_all_and_cache(episodes, tmp_path, field, value):
     cfg = episodes
     pool = add_images(cfg, tmp_path)
-    episode.build_playlist(cfg, PID, run=fake_media)
-    first, second = [episode.read(cfg, ident) for ident in IDS]
-    assert first["asset_id"] == pool[101 % 2] and second["asset_id"] == pool[102 % 2]
-    before = {p.name: p.read_bytes() for p in episode.directory(cfg, IDS[0]).iterdir()}
-    episode.set_override(cfg, IDS[1], first["asset_id"])
+    defaults = episode.read_settings(cfg, PID)
+    assert defaults["asset_id"] is None and defaults["title_lines"] == ["Kinh", "Địa Tạng", "Bồ Tát Bổn Nguyện"]
+    episode.build_playlist(cfg, PID, run=episode_media)
+    settings = dict(defaults, **{field: pool[0] if value == "image" else value})
+    assert episode.write_settings(cfg, PID, settings) == settings
+    assert episode.read_settings(cfg, PID) == settings
+    assert not episode.valid_files(cfg, IDS[0])
     calls = []
     def counted(cmd):
         calls.append(cmd)
-        return fake_media(cmd)
-    assert episode.build_playlist(cfg, PID, video_id=IDS[1], run=counted)["built"] == 1
-    assert len(calls) == 1
-    assert before == {p.name: p.read_bytes() for p in episode.directory(cfg, IDS[0]).iterdir()}
-    assert episode.read(cfg, IDS[1])["override"] == first["asset_id"]
-    episode.set_override(cfg, IDS[1], None)
-    episode.build_playlist(cfg, PID, run=fake_media)
-    assert episode.read(cfg, IDS[1])["asset_id"] == second["asset_id"]
+        return episode_media(cmd)
+    assert episode.build_playlist(cfg, PID, run=counted) == dict(built=2, reused=0, skipped=[])
+    assert len([cmd for cmd in calls if "mjpeg" in cmd]) == 3
+    assert all(episode.read(cfg, ident)["asset_id"] == settings["asset_id"] for ident in IDS)
+    assert episode.build_playlist(cfg, PID, run=lambda _: pytest.fail("cached settings ran ffmpeg"))["reused"] == 2
+    episode.write_settings(cfg, PID, dict(settings, asset_id=None))
+    episode.build_playlist(cfg, PID, run=episode_media)
+    assert all(episode.read(cfg, ident)["asset_id"] is None for ident in IDS)
+
+
+@pytest.mark.parametrize("field,value", [("style", "D"), ("asset_id", "x"*64), ("focus_x", -0.1),
+    ("focus_x", 1.1), ("focus_x", float("nan")), ("focus_x", True), ("title_lines", []),
+    ("title_lines", [" "]), ("title_lines", ["A"]*4), ("title_lines", ["A"*41]),
+    ("title_lines", ["a\nb"]), ("credit", "a"*61)])
+def test_settings_validation_and_asset_approval(episodes, tmp_path, field, value):
+    cfg = episodes
+    settings = episode.read_settings(cfg, PID)
+    with pytest.raises(PackageError):
+        episode.write_settings(cfg, PID, dict(settings, **{field: value}))
+    assert not episode.settings_path(cfg, PID).exists()
+    pool = add_images(cfg, tmp_path)
     library = assets.list_assets(cfg.packaging.asset_dir)
-    library[0]["approved"] = False
-    (cfg.packaging.asset_dir / library[1]["file"]).write_bytes(b"tamper")
+    for asset in library:
+        asset["approved"] = False
     atomic_write_json(cfg.packaging.asset_dir / "library.json", dict(schema_version=1, assets=library))
     assert episode.images(cfg) == []
     with pytest.raises(PackageError):
-        episode.set_override(cfg, IDS[1], library[0]["id"])
+        episode.write_settings(cfg, PID, dict(settings, asset_id=pool[0]))
 
 
-def test_cache_sha_header_key_and_removal_of_old_files(episodes):
+def test_preview_is_temporary_and_text_is_not_filter_syntax(episodes, tmp_path):
+    cfg = episodes
+    settings = episode.read_settings(cfg, PID)
+    settings["title_lines"] = ["Kinh %{pts}: 'Niệm Phật'"]
+    before = {str(p): p.read_bytes() for p in cfg.render.output_dir.rglob("*") if p.is_file()}
+    scripts, folders = [], []
+    def inspect(cmd):
+        script = Path(cmd[cmd.index("-filter_complex_script") + 1])
+        scripts.append(script.read_text())
+        folders.append(script.parent)
+        assert settings["title_lines"][0].upper() in " ".join(p.read_text() for p in script.parent.glob("line*.txt"))
+        return episode_media(cmd)
+    result = episode.preview(cfg, PID, settings=settings, run=inspect)
+    assert set(result) == {"landscape", "vertical"}
+    assert all(data.startswith(b"jpeg:") for data in result.values())
+    assert all("%{pts}" not in graph and "Niệm Phật" not in graph and "expansion=none" in graph for graph in scripts)
+    assert all(not folder.exists() for folder in folders)
+    assert before == {str(p): p.read_bytes() for p in cfg.render.output_dir.rglob("*") if p.is_file()}
+    assert not episode.settings_path(cfg, PID).exists()
+    partial_folders = []
+    def failed(cmd):
+        path = Path(cmd[-1])
+        partial_folders.append(path.parent)
+        path.write_bytes(b"partial")
+        return subprocess.CompletedProcess(cmd, 1, "", "preview failed")
+    with pytest.raises(RenderError, match="preview failed"):
+        episode.preview(cfg, PID, settings=settings, run=failed)
+    assert all(not folder.exists() for folder in partial_folders)
+    assert before == {str(p): p.read_bytes() for p in cfg.render.output_dir.rglob("*") if p.is_file()}
+    work = tmp_path / "glyph"
+    work.mkdir()
+    with pytest.raises(TextError, match="glyph|missing"):
+        thumbnail.build_episode(work, episode.header(cfg, IDS[0]), "landscape", None, "test.jpg",
+                                settings=dict(settings, title_lines=["Kinh 🧘"]),
+                                run=lambda _: pytest.fail("missing glyph ran ffmpeg"))
+
+
+def test_cache_sha_header_key_and_removal_of_old_files(episodes, tmp_path, monkeypatch):
     cfg = episodes
     episode.build_playlist(cfg, PID, run=fake_media)
+    unchanged = {ident: (episode.directory(cfg, ident) / "thumbs.json").read_bytes() for ident in IDS}
+    monkeypatch.setattr(episode, "utc_now", lambda: "2099-01-01T00:00:00Z")
     assert episode.build_playlist(cfg, PID, run=lambda _: pytest.fail("cache called ffmpeg")) == dict(built=0, reused=2, skipped=[])
+    assert unchanged == {ident: (episode.directory(cfg, ident) / "thumbs.json").read_bytes() for ident in IDS}
     folder = episode.directory(cfg, IDS[0])
     old = episode.read(cfg, IDS[0])
     (folder / old["files"]["landscape"]["file"]).write_bytes(b"corrupt")
@@ -177,6 +272,13 @@ def test_cache_sha_header_key_and_removal_of_old_files(episodes):
     assert len(calls) == 2
     assert all(not (folder / entry["file"]).exists() for entry in old["files"].values())
     assert len(episode.valid_files(cfg, IDS[0])) == 2
+    font = tmp_path / "changed-serif.ttf"
+    font.write_bytes(thumbnail.EPISODE_FONTS["serif"].read_bytes() + b"font revision")
+    monkeypatch.setitem(thumbnail.EPISODE_FONTS, "serif", font)
+    assert not episode.valid_files(cfg, IDS[0])
+    calls.clear()
+    assert episode.build_playlist(cfg, PID, run=counted)["built"] == 2
+    assert len(calls) == 3
 
 
 @pytest.mark.parametrize("failure_at", [1, 2])
@@ -221,7 +323,7 @@ def test_rejects_traversal_and_symlink_artifacts(episodes, tmp_path, attack):
     if attack == "directory_symlink":
         folder.symlink_to(tmp_path)
         with pytest.raises(PackageError):
-            episode.build_episode(cfg, IDS[0], run=fake_media)
+            episode.build_episode(cfg, IDS[0], pid=PID, run=episode_media)
         return
     episode.build_playlist(cfg, PID, run=fake_media)
     doc = episode.read(cfg, IDS[0])

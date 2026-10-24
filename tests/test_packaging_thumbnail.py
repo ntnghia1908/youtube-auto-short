@@ -185,6 +185,16 @@ def test_cli_import_provenance_and_config(tmp_path, monkeypatch, capsys):
         assets.import_post_images(replace(Config(), post=PostConfig(image_dir=images)), license="")
 
 
+def test_import_post_images_tags_original_number(tmp_path):
+    images = tmp_path / "post-images"
+    images.mkdir()
+    (images / "67.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + (800).to_bytes(4, "big") * 2)
+    cfg = replace(Config(), post=PostConfig(image_dir=images), packaging=PackagingConfig(tmp_path / "assets"))
+    imported = assets.import_post_images(cfg, license="HUMAN LEAD confirmed", run=fake_media)
+    assert len(imported) == 1 and imported[0]["tags"] == ["67"]
+    assert assets.list_assets(cfg.packaging.asset_dir)[0]["tags"] == ["67"]
+
+
 @pytest.mark.parametrize("speaker,expected", [(None, "Niệm Phật"), ("HT.Tịnh Không", "Niệm Phật | HT Tịnh Không")])
 def test_traditional_title_uses_source_speaker_without_ai(package, speaker, expected):
     cfg, plan, _, _, _ = package
