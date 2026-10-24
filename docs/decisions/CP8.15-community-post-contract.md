@@ -158,6 +158,8 @@ State người dùng, **không** là input stage nào (như `publish.json`, CP8.
 
 **Sửa đổi CP8.19:** `PUT /api/playlists/{id}/doc` (CP8.3 W7, P15 D1); `GET …/posts` trả `origin: "doc"`; nhãn "Văn bản gốc" trên tab Bài đăng, bài `doc` không có nhãn "ít dấu câu"; sửa tay bài `doc` → `manual` như mọi bài (từ điển P14 vẫn học từ bản sửa).
 
+**Sửa đổi FIX-post-doc-gate (HUMAN LEAD 2026-10-24):** bài `ai` / `raw` có nhãn "Chữ AI từ phụ đề — đọc kỹ trước khi đăng"; nút "Sao chép bài" của bài đó cần xác nhận tại chỗ ("Vẫn sao chép", không dùng hộp thoại trình duyệt) trước khi copy; bài `doc` / `manual` copy một lần bấm.
+
 ## P10. Không CLI mới
 
 Như CP8.5 / CP9: chỉ web gọi `post/`.
@@ -195,7 +197,7 @@ Canonical owner của bài đăng lấy từ văn bản đã biên tập của `
 - **D1** Bộ kinh có field tùy chọn `doc_url` (`<workspace>/_playlists/<pid>.json`, sau `series`; giữ khi "Cập nhật danh sách"): chỉ nhận `https://ph.tinhtong.vn/Home/<Code>?d=<Code>_<số>.html`. Link tập N = thay `<số>` bằng N giữ độ rộng đệm số 0. Số tập = `episode` của entry bộ kinh (CP8.11); tập `<id>.kt` dùng link của video gốc. Nhiều bộ cùng có `doc_url` → bộ có `playlist_id` nhỏ nhất (như CP8.8 H4).
 - **D2** Tải trang (+ phần gzip `/html-end/…gz.z` cùng host) bằng `post.fetch.fetch`, **áp P13** (chỉ host công khai, kiểm lại mỗi redirect, thêm: redirect sang host khác `ph.tinhtong.vn` → lỗi; trang ≤ 5 MB; gzip ≤ 5 MB cả sau giải nén). Đoạn = `<p>` của `<div id="bodytext">`, bỏ `text-center` và đoạn toàn chữ `<b>` (tiêu đề).
 - **D3** Cache `work/<id>/doc.json` (`schema_version`, `url`, `fetched_at`, `paragraphs`, `match`); `match` = token transcript nằm trong khối khớp `difflib` với văn bản / tổng token transcript; `< 0.5` → tập không dùng văn bản (cache vẫn lưu). *Sửa đổi 2026-10-04 (HUMAN LEAD, FIX-doc-match-050): ngưỡng 0,6 → 0,5; đo CP8.24 P3: trang đúng 0,587–0,91 (Whisper trên âm thanh 480p cũ thấp nhất), trang sai ≈ 0,03; D4 (`ratio ≥ 0.6` riêng từng Short) giữ nguyên.* Dùng lại khi `url` trùng; lỗi tải không ghi cache.
-- **D4** Gióng chữ nguồn P2 (chưa áp từ điển) vào văn bản: khối khớp ≥ 4 token, cụm khối dày nhất (khoảng cách ≤ 30 token), `ratio ≥ 0.6` mới dùng.
+- **D4** Gióng chữ nguồn P2 (chưa áp từ điển) vào văn bản: khối khớp ≥ 4 token, cụm khối dày nhất (khoảng cách ≤ 30 token), `ratio ≥ 0.6` mới dùng. *Sửa đổi 2026-10-24 (HUMAN LEAD, FIX-post-doc-gate): thêm mức thấp — `0.40 ≤ ratio < 0.6` cũng dùng khi cụm dày nhất ≥ 20 token khớp và ≥ 2 × cụm thứ hai (phụ đề lỗi nặng nhưng vùng gióng rõ ràng); đo 2026-10-24: 151/264 bài `ai` chưa đăng ở tập có văn bản gióng được, mẫu đúng đoạn. Đoạn bài bỏ paragraph chú thích `[số] …` và dấu tham chiếu `[số]` trong câu.*
 - **D5** Đoạn bài mở rộng ra trọn câu hai đầu (tối đa 60 token mỗi phía, vượt → dừng ở điểm gióng + `…`), giữ ngắt đoạn của văn bản, `“ X ”` → `“X”`, viết hoa chữ đầu.
 - **D6** `compose_posts`: nhánh `doc` trước AI; `post_log.json` ghi `origin: doc`, `doc_url`, `doc_match`, `ratio`, `span`, `expanded`, không có `ai_calls`; lỗi tải chỉ cảnh báo, cả tập đi nhánh cũ. `store.ORIGINS` thêm `doc`, `schema_version` giữ 1.
 - **D7** `PUT …/doc` với link mới → xếp job `post` (khóa `<id>#post`, CP8.16) cho từng tập (Short + khai thị) của bộ có `posts.json`, clip = bài `ai` / `raw` chưa đăng; `manual` và bài đã đăng không đổi.
