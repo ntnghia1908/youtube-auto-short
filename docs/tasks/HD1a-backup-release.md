@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -77,11 +77,12 @@ Chạm public API nội bộ web (route mới) và xóa dữ liệu → manual t
 
 ## Result
 
-- Main changes:
-- Tests:
-- Diff + / − (app, test):
-- Helper mới (đã tìm, lý do không tái dùng):
-- Review:
-- Important findings / decisions:
-- Known limitations:
+- Main changes: `review/backup.py` (confirm / release / vertical_sha cache / view, `backup.json`); routes `POST /api/episodes/{id}/backup`, `/release`; `enhance.json released` → `effective_source` None, render Short / khai thị / bản dọc từ chối "HD đã chuyển ra máy ngoài", auto re-render (`_release_hd`), auto vertical, enhance redo / bật lại bỏ qua tập released; view episode / playlist thêm `released`, `app.js` hiện "HD đã chuyển ra máy ngoài (ngày)"; `scripts/backup/` (generator tham số playlist / bộ kinh, template giữ hành vi cũ + bước G6, tên `[HD Mobile]` + đổi tên `[HD Dọc]` cũ).
+- Tests: `tests/test_hd_backup.py` 17 test (AC1–AC5, AC4 so byte transcript / clips / titles / Short / manifest); targeted module 280 passed; full suite 2505 passed, 1 failed `test_prepare_parallel_cp829.py::test_lower_thread_priority_is_per_thread_and_inherited_by_children` (`assert 19 == 10`, chạy riêng 5/5 pass, không thuộc phạm vi HD1a — là test chập chờn ghi trong current-state); `node --check app.js` OK. **Chưa chạy** `.ps1` (VM không có PowerShell) → manual test 3090 là gate.
+- Chạy thật trên bản sao (`uuymFxiObZE`, file nhỏ chép thật, media hard link): release trước xác nhận / sha sai / thiếu xác nhận dọc → từ chối; đủ → giải phóng 3,0 GB trong bản sao, file thật còn nguyên; render tập + `.kt` sau đó → từ chối; transcript / clips / titles / manifest không đổi. Generator thật: `backup.ps1` 93 HD + 41 Doc sha256 (`~/.local/share/auto-short/backup-hd1/`).
+- Diff + / − (app, test): app +331 / −2 (gồm `backup.py` +213), test +360, scripts ≈ +198 / −57.
+- Helper mới (đã tìm, lý do không tái dùng): `review/backup.py` (không có code xác nhận / giải phóng; `archive.py` chỉ xóa `source.*` — tái dùng mẫu kiểm job + `submit_lock`), `enhance.state.is_released`, PS `Post-Json`, `Rename-LegacyMobile`.
+- Review: ORCHESTRATOR — thứ tự ghi trước / xóa sau; xóa thêm hard link `<id>.kt/source_hd.mp4` (cùng file, không xóa thì không giải phóng được) chấp nhận; ghép chủ đề vẫn tải lại bản gốc khi thiếu file (hành vi cũ; nguồn HD thuộc HD1b G5).
+- Important findings / decisions: script chỉ đề nghị giải phóng tập đã xác nhận cả ngang lẫn dọc; không gửi `allow_no_vertical`.
+- Known limitations: `backup.json` khóa trong process (web một process); 52 tập Kinh Địa Tạng chưa có bản dọc → chưa giải phóng được tới khi tạo bản dọc.
 - PR:
