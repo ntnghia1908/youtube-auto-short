@@ -37,6 +37,9 @@ SCHEMA_VERSION = 1
 MAX_BYTES = fetch.MAX_PAGE_BYTES  # page, gzip body and its decompressed size: 5 MB each
 MIN_MATCH = 0.5  # D3: transcript tokens found in the text / transcript tokens
 MIN_RATIO = 0.6  # D4: Short source vs aligned region
+MIN_RATIO_LOW = 0.40  # D4: noisy ASR may pass with a strong, dominant chain
+MIN_CHAIN = 20  # D4: matching tokens in the densest chain at the lower ratio
+CHAIN_DOMINANCE = 2  # D4: densest chain / runner-up matching tokens
 MIN_BLOCK = 4  # D4: smallest matching block used
 MAX_GAP = 30  # D4: text tokens between two blocks of the same cluster
 MAX_EXPAND = 60  # D5: tokens added at each end
@@ -363,7 +366,9 @@ class Alignment:
 def align(src_words: list[str], doc_words: list[str]) -> Alignment | None:
     """D4: where in ``doc_words`` a Short's words are said. Blocks of at least :data:`MIN_BLOCK` equal words are
     chained (text gap <= :data:`MAX_GAP`); the densest chain gives the region, widened by the unmatched words at each
-    end of the Short. None when no chain exists or the similarity is below :data:`MIN_RATIO`."""
+    end of the Short. Accept similarity >= :data:`MIN_RATIO` as before; from :data:`MIN_RATIO_LOW` up to that
+    threshold require at least :data:`MIN_CHAIN` matched tokens in the densest chain and at least
+    :data:`CHAIN_DOMINANCE` times the runner-up (zero when absent). Otherwise return None."""
     if len(src_words) < MIN_BLOCK or not doc_words:
         return None
     sm = SequenceMatcher(None, src_words, doc_words, autojunk=False)
@@ -377,7 +382,8 @@ def align(src_words: list[str], doc_words: list[str]) -> Alignment | None:
             clusters[-1].append(b)
         else:
             clusters.append([b])
-    best = max(clusters, key=lambda c: sum(b.size for b in c))
+    ranked = sorted(clusters, key=lambda c: sum(b.size for b in c), reverse=True)
+    best = ranked[0]
     first, last = best[0], best[-1]
     start = max(first.b - first.a, 0)
     end = min(last.b + last.size + (len(src_words) - (last.a + last.size)), len(doc_words))
@@ -385,7 +391,10 @@ def align(src_words: list[str], doc_words: list[str]) -> Alignment | None:
         return None
     ratio = SequenceMatcher(None, src_words, doc_words[start:end], autojunk=False).ratio()
     if ratio < MIN_RATIO:
-        return None
+        best_size = sum(b.size for b in best)
+        second_size = sum(b.size for b in ranked[1]) if len(ranked) > 1 else 0
+        if ratio < MIN_RATIO_LOW or best_size < MIN_CHAIN or best_size < CHAIN_DOMINANCE * second_size:
+            return None
     return Alignment(start, end, round(ratio, 4))
 
 
@@ -421,8 +430,9 @@ def _clean_quotes(s: str) -> str:
 
 def expand(text: DocText, start: int, end: int) -> tuple[list[str], int, int, bool, bool]:
     """D5: the paragraphs of words ``[start, end)`` widened to whole sentences (at most :data:`MAX_EXPAND` tokens at
-    each end; beyond that the end stays at the aligned word and gets ``…``). Returns
-    ``(paragraphs, head, tail, head_ellipsis, tail_ellipsis)``."""
+    each end; beyond that the end stays at the aligned word and gets ``…``).
+    Numeric footnote paragraphs and inline references are removed only from the output, preserving alignment indices.
+    Returns ``(paragraphs, head, tail, head_ellipsis, tail_ellipsis)``."""
     n = len(text.tokens)
     first, last = text.word_pos[start], text.word_pos[end - 1]
     j = first
@@ -440,15 +450,14 @@ def expand(text: DocText, start: int, end: int) -> tuple[list[str], int, int, bo
     else:
         while k + 1 < n and text.para_of[k + 1] == text.para_of[k] and _closer_only(text.tokens[k + 1]):
             k += 1
-    pieces: list[str] = []
-    cur, cur_para = [], text.para_of[j]
+    pieces: dict[int, list[str]] = {}
     for i in range(j, k + 1):
-        if text.para_of[i] != cur_para:
-            pieces.append(" ".join(cur))
-            cur, cur_para = [], text.para_of[i]
-        cur.append(text.tokens[i])
-    pieces.append(" ".join(cur))
-    paragraphs = [_clean_quotes(p) for p in pieces]
+        pieces.setdefault(text.para_of[i], []).append(text.tokens[i])
+    paragraphs = [_clean_quotes(re.sub(r"\s*\[\d+\]", "", " ".join(tokens))).strip()
+                  for para, tokens in pieces.items() if not re.match(r"^\s*\[\d+\]", text.paragraphs[para])]
+    paragraphs = [p for p in paragraphs if p]
+    if not paragraphs:
+        return [], first - j, k - last, head_ellipsis, tail_ellipsis
     if head_ellipsis:
         paragraphs[0] = "…" + paragraphs[0]
     else:
@@ -468,4 +477,6 @@ def compose(text: DocText, source_text: str) -> DocPost | None:
     if al is None:
         return None
     paragraphs, head, tail, he, te = expand(text, al.start, al.end)
+    if not paragraphs:
+        return None
     return DocPost(paragraphs, al.ratio, (al.start, al.end), head, tail, he, te)

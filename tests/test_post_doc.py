@@ -245,6 +245,74 @@ def _src(text: str) -> str:
     return _asr(text)
 
 
+@pytest.mark.parametrize("best,second,length,accepted", [
+    (18, 0, 30, True),    # ratio == 0.6: old gate, even with a chain below 20
+    (30, 20, 50, True),   # ratio == 0.6: dominance is not required
+    (17, 0, 30, False),   # ratio just below 0.6 needs the new chain checks
+    (20, 0, 50, True),    # ratio == 0.40, chain == 20, no runner-up
+    (20, 0, 51, False),   # ratio below 0.40 despite a strong chain
+    (19, 0, 40, False),   # low ratio, chain just below 20
+    (20, 0, 40, True),    # low ratio, chain exactly 20
+    (20, 10, 50, True),   # best == 2 * second
+    (20, 11, 50, False),  # runner-up just above half the best
+    (20, 20, 50, False),  # equally strong regions are ambiguous
+])
+def test_align_two_level_gate_boundaries(best, second, length, accepted):  # FIX-post-doc-gate AC1
+    src = [f"s{i}" for i in range(length)]
+    # Distinct tokens and a gap > MAX_GAP give exactly the two intended matching chains.
+    words = [f"prefix{i}" for i in range(40)] + src[:best]
+    words += [f"gap{i}" for i in range(doc.MAX_GAP + 1)] + src[best:best + second]
+    words += [f"suffix{i}" for i in range(length)]
+    al = doc.align(src, words)
+    assert (al is not None) is accepted
+    if accepted:
+        assert (al.start, al.end) == (40, 40 + length)
+        assert al.ratio == pytest.approx(best / length, abs=0.00005)
+
+
+def test_noisy_t11_k03_style_source_composes_doc_without_ai(tmp_path, monkeypatch):  # FIX-post-doc-gate AC2
+    # T11 k03 excerpt; keep the question recognizable so its blocks join the main chain (>= 20 tokens).
+    asr = ("Ừ cái quan điểm này chúng ta không cách diệt thiết lập từ thiên dường chư phật bồ tát đều có các "
+           "quan niệm này nhân vật chính được phát hình Thanh Tịnh pháp thân là gì vậy phát thân là hư không "
+           "pháp giới Tất cả chúng sanh là chính mình cố gắng định là chính mình anh hoàn toàn không có mấy "
+           "mây mi hoặc anh là chính mình trứng thật là chính mình")
+    original = ("Chúng ta không cách gì hình thành quan niệm này, thế nhưng chư Phật Bồ-tát đều có quan niệm này. "
+                "Phật chứng được pháp thân thanh tịnh. Pháp thân là gì vậy? Pháp thân là tất cả chúng sanh "
+                "trong hư không pháp giới là chính mình, khẳng định là chính mình, hoàn toàn không có mảy may "
+                "nghi hoặc, chân thật là chính mình thì người này thành Phật rồi.")
+    text = doc.build_text(BASE_URL, [original, "Đoạn cuối khác nói về việc đọc sách. " * 20], 0.9)
+    post = doc.compose(text, asr)
+    assert post is not None and doc.MIN_RATIO_LOW <= post.ratio < doc.MIN_RATIO
+    assert post.paragraphs == [original]
+    # The D6 branch persists origin:doc and never calls the AI for this noisy source.
+    cfg = _cfg(tmp_path)
+    make_post_episode(cfg.workspace.dir, cfg.render.output_dir)
+    monkeypatch.setattr(source, "source_lines", lambda ep, cid: [asr])
+    client = FailClient()
+    summary = stage.compose_posts(EID, cfg, ["k01"], client=client, sleep=lambda _: None,
+                                  doc_loader=lambda eid, segments: text)
+    entry = store.find(store.read_posts(cfg.workspace.dir / EID / store.POSTS_NAME, EID), "k01")
+    assert summary.doc == 1 and client.calls == 0
+    assert entry["origin"] == "doc" and entry["paragraphs"] == [original]
+
+
+@pytest.mark.parametrize("paragraphs,expected", [
+    (["Nói về chân’[1]. Cội nguồn [2] của tâm [bốn giai đoạn].", "[1] Chú thích cần bỏ.",
+      "  [23] Chú thích khác.", "[bốn giai đoạn] Lời người dịch."],
+     ["Nói về chân’. Cội nguồn của tâm [bốn giai đoạn].", "[bốn giai đoạn] Lời người dịch."]),
+    (["[1] Chỉ có chú thích dài hơn bốn từ."], []),
+])
+def test_doc_footnotes_removed_only_from_output(paragraphs, expected):  # FIX-post-doc-gate AC3
+    text = doc.build_text(BASE_URL, paragraphs, 1.0)
+    original_tokens, original_positions = list(text.tokens), list(text.word_pos)
+    # Start inside the first paragraph: the full paragraph prefix still identifies a footnote definition.
+    expanded, *_ = doc.expand(text, 1, len(text.words))
+    assert expanded == expected
+    post = doc.compose(text, " ".join(paragraphs))
+    assert (post.paragraphs if post else []) == expected
+    assert text.paragraphs == paragraphs and text.tokens == original_tokens and text.word_pos == original_positions
+
+
 def test_short_starting_mid_sentence_with_asr_errors_expands_to_sentence():  # AC5
     src = ("chỉ là chút ít thôi hay nói cách khác đối với thế giới cùng xuất thế gian pháp không quá mê hoạc "
            "không mê chính là không bị nó xoay chuyển")
