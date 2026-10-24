@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: DRAFT
+- Status: IN_PROGRESS
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -11,13 +11,13 @@
 - Implementer: codex — module mới tự chứa, spec rõ (project-profile §7); Sonnet `implementer` nếu quota Codex ≥ ngưỡng
 - Human Lead: HUMAN LEAD
 - Authorization mode: boundary
-- Authorization source: `docs/decisions/PKG-video-packaging-authorization.md` (chờ G1, G2, G4, G5)
+- Authorization source: `docs/decisions/PKG-video-packaging-authorization.md` (ACCEPTED 2026-10-24, G1–G6)
 - Parallel group: —
-- Owned paths: `src/auto_short/packaging/` (mới: `__init__.py`, `assets.py`, `record.py`, `thumbnail.py`, `__main__.py` CLI kho asset), `src/auto_short/render/fonts/BeVietnamPro-ExtraBold.ttf` (G4), `src/auto_short/web/packaging.py` (mới), `src/auto_short/web/static/package.html` + `package.js` (mới), sửa nhỏ: `web/app.py` (đăng ký), `web/routes/pages.py` (trang), `web/static/theme_plan.js` (link "Đóng gói"), `config.py` + `config.example.toml` (`[packaging]`), `tests/test_packaging_thumbnail.py`, `tests/test_web_packaging.py`, contract này, module map `docs/ai/project-profile.md`
+- Owned paths: `src/auto_short/packaging/` (mới: `__init__.py`, `assets.py`, `record.py`, `thumbnail.py`, `__main__.py` CLI kho asset), `src/auto_short/render/fonts/BeVietnamPro-ExtraBold.ttf` (G4, đã thêm: bản chính thức google/fonts `ofl/bevietnampro`, Regular cùng nguồn trùng sha256 bản đang đóng gói), `src/auto_short/web/packaging.py` (mới), `src/auto_short/web/static/package.html` + `package.js` (mới), sửa nhỏ: `web/app.py` (đăng ký service + job view, như `theme_plan_web`), trang đăng ký trong `web/packaging.py` (hoặc `web/routes/pages.py`), `web/static/theme_plan.js` (link "Đóng gói"), `config.py` + `config.example.toml` (`[packaging]`), `tests/test_packaging_thumbnail.py`, `tests/test_web_packaging.py`, contract này, module map `docs/ai/project-profile.md`
 - Dependencies: TC3 (đã merge); không dependency thư viện mới
-- Base commit / branch: điền khi authorize (từ `origin/main`) / `feature/pkg1-thumbnail`
-- Human Lead approval: pending
-- Implementation authorized: NO
+- Base commit / branch: `7381e1f` / `feature/pkg1-thumbnail`
+- Human Lead approval: inherited from boundary
+- Implementation authorized: YES
 
 ## Goal
 
