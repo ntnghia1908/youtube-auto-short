@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: DRAFT
+- Status: IN_PROGRESS
 - Type: FEATURE
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -16,8 +16,8 @@
 - Owned paths: `src/auto_short/post/kept.py` (mới), `src/auto_short/review/delete.py`, `src/auto_short/web/app.py` / router liên quan (route mới + `post_unticked` ở view tập), `src/auto_short/web/static/app.js`, `src/auto_short/web/static/index.html`, tests mới `tests/test_post_kept.py` + tests delete / web liên quan, `docs/decisions/CP8.3-web-contract.md` (§ Xóa tập), `docs/decisions/CP8.15-community-post-contract.md` (pointer P7), contract này
 - Dependencies: none
 - Base commit / branch: `a94995a` / `feature/cp8.38-delete-keep-posts`, worktree `.claude/worktrees/cp8.38-delete-keep-posts`
-- Human Lead approval: pending (duyệt contract)
-- Implementation authorized: NO
+- Human Lead approval: accepted (HUMAN LEAD 2026-10-24 “duyệt contract CP8.38”)
+- Implementation authorized: YES
 
 ## Goal
 
