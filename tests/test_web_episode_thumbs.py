@@ -1,6 +1,7 @@
 """PKG2: socket-free service tests plus authenticated HTTP coverage for ORCHESTRATOR."""
 import io
 import json
+import re
 import zipfile
 from types import SimpleNamespace
 from urllib.parse import unquote
@@ -239,3 +240,82 @@ def test_http_settings_validation_preview_and_rebuild(client, tmp_path):
         assert all(row["asset_id"] == pool[0] for row in view["episodes"])
     finally:
         s.runner.stop()
+
+
+def test_service_progress_counts_per_shape_and_reasons(service):
+    s = service
+    progress = s.service.view(PID)["progress"]
+    reason = "chưa dựng hoặc đầu vào đã đổi — dựng lại"
+    assert progress == dict(total=2, landscape=0, vertical=0, with_any=0, skipped=2, skipped_by_reason={reason: 2})
+    episode.build_playlist(s.cfg, PID, run=episode_media)
+    assert s.service.view(PID)["progress"] == dict(total=2, landscape=2, vertical=1, with_any=2, skipped=0, skipped_by_reason={})
+    (s.cfg.workspace.dir / IDS[1] / "source.mp4").unlink()  # no HD landscape and no vertical: skipped
+    episode.build_playlist(s.cfg, PID, run=episode_media)
+    progress = s.service.view(PID)["progress"]
+    assert (progress["total"], progress["landscape"], progress["vertical"], progress["with_any"], progress["skipped"]) \
+        == (2, 1, 1, 1, 1)
+    assert list(progress["skipped_by_reason"].values()) == [1] and list(progress["skipped_by_reason"])[0]
+    assert str(s.cfg.workspace.dir) not in json.dumps(progress)
+
+
+def test_http_vertical_override_validation_preview_and_save(client, tmp_path):
+    s = client
+    pool = add_images(s.cfg, tmp_path)
+    settings = s.c.get(BASE + "/settings").json()
+    assert settings["vertical"] is None
+    good = dict(style="B", asset_id=pool[0], focus_x=0.25)
+    for bad in (dict(good, style="D"), dict(good, focus_x=1.5), dict(good, focus_x=-0.1), dict(good, asset_id="x" * 64),
+                dict(good, asset_id="a" * 64), {"style": "A", "focus_x": 0.5}, "A"):
+        for method, url in (("PUT", BASE + "/settings"), ("POST", BASE + "/preview")):
+            assert s.c.request(method, url, json={**settings, "vertical": bad}).status_code in (400, 422), (method, bad)
+    assert not s.calls and not episode.settings_path(s.cfg, PID).exists()
+    preview = s.c.post(BASE + "/preview", json={**settings, "vertical": good})
+    assert preview.status_code == 200 and set(preview.json()["files"]) == {"landscape", "vertical"}
+    assert not episode.settings_path(s.cfg, PID).exists()
+    saved = s.c.put(BASE + "/settings", json={**settings, "vertical": good})
+    assert saved.status_code == 200 and saved.json()["vertical"] == good
+    assert s.c.get(BASE).json()["settings"]["vertical"] == good
+    # null (or no field) goes back to the shared look
+    assert s.c.put(BASE + "/settings", json={**settings, "vertical": None}).json()["vertical"] is None
+    assert s.c.put(BASE + "/settings", json={k: v for k, v in settings.items() if k != "vertical"}).json()["vertical"] is None
+
+
+def test_http_vertical_override_only_rebuilds_vertical(client, tmp_path):
+    s = client
+    pool = add_images(s.cfg, tmp_path)
+    episode.build_playlist(s.cfg, PID, run=episode_media)
+    settings = s.c.get(BASE + "/settings").json()
+    s.calls.clear()
+    assert s.c.put(BASE + "/settings", json={**settings, "vertical": dict(style="C", asset_id=pool[1], focus_x=0.4)}).status_code == 200
+    progress = s.c.get(BASE).json()["progress"]
+    assert (progress["landscape"], progress["vertical"]) == (2, 0)
+    assert s.c.post(BASE).status_code == 202
+    s.runner.start()
+    try:
+        assert s.runner.wait_idle(5)
+        assert len([cmd for cmd in s.calls if "mjpeg" in cmd]) == 1
+        progress = s.c.get(BASE).json()["progress"]
+        assert (progress["landscape"], progress["vertical"], progress["with_any"]) == (2, 1, 2)
+    finally:
+        s.runner.stop()
+
+
+def test_page_has_sticky_action_bar_and_collapsed_lists(client):
+    html = client.c.get(f"/playlists/{PID}/thumbs").text
+    parse = re.compile(r"<details\b([^>]*)>")
+    assert "position: sticky" in html and "bottom: 0" in html
+    bar = html[html.index('class="th-bar"'):]
+    for control in ("thumbs-preview", "thumbs-build", "thumbs-zip"):
+        assert control in bar
+    assert bar.index("thumbs-build") < bar.index("</form>")  # the bar lives inside the form, after all settings
+    details = {m.group(1) for m in parse.finditer(html)}
+    assert all("open" not in attrs.split() for attrs in details)
+    for ident in ("thumbs-details", "thumbs-vdetails", "thumbs-episodes"):
+        assert f'id="{ident}"' in html
+    assert re.search(r'id="thumbs-assets"[^>]*>', html) and "max-height: 50vh" in html and "overflow: auto" in html
+    # the grid of episodes sits inside its closed <details>, the preview sits above the action bar
+    assert html.index('id="thumbs-episodes"') < html.index('id="thumbs-grid"') < html.index('class="th-bar"')
+    assert html.index('id="thumbs-preview-images"') < html.index('class="th-bar"')
+    assert 'id="thumbs-vsep"' in html and 'id="thumbs-vgroup"' in html
+    script = client.c.get("/static/thumbs.js").text
+    assert "vertical:" in script and '"toggle"' in script and "view.progress" in script

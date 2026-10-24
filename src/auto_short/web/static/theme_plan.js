@@ -4,6 +4,12 @@ const ThemePlan = (() => {
   const { el, api, fmtDur, copyText } = Favorites;
   const $ = (id) => document.getElementById(id);
   const jobs = { queued: "đang chờ", running: "đang ghép", done: "xong", failed: "lỗi", interrupted: "bị ngắt" };
+  const REASONS = {
+    "not a khai thi episode": "Short thường, không phải khai thị",
+    "kept source unreconstructable": "khai thị đã lưu không dựng lại được nguồn",
+    "rejected": "clip đã bị loại khi duyệt",
+    "episode outside selected playlist": "tập không thuộc bộ kinh này",
+  };
   const drafts = new Map(), choices = new Map(), opened = new Map(), inputs = new Set();
   let base = "", data = null, timer = null, loading = false, pending = false, refreshAgain = false;
   const active = (job) => !!(job && job.active);
@@ -229,7 +235,14 @@ const ThemePlan = (() => {
   }
   function renderData() {
     const s = data.index_summary;
-    $("tp-summary").textContent = `${s.usable} clip khai thị dùng được / ${s.unusable} không dùng được · ${s.source_missing} clip phải tải lại nguồn${s.common_reasons.length ? ". Lý do: " + s.common_reasons.map((r) => `${r.count} × ${r.reason}`).join("; ") : ""}`;
+    const parts = [`${s.usable} clip sẵn sàng`];
+    if (s.pending) parts.push(`${s.pending} clip khai thị chờ AI đọc nội dung (bấm "AI gợi ý chủ đề")`);
+    if (s.unusable) {
+      const why = s.common_reasons.map((r) => `${r.count} × ${REASONS[r.reason] || r.reason}`).join("; ");
+      parts.push(`${s.unusable} không dùng cho ghép chủ đề${why ? ` (${why})` : ""}`);
+    }
+    if (s.source_missing) parts.push(`${s.source_missing} clip phải tải lại nguồn khi ghép`);
+    $("tp-summary").textContent = parts.join(" · ");
     $("tp-job").textContent = jobText(data.generate_job);
     $("tp-generate").disabled = active(data.generate_job);
     // Preserve focus/caret; draft values and expanded details also survive later polls.

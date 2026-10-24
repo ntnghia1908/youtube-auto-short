@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from auto_short.config import Config, PackagingConfig, RenderConfig, WorkspaceConfig
-from auto_short.hashing import sha256_file
+from auto_short.hashing import config_hash, sha256_file
 from auto_short.packaging import PackageError, assets, episode, thumbnail
 from auto_short.render.stage import RenderError, _run, probe_media
 from auto_short.render.text import Font, TextError
@@ -441,3 +441,132 @@ def test_hd_eligibility_uses_completed_enhance_or_high_resolution_original(episo
         if changed:
             path.write_bytes(b"changed HD")
     assert episode.shapes(cfg, ident) == (["landscape"] if expected else [])
+
+
+# PKG2.1: keys captured with the pre-PKG2.1 cache_key on this fixture (no per-shape settings).
+OLD_KEYS = {
+    ("lecture0001", "A", "landscape"): "92b09f8660d8b024eedb74a81f5f4349ee9b41910ef0456d36d9aa111e6fd07f",
+    ("lecture0001", "A", "vertical"): "0dab1fd68da9dfccaf06c37481cff5cfcbee7bc8ef42b877d180e8828172f275",
+    ("lecture0001", "B", "landscape"): "7cd4706550b7c0077caef5bf0e9c014336765b1eee68ce8113d804274a788979",
+    ("lecture0001", "B", "vertical"): "43b1e6fc9296009995cc9d4c90e35c3ae16fb1b5552fde93ef5723ba8fb5d933",
+    ("lecture0001", "C", "landscape"): "3235adad957d392cca74fe43cb8c65a85566b347a6efa616bb40b95c4cdef999",
+    ("lecture0001", "C", "vertical"): "51b042aa134a29c82fecd958ac3d4266528450c947bb6af261fbe7126c10af23",
+    ("lecture0002", "A", "landscape"): "72c687b9f40d8410efcb4c62310c27fdf7bf6c5ebd58e84dc4c08f1616bfbf54",
+    ("lecture0002", "C", "landscape"): "81c59a9dd054809469aab6dc4af7ba577b6ca6d5f6a87856ddb63702d2a5c723",
+}
+
+
+@pytest.mark.parametrize("key", sorted(OLD_KEYS))
+def test_keys_unchanged_without_vertical_override(episodes, key):
+    cfg = episodes
+    ident, style, shape = key
+    settings = dict(episode.read_settings(cfg, PID), style=style)
+    assert settings["vertical"] is None
+    fields = episode.header(cfg, ident)
+    assert episode.cache_key(fields, settings, shape) == OLD_KEYS[key]
+    # An older settings record (no "vertical" at all) gives the same key.
+    legacy = {k: v for k, v in settings.items() if k != "vertical"}
+    assert episode.cache_key(fields, legacy, shape) == OLD_KEYS[key]
+    expected = config_hash(dict(header=fields, settings={k: settings[k] for k in episode.SETTING_FIELDS},
+                                layout_version=thumbnail.EPISODE_LAYOUT_VERSION,
+                                font_sha256=thumbnail.font_hashes(style), shape=shape))
+    assert expected == OLD_KEYS[key]
+
+
+def test_legacy_settings_file_and_record_without_vertical_still_valid(episodes):
+    cfg = episodes
+    episode.build_playlist(cfg, PID, run=episode_media)
+    base = episode.read_settings(cfg, PID)
+    atomic_write_json(episode.settings_path(cfg, PID), dict(schema_version=1, playlist_id=PID, updated_at="2026-01-01T00:00:00Z",
+                                                            **{k: base[k] for k in episode.SETTING_FIELDS}))
+    assert episode.read_settings(cfg, PID) == base
+    folder = episode.directory(cfg, IDS[0])
+    doc = json.loads((folder / "thumbs.json").read_text())
+    doc.pop("asset_ids")  # record written before PKG2.1: one asset_id for all shapes
+    atomic_write_json(folder / "thumbs.json", doc)
+    assert episode.read(cfg, IDS[0]) is not None
+    assert set(episode.valid_files(cfg, IDS[0])) == {"landscape", "vertical"}
+    assert episode.build_playlist(cfg, PID, run=lambda _: pytest.fail("legacy record forced a rebuild")) \
+        == dict(built=0, reused=2, skipped=[])
+
+
+def test_vertical_override_changes_only_vertical_key_and_rebuild(episodes, tmp_path):
+    cfg = episodes
+    pool = add_images(cfg, tmp_path)
+    base = episode.read_settings(cfg, PID)
+    episode.build_playlist(cfg, PID, run=episode_media)
+    before = episode.read(cfg, IDS[0])
+    own = dict(base, vertical=dict(style="C", asset_id=pool[0], focus_x=0.3))
+    assert episode.write_settings(cfg, PID, own) == own and episode.read_settings(cfg, PID) == own
+    for ident in IDS:
+        fields = episode.header(cfg, ident)
+        assert episode.cache_key(fields, own, "landscape") == episode.cache_key(fields, base, "landscape")
+    fields = episode.header(cfg, IDS[0])
+    assert episode.cache_key(fields, own, "vertical") != episode.cache_key(fields, base, "vertical")
+    assert set(episode.valid_files(cfg, IDS[0])) == {"landscape"}
+    assert set(episode.valid_files(cfg, IDS[1])) == {"landscape"}
+    calls = []
+    def counted(cmd):
+        calls.append(cmd)
+        return episode_media(cmd)
+    assert episode.build_playlist(cfg, PID, run=counted) == dict(built=1, reused=1, skipped=[])
+    assert len([cmd for cmd in calls if "mjpeg" in cmd]) == 1  # only the 9:16 file of the first episode
+    after = episode.read(cfg, IDS[0])
+    assert after["files"]["landscape"] == before["files"]["landscape"]
+    assert after["files"]["vertical"]["key"] != before["files"]["vertical"]["key"]
+    assert after["asset_id"] is None and after["asset_ids"] == dict(landscape=None, vertical=pool[0])
+    assert set(episode.valid_files(cfg, IDS[0])) == {"landscape", "vertical"}
+    assert episode.read(cfg, IDS[1])["asset_ids"] == dict(landscape=None)
+    # Back to the shared look: only the vertical file is rebuilt, and it gets the original key again.
+    episode.write_settings(cfg, PID, base)
+    calls.clear()
+    assert episode.build_playlist(cfg, PID, run=counted)["built"] == 1
+    assert len([cmd for cmd in calls if "mjpeg" in cmd]) == 1
+    assert episode.read(cfg, IDS[0])["files"]["vertical"]["key"] == before["files"]["vertical"]["key"]
+
+
+def test_preview_and_effective_settings_use_vertical_override_per_shape(episodes, tmp_path):
+    cfg = episodes
+    pool = add_images(cfg, tmp_path)
+    own = dict(episode.read_settings(cfg, PID), vertical=dict(style="B", asset_id=pool[1], focus_x=0.7))
+    assert episode.effective(own, "landscape") == {k: own[k] for k in episode.SETTING_FIELDS}
+    assert episode.effective(own, "vertical") == dict({k: own[k] for k in episode.SETTING_FIELDS},
+                                                      style="B", asset_id=pool[1], focus_x=0.7)
+    image = str(assets.usable(cfg.packaging.asset_dir, pool[1], kind="image")[1])
+    commands = []
+    def inspect(cmd):
+        commands.append(" ".join(map(str, cmd)))
+        return episode_media(cmd)
+    assert set(episode.preview(cfg, PID, settings=own, run=inspect)) == {"landscape", "vertical"}
+    assert image not in commands[0]  # landscape is rendered first and keeps the shared look (no image)
+    assert any(image in cmd for cmd in commands[1:])
+
+
+@pytest.mark.parametrize("vertical", [
+    dict(style="D", asset_id=None, focus_x=0.5), dict(style="A", asset_id=None, focus_x=-0.1),
+    dict(style="A", asset_id=None, focus_x=1.1), dict(style="A", asset_id=None, focus_x=float("nan")),
+    dict(style="A", asset_id=None, focus_x=True), dict(style="A", asset_id="x" * 64, focus_x=0.5),
+    dict(style="A", asset_id=5, focus_x=0.5), dict(style="A", asset_id=None),
+    dict(style="A", asset_id=None, focus_x=0.5, title_lines=["Kinh"]), "A", [], 0])
+def test_invalid_vertical_override_rejected_before_ffmpeg(episodes, vertical):
+    cfg = episodes
+    settings = dict(episode.read_settings(cfg, PID), vertical=vertical)
+    with pytest.raises(PackageError):
+        episode.write_settings(cfg, PID, settings)
+    with pytest.raises(PackageError):
+        episode.preview(cfg, PID, settings=settings, run=lambda _: pytest.fail("invalid vertical ran ffmpeg"))
+    assert not episode.settings_path(cfg, PID).exists()
+
+
+def test_vertical_override_asset_must_be_approved(episodes, tmp_path):
+    cfg = episodes
+    pool = add_images(cfg, tmp_path)
+    library = assets.list_assets(cfg.packaging.asset_dir)
+    for asset in library:
+        asset["approved"] = False
+    atomic_write_json(cfg.packaging.asset_dir / "library.json", dict(schema_version=1, assets=library))
+    settings = dict(episode.read_settings(cfg, PID), vertical=dict(style="A", asset_id=pool[0], focus_x=0.5))
+    with pytest.raises(PackageError):
+        episode.write_settings(cfg, PID, settings)
+    with pytest.raises(PackageError):
+        episode.preview(cfg, PID, settings=settings, run=lambda _: pytest.fail("unapproved asset ran ffmpeg"))

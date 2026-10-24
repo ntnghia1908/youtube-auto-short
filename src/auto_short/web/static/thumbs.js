@@ -1,28 +1,59 @@
-/* PKG2 v2: one design and portrait for the whole playlist; temporary previews before publication. */
+/* PKG2.1: one design for the whole playlist, optional own look for the 9:16 shape; temporary previews before publication. */
 "use strict";
 (() => {
   const { el, api } = AutoShort;
   const $ = (id) => document.getElementById(id);
   const pid = encodeURIComponent(decodeURIComponent(location.pathname.split("/").filter(Boolean)[1] || ""));
   const base = `/api/playlists/${pid}/thumbs`;
-  let pending = false, dirty = false, timer = null, view = null, assetId = null, assetKey = null;
+  let pending = false, dirty = false, timer = null, view = null;
   const cards = new Map();
+  // Two image pickers share the same code: the compact "selected image" line + a closed <details> holding the gallery.
+  const looks = {
+    main: { picked: $("thumbs-picked"), details: $("thumbs-details"), grid: $("thumbs-assets"), id: null, key: null },
+    vertical: { picked: $("thumbs-vpicked"), details: $("thumbs-vdetails"), grid: $("thumbs-vassets"), id: null, key: null },
+  };
   $("thumbs-back").href = `/playlists/${pid}`;
   function say(text) { $("thumbs-msg").textContent = text; }
   function draft() {
-    return { style: $("thumbs-style").value, asset_id: assetId, focus_x: Number($("thumbs-focus").value),
-      title_lines: $("thumbs-lines").value.split("\n").filter((line) => line.trim()), credit: $("thumbs-credit").value };
+    return { style: $("thumbs-style").value, asset_id: looks.main.id, focus_x: Number($("thumbs-focus").value),
+      title_lines: $("thumbs-lines").value.split("\n").filter((line) => line.trim()), credit: $("thumbs-credit").value,
+      vertical: $("thumbs-vsep").checked ? { style: $("thumbs-vstyle").value, asset_id: looks.vertical.id,
+        focus_x: Number($("thumbs-vfocus").value) } : null };
   }
-  function lock() {
-    const busy = pending || !!(view && view.job && view.job.active);
-    $("thumbs-settings").querySelectorAll("input, textarea, select, button").forEach((c) => { c.disabled = busy; });
-    $("thumbs-zip").hidden = dirty || busy || !view || !view.episodes.some((row) => Object.keys(row.files).length);
-    $("thumbs-focus-value").textContent = Number($("thumbs-focus").value).toFixed(2);
-    document.querySelectorAll("#thumbs-assets button").forEach((button) => {
-      const selected = (button.dataset.asset || null) === assetId;
+  function showPicked(look) {
+    const asset = look.id && view ? view.assets.find((a) => a.id === look.id) : null;
+    look.picked.replaceChildren(...(asset
+      ? [el("img", { src: asset.preview_url, alt: "Ảnh " + asset.number }), el("span", { text: "Ảnh " + asset.number })]
+      : [el("span", { text: look.id ? "Ảnh không còn dùng được" : "Không ảnh" })]));
+    look.grid.querySelectorAll("button").forEach((button) => {
+      const selected = (button.dataset.asset || null) === look.id;
       button.setAttribute("aria-pressed", String(selected));
       button.style.outline = selected ? "3px solid #b58a44" : "none";
     });
+  }
+  function fillGallery(look) {
+    const key = JSON.stringify(view.assets);
+    if (look.key === key) return;
+    look.key = key;
+    look.grid.replaceChildren(...[{ id: "", number: "Không ảnh" }, ...view.assets].map((asset) => {
+      const button = el("button", { class: "btn", type: "button", "data-asset": asset.id,
+        "aria-label": "Ảnh " + asset.number, style: "padding:6px" });
+      if (asset.preview_url) button.append(el("img", { src: asset.preview_url, alt: "Ảnh " + asset.number,
+        loading: "lazy", width: "96", height: "90", style: "max-width:100%;object-fit:contain;display:block" }));
+      button.append(document.createTextNode(String(asset.number)));
+      button.addEventListener("click", () => { look.id = asset.id || null; look.details.open = false; edited(); });
+      return button;
+    }));
+  }
+  function lock() {
+    const busy = pending || !!(view && view.job && view.job.active);
+    $("thumbs-settings").querySelectorAll("input, textarea, select, button").forEach((c) => { c.disabled = busy && !("keep" in c.dataset); });
+    $("thumbs-zip").hidden = dirty || busy || !view || !view.episodes.some((row) => Object.keys(row.files).length);
+    $("thumbs-focus-value").textContent = Number($("thumbs-focus").value).toFixed(2);
+    $("thumbs-vfocus-value").textContent = Number($("thumbs-vfocus").value).toFixed(2);
+    $("thumbs-vgroup").hidden = !$("thumbs-vsep").checked;
+    showPicked(looks.main);
+    showPicked(looks.vertical);
   }
   function edited() {
     dirty = true;
@@ -34,33 +65,20 @@
       loading: "lazy", width: shape === "landscape" ? "288" : "135", height: shape === "landscape" ? "162" : "240",
       style: "max-width:100%;object-fit:contain" });
   }
-  function draw() {
-    $("thumbs-title").textContent = `Thumbnail — ${view.series}`;
-    $("thumbs-zip").href = view.zip_url;
-    $("thumbs-status").textContent = view.job
-      ? (view.job.active ? "Đang dựng… " : "") + (view.job.summary || view.job.status) + (view.job.error ? ": " + view.job.error : "") : "Chưa chạy";
-    if (!dirty && !pending) {
-      assetId = view.settings.asset_id;
-      $("thumbs-style").value = view.settings.style;
-      $("thumbs-lines").value = view.settings.title_lines.join("\n");
-      $("thumbs-credit").value = view.settings.credit;
-      $("thumbs-focus").value = view.settings.focus_x;
-    }
-    const choices = [{ id: "", number: "Không ảnh" }, ...view.assets];
-    const nextAssetKey = JSON.stringify(view.assets);
-    if (assetKey !== nextAssetKey) {
-      assetKey = nextAssetKey;
-      $("thumbs-assets").replaceChildren(...choices.map((asset) => {
-      const button = el("button", { class: "btn", type: "button", "data-asset": asset.id,
-        "aria-label": "Ảnh " + asset.number, style: "padding:6px" });
-      if (asset.preview_url) button.append(el("img", { src: asset.preview_url, alt: "Ảnh " + asset.number,
-        loading: "lazy", width: "96", height: "90", style: "max-width:100%;object-fit:contain;display:block" }));
-      button.append(document.createTextNode(String(asset.number)));
-      button.addEventListener("click", () => { assetId = asset.id || null; edited(); });
-      return button;
-      }));
-    }
-    $("thumbs-grid").replaceChildren(...view.episodes.map((row) => {
+  function drawProgress() {
+    const p = view.progress, active = !!(view.job && view.job.active);
+    $("thumbs-progress").textContent = `Đã có thumbnail ${p.with_any}/${p.total} tập — ngang ${p.landscape}, dọc ${p.vertical}`
+      + (p.skipped ? ` · ${p.skipped} tập bỏ qua` : "");
+    $("thumbs-reasons").replaceChildren(...Object.entries(p.skipped_by_reason).map(([reason, n]) => el("li", { text: `${n} tập: ${reason}` })));
+    const bar = $("thumbs-bar");
+    bar.hidden = !active;
+    bar.max = Math.max(p.total, 1);
+    bar.value = p.with_any;
+  }
+  function drawEpisodes() {
+    const box = $("thumbs-grid");
+    if (!$("thumbs-episodes").open) { box.replaceChildren(); return; }  // DOM only while the list is open
+    box.replaceChildren(...view.episodes.map((row) => {
       const key = JSON.stringify(row);
       const cached = cards.get(row.video_id);
       if (cached && cached.key === key) return cached.card;
@@ -74,6 +92,28 @@
       cards.set(row.video_id, { key, card });
       return card;
     }));
+  }
+  function draw() {
+    $("thumbs-title").textContent = `Thumbnail — ${view.series}`;
+    $("thumbs-zip").href = view.zip_url;
+    $("thumbs-status").textContent = view.job
+      ? (view.job.active ? "Đang dựng… " : "") + (view.job.summary || view.job.status) + (view.job.error ? ": " + view.job.error : "") : "Chưa chạy";
+    if (!dirty && !pending) {
+      const s = view.settings, v = s.vertical;
+      looks.main.id = s.asset_id;
+      $("thumbs-style").value = s.style;
+      $("thumbs-lines").value = s.title_lines.join("\n");
+      $("thumbs-credit").value = s.credit;
+      $("thumbs-focus").value = s.focus_x;
+      $("thumbs-vsep").checked = !!v;
+      looks.vertical.id = (v || s).asset_id;
+      $("thumbs-vstyle").value = (v || s).style;
+      $("thumbs-vfocus").value = (v || s).focus_x;
+    }
+    fillGallery(looks.main);
+    fillGallery(looks.vertical);
+    drawProgress();
+    drawEpisodes();
     lock();
   }
   async function load() {
@@ -107,7 +147,16 @@
     if (preview) lock(); else await load();
   }
   $("thumbs-settings").addEventListener("submit", (e) => { e.preventDefault(); act(false); });
-  for (const id of ["thumbs-style", "thumbs-lines", "thumbs-credit", "thumbs-focus"]) $(id).addEventListener("input", edited);
+  for (const id of ["thumbs-style", "thumbs-lines", "thumbs-credit", "thumbs-focus", "thumbs-vstyle", "thumbs-vfocus"]) $(id).addEventListener("input", edited);
+  $("thumbs-vsep").addEventListener("change", () => {
+    if ($("thumbs-vsep").checked) {  // start from the shared look, then let the user change it
+      looks.vertical.id = looks.main.id;
+      $("thumbs-vstyle").value = $("thumbs-style").value;
+      $("thumbs-vfocus").value = $("thumbs-focus").value;
+    }
+    edited();
+  });
+  $("thumbs-episodes").addEventListener("toggle", () => { if (view) drawEpisodes(); });
   $("thumbs-preview").addEventListener("click", () => act(true));
   $("thumbs-refresh").addEventListener("click", load);
   load();
