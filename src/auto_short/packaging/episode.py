@@ -52,6 +52,10 @@ def read(config, video_id):
                 or doc["asset_id"] is not None and not assets.SHA.fullmatch(doc["asset_id"]) \
                 or doc["skipped_reason"] is not None and not isinstance(doc["skipped_reason"], str):
             raise PackageError("hồ sơ thumbnail không hợp lệ")
+        owners = doc.get("asset_ids", {})  # PKG2.1: per-shape assets; older records only have asset_id
+        if not isinstance(owners, dict) or any(k not in ("landscape", "vertical") or v is not None
+                                               and not assets.SHA.fullmatch(v) for k, v in owners.items()):
+            raise PackageError("hồ sơ thumbnail không hợp lệ")
         for shape, entry in doc["files"].items():
             match = FILE_NAME.fullmatch(entry["file"])
             if not match or shape != match[1] or entry["key"] != match[2] \
@@ -112,19 +116,37 @@ def images(config):
     return usable
 
 
+def effective(settings, shape):
+    """Settings one shape is rendered with: the shared fields, plus the vertical override for 9:16.
+
+    Without an override both shapes get exactly the five shared fields, so cache keys equal the pre-PKG2.1 ones."""
+    result = {k: settings[k] for k in SETTING_FIELDS}
+    if shape == "vertical" and settings.get("vertical"):
+        result.update(settings["vertical"])
+    return result
+
+
 def context(config, video_id, settings):
+    """fields, formats, {shape: asset id}, {shape: image path}; assets are checked for both shapes."""
     fields = header(config, video_id)
     formats = shapes(config, video_id)
     if not formats:
         raise PackageError("chưa có bản ngang HD hoặc bản dọc hoàn chỉnh")
-    ident = settings["asset_id"]
-    image = assets.usable(config.packaging.asset_dir, ident, kind="image")[1] if ident else None
-    return fields, formats, ident, image
+    idents, images = {}, {}
+    for shape in thumbnail.EPISODE_SIZES:
+        ident = idents[shape] = effective(settings, shape)["asset_id"]
+        images[shape] = assets.usable(config.packaging.asset_dir, ident, kind="image")[1] if ident else None
+    return fields, formats, idents, images
 
 
 def cache_key(fields, settings, shape):
-    return config_hash(dict(header=fields, settings=settings, layout_version=thumbnail.EPISODE_LAYOUT_VERSION,
-                            font_sha256=thumbnail.font_hashes(settings["style"]), shape=shape))
+    look = effective(settings, shape)
+    return config_hash(dict(header=fields, settings=look, layout_version=thumbnail.EPISODE_LAYOUT_VERSION,
+                            font_sha256=thumbnail.font_hashes(look["style"]), shape=shape))
+
+
+def recorded_asset(doc, shape):
+    return doc.get("asset_ids", {}).get(shape, doc["asset_id"])
 
 
 def valid_files(config, video_id, doc=None, *, pid=None, settings=None):
@@ -138,10 +160,11 @@ def valid_files(config, video_id, doc=None, *, pid=None, settings=None):
         if not pid:
             return {}
         settings = read_settings(config, pid) if settings is None else settings
-        fields, formats, ident, _ = context(config, video_id, settings)
-        if doc["header"] != fields or doc["asset_id"] != ident:
+        fields, formats, idents, _ = context(config, video_id, settings)
+        if doc["header"] != fields:
             return {}
         return {shape: entry for shape, entry in doc["files"].items() if shape in formats
+                and recorded_asset(doc, shape) == idents[shape]
                 and thumbnail.reusable(folder, entry, cache_key(fields, settings, shape), file_pattern=FILE_NAME)}
     except (PackageError, TitlingError, OSError, ValueError, KeyError, TypeError):
         return {}
@@ -155,14 +178,33 @@ def settings_path(config, pid):
     return _no_symlinks(Path(config.render.output_dir) / "_compilations" / pid / "thumbs.json")
 
 
+VERTICAL_FIELDS = ("style", "asset_id", "focus_x")
+
+
+def _check_look(config, look, check_asset):
+    if not isinstance(look["style"], str) or look["style"] not in thumbnail.STYLE_FONTS:
+        raise PackageError("kiểu thumbnail phải là A, B hoặc C")
+    if type(look["focus_x"]) not in (int, float) or not 0 <= look["focus_x"] <= 1:
+        raise PackageError("focus_x phải từ 0 đến 1")
+    if look["asset_id"] is not None:
+        if not isinstance(look["asset_id"], str) or not assets.SHA.fullmatch(look["asset_id"]):
+            raise PackageError("asset id không hợp lệ")
+        if check_asset:
+            assets.usable(config.packaging.asset_dir, look["asset_id"], kind="image")
+
+
 def validate_settings(config, settings, *, check_asset=True):
     if not isinstance(settings, dict) or any(k not in settings for k in SETTING_FIELDS):
         raise PackageError("cấu hình thumbnail thiếu trường")
     result = {k: settings[k] for k in SETTING_FIELDS}
-    if not isinstance(result["style"], str) or result["style"] not in thumbnail.STYLE_FONTS:
-        raise PackageError("kiểu thumbnail phải là A, B hoặc C")
-    if type(result["focus_x"]) not in (int, float) or not 0 <= result["focus_x"] <= 1:
-        raise PackageError("focus_x phải từ 0 đến 1")
+    _check_look(config, result, check_asset)
+    vertical = settings.get("vertical")  # None = share the landscape look
+    if vertical is not None:
+        if not isinstance(vertical, dict) or set(vertical) != set(VERTICAL_FIELDS):
+            raise PackageError("kiểu riêng cho bản dọc cần đủ style, asset_id, focus_x")
+        vertical = {k: vertical[k] for k in VERTICAL_FIELDS}
+        _check_look(config, vertical, check_asset)
+    result["vertical"] = vertical
     lines = result["title_lines"]
     if not isinstance(lines, list) or not 1 <= len(lines) <= 3 \
             or any(not isinstance(v, str) or not v.strip() or len(nfc(v)) > 40 or len(v.splitlines()) != 1 for v in lines):
@@ -172,11 +214,6 @@ def validate_settings(config, settings, *, check_asset=True):
         raise PackageError("credit tối đa 60 ký tự trên một dòng")
     result["title_lines"] = [" ".join(nfc(v).split()) for v in lines]
     result["credit"] = " ".join(nfc(result["credit"]).split())
-    if result["asset_id"] is not None:
-        if not isinstance(result["asset_id"], str) or not assets.SHA.fullmatch(result["asset_id"]):
-            raise PackageError("asset id không hợp lệ")
-        if check_asset:
-            assets.usable(config.packaging.asset_dir, result["asset_id"], kind="image")
     return result
 
 
@@ -239,8 +276,9 @@ def build_episode(config, video_id, *, pid, settings=None, run=None):
     folder = directory(config, video_id)
     previous = read(config, video_id) or _new(video_id)
     settings = read_settings(config, pid) if settings is None else settings
-    fields, formats, ident, image = context(config, video_id, settings)
-    doc = dict(_new(video_id), playlist_id=pid, header=fields, asset_id=ident)
+    fields, formats, idents, images = context(config, video_id, settings)
+    doc = dict(_new(video_id), playlist_id=pid, header=fields, asset_id=idents["landscape"],
+               asset_ids={shape: idents[shape] for shape in formats})
     folder.mkdir(parents=True, exist_ok=True)
     staged = []
     with tempfile.TemporaryDirectory(prefix=".episode-thumbs-", dir=folder) as tmpname:
@@ -253,7 +291,8 @@ def build_episode(config, video_id, *, pid, settings=None, run=None):
             work = Path(tmpname) / shape
             work.mkdir()
             name = f"{shape}-{expected}.jpg"
-            output = thumbnail.build_episode(work, fields, shape, image, name, settings=settings, run=run)
+            output = thumbnail.build_episode(work, fields, shape, images[shape], name,
+                                             settings=effective(settings, shape), run=run)
             doc["files"][shape] = dict(file=name, key=expected, sha256=sha256_file(output))
             staged.append((output, folder / name))
         if not staged:
@@ -304,7 +343,7 @@ def preview(config, pid, *, settings=None, run=None):
     settings = read_settings(config, pid) if settings is None else validate_settings(config, settings)
     for entry in playlist(config, pid)["entries"]:
         try:
-            fields, _, _, image = context(config, entry["video_id"], settings)
+            fields, _, _, images = context(config, entry["video_id"], settings)
             break
         except (PackageError, TitlingError, OSError, ValueError, KeyError, TypeError):
             continue
@@ -315,6 +354,7 @@ def preview(config, pid, *, settings=None, run=None):
         for shape in thumbnail.EPISODE_SIZES:
             work = Path(tmp) / shape
             work.mkdir()
-            path = thumbnail.build_episode(work, fields, shape, image, "preview.jpg", settings=settings, run=run)
+            path = thumbnail.build_episode(work, fields, shape, images[shape], "preview.jpg",
+                                             settings=effective(settings, shape), run=run)
             result[shape] = path.read_bytes()
         return result

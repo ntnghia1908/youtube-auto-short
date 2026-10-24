@@ -5,6 +5,22 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Thumbnail cả bộ — Auto Short</title>
 <link rel="stylesheet" href="/static/style.css">
+<style>
+  /* PKG2.1: action bar always visible, compact picker, collapsed lists (phone first) */
+  .th-bar { position: sticky; bottom: 0; z-index: 5; background: var(--card); border-top: 1px solid var(--border);
+    margin: 1rem -.75rem -.75rem; padding: .6rem .75rem calc(.6rem + env(safe-area-inset-bottom)); box-shadow: 0 -2px 6px rgba(0, 0, 0, .08); }
+  .th-bar .actions { margin: 0; }
+  .th-bar p { margin: .35rem 0 0; }
+  .th-look { border: 1px solid var(--border); border-radius: 8px; padding: .6rem; margin: .75rem 0; }
+  .th-look legend { padding: 0 .3rem; }
+  .th-picked { display: flex; align-items: center; gap: .6rem; min-height: 56px; }
+  .th-picked img { width: 48px; height: 48px; object-fit: contain; background: #eee; border-radius: 6px; }
+  .th-assets { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 8px; max-height: 50vh; overflow: auto; padding: 4px; }
+  .th-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 16px; margin-top: .6rem; }
+  .th-check { display: flex; align-items: center; gap: .5rem; min-height: 44px; }
+  #thumbs-bar { width: 100%; }
+  .th-reasons { margin: .25rem 0 0; padding-left: 1.2rem; }
+</style>
 </head>
 <body>
 <header class="topbar"><a class="brand" href="/">&larr; Auto Short</a>
@@ -23,23 +39,47 @@
 <label>Các dòng tiêu đề (1–3 dòng, tối đa 40 ký tự mỗi dòng)
 <textarea id="thumbs-lines" rows="3" aria-label="Các dòng tiêu đề"></textarea></label>
 <label>Người giảng / credit <input id="thumbs-credit" type="text" maxlength="60"></label>
-<fieldset><legend>Ảnh dùng chung cho cả bộ</legend>
-<div id="thumbs-assets" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:8px"></div>
-</fieldset>
+<fieldset class="th-look"><legend>Ảnh dùng chung cho cả bộ</legend>
+<div id="thumbs-picked" class="th-picked"></div>
+<details id="thumbs-details"><summary>Đổi ảnh</summary>
+<div id="thumbs-assets" class="th-assets"></div></details>
 <label>Vị trí lấy ảnh <input id="thumbs-focus" type="range" min="0" max="1" step="0.01" value="0.5">
 <output id="thumbs-focus-value">0.50</output></label>
+</fieldset>
+<label class="th-check"><input id="thumbs-vsep" type="checkbox"> Bản dọc dùng kiểu riêng</label>
+<fieldset id="thumbs-vgroup" class="th-look" hidden><legend>Kiểu riêng cho bản dọc 9:16</legend>
+<label>Kiểu
+<select id="thumbs-vstyle">
+<option value="A">A — Nền tối, chữ vàng serif</option>
+<option value="B">B — Viền vàng, chữ trắng Anton</option>
+<option value="C">C — Nền giấy thủy mặc, chữ nâu</option>
+</select></label>
+<div id="thumbs-vpicked" class="th-picked"></div>
+<details id="thumbs-vdetails"><summary>Đổi ảnh</summary>
+<div id="thumbs-vassets" class="th-assets"></div></details>
+<label>Vị trí lấy ảnh <input id="thumbs-vfocus" type="range" min="0" max="1" step="0.01" value="0.5">
+<output id="thumbs-vfocus-value">0.50</output></label>
+</fieldset>
+<div id="thumbs-preview-images" class="actions" style="align-items:flex-start"></div>
+<p id="thumbs-msg" class="small" role="status"></p>
+<div id="thumbs-progress-box">
+<p id="thumbs-progress" role="status">Chưa có số liệu</p>
+<progress id="thumbs-bar" hidden></progress>
+<ul id="thumbs-reasons" class="th-reasons small muted"></ul>
+<button id="thumbs-refresh" class="btn small" type="button" data-keep>Tải lại trạng thái</button>
+</div>
+<details id="thumbs-episodes"><summary>Xem từng tập</summary>
+<div id="thumbs-grid" class="th-grid"></div></details>
+<div class="th-bar">
 <div class="actions">
 <button id="thumbs-preview" class="btn" type="button">Xem trước</button>
-<button id="thumbs-build" class="btn primary" type="submit">Dựng cả bộ</button>
+<button id="thumbs-build" class="btn primary" type="submit" style="margin-top:0">Dựng cả bộ</button>
 <a id="thumbs-zip" class="btn" download>Tải zip</a>
-<button id="thumbs-refresh" class="btn" type="button">Tải lại trạng thái</button>
+</div>
+<p id="thumbs-status" class="small" role="status"></p>
 </div>
 </form>
-<p id="thumbs-status" role="status"></p>
-<p id="thumbs-msg" class="small" role="status"></p>
-<div id="thumbs-preview-images" class="actions" style="align-items:flex-start"></div>
 </section>
-<div id="thumbs-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:16px"></div>
 </main>
 <script src="/static/app.js"></script>
 <script src="/static/thumbs.js"></script>

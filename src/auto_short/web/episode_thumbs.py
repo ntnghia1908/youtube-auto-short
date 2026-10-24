@@ -97,7 +97,7 @@ class EpisodeThumbs:
             doc, files, reason = None, {}, None
             try:
                 doc = episode.read(self.config, ident)
-                fields, _, _, _ = episode.context(self.config, ident, settings)
+                fields = episode.context(self.config, ident, settings)[0]
                 files = episode.valid_files(self.config, ident, doc, pid=pid)
                 reason = (doc or {}).get("skipped_reason")
                 if not files and reason is None:
@@ -115,8 +115,22 @@ class EpisodeThumbs:
             rows.append(row)
         return rows
 
+    @staticmethod
+    def progress(rows):
+        """Aggregate for the page so the client does not count: files per shape, episodes without any file by reason."""
+        reasons = {}
+        for row in rows:
+            if not row["files"]:
+                reason = row["skipped_reason"] or "không rõ lý do"
+                reasons[reason] = reasons.get(reason, 0) + 1
+        return dict(total=len(rows), landscape=sum("landscape" in row["files"] for row in rows),
+                    vertical=sum("vertical" in row["files"] for row in rows),
+                    with_any=sum(bool(row["files"]) for row in rows), skipped=sum(reasons.values()),
+                    skipped_by_reason=reasons)
+
     def view(self, pid):
         doc = episode.playlist(self.config, pid)
+        rows = self.rows(pid)
         images = episode.images(self.config)
         images.sort(key=lambda a: (0, int(a["tags"][0]), a["id"]) if a["tags"] and a["tags"][0].isdecimal()
                     else (1, 0, a["id"]))
@@ -124,7 +138,7 @@ class EpisodeThumbs:
         for number, asset in enumerate(images, 1):
             asset.update(number=asset["tags"][0] if asset["tags"] else number, preview_url=f"/files/playlists/{pid}/thumbs/assets/{asset['id']}")
         return dict(playlist_id=pid, series=safe(doc.get("series") or doc.get("title") or pid),
-                    episodes=self.rows(pid), assets=images, settings=safe(episode.read_settings(self.config, pid)),
+                    episodes=rows, progress=self.progress(rows), assets=images, settings=safe(episode.read_settings(self.config, pid)),
                     job=job_view(self.runner.latest(render_key(pid))), zip_url=f"/files/playlists/{pid}/thumbs.zip")
 
     def archive(self, pid):
@@ -156,12 +170,19 @@ class EpisodeThumbs:
         return content.getvalue(), filename
 
 
+class VerticalIn(BaseModel):
+    style: Literal["A", "B", "C"]
+    asset_id: StrictStr | None = Field(max_length=64)
+    focus_x: float = Field(ge=0, le=1, strict=True)
+
+
 class SettingsIn(BaseModel):
     style: Literal["A", "B", "C"] = "A"
     asset_id: StrictStr | None = Field(default=None, max_length=64)
     focus_x: float = Field(default=0.5, ge=0, le=1, strict=True)
     title_lines: list[StrictStr] = Field(min_length=1, max_length=3)
     credit: StrictStr = Field(default="", max_length=60)
+    vertical: VerticalIn | None = None  # None = bản dọc dùng chung kiểu / ảnh với bản ngang
 
 
 def register(app: FastAPI, service: EpisodeThumbs):
