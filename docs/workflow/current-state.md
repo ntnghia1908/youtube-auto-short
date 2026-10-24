@@ -25,7 +25,7 @@ Cập nhật 2026-10-24.
 
 1. HUMAN LEAD đăng 13 bài tập 10 Thập Thiện `W2d-xS4ttTw` (xử lý lại 2026-10-24).
 2. TC-AIQ2 (`docs/tasks/TC-AIQ2-theme-target-length.md`, READY, PR #131): chạy thật 4/5 chủ đề đạt 30–40 phút; HUMAN LEAD chấm ngữ nghĩa trên 8080 rồi merge #130 → #131.
-3. Đóng gói video ghép chủ đề (thumbnail / hình ambient / nhạc nền): boundary `docs/decisions/PKG-video-packaging-authorization.md` ACCEPTED 2026-10-24; làm tuần tự `PKG1` (đang làm) → `VIS1` → `AUD1`; nguồn asset CC0 chờ HUMAN LEAD duyệt (G3). Hàng đăng bài (PUB1) và nhật ký thử nghiệm (PKG1.1): HUMAN LEAD bỏ 2026-10-24.
+3. Đóng gói (boundary `docs/decisions/PKG-video-packaging-authorization.md` ACCEPTED, G1–G8): branch `feature/pkg1-thumbnail` (worktree `.claude/worktrees/cp8.38-delete-keep-posts`, chưa push). PKG1 READY (commit `3a39306`). PKG2 thumbnail tập Địa Tạng (ưu tiên): vòng 1 commit `ba48de9`; vòng 2 (3 kiểu A/B/C theo bộ kinh, mục "Vòng 2" trong contract; Địa Tạng = kiểu A + ảnh 67) giao Codex session `01a16d28-a9b3-7621-8da7-7d1dff31fd0d`. Sau đó: VIS1 → AUD1. PUB1 / PKG1.1: bỏ.
 4. Cũ, vẫn mở: HTTPS cho 8080; FIX `setup-enhance-worker.ps1` (S1); CP14 Whisper GPU tạm gác.
 
 Đây là PROPOSED, không authorize implementation tiếp theo.

@@ -75,6 +75,17 @@ Chạm public API (route mới sau đăng nhập), không chạm security model 
 
 - [ ] Trên 8080 ghim commit branch: "Thumbnail cả bộ" Địa Tạng, xem lưới, đổi ảnh 1 tập, tải zip.
 
+## Vòng 2 — thiết kế theo bộ kinh (HUMAN LEAD 2026-10-24, G8)
+
+HUMAN LEAD chê bố cục vòng 1 ("không đẹp"), gửi 6 thumbnail tham khảo; ORCHESTRATOR làm mẫu bằng ffmpeg, HUMAN LEAD duyệt:
+
+- **3 kiểu** (mỗi bộ kinh chọn một): `A` nền tối + chữ serif vàng ánh kim + ô đỏ "TẬP N" (Thái Thượng); `B` thanh vàng trên / dưới, chữ trắng hẹp Anton, ô đỏ (Thập Thiện); `C` thủy mặc nền giấy, ảnh tách nền đứng, chữ serif nâu, dải xanh (Hoa Nghiêm). Bản tham chiếu dựng hình: `docs/tasks/assets/PKG2-style-prototype.py` (A/B/C), `docs/tasks/assets/PKG2-photo-gallery.py` (mặt nạ elip mờ cho ảnh bất kỳ, colorkey cho ảnh nền trắng).
+- **Một ảnh chung cho cả bộ** (bỏ xoay vòng theo tập); HUMAN LEAD chọn từ bảng ảnh. Địa Tạng: **kiểu A, ảnh 67** (`post-images/67.jpg`).
+- **Font** (G8, OFL, đã thêm vào `render/fonts/` kèm `OFL-*.txt`): `PlayfairDisplaySC-Bold.ttf`, `OldStandard-Bold.ttf`, `Anton-Regular.ttf`; đủ glyph tiếng Việt (kiểm bằng `Font.missing`).
+- **Cấu hình theo bộ kinh** `output/_compilations/<pid>/thumbs.json` (hoặc file playlist-scoped tương đương): `style`, `asset_id`, `focus_x` (0–1, mặc định 0.5), `title_lines` (mặc định tách từ tên bộ: dòng nhỏ "KINH" nếu tên bắt đầu bằng "Kinh", dòng lớn = 2 từ kế, dòng vừa = phần còn lại; sửa tay được), `credit` (mặc định "CHỦ GIẢNG: PHÁP SƯ TỊNH KHÔNG" theo speaker header). Đổi cấu hình → key mới cho mọi tập của bộ.
+- 9:16 (1080×1920) theo cùng kiểu: chữ nửa trên, ảnh nửa dưới, ô "TẬP N" giữa.
+- Override ảnh từng tập vòng 1 → thay bằng cấu hình cả bộ (xóa code / route / test override từng tập).
+
 ## Result
 
 - Main changes (IMPLEMENTER):
