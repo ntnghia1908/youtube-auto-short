@@ -525,6 +525,11 @@ def run_render(episode_id: str, config: Config, *, force: bool = False, run: Run
         # CP8.6 S3: the source video was cleaned up; the last render stays as it is (manifest untouched).
         raise RenderError(f"episode {ws.episode_id!r} is archived (source video cleaned up); its Shorts are kept "
                           "as they are — delete the episode and run it again to change them")
+    if enhance_state.is_released(ws.dir) or enhance_state.is_released(Path(ws.root) / enhance_state.owner_id(ws.episode_id)):
+        # HD1 G3: the HD source was moved to an external machine; never fall back to the original silently, and the
+        # manifest stays untouched (the Shorts rendered from the HD source stay current).
+        raise RenderError(f"episode {ws.episode_id!r}: {enhance_state.RELEASED_MESSAGE} (HD1); "
+                          "không render lại từ bản gốc — lấy lại nguồn HD trước")
     out_dir = (cfg.output_dir / ws.episode_id).resolve()
     prior = list((manifest["stages"].get(STAGE) or {}).get("artifacts", []))
 

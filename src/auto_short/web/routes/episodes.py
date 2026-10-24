@@ -22,6 +22,7 @@ from ...review import (
     ArchivedError, EpisodeNotFound, ReviewError, archive_source, content_disposition,
     delete_episode, is_archived, list_titles, set_published, set_watched, shorts as review_shorts,
 )
+from ...review import backup as review_backup
 from ...review.archive import restore_parts
 from ...review.names import hashtags as review_hashtags
 from .. import episodes as ep
@@ -51,6 +52,15 @@ class SubmitIn(BaseModel):
 
 class EnhanceSwitchIn(BaseModel):
     enabled: StrictBool
+
+
+class BackupIn(BaseModel):
+    kind: Literal["hd", "vertical"]
+    sha256: str = Field(max_length=200)
+
+
+class ReleaseIn(BaseModel):
+    allow_no_vertical: StrictBool = False
 
 
 def _clean(value: str | None) -> str | None:
@@ -200,10 +210,13 @@ def build(ctx: WebContext) -> APIRouter:
         while there is no effective HD source (``source``: ``hd`` | ``original`` | ``archived``; an archived original
         has no landscape download, ``url`` is None, and its vertical job downloads it again)."""
         src = ep.hd_source(ctx.config, episode_id)
+        owner = ep.hd_owner(episode_id)
+        backup = review_backup.view(ctx.config, owner)  # HD1 G3
         if src is None:
+            if backup["released"]:  # HD moved to an external machine: no HD / vertical link, only the fact
+                return {"url": None, "name": None, "size": None, "source": "released", "vertical": None, **backup}
             return None
         hd = src.path
-        owner = ep.hd_owner(episode_id)
         ready = render_full.ready_file(ctx.config, owner) if render_full.current(ctx.config, owner) else None
         job = ctx.runner.latest_vertical(owner)
         return {"url": f"/api/episodes/{episode_id}/source-hd" if hd is not None else None,
@@ -212,7 +225,7 @@ def build(ctx: WebContext) -> APIRouter:
                 "vertical": {"ready": ready is not None, "url": f"/api/episodes/{episode_id}/vertical",
                              "name": ep.video_download_name(ctx.config, episode_id, "Doc"),
                              "size": ready.stat().st_size if ready is not None else None,
-                             "job": ctx.job_view(job, logs=False)}}
+                             "job": ctx.job_view(job, logs=False)}, **backup}
 
     @router.post("/api/episodes/{episode_id}/priority")
     def api_episode_priority(episode_id: str, body: PublishedIn):
@@ -372,6 +385,9 @@ def build(ctx: WebContext) -> APIRouter:
         """E6 "Render bằng bản gốc": turn enhance off for the video and render now from the original source."""
         if (bad := _enhance_episode(episode_id)) is not None:
             return bad
+        if review_backup.view(ctx.config, episode_id)["released"]:  # HD1 G3: no silent fall-back to the original
+            return JSONResponse({"detail": f"{enh_state.RELEASED_MESSAGE}: không render bằng bản gốc"},
+                                status_code=409)
         try:
             doc = ctx.svc.set_wanted(episode_id, False)
         except EnhanceError as exc:
@@ -519,5 +535,50 @@ def build(ctx: WebContext) -> APIRouter:
         log.warning("web: archived %s: removed %s (%d bytes)", episode_id, ", ".join(result.removed) or "-",
                     result.freed)
         return {"archived": episode_id, "changed": result.changed, "freed": result.freed, "removed": result.removed}
+
+    def _backup_busy(owner: str):
+        """409 body when a job / restore of the video (or its khai thị part) is queued or running, else None."""
+        busy = ctx.restore_job(owner)
+        if busy is None or not busy.active:
+            busy = next((j for j in ctx.runner.jobs() if j.active and ep.hd_owner(j.episode_id) == owner), None)
+        if busy is None:
+            return None
+        return JSONResponse({"detail": "video đang có job chạy/đợi; thử lại sau khi xong", "job": ctx.job_view(busy)},
+                            status_code=409)
+
+    @router.post("/api/episodes/{episode_id}/backup")
+    def api_backup_confirm(episode_id: str, body: BackupIn):
+        """HD1 G1: record that the external copy exists; only the sha256 of the file the VM holds now is accepted.
+        404 unknown id; 409 job running; 422 no file / sha mismatch."""
+        if not ep.valid_episode_id(episode_id) or not (Path(ctx.config.workspace.dir) / ep.hd_owner(episode_id)).is_dir():
+            return JSONResponse({"detail": "không có episode này"}, status_code=404)
+        owner = ep.hd_owner(episode_id)
+        with ctx.submit_lock:
+            if (busy := _backup_busy(owner)) is not None:
+                return busy
+            try:
+                done = review_backup.confirm(ctx.config, episode_id, body.kind, body.sha256)
+            except review_backup.BackupError as exc:
+                return JSONResponse({"detail": str(exc)}, status_code=exc.status)
+        return {"confirmed": done}
+
+    @router.post("/api/episodes/{episode_id}/release")
+    def api_release(episode_id: str, body: ReleaseIn | None = None):
+        """HD1 G2: delete source_hd.mp4 + full/vertical.mp4 of the video once both were confirmed. 404 unknown id; 409
+        job / enhance lease running; 422 conditions unmet (nothing deleted)."""
+        if not ep.valid_episode_id(episode_id) or not (Path(ctx.config.workspace.dir) / ep.hd_owner(episode_id)).is_dir():
+            return JSONResponse({"detail": "không có episode này"}, status_code=404)
+        owner = ep.hd_owner(episode_id)
+        with ctx.submit_lock:
+            if (busy := _backup_busy(owner)) is not None:
+                return busy
+            try:
+                result = review_backup.release(ctx.config, episode_id,
+                                               allow_no_vertical=bool(body and body.allow_no_vertical))
+            except review_backup.BackupError as exc:
+                return JSONResponse({"detail": str(exc)}, status_code=exc.status)
+            ctx.storage.invalidate()
+            ctx.playlists.invalidate(owner)
+        return {"released": owner, "changed": result.changed, "freed": result.freed, "removed": result.removed}
 
     return router

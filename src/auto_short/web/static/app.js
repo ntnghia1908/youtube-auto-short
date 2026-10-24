@@ -766,6 +766,8 @@ const AutoShort = (() => {
     return !!j && (j.status === "queued" || j.status === "running");
   }
 
+  function hdReleasedText(at) { return `HD đã chuyển ra máy ngoài${at ? " (" + String(at).slice(0, 10) + ")" : ""}`; }
+
   function fmtGb(n) { return n >= 1e9 ? (n / 1e9).toFixed(1).replace(".", ",") + " GB" : Math.round(n / 1e6) + " MB"; }
 
   let thumbnailLinksFor = null;
@@ -790,6 +792,17 @@ const AutoShort = (() => {
     box.hidden = !h;
     if (!h) return;
     const land = $("#hd-landscape");
+    if (h.released) { // HD1 G3: the HD / vertical files were moved to an external machine
+      land.hidden = true;
+      $("#hd-vertical-dl").hidden = true;
+      $("#hd-vertical-make").hidden = true;
+      $("#hd-vertical-cancel").hidden = true;
+      const rn = $("#hd-vertical-note");
+      rn.hidden = false;
+      rn.classList.remove("error");
+      rn.textContent = hdReleasedText(h.released_at);
+      return;
+    }
     land.hidden = !h.url; // CP8.32: no landscape download for an archived original (it is fetched again for the vertical only)
     if (h.url) {
       land.href = h.url;
@@ -825,6 +838,7 @@ const AutoShort = (() => {
       refreshEpisode();
     };
     const note = $("#hd-vertical-note");
+    note.classList.add("error");
     note.hidden = !(job && (job.status === "failed" || job.status === "cancelled"));
     if (job && job.status === "failed") note.textContent = `Lỗi tạo bản dọc: ${job.error || "?"}`;
     else if (job && job.status === "cancelled") note.textContent = "Đã hủy bản dọc (bấm \"Tạo bản dọc\" để làm lại).";
@@ -3294,6 +3308,9 @@ const AutoShort = (() => {
         if (e.action !== "resume" && !plKinds().kinds.length) b.disabled = true;
         b.addEventListener("click", () => processEntry(e, b));
         actions.append(b);
+      }
+      if (e.hd_released) { // HD1 G3: no download link, only the fact
+        actions.append(el("span", { class: "muted", title: hdReleasedText(e.hd_released_at), text: "HD đã chuyển ra máy ngoài" }));
       }
       if (e.hd_url) { // CP8.27 H2: the landscape HD video of this episode
         actions.append(el("a", { class: "btn icon-btn", href: e.hd_url, download: e.hd_name || "", title: "Tải video HD (bản ngang)",
