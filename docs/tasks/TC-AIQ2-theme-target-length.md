@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: CHANGE
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -116,4 +116,4 @@ Không chạm database, security model hoặc public API contract; manual test s
 - Review: Codex IMPLEMENTER 2 vòng (≈ 138k tokens): F1 (không còn ứng viên vẫn gọi AI với `enum: []`) sửa ở vòng 2. ORCHESTRATOR review diff: `ChatError` vòng 1 vẫn propagate (không phải `ValueError`); ACCEPTED.
 - Important findings / decisions: D2 accepted. AC5 (playlist `PLOynZc0cJJfA6C9mATbfggiF7ATJmwSJa`, 39 clip indexed, job 470 s): 5 theme, **4 `ok`** (30,1–39,8 phút) + 1 `short` 29,5 phút; 6–8 clip / theme, 5–6 tập / theme; 28/39 clip dùng (trước: 5 × 3 clip, 12,6–17,4 phút, tất cả short, 15 clip). `filled_count` 2 / 0 / 2 / 0 / 1; theme "Trung đạo và tu hành" `fill_error: duplicate clip ids in theme` (add_ids trùng nhau — `uniqueItems` không được grammar Ollama ép) → giữ vòng 1 đúng AC3.
 - Known limitations: add_ids trùng làm bỏ cả vòng bổ sung thay vì bỏ id trùng (đúng contract; follow-up nhỏ nếu muốn: dedupe trước khi validate). `think_used` ghi False nếu bất kỳ lần gọi nào phải retry không think. Chất lượng ngữ nghĩa (clip có cùng ý, thứ tự nghe) chờ HUMAN LEAD chấm.
-- PR:
+- PR: https://github.com/ntnghia1908/youtube-auto-short/pull/131 (draft)
