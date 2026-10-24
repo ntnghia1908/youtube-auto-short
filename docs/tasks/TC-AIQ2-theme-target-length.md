@@ -110,10 +110,10 @@ Không chạm database, security model hoặc public API contract; manual test s
   | 2 | `test_fill_appends_valid_clips_and_truncates`, `test_fill_payload_enum_order_and_final_speaker`, `test_fill_once_per_short_theme_and_skip_ok` |
   | 3 | `test_fill_errors_preserve_first_round_and_other_themes`, `test_fill_parse_failure_retries_without_thinking`, `test_fill_without_candidates_remains_short` |
   | 4 | full suite + checks trên |
-  | 5 | chưa chạy — cần pin 8080 vào commit branch (HUMAN LEAD duyệt restart) |
+  | 5 | chạy thật 2026-10-24 trên 8080 `965044c`, Ollama qwen3:30b trên A100 mượn — xem Important findings |
 - Diff + / − (app, test): app +68 / −12; test +159 / −4.
 - Helper mới (đã tìm, lý do không tái dùng): `_chat_json` — tách retry JSON có sẵn của vòng 1 để hai vòng dùng chung; `_fill_theme` tái dùng `_validate_theme`, `_build_proposal`, `speaker_for_clips`.
 - Review: Codex IMPLEMENTER 2 vòng (≈ 138k tokens): F1 (không còn ứng viên vẫn gọi AI với `enum: []`) sửa ở vòng 2. ORCHESTRATOR review diff: `ChatError` vòng 1 vẫn propagate (không phải `ValueError`); ACCEPTED.
-- Important findings / decisions: D2 accepted.
-- Known limitations: chưa có số đo thật (AC5).
+- Important findings / decisions: D2 accepted. AC5 (playlist `PLOynZc0cJJfA6C9mATbfggiF7ATJmwSJa`, 39 clip indexed, job 470 s): 5 theme, **4 `ok`** (30,1–39,8 phút) + 1 `short` 29,5 phút; 6–8 clip / theme, 5–6 tập / theme; 28/39 clip dùng (trước: 5 × 3 clip, 12,6–17,4 phút, tất cả short, 15 clip). `filled_count` 2 / 0 / 2 / 0 / 1; theme "Trung đạo và tu hành" `fill_error: duplicate clip ids in theme` (add_ids trùng nhau — `uniqueItems` không được grammar Ollama ép) → giữ vòng 1 đúng AC3.
+- Known limitations: add_ids trùng làm bỏ cả vòng bổ sung thay vì bỏ id trùng (đúng contract; follow-up nhỏ nếu muốn: dedupe trước khi validate). `think_used` ghi False nếu bất kỳ lần gọi nào phải retry không think. Chất lượng ngữ nghĩa (clip có cùng ý, thứ tự nghe) chờ HUMAN LEAD chấm.
 - PR:
