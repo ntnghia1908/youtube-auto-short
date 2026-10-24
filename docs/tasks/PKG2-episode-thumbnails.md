@@ -77,11 +77,40 @@ Chạm public API (route mới sau đăng nhập), không chạm security model 
 
 ## Result
 
-- Main changes:
-- Tests:
-- Diff + / − (app, test):
+- Main changes (IMPLEMENTER):
+  - `packaging/thumbnail.py`: `_draw_text` / `_encode` dùng chung PKG1 + PKG2; mở rộng kiểm cache cho tên file tập. Key, version và bố cục ba template PKG1 giữ nguyên. Bố cục tập version 1: series ≤ 2 dòng cân bằng, `TẬP N` và speaker một dòng; 1280×720 / 1080×1920, JPEG ≤ 2 MB.
+  - `packaging/episode.py`: header từ titles / titles khai thị / resolve_header + playlist_header; điều kiện HD gọi trực tiếp `enhance.state.effective_source`, bản dọc dùng `full.ready_file`; ảnh approved luân phiên + override; staging, record atomic, SHA cache, dọn key cũ sau thành công, lỗi từng tập được ghi và tiếp tục.
+  - `web/episode_thumbs.py`: service / job render `episode_thumbs:<pid>` / dedup, trang lưới, API dựng + override, preview / tải từng ảnh và zip chỉ chứa ảnh hiện hành khớp SHA. `safe()` chạy trước khi thêm URL. Job không khôi phục tự động sau restart.
+  - `static/thumbs.html` / `thumbs.js`, nút "Thumbnail cả bộ" trong playlist và link tải thumbnail ở trang tập. Route file nhận tên có key và hai alias cố định `landscape.jpg` / `vertical.jpg` cho link trang tập; alias cũng phải qua kiểm record / key / SHA, không thêm API tra cứu.
+  - Module map cập nhật PKG2.
+- AC → test (tên rút gọn; tất cả thuộc hai file test PKG2):
+
+  | AC | Test |
+  |---|---|
+  | 1 | `test_real_episode_jpegs_dimensions_vietnamese_and_two_line_series` (2 ca, ffmpeg thật); `test_hd_eligibility_uses_completed_enhance_or_high_resolution_original` (5 ca) |
+  | 2 | `test_skips_missing_input_and_continues` (3 ca); `test_header_kt_and_playlist_fallback_and_vertical_without_source`; `test_service_failed_episode_continues_and_queue_not_restored` |
+  | 3 | `test_rotation_approved_assets_and_override_only_rebuilds_one_episode`; `test_service_job_lane_dedup_cache_and_single_override`; `test_http_override_rebuilds_only_selected_episode` (chờ ORCHESTRATOR) |
+  | 4 | `test_cache_sha_header_key_and_removal_of_old_files`; `test_service_job_lane_dedup_cache_and_single_override` |
+  | 5 | `test_service_zip_only_verified_files_and_series_name` (4 ca); `test_http_build_grid_download_zip_and_tamper` (chờ ORCHESTRATOR) |
+  | 6 | `test_failure_keeps_previous_files_and_other_episode_and_no_partial_files` (2 ca); `test_rejects_traversal_and_symlink_artifacts` (4 ca); `test_http_auth_ids_traversal_and_static` (chờ ORCHESTRATOR) |
+
+- Tests trong sandbox (Python env `auto-short`, đặt `PATH=/home/ntnghia/miniconda3/envs/auto-short/bin:$PATH`):
+  - `PYTHONPATH=src python -m pytest -q -x tests/test_packaging_episode.py tests/test_packaging_thumbnail.py`: **37 passed**.
+  - `PYTHONPATH=src python -m pytest -q -x tests/test_web_episode_thumbs.py tests/test_web_packaging.py -k service`: **12 passed, 10 deselected**, một cảnh báo deprecation từ dependency Starlette hiện có.
+  - `PYTHONPATH=src python -m pytest --collect-only -q tests/test_web_episode_thumbs.py`: **9 tests collected**; không coi collect là HTTP PASS.
+  - `git diff --check`; `node --check src/auto_short/web/static/thumbs.js`; `node --check src/auto_short/web/static/app.js`: PASS.
+  - Lần gọi đầu bằng Python base: dừng ngay `No module named pytest`; đã chạy lại bằng env repo như trên.
+- Diff + / − (bao gồm file mới chưa stage, đo bằng `git diff --numstat` và `git diff --no-index --numstat /dev/null <file mới>`): app **+653 / −36**; tests **+464 / −0**.
 - Helper mới (đã tìm, lý do không tái dùng):
-- Review:
-- Important findings / decisions:
-- Known limitations:
-- PR:
+  - Lệnh tìm: `rg -n 'def (.*cache.*|.*reus.*|.*thumb.*|.*zip.*|.*header.*|.*directory.*)|textfile=|escape_option|quality in' src/auto_short/packaging src/auto_short/render/text.py src/auto_short/render/full.py src/auto_short/titling/logic.py src/auto_short/titling/playlist.py src/auto_short/web/packaging.py src/auto_short/review/names.py`.
+  - Thumbnail: `_draw_text` / `_encode` là phần tách từ PKG1; `episode_text` / `build_episode` bổ sung bố cục ba tầng + hai khuôn, dùng `wrap_balanced`, `Font`, `escape_option`. `thumbnail.reusable` được dùng chung, chỉ truyền regex tên tập; không chép kiểm file.
+  - Episode: `_no_symlinks`, `directory`, `playlist`, `read`, `_new` quản lý schema / đường dẫn `thumbs.json` riêng (record PKG1 gắn plan/revision); `header`, `shapes`, `images`, `context`, `cache_key`, `valid_files`, `set_override`, `build_episode`, `build_playlist` ghép các helper core đã có cho điều kiện tập / cache / atomic publication. Tái dùng `assets.list_assets/usable`, `resolve_header`, `playlist_header`, `effective_source`, `full.ready_file`, hashing, `atomic_write_json`, `utc_now`.
+  - Web: `render_key`, `ThumbnailTarget`, `EpisodeThumbs` và `register` theo mẫu PKG1; zip dùng stdlib + `review.names.content_disposition/clean_part/truncate_utf8` (helper zip Short không xuất JPEG). JS `episodeThumbnailLinks` tạo link trong trang tập từ hai alias kiểm chứng.
+  - Test: `seed_episodes` / `add_images` được dùng chung từ test core sang test web; tái dùng `test_packaging_thumbnail.fake_media` và fixture app offline hiện có.
+- Review: IMPLEMENTER tự rà diff / AC, chỉ Owned paths; chờ ORCHESTRATOR review độc lập.
+- Important findings / decisions: theo G7, tập còn bản dọc hoàn chỉnh có cả thumbnail ngang + dọc dù video nguồn đã dọn. Không import web từ core.
+- Known limitations / verification bàn giao ORCHESTRATOR:
+  - Không chạy HTTP TestClient do sandbox chặn loopback (theo delegation); chưa claim auth / HTTP PASS. Lệnh còn lại: `PYTHONPATH=src python -m pytest -q -x tests/test_packaging_episode.py tests/test_web_episode_thumbs.py`.
+  - Chưa chạy `PYTHONPATH=src python -m pytest -q -n auto`, `node scripts/framework-check.mjs`, chạy thật trên bản sao Địa Tạng và manual checklist; thuộc ORCHESTRATOR theo contract / delegation.
+  - Triển khai sẵn sàng bàn giao IMPLEMENTER; contract giữ IN_PROGRESS tới review / required verification của ORCHESTRATOR.
+- PR: không commit / push / PR; không agent khác / không mạng thật.

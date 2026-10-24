@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Thumbnail cả bộ — Auto Short</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar"><a class="brand" href="/">&larr; Auto Short</a>
+<form method="post" action="/logout"><button class="btn link" type="submit">Đăng xuất</button></form></header>
+<main class="container">
+<section class="card">
+<a id="thumbs-back" href="/">&larr; Về bộ kinh</a>
+<h2 id="thumbs-title">Thumbnail cả bộ</h2>
+<div class="actions">
+<button id="thumbs-build" class="btn primary" type="button">Dựng / dựng lại</button>
+<a id="thumbs-zip" class="btn" download>Tải zip</a>
+<button id="thumbs-refresh" class="btn" type="button">Tải lại trạng thái</button>
+</div>
+<p id="thumbs-status" role="status"></p>
+<p id="thumbs-msg" class="small" role="status"></p>
+</section>
+<div id="thumbs-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:16px"></div>
+</main>
+<script src="/static/app.js"></script>
+<script src="/static/thumbs.js"></script>
+</body>
+</html>
