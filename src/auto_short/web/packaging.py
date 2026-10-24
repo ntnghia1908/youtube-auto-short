@@ -183,6 +183,8 @@ class Packages:
         view["download_urls"] = downloads
         view["download_url"] = downloads["landscape"] if downloads else None
         return {"package": view, "description": safe(meta["description"]) if meta else "", "assets": safe(images),
+                "duration": meta.get("duration") if meta else None,
+                "image_order": sorted(a["id"] for a in images),  # same order as episode.images; PUT re-checks usable
                 "job": job_view(self.runner.latest(render_key(pid, plan_id))), **self.visual_view(pid, plan_id)}
 
     def visual_view(self, pid, plan_id):

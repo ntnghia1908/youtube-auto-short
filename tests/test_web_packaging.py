@@ -1,5 +1,6 @@
 """PKG1: authenticated HTTP routes plus socket-free service/job verification."""
 import asyncio
+import hashlib
 import json
 import os
 import shutil
@@ -299,10 +300,13 @@ def test_http_auth_ids_and_static_page(setup):
     assert "Đóng gói" in s.c.get("/static/theme_plan.js").text
     page = s.c.get("/static/package.html").text
     for control in ("pkg-approve", "pkg-line-0", "pkg-line-2", "pkg-palette", "pkg-background", "pkg-download-landscape",
-                    "pkg-download-vertical"):
+                    "pkg-download-vertical", "pkg-grid", "pkg-review", "pkg-other-image", "pkg-custom", "pkg-build"):
         assert f'id="{control}"' in page
+    custom = page[page.index('<details id="pkg-custom"'):]  # PKG3.1: PKG3 controls live in the closed "Tùy chỉnh"
+    assert "open" not in custom.split(">", 1)[0] and all(f'id="{c}"' in custom for c in ("pkg-line-0", "pkg-palette", "pkg-save", "pkg-thumbnails"))
     script = s.c.get("/static/package.js").text
-    assert 'name: "style"' in script and "preview_urls" in script and "download_urls" in script and "classic" not in script
+    assert "preview_urls" in script and "download_urls" in script and "classic" not in script
+    assert "autoBuilt" in script and "image_order" in script and "pkg-badge" in script
 
 
 def test_visual_service_job_cache_approve_preview_stale_and_delete(service):
@@ -651,3 +655,35 @@ def test_music_routes_auth_middleware_socket_free(service):
                 assert response.status_code == (204 if signed_in else 401)
                 assert called is signed_in
     asyncio.run(check())
+
+
+def test_default_asset_is_deterministic_empty_safe_and_keeps_existing(service, tmp_path):
+    s = service
+    plan, meta = s.plan, {"sha256": "a" * 64, "duration": 61.0}
+    assert [t["asset_ids"] for t in record.new(s.cfg, plan, meta)["thumbnails"]] == [[], [], []]  # empty library
+    asset_dir = s.cfg.packaging.asset_dir
+    ids = []
+    for n in range(3):
+        path = tmp_path / f"p{n}.jpg"
+        subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", f"color=c=0x{n}b5670:s=64x80",
+                        "-frames:v", "1", "-threads", "1", str(path)], check=True)
+        entry = assets.add(asset_dir, path, kind="image", source="local:test", license="CC0")
+        assets.approve(asset_dir, entry["id"])
+        ids.append(entry["id"])
+    ordered = sorted(ids)
+    expected = [ordered[int(hashlib.sha256(plan["plan_id"].encode()).hexdigest(), 16) % 3]]
+    doc = record.new(s.cfg, plan, meta)
+    assert [t["asset_ids"] for t in doc["thumbnails"]] == [expected] * 3
+    assert record.new(s.cfg, plan, meta)["thumbnails"] == doc["thumbnails"]
+    # a stored record keeps its own asset_ids when the library changes
+    _, _, folder, stored = s.package.context(PID, plan["plan_id"])
+    stored["thumbnails"][1]["asset_ids"] = []
+    record.write(folder, stored)
+    _, _, _, again = s.package.context(PID, plan["plan_id"])
+    assert again["thumbnails"][1]["asset_ids"] == []
+    view = s.package.view(PID, plan["plan_id"])
+    assert view["image_order"] == ordered and view["duration"] == meta_duration(s)
+
+
+def meta_duration(s):
+    return s.package.context(PID, s.plan["plan_id"])[1].get("duration")

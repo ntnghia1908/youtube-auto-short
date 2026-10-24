@@ -20,7 +20,20 @@
 </section>
 <form id="pkg-form" hidden>
 <section class="card">
-<h3>Tiêu đề</h3>
+<h3>1. Chọn thumbnail</h3>
+<p class="small muted">Ba mẫu A / B / C được dựng sẵn từ ảnh mặc định; bấm một mẫu để chọn và xem lại.</p>
+<p id="pkg-building" class="small muted" role="status"></p>
+<div id="pkg-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px"></div>
+</section>
+<section class="card">
+<h3>2. Xem lại <span id="pkg-review-name"></span></h3>
+<div id="pkg-review" style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap"></div>
+<div class="actions">
+<button id="pkg-other-image" class="btn small" type="button">Ảnh khác</button>
+</div>
+</section>
+<section class="card">
+<h3>3. Tiêu đề</h3>
 <div id="pkg-options" class="actions"></div>
 <label>Tiêu đề đăng video <input id="pkg-title" type="text" maxlength="80" required></label>
 <div class="actions">
@@ -29,7 +42,16 @@
 </div>
 </section>
 <section class="card">
-<h3>Chữ trên thumbnail</h3>
+<h3>4. Duyệt và tải</h3>
+<p class="small muted">Bản đăng gồm cả ảnh ngang 16:9 và dọc 9:16 của mẫu đã chọn.</p>
+<div class="actions">
+<button id="pkg-approve" class="btn primary" type="button">Duyệt bản đăng</button>
+<a id="pkg-download-landscape" class="btn" hidden download>Tải ảnh ngang</a>
+<a id="pkg-download-vertical" class="btn" hidden download>Tải ảnh dọc</a>
+</div>
+</section>
+<details id="pkg-custom" class="card">
+<summary>Tùy chỉnh</summary>
 <p class="small muted">Tối đa 3 dòng tiêu đề (bỏ trống dòng nào thì dòng sau dồn lên). Chữ quá dài sẽ báo lỗi để bạn rút ngắn. Khung thời lượng tự tính từ video đã ghép.</p>
 <label>Dòng 1 <input id="pkg-line-0" type="text" maxlength="40"></label>
 <label>Dòng 2 <input id="pkg-line-1" type="text" maxlength="40"></label>
@@ -45,21 +67,13 @@
 <label>Nền (kiểu A) <select id="pkg-background">
 <option value="plain">Màu trơn</option><option value="blur">Ảnh mờ toàn khung (cần chọn ảnh)</option></select></label>
 </div>
-<div class="actions">
-<button id="pkg-save" class="btn small" type="button">Lưu thay đổi</button>
-<button id="pkg-build" class="btn primary small" type="button">Dựng thumbnail (3 kiểu × ngang / dọc)</button>
-</div>
-</section>
-<section class="card">
-<h3>Chọn kiểu thumbnail</h3>
-<p class="small muted">Chọn kiểu A / B / C, ảnh đã duyệt trong kho (hoặc không ảnh). Bản đăng gồm cả ảnh ngang 16:9 và dọc 9:16 của kiểu đã chọn; góc phải dưới bản ngang chừa cho nhãn thời lượng YouTube.</p>
+<h4>Ảnh từng kiểu</h4>
 <div id="pkg-thumbnails"></div>
 <div class="actions">
-<button id="pkg-approve" class="btn primary" type="button">Duyệt bản đăng</button>
-<a id="pkg-download-landscape" class="btn" hidden download>Tải ảnh ngang</a>
-<a id="pkg-download-vertical" class="btn" hidden download>Tải ảnh dọc</a>
+<button id="pkg-save" class="btn small" type="button">Lưu thay đổi</button>
+<button id="pkg-build" class="btn primary small" type="button">Dựng lại thumbnail (3 kiểu × ngang / dọc)</button>
 </div>
-</section>
+</details>
 </form>
 <section id="visual-section" class="card" hidden>
 <h3>Hình ambient</h3>
