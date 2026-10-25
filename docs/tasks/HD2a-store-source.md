@@ -8,7 +8,7 @@
 - Owner: HUMAN LEAD
 - Execution profile: dual-agent
 - Orchestrator: claude-code — main session, review, full suite, chạy thật (kho giả trên VM + 3090 thật sau khi HUMAN LEAD cài)
-- Implementer: phần A (kho Windows, `tools/store/`) — Codex CLI (tự chứa, stdlib, test không cần socket); phần B (client + tích hợp VM) — claude-code `implementer` (Sonnet) (job / route web, test web). Hai phần owned paths rời nhau, làm nối tiếp trên cùng branch.
+- Implementer: codex (phần A: kho Windows, `tools/store/` — tự chứa, stdlib, test không cần socket) + claude-code `implementer` (Sonnet) (phần B: client + tích hợp VM) (job / route web, test web). Hai phần owned paths rời nhau, làm nối tiếp trên cùng branch.
 - Human Lead: HUMAN LEAD
 - Authorization mode: task
 - Authorization source: `docs/decisions/HD2-external-store-3090.md` ACCEPTED (HUMAN LEAD 2026-10-25 "ok cả hai"), G1–G4 + G8
