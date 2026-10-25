@@ -92,4 +92,4 @@ Chạy `backup.ps1` nhiều lượt không làm mất dòng `danh-sach.csv` củ
 - Important findings / decisions: branch `fix/backup-index-csv`, HEAD `60cf6f2`, working tree sạch lúc nhận; không đổi ngoài owned paths / mục Result. Implementation hoàn tất, verification bị chặn; giữ Status IN_PROGRESS.
 - Known limitations: test văn bản không chứng minh hành vi PowerShell 5.1; manual checklist trên 3090 và full suite còn chờ ORCHESTRATOR/HUMAN LEAD.
 - ORCHESTRATOR (2026-10-25, ngoài sandbox): review diff (gộp đúng khóa, `-NoVertical` cũng không còn làm mất dòng Doc cũ); `tests/test_hd_backup.py tests/test_store_server.py` **107 passed**; full suite `-n auto` **2798 passed, 1 skipped**; `framework-check`, `git diff --check` PASS. Codex: 1 lượt, 45k tokens. Sinh lại `backup.ps1` Địa Tạng bằng `make_backup.py` (50 HD + 0 Doc sha — VM không còn `vertical.mp4` nào của bộ này; file ngoài bảng kiểm theo dung lượng như cũ), gửi HUMAN LEAD. Còn: manual checklist trên 3090.
-- PR: (điền khi mở)
+- PR: #161
