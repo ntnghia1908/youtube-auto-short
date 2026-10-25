@@ -7,12 +7,50 @@
   const pid = encodeURIComponent(decodeURIComponent(parts[1] || ""));
   const plan = encodeURIComponent(decodeURIComponent(parts[3] || ""));
   const base = `/api/playlists/${pid}/theme-plans/${plan}/package`;
-  let view = null, dirty = false, pending = false, timer = null;
+  let view = null, dirty = false, pending = false, timer = null, chosen = "A", autoBuilt = false;
   const names = { A: "Kiểu A — nền tối, chữ vàng", B: "Kiểu B — khung vàng, chữ trắng", C: "Kiểu C — giấy, chữ nâu" };
   const shapes = { landscape: "Ngang 16:9", vertical: "Dọc 9:16" };
   const active = () => view && view.job && view.job.active;
-  const selectedStyle = () => { const r = $("pkg-form").querySelector('input[name="style"]:checked'); return r ? r.value : "A"; };
+  const selectedStyle = () => chosen;
   function styleControls() { $("pkg-style-a").hidden = selectedStyle() !== "A"; }
+  const clock = (n) => {
+    const t = Math.max(0, Math.round(n || 0)), h = Math.floor(t / 3600), m = Math.floor(t % 3600 / 60), sec = String(t % 60).padStart(2, "0");
+    return h ? `${h}:${String(m).padStart(2, "0")}:${sec}` : `${m}:${sec}`;
+  };
+  const building = () => pending || active();
+  function drawChoice() {
+    const doc = view.package, thumbs = doc.thumbnails;
+    styleControls();
+    $("pkg-building").textContent = building() ? "đang dựng…" : "";
+    $("pkg-grid").replaceChildren(...thumbs.map((t) => {
+      const url = t.preview_urls.landscape, on = t.style === chosen;
+      const body = url ? el("img", { src: url, alt: names[t.style], style: "display:block;width:100%;height:auto" })
+        : el("p", { class: "small muted", text: building() ? "đang dựng…" : "chưa dựng" });
+      const card = el("button", { type: "button", class: "tp-plan", "data-style": t.style, "aria-pressed": String(on),
+        style: `text-align:left;cursor:pointer;padding:8px;background:none;color:inherit;border:${on ? "3px solid currentColor" : "1px solid #888"}` },
+        body, el("strong", { text: names[t.style] }));
+      card.addEventListener("click", () => perform(async () => { chosen = t.style; dirty = true; await save(); }));
+      return card;
+    }));
+    const t = thumbs.find((x) => x.style === chosen) || thumbs[0];
+    $("pkg-review-name").textContent = "— " + names[t.style];
+    const figs = [];
+    const big = t.preview_urls.landscape, vert = t.preview_urls.vertical;
+    if (!big && !vert) figs.push(el("p", { class: "small muted", text: building() ? "đang dựng…" : "Chưa có ảnh xem trước." }));
+    if (big) figs.push(el("figure", { style: "margin:0" },
+      el("img", { src: big, alt: "Ngang 16:9", style: "display:block;max-width:100%;width:640px;height:auto" }),
+      el("figcaption", { class: "small muted", text: "Ngang 16:9" })));
+    if (vert) figs.push(el("figure", { style: "margin:0" },
+      el("img", { src: vert, alt: "Dọc 9:16", style: "display:block;max-width:100%;width:216px;height:auto" }),
+      el("figcaption", { class: "small muted", text: "Dọc 9:16" })));
+    if (big) figs.push(el("figure", { style: "margin:0" },
+      el("div", { class: "pkg-yt", style: "position:relative;width:360px;max-width:100%" },
+        el("img", { src: big, alt: "Cỡ YouTube", style: "display:block;width:100%;height:auto" }),
+        el("span", { class: "pkg-badge", text: clock(view.duration),
+          style: "position:absolute;right:4px;bottom:4px;background:rgba(0,0,0,.8);color:#fff;font-size:12px;font-weight:600;padding:1px 4px;border-radius:3px" })),
+      el("figcaption", { class: "small muted", text: "Cỡ danh sách YouTube" })));
+    $("pkg-review").replaceChildren(...figs);
+  }
   function say(message, error = false) {
     $("pkg-msg").textContent = message;
     $("pkg-msg").className = "small" + (error ? " error" : "");
@@ -36,6 +74,7 @@
       : doc.state === "approved" ? "Đã duyệt bản đăng." : "Bản nháp — chọn thumbnail rồi duyệt.") +
       (view.job ? ` · ${view.job.active ? "Đang dựng thumbnail…" : view.job.status}${view.job.error ? ": " + view.job.error : ""}` : "");
     if (!dirty) {
+      chosen = doc.selected;
       $("pkg-title").value = doc.title;
       const s = doc.settings;
       for (let i = 0; i < 3; i++) $("pkg-line-" + i).value = s.title_lines[i] || "";
@@ -53,30 +92,17 @@
         $("pkg-options").append(b);
       });
       const cards = doc.thumbnails.map((t) => {
-        const radio = el("input", { type: "radio", name: "style", value: t.style });
-        radio.checked = doc.selected === t.style;
-        const label = el("label", { class: "inline" }, radio, document.createTextNode(" " + names[t.style]));
         const select = el("select", { "aria-label": "Ảnh " + names[t.style], "data-style": t.style },
           el("option", { value: "", text: "Không ảnh" }));
         for (const asset of view.assets) select.append(el("option", { value: asset.id,
           text: `${asset.tags.join(", ") || asset.id.slice(0, 12)} · ${asset.license}` }));
         select.value = t.asset_ids[0] || "";
-        const box = el("article", { class: "tp-plan" }, label, select);
-        const previews = el("div", { style: "display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap" });
-        for (const [shape, text] of Object.entries(shapes)) {
-          const url = t.preview_urls[shape];
-          previews.append(url ? el("figure", { style: "margin:0" },
-            el("img", { src: url, alt: `${names[t.style]} · ${text}`, loading: "lazy",
-              style: shape === "landscape" ? "display:block;max-width:100%;width:480px;height:auto"
-                : "display:block;max-width:100%;width:216px;height:auto" }),
-            el("figcaption", { class: "small muted", text })) : el("p", { class: "small muted", text: `${text}: chưa dựng` }));
-        }
-        box.append(previews);
-        return box;
+        return el("label", { text: names[t.style] }, select);
       });
       $("pkg-thumbnails").replaceChildren(...cards);
       styleControls();
     }
+    drawChoice();
     lock();
     drawVisual();
   }
@@ -84,6 +110,13 @@
     clearTimeout(timer);
     try { view = await api(base); draw(); }
     catch (e) { say(e.message, true); }
+    if (view && !autoBuilt) {
+      autoBuilt = true;  // PKG3.1: build the 3 styles once per page load when nothing is rendered yet
+      if (!active() && !pending && !view.package.thumbnails.some((t) => Object.values(t.preview_urls).some(Boolean))) {
+        perform(() => request("/thumbnails", "POST"));
+        return;
+      }
+    }
     if (active() || visualActive()) timer = setTimeout(load, 2000);
   }
   async function save() {
@@ -108,7 +141,17 @@
   $("pkg-back").href = `/playlists/${pid}/favorites`;
   $("pkg-form").addEventListener("submit", (e) => e.preventDefault());
   $("pkg-form").addEventListener("input", edited);
-  $("pkg-form").addEventListener("change", (e) => { if (e.target.name === "style") styleControls(); edited(); });
+  $("pkg-form").addEventListener("change", edited);
+
+  $("pkg-other-image").addEventListener("click", () => perform(async () => {
+    await save();
+    const order = view.image_order || [], entry = view.package.thumbnails.find((t) => t.style === chosen);
+    if (!order.length) return;
+    const at = order.indexOf(entry.asset_ids[0]);
+    const next = order[(at + 1) % order.length];  // at = -1 (no/unknown image) starts at the first
+    await request("", "PUT", { asset_ids: { [chosen]: [next] } });
+    await request("/thumbnails", "POST");
+  }));
   $("pkg-refresh").addEventListener("click", load);
   $("pkg-save").addEventListener("click", () => perform(async () => { await save(); say("Đã lưu."); }));
   $("pkg-build").addEventListener("click", () => perform(async () => { await save(); await request("/thumbnails", "POST"); }));

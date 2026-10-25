@@ -1,6 +1,7 @@
 """Versioned package records and canonical input keys (PKG R3/R4; schema 2 = PKG3 styles A/B/C)."""
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
@@ -90,12 +91,25 @@ def default_settings(config, plan, tc3, pid=None):
                 focus_x=0.5, palette="nau-vang", background="plain")
 
 
+def default_asset_ids(config, plan_id):
+    """One deterministic usable image per plan (index = sha256(plan_id) mod count); none when the library is empty."""
+    from . import episode  # lazy: episode imports thumbnail, which imports this module
+    try:
+        ids = [a["id"] for a in episode.images(config)]
+    except (PackageError, OSError, ValueError, KeyError):
+        return []
+    if not ids:
+        return []
+    return [ids[int(hashlib.sha256(plan_id.encode("utf-8")).hexdigest(), 16) % len(ids)]]
+
+
 def new(config, plan, tc3, pid=None):
     options = title_options(config, plan)
+    default_assets = default_asset_ids(config, plan["plan_id"])
     return dict(schema_version=SCHEMA_VERSION, plan_id=plan["plan_id"], revision=plan["revision"],
                 plan_fingerprint=fingerprint(plan), tc3_sha256=tc3["sha256"], title_options=options,
                 title=plan["title"], settings=default_settings(config, plan, tc3, pid),
-                thumbnails=[dict(style=s, layout_version=1, asset_ids=[], files={shape: None for shape in SHAPES})
+                thumbnails=[dict(style=s, layout_version=1, asset_ids=list(default_assets), files={shape: None for shape in SHAPES})
                             for s in STYLES], selected="A", state="draft", approved_at=None,
                 updated_at=utc_now())
 
