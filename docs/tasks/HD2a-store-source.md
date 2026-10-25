@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -69,10 +69,11 @@ Thêm kênh mạng + token (security model) → manual test là gate.
 
 ## Result
 
-- Main changes:
-- Tests:
-- Diff + / − (app, test):
-- Helper mới (đã tìm, lý do không tái dùng):
-- Review:
-- Known limitations:
+- Main changes: A (Codex, 62,6k tokens, 1 lượt) — `tools/store/store.py` (index từ `danh-sach.csv` / `index.csv` + `SHA256SUMS.txt`, HEAD / GET Range / PUT kiểm sha, Bearer token hằng thời gian, chỉ `127.0.0.1`, chặn traversal / symlink / junction), `setup-store.ps1` (tìm Python worker, token, RemoteForward vào `gpu-worker-v4` có backup, Task Scheduler, `-Uninstall`), `docs/guides/store-3090.md`. B (Sonnet) — `auto_short/store/client.py` (fetch `.part` + Range + sha), `store/borrow.py` (`borrow_hd`: mượn HD vào chỗ cũ, sha = `backup.json released.hd`, đếm lượt dùng, xóa sau job), `[store]` config (mặc định tắt), `run_render` / `_run_vertical` mượn HD khi released + kho bật, `StoreWait` → job "đợi 3090" (interrupted, không đỏ) + `store_retry_pass` mỗi `retry_seconds`, `render_full.current` so sha đã giải phóng, route / view `store`, `app.js` "HD trên 3090".
+- Tests: `tests/test_store_server.py` 87, `tests/test_store_client.py` 14 (server thật trên 127.0.0.1); targeted 124 + 201 passed; full suite 2612 passed, 1 failed (test chập chờn `test_lower_thread_priority…`).
+- Chạy thật trên VM: kho thật `store.py` cổng 18191, thư mục giả đúng định dạng `danh-sach.csv` PowerShell (BOM, ngoặc kép), media hard link; bản sao tập 11 `54iAdqkUMrY`: xác nhận + giải phóng (2,78 GB) → `run_render` mượn HD qua HTTP, kiểm sha, chạy xong xóa file mượn, `released` giữ nguyên; kho tắt → `StoreWait` "đợi 3090: không kết nối được kho", manifest không đổi. Đối chứng không giải phóng: render cũng encode lại 18 lần (tập vốn cũ so cấu hình / đường dẫn bản sao) → HD2a không gây render lại. Short thật không bị đụng (render ghi file mới rồi đổi tên, link trong bản sao bị thay).
+- Diff + / − (app, test): A +657 (server / setup / config / docs), test +372; B app ≈ +360 / −11, test ≈ +330.
+- Helper mới (đã tìm, lý do không tái dùng): `StoreClient`, `borrow_hd`, `released_hd_sha`, `StoreWait` / `StoreWaitJob` (cơ chế "đợi HD" gắn với pipeline giữa các làn, không tái dùng được — làm bản tối thiểu), phía kho: `no_links`, `inside`, `parse_range`, `Store`.
+- Review: ORCHESTRATOR — an ninh kho đạt; `borrow_hd` chỉ xóa file chính nó tải; ghi nhận hạn chế bên dưới.
+- Known limitations: ghép chủ đề (theme_render) chưa mượn từ kho → HD2b; job "đợi 3090" chỉ tự thử lại khi web còn chạy (restart thì bấm lại); web tắt giữa lúc mượn → file mượn nằm lại (HD2b dọn); `.part` dở trên kho chặn PUT cùng tên tới khi xóa tay; `run_vertical` tải cả HD kể cả khi bản dọc đã có; setup Windows chưa chạy được trên VM (gate: cài trên 3090).
 - PR:
