@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: BUG
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -78,4 +78,22 @@ Job render / bản dọc / khôi phục nguồn đang "đợi 3090" (HD đã gi�
 
 ## Result
 
-- (điền khi READY)
+- READY (ORCHESTRATOR review 2026-10-26). Codex: 1 vòng, ~77,7k tokens, effort high.
+- Main changes: `jobs.py` lưu mục tùy chọn `store_wait` bằng `_entry` + `error`, chỉ lấy job INTERRUPTED mới nhất thuộc ba kind và có `WAIT_PREFIX`; giữ `version: 1`. Mở rộng `_restore_one_locked` để tái dùng `_rebuild`, khôi phục job INTERRUPTED ngoài mọi queue / parked, bỏ qua trùng active và log entry lỗi. Import cục bộ `KIND_RESTORE_SOURCE` vì `context.py` import `jobs.py`; tái dùng `WAIT_PREFIX` từ `store.borrow`.
+- Đã kiểm `StoreWaitJob → finally → _after → _save_locked`; submit mới đã ghi lại snapshot. Thêm `_save_locked` trong `forget()` để xóa tập loại job đợi khỏi file ngay. Không cần sửa `app.py` / `store_retry_pass`.
+
+| AC | Test / bằng chứng |
+|---|---|
+| 1 | `test_store_wait_restart_then_retry_without_reapplying_edits`: render / vertical / restore_source × lanes / serial; giữ error, spec, step, clip_ids, restored và edits đã applied; không vào queue / parked. |
+| 2 | Test trên: kho thiếu / sai SHA vẫn đợi, đúng SHA submit lại và hoàn tất, không download / apply edits lần hai. `test_superseded_or_deleted_store_wait_is_removed_from_disk`: thay job cùng key / xóa tập, kiểm ngay file và app mới không retry job cũ. |
+| 3 | `test_legacy_queue_and_nonlist_store_wait_restore_normally`: file cũ thiếu mục mới / mục không phải list. `test_bad_store_wait_entry_is_skipped_without_losing_valid_entries`: entry hỏng, kind / error sai, rebuild None / exception, trùng job active; entry hợp lệ vẫn restore. |
+| 4 | ORCHESTRATOR 2026-10-26: targeted `tests/test_store_wait_persist.py tests/test_store_client.py tests/test_src3_auto_restore.py` **113 passed**; full suite `-n auto` **3026 passed, 1 skipped**; `framework-check` PASS; `git diff --check` PASS. |
+
+- Helper mới: không có helper production; mở rộng helper `_restore_one_locked` có sẵn. Fixture test mới `waiting_app` dựng job đợi bằng app/runner thật và client/render giả; tái dùng `app_for`, `endpoint`, `cfg`, `episode`, `fake_download`, `request`, `run` từ các test hiện có. Đã tìm bằng `rg -n 'StoreWait|store_retry_pass|_rebuild_job|_snapshot_locked|def restore|def _after|def drop|_save_locked|WAIT_PREFIX' src/auto_short/web/jobs.py src/auto_short/web/app.py src/auto_short/store/borrow.py tests/test_store_client.py tests/test_src3_auto_restore.py`.
+- Verification đã chạy; mọi lệnh pytest dưới đây dùng tiền tố `timeout 300 env PYTHONPATH=$PWD/src /home/ntnghia/miniconda3/envs/auto-short/bin/python -m pytest -q -x --tb=short` tại worktree này:
+  - `tests/test_store_wait_persist.py`: **34 PASS** (9.59 s, lần cuối; trước khi thêm hai nhánh entry lỗi: 30 PASS).
+  - `tests/test_src3_auto_restore.py`: **52 PASS** (8.25 s).
+  - `tests/test_store_client.py -k 'client_token_from_env_only or config_store_section or put_streams_file_and_length_without_chunked_encoding or put_maps_http_errors_without_token or put_heads_existing_identity_without_sending_body or put_rejects_invalid_series_before_sending_body'`: **14 PASS, 13 deselected** (0.62 s).
+  - `tests/test_web_queue_cp822.py -k 'not api_pause_resume_submit_while_paused_and_restart and not restore_skips_job_whose_workspace_is_gone and not restore_vertical_job_with_only_khaithi_workspace and not restore_skips_vertical_job_whose_workspaces_are_gone'`: **8 PASS, 4 deselected** (1.22 s).
+- `timeout 10 git diff --check`: **PASS**. Diff ứng dụng **+34 / −1**; test mới **+200 / −0** (`git diff --numstat`, file mới chưa stage đo bằng `git diff --no-index --stat /dev/null tests/test_store_wait_persist.py`; exit 1 của no-index chỉ báo có diff).
+- Không chạy lệnh targeted nguyên file `tests/test_store_wait_persist.py tests/test_store_client.py` / bộ ba trong Required verification vì phần còn lại của `test_store_client.py` cần server loopback / TestClient; sandbox không có socket loopback, theo chỉ thị bàn giao chỉ chạy test không cần socket. Full suite `… -m pytest -q -n auto`, bốn test TestClient CP8.22 và `node scripts/framework-check.mjs` để ORCHESTRATOR chạy theo phân công. Không gọi dịch vụ thật; không commit / push / PR / gọi agent khác.
