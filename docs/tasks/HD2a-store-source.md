@@ -76,4 +76,4 @@ Thêm kênh mạng + token (security model) → manual test là gate.
 - Helper mới (đã tìm, lý do không tái dùng): `StoreClient`, `borrow_hd`, `released_hd_sha`, `StoreWait` / `StoreWaitJob` (cơ chế "đợi HD" gắn với pipeline giữa các làn, không tái dùng được — làm bản tối thiểu), phía kho: `no_links`, `inside`, `parse_range`, `Store`.
 - Review: ORCHESTRATOR — an ninh kho đạt; `borrow_hd` chỉ xóa file chính nó tải; ghi nhận hạn chế bên dưới.
 - Known limitations: ghép chủ đề (theme_render) chưa mượn từ kho → HD2b; job "đợi 3090" chỉ tự thử lại khi web còn chạy (restart thì bấm lại); web tắt giữa lúc mượn → file mượn nằm lại (HD2b dọn); `.part` dở trên kho chặn PUT cùng tên tới khi xóa tay; `run_vertical` tải cả HD kể cả khi bản dọc đã có; setup Windows chưa chạy được trên VM (gate: cài trên 3090).
-- PR:
+- PR: #145 (nối tiếp #144)
