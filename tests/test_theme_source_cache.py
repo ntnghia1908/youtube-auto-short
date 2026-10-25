@@ -303,3 +303,21 @@ def test_workspace_skip_requires_ingest_sha(cfg, fake_probe, monkeypatch):
     assert sc.workspace_source(cfg, 'lecture') is None
     monkeypatch.setattr(sc.shutil, 'which', lambda _: '/bin/node')
     assert sc.run(cfg, downloader=download, sleep=no_call, log=lambda _: None)['downloaded'] == 1
+
+
+def test_shared_download_validates_private_file_without_publishing(cfg, fake_probe, tmp_path):
+    ingest(cfg, 'lecture')
+    dest = tmp_path / 'private'
+    dest.mkdir()
+    path, meta = sc.download_verified(cfg, 'lecture', dest, download, clock=lambda: 0)
+    assert path.read_bytes() == b'downloaded source' and meta['differs_from_ingest']
+    assert not sc.cache_dir(cfg).exists() and not (dest / 'meta.json').exists()
+
+
+def test_fetch_http403_remains_normal_error(cfg, fake_probe):
+    ingest(cfg, 'lecture')
+    def blocked(uri, dest, config):
+        raise DownloadError('HTTP Error 403: Forbidden')
+    with pytest.raises(RenderError, match='403'):
+        sc.fetch_to_cache(cfg, 'lecture', blocked)
+    assert_no_temporary(cfg)

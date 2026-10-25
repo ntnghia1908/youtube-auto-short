@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import shutil
 import threading
 import time
@@ -352,6 +353,104 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                 log.exception("web: sao lưu nguồn: lỗi")
             await asyncio.sleep(config.store.retry_seconds)
 
+    redownload_failed: set[str] = set()
+    redownload_total: set[str] = set()
+    redownload_done: set[str] = set()
+    redownload_next = 0.0
+    redownload_wait = 3600.0
+    redownload_snapshot = dict(status="paused", reason="chờ kiểm kê", done=0, total=0)
+
+    def redownload_pass(client=None, *, downloader=None, rng=random) -> dict:
+        """SRC2: one download per pass; private backoff never changes the real prepare queue."""
+        from ..store import redownload
+        from ..store.client import StoreError
+
+        nonlocal redownload_next, redownload_wait, redownload_snapshot
+
+        def publish(status, **fields):
+            nonlocal redownload_snapshot
+            redownload_snapshot = dict(status=status, done=len(redownload_done), total=len(redownload_total), **fields)
+            storage.update_redownload(redownload_snapshot)
+            return dict(redownload_snapshot)
+
+        def prepare_busy():
+            if any(lane in ("prepare", "serial") for lane in runner.running()):
+                return True
+            lanes = runner.monitor_queue(limit=1)["lanes"]
+            return any(lanes.get(lane, {}).get("pending_total", 0) for lane in ("prepare", "serial"))
+
+        if not config.store.enabled or not config.store.redownload:
+            return publish("paused", reason="chưa bật tải lại nguồn")
+        if clock() < redownload_next:
+            return dict(redownload_snapshot)
+        vid = None
+        try:
+            if prepare_busy():
+                return publish("paused", reason="làn prepare đang bận")
+            youtube = runner.youtube_status()
+            if youtube["blocked"]:
+                return publish("blocked", reason="YouTube đang chặn hàng đợi prepare",
+                               retry_at=parse_time(youtube.get("next_check")))
+            if redownload.free_bytes(config, disk_usage) < redownload.MIN_FREE_BYTES:
+                log.warning("web: tải lại nguồn: work/ còn dưới 20 GB trống")
+                return publish("paused", reason="work/ còn dưới 20 GB trống")
+            if not shutil.which("node"):
+                return publish("paused", reason="không tìm thấy node trên PATH")
+            order = redownload.pending(config, client=client)
+            redownload_total.update(order)
+            if not order:
+                return publish("idle")
+            candidates = [v for v in order if v not in redownload_failed]
+            if not candidates:
+                redownload_failed.clear()
+                return publish("paused", reason="đã thử hết lượt; sẽ thử lại các video lỗi")
+            # Inventory can involve disk/network waits; give newly queued prepare jobs priority too.
+            if prepare_busy() or runner.youtube_status()["blocked"]:
+                return publish("paused", reason="nhường làn prepare / YouTube")
+            vid = candidates[0]
+            publish("downloading", video_id=vid)
+            kwargs = dict(client=client, clock=clock, disk_usage=disk_usage)
+            if downloader is not None:
+                kwargs["downloader"] = downloader
+            result = redownload.step(config, vid, **kwargs)
+            status = result["status"]
+            if status == "blocked":
+                redownload_next = clock() + redownload_wait
+                redownload_wait = min(redownload_wait * 2, 21600)
+                log.warning("web: tải lại nguồn %s: YouTube chặn: %s", vid, result.get("reason"))
+                return publish("blocked", video_id=vid, reason=result.get("reason"), retry_at=redownload_next)
+            if status == "store_unavailable":
+                redownload_next = clock() + config.store.retry_seconds
+                log.warning("web: tải lại nguồn: %s", result.get("reason"))
+                return publish("paused", reason=result.get("reason"), retry_at=redownload_next)
+            if status == "done":
+                redownload_done.add(vid)
+                redownload_failed.discard(vid)
+                redownload_wait = 3600
+                log.info("web: tải lại nguồn %s: đã xác nhận trên 3090", vid)
+            elif status == "failed":
+                redownload_failed.add(vid)
+                log.warning("web: tải lại nguồn %s: %s", vid, result.get("reason"))
+            redownload_next = clock() + rng.uniform(600, 1200)
+            return publish("waiting" if status == "done" else "paused", video_id=vid,
+                           reason=result.get("reason"), retry_at=redownload_next)
+        except StoreError as exc:
+            redownload_next = clock() + config.store.retry_seconds
+            log.warning("web: tải lại nguồn: %s", exc)
+            return publish("paused", reason=str(exc), retry_at=redownload_next)
+        except Exception as exc:
+            if vid is not None:
+                redownload_failed.add(vid)
+            redownload_next = clock() + config.store.retry_seconds
+            log.exception("web: tải lại nguồn: lỗi")
+            return publish("paused", reason=str(exc), retry_at=redownload_next)
+
+    async def _redownload_loop() -> None:
+        while config.store.enabled and config.store.redownload:
+            await asyncio.to_thread(redownload_pass)
+            await asyncio.sleep(max(1, redownload_next - clock()) if redownload_next > clock()
+                                else config.store.retry_seconds)
+
     def store_retry_pass(client=None) -> list[str]:
         """HD2a: jobs that ended "đợi 3090" (the HD of a released video is on the store, which could not lend it) are
         submitted again when the store answers and has the file with the sha256 recorded at release. Returns the keys
@@ -541,12 +640,15 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         sweeper = asyncio.create_task(_auto_archive_loop())
         store_retry = asyncio.create_task(_store_retry_loop())
         source_backup = asyncio.create_task(_source_backup_loop())
+        source_redownload = asyncio.create_task(_redownload_loop())
         try:
             yield
         finally:
             sweeper.cancel()
             store_retry.cancel()
             source_backup.cancel()
+            source_redownload.cancel()
+            await asyncio.gather(source_redownload, return_exceptions=True)
             await asyncio.to_thread(sampler.stop)
             await asyncio.to_thread(runner.stop)
 
@@ -558,6 +660,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     app.state.storage = storage
     app.state.auto_archive_pass = auto_archive_pass
     app.state.source_backup_pass = source_backup_pass
+    app.state.redownload_pass = redownload_pass
     app.state.store_retry_pass = store_retry_pass
     app.state.sweep_refetched = _sweep_refetched
     app.state.playlists = playlists

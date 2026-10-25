@@ -2722,6 +2722,22 @@ const AutoShort = (() => {
         backup.textContent = `đã sao lưu lên 3090: ${b.backed_up} / ${b.total} video gốc · còn chờ ${b.pending}`;
       }
     }
+    const redownload = $("#source-redownload");
+    if (redownload) {
+      const r = d.redownload;
+      redownload.hidden = !r;
+      if (r) {
+        let detail = "";
+        if (r.status === "downloading") detail = `, đang tải ${r.video_id}`;
+        else if (r.status === "blocked" && r.retry_at) {
+          const until = new Date(r.retry_at * 1000).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
+          detail = `, đang chờ YouTube đến ${until}`;
+        } else if (r.status === "blocked") detail = ", đang chờ YouTube";
+        else if (r.status === "paused") detail = `, tạm dừng: ${r.reason || "chờ lượt tiếp"}`;
+        else if (r.status === "waiting") detail = ", chờ lượt tiếp";
+        redownload.textContent = `Tải lại nguồn: đã xong ${r.done} / ${r.total}${detail}`;
+      }
+    }
     $("#storage-meta").textContent = `Các tập: ${fmtBytes(t.episodes)} (video nguồn ${fmtBytes(t.source)}, Short ${fmtBytes(t.shorts)}, khác ${fmtBytes(t.other)}` +
       (t.hd || t.enhance_tmp ? `; trong đó bản HD ${fmtBytes(t.hd || 0)}, đoạn enhance tạm ${fmtBytes(t.enhance_tmp || 0)}` : "") + `). ` +
       `Tính lúc ${fmtTime(d.computed_at)} (làm mới tối đa 30 giây một lần).`;

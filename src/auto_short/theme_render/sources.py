@@ -113,6 +113,46 @@ def cached_source(config: Config, video_id: str) -> Path | None:
     return None
 
 
+def download_verified(config: Config, video_id: str, dest_dir: Path, downloader=ytdlp_download, *, clock=time.time
+                      ) -> tuple[Path, dict]:
+    """Download and validate private bytes; the caller owns cleanup and publication.
+
+    Keep DownloadError unwrapped so callers can choose their own retry policy.
+    """
+    from ..enhance.state import owner_for
+
+    video_id = _owner(video_id)
+    folder = Path(config.workspace.dir) / owner_for(config, video_id)
+    source = _read(folder / "manifest.json").get("source")
+    if not isinstance(source, dict):
+        raise RenderError("manifest không có nguồn ingest")
+    uri, ingest_sha = source.get("uri"), source.get("sha256")
+    if not isinstance(uri, str) or not uri or not isinstance(ingest_sha, str) or not ingest_sha:
+        raise RenderError("manifest không có URI / sha256 để tải lại video nguồn")
+    expected = _read(folder / "metadata.json").get("duration")
+    if not _positive(expected):
+        raise RenderError("metadata.json không có thời lượng nguồn hợp lệ")
+    expected = float(expected)
+    dest = Path(dest_dir)
+    got = downloader(uri, dest, config.ingest)
+    path = Path(got.path).resolve()
+    if not path.is_relative_to(dest.resolve()) or not path.is_file():
+        raise RenderError("downloader không trả file trong thư mục tải tạm")
+    if not re.fullmatch(r"\.[A-Za-z0-9]+", path.suffix):
+        raise RenderError("đuôi file nguồn không hợp lệ")
+    info = probe.probe(path)
+    if not _matches_duration(info.get("duration"), expected):
+        raise RenderError(f"video tải lại dài {info.get('duration')} s, bản gốc {expected} s; không dùng")
+    if not _positive(info.get("height")) or path.stat().st_size <= 0:
+        raise RenderError("video tải lại không có kích thước hợp lệ")
+    sha = hashing.sha256_file(path)
+    meta = {"schema_version": 1, "video_id": video_id, "file": f"source{path.suffix}", "uri": uri,
+            "downloaded_at": datetime.fromtimestamp(clock(), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "size": path.stat().st_size, "sha256": sha, "duration": info["duration"], "height": info["height"],
+            "ingest_sha256": ingest_sha, "differs_from_ingest": sha != ingest_sha}
+    return path, meta
+
+
 def fetch_to_cache(config: Config, video_id: str, downloader=ytdlp_download, *, clock=time.time) -> Path:
     """Validate in a private temporary directory; publish metadata last. Never alter ingest."""
     video_id = _owner(video_id)
@@ -122,28 +162,13 @@ def fetch_to_cache(config: Config, video_id: str, downloader=ytdlp_download, *, 
     uri, ingest_sha = source.get("uri"), source.get("sha256")
     if not isinstance(uri, str) or not uri or not isinstance(ingest_sha, str) or not ingest_sha:
         raise RenderError("manifest không có URI / sha256 để tải lại video nguồn")
-    expected = _duration(config, video_id)
+    _duration(config, video_id)
     root = cache_dir(config)
     root.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=root, prefix=f".{video_id}-") as tmp:
         dest = Path(tmp)
         try:
-            got = downloader(uri, dest, config.ingest)
-            path = Path(got.path).resolve()
-            if not path.is_relative_to(dest.resolve()) or not path.is_file():
-                raise RenderError("downloader không trả file trong thư mục tải tạm")
-            if not re.fullmatch(r"\.[A-Za-z0-9]+", path.suffix):
-                raise RenderError("đuôi file nguồn không hợp lệ")
-            info = probe.probe(path)
-            if not _matches_duration(info.get("duration"), expected):
-                raise RenderError(f"video tải lại dài {info.get('duration')} s, bản gốc {expected} s; không dùng")
-            if not _positive(info.get("height")) or path.stat().st_size <= 0:
-                raise RenderError("video tải lại không có kích thước hợp lệ")
-            sha = hashing.sha256_file(path)
-            meta = {"schema_version": 1, "video_id": video_id, "file": f"source{path.suffix}", "uri": uri,
-                    "downloaded_at": datetime.fromtimestamp(clock(), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                    "size": path.stat().st_size, "sha256": sha, "duration": info["duration"], "height": info["height"],
-                    "ingest_sha256": ingest_sha, "differs_from_ingest": sha != ingest_sha}
+            path, meta = download_verified(config, video_id, dest, downloader, clock=clock)
             atomic_write_json(dest / "meta.json", meta)
             folder = root / video_id
             folder.mkdir(exist_ok=True)
