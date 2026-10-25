@@ -9,7 +9,7 @@ import shutil
 import threading
 import time
 from collections.abc import Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -80,6 +80,8 @@ from .jobs import (
     KIND_RENDER,
     INTERRUPTED,
     KIND_VERTICAL,
+    AI,
+    RENDER,
     PREPARE,
     JobFailed,
     JobRunner,
@@ -101,20 +103,32 @@ log = logging.getLogger("auto_short")
 
 
 class RestoreSourceTarget:
-    """CP8.37: exact source restoration; download work stays outside the submit/publication lock."""
+    """SRC3: restore privately, then apply validated edits in order and render on the existing lanes."""
 
     def __init__(self, config, episode_id, *, downloader=None, lock=None, disk_blocked=None,
-                 clock=time.time, after=None):
+                 clock=time.time, after=None, edits=None, apply_edit=None, restored=False, render=run_render):
         self.config, self.episode_id = config, episode_id
         self.downloader, self.lock, self.disk_blocked = downloader, lock, disk_blocked
         self.clock, self.after = clock, after
+        self.edits = list(edits or [])
+        self.apply_edit = apply_edit
+        self.accepting_edits = not restored
+        self.restored = restored
+        self.render_fn = render
 
     def needs_download(self):
-        from ..theme_render.sources import cached_source
-        return cached_source(self.config, self.episode_id) is None
+        from ..theme_render.sources import cached_source, workspace_source
+        if self.restored or workspace_source(self.config, self.episode_id) or cached_source(self.config, self.episode_id):
+            return False
+        if self.config.store.enabled:
+            from ..store import index_cache
+            return not index_cache.has_source(self.config, ep.hd_owner(self.episode_id), blocking=False)
+        return True
 
-    def __call__(self, job):
+    def prepare(self, job):
         from ..ingest.youtube import YoutubeBlocked
+        if self.restored:
+            return
         job.stage = "ingest"
         if self.disk_blocked is not None and (message := self.disk_blocked()):
             raise JobFailed(message)
@@ -133,12 +147,58 @@ class RestoreSourceTarget:
         job.stages.append({"stage": "ingest", "ran": result.downloaded, "seconds": round(time.monotonic() - t0, 3)})
         job.stage = None
         job.summary = "Đã khôi phục nguồn: " + ", ".join(result.episodes)
+        with self.lock if self.lock is not None else nullcontext():
+            self.restored = True
+            self.accepting_edits = False
+            # A request may have joined a manual restore after its prepare-only steps were created.
+            if self.edits and len(job.steps) == 1 and job.steps[0].lane == PREPARE:
+                job.steps.extend([Step(AI, self.edit), Step(RENDER, self.render_edits)])
+
+    def edit(self, job):
+        with self.lock if self.lock is not None else nullcontext():
+            self.accepting_edits = False
+        job.stage = "titling" if self.edits else None
+        try:
+            for edit in self.edits:
+                if edit.get("applied"):
+                    continue
+                # Each request uses exactly the same mutation and targets as the normal editing route.
+                with self.lock if self.lock is not None else nullcontext():
+                    clip, target = self.apply_edit(edit)
+                child = replace(job, episode_id=edit["episode_id"], clip_ids=[clip])
+                if hasattr(target, "ai"):
+                    target.ai(child)
+                    edit["title_error"] = target.title_error
+                edit["result_clip"] = clip
+                edit["applied"] = True
+                if clip not in job.clip_ids:
+                    job.clip_ids.append(clip)
+        except (ReviewError, OSError) as exc:
+            raise JobFailed(f"thao tác sau khôi phục: {exc}") from exc
+
+    def render_edits(self, job):
+        # The persisted edits are sufficient to resume directly in the render lane after restart.
+        for eid in dict.fromkeys(edit["episode_id"] for edit in self.edits):
+            clips = [edit["result_clip"] for edit in self.edits if edit["episode_id"] == eid]
+            child = replace(job, episode_id=eid, kind=KIND_RENDER, clip_ids=clips)
+            render_target(self.config, render=self.render_fn)(child)
+            job.summary = child.summary
+        errors = [edit["title_error"] for edit in self.edits if edit.get("title_error")]
+        if errors:
+            raise JobFailed("; ".join(errors) + " — Short đã thêm nhưng chưa có tiêu đề: gõ tiêu đề tay")
+        job.stage = None
+
+    def __call__(self, job):
+        self.prepare(job)
+        self.edit(job)
+        self.render_edits(job)
 
     def lane_steps(self):
-        return [Step(PREPARE, self)]
+        return [Step(PREPARE, self.prepare)] + ([Step(AI, self.edit), Step(RENDER, self.render_edits)]
+                                                if self.edits else [])
 
     def spec(self):
-        return {"episode_id": self.episode_id}
+        return {"episode_id": self.episode_id, "edits": list(self.edits), "restored": self.restored}
 
 STATIC_DIR = Path(__file__).parent / "static"
 # Reachable without a session: the login page and its stylesheet only.
@@ -513,9 +573,12 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         for eid in episodes:
             playlists.invalidate(eid)
 
-    def _restore_target(eid: str):
+    def _restore_target(eid: str, *, edits=None, restored=False):
         return RestoreSourceTarget(config, eid, downloader=restore_downloader, lock=submit_lock,
-                                   disk_blocked=storage.block_message, clock=clock, after=_restored)
+                                   disk_blocked=storage.block_message, clock=clock, after=_restored,
+                                   edits=edits, restored=restored,
+                                   render=render,
+                                   apply_edit=lambda edit: episode_edit.apply_restore_edit(ctx, edit))
 
     def _auto_vertical_check(eid: str) -> None:
         """CP8.35 D4: the wish "tự tạo bản dọc" of the video is met when its Shorts are rendered and the best HD source is
@@ -568,10 +631,22 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             if not isinstance(target_id, str) or not ep.valid_episode_id(target_id) or ep.hd_owner(target_id) != eid:
                 return None
             try:
-                restore_parts(target_id, config)
-            except (ReviewError, OSError):
+                edits = spec.get("edits", [])
+                if not isinstance(edits, list):
+                    return None
+                for edit in edits:
+                    if ep.hd_owner(edit["episode_id"]) != eid:
+                        return None
+                    episode_edit.validate_restore_edit(config, edit)
+                restored = spec.get("restored") is True
+                if restored:
+                    if any(is_archived(ws / part) for part in (eid, eid + khaithi.SUFFIX)):
+                        return None
+                else:
+                    restore_parts(target_id, config)
+            except (ReviewError, OSError, ValueError, KeyError, TypeError):
                 return None
-            return _restore_target(target_id)
+            return _restore_target(target_id, edits=edits, restored=restored)
         if is_archived(ws / eid) and kind != KIND_VERTICAL:
             return None
         if kind == KIND_PIPELINE:
