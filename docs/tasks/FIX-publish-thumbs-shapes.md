@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: BUG
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -61,11 +61,11 @@ Chỉ sửa test; không có manual test.
 
 ## Result
 
-- Main changes:
-- Tests:
-- Diff + / − (app, test):
-- Helper mới (đã tìm, lý do không tái dùng):
-- Review:
-- Important findings / decisions:
-- Known limitations:
-- PR:
+- Main changes: fixture `episodes` dựng ảnh cho mọi khung `thumbnail.EPISODE_SIZES` (G8) thay `episode.shapes`; `test_match_shapes_normalization_skips_and_duplicates`: hàng thứ 7 (video dọc của tập 102 trên YouTube) giờ "sẵn sàng" vì G8 luôn có ảnh dọc kể cả khi tập chưa có bản dọc — trước G8 hàng này bị bỏ qua vì thiếu ảnh; các kiểm "bỏ qua" khác giữ nguyên.
+- Tests: ORCHESTRATOR chạy `tests/test_publish_thumbs.py` 30 passed (Codex cũng 30 passed trong sandbox); full suite 2716 passed, 1 skipped, 0 error; 1 fail chập chờn đã biết `test_lower_thread_priority…` (chạy lại riêng PASS).
+- Diff + / − (app, test): app 0; test +6 / −3.
+- Helper mới (đã tìm, lý do không tái dùng): không.
+- Review: ORCHESTRATOR đọc diff, ACCEPTED vòng 1. IMPLEMENTER Codex (`gpt-6.1-sol`, effort medium), 1 vòng, ≈ 31 k token.
+- Important findings / decisions: không sửa `src/`; `publish/thumbs.py` chạy thật dùng `episode.valid_files` nên không bị lỗi runtime.
+- Known limitations: không.
+- PR: #150
