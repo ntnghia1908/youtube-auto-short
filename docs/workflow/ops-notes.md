@@ -35,7 +35,10 @@ Ghi chú vận hành ít dùng, tách từ `current-state.md` (CHG-current-state
 - Enhance: worker trên 3090 (+ A100 mượn), `[enhance] face = "gfpgan_v1.4"`, `lease_hours = 12`; ước ≈ 6 h / tập (3090); 3090 GPU 100 % — thêm worker không nhanh hơn.
 - 3050 thôi làm enhance từ 2026-10-24 (HUMAN LEAD; máy giữ cho việc GPU khác sau này): token `rtx3050` đã gỡ khỏi `enhance-tokens.env` (backup `~/.cache/enhance-tokens.env.bak-pre-drop-3050-20261024`), hiệu lực từ lần restart web kế tiếp. Dùng lại: chép dòng token từ backup rồi restart web.
 
-## A100 mượn (Slurm khoa, từ 2026-10-24, vài ngày)
+## A100 mượn (Slurm khoa, 2026-10-24 → ngừng 2026-10-25)
+
+- **Ngừng 2026-10-25** (HUMAN LEAD): `scancel 294`, đã làm đủ các bước "Trả máy" trừ restart web (chờ làn rảnh) và giữ `/shared/users/ntnghia/autoshort` để dùng lại. Backup `~/.cache/*.bak-a100-return-20261025T045813Z` (config, token, authorized_keys). AI về 3090 (`127.0.0.1:11437`, mặc định code).
+- Ưu tiên: `priority/multifactor`, fairshare weight 10000, decay half-life 7 ngày, tính theo CPU giữ (không theo GPU dùng). Sau job 294 (16 CPU × 21 h) tài khoản FairShare ≈ 0,03 (người khác 1,0) → khi có hàng chờ job mình xếp sau. Không giữ job ngồi rảnh; Ollama-only nên xin ít CPU (4 CPU / 16 GB). Dùng lại: phục hồi 3 mục backup `bak-pre-a100-*` / thêm lại token + khóa tunnel, `sbatch`, restart web.
 
 - Gateway `ntnghia@10.8.102.15` (ngoài: `125.234.238.107`), node `gpu01` 1 × A100-SXM4-80GB, không sudo; mọi việc GPU qua Slurm. Giới hạn tài khoản: 16 CPU, 1 GPU, 32 GB RAM, `--time` ≤ 3 ngày / job. Internet cụm ≈ 0,3–1 MB/s, hay đứt (chép từ 3090 qua LAN ≈ 11–19 MB/s).
 - Tất cả trong `/shared/users/ntnghia/autoshort`: `autoshort-a100.sbatch` (Ollama cổng 11534, context 32768, 2 slot, KV q8_0 + 3 enhance worker `a100` / `a100b` / `a100c` + tunnel SSH tự nối lại), env `envs/enhance-worker` (torch 2.5.1+cu124), `enhance/config*.json` (token, mode 600), log `logs/`, `enhance/logs/`. Job hết hạn: `sbatch autoshort-a100.sbatch` lại; xem `squeue -u ntnghia`.

@@ -18,7 +18,7 @@ Cập nhật 2026-10-25.
 - Kho nguồn ghép chủ đề `work/_theme_sources/` (13 video, tải dần bằng `python -m auto_short.theme_render.sources`).
 - Codex IMPLEMENTER: ưu tiên Codex (HUMAN LEAD 2026-10-25, tiết kiệm quota Claude); `.claude/rules/execution.md`, quota `scripts/codex-usage.py`.
 - 3050 thôi làm enhance 2026-10-24; worker #100 đã chép lên 3090 + 3050, không lỗi CUDA (`__version__` vẫn "3"). CP8.38: HUMAN LEAD bỏ qua manual test (API PASS 12/12); manual test cũ: HUMAN LEAD cho PASS.
-- A100 mượn: Ollama + 3 enhance worker qua Slurm; VM trỏ AI sang A100. Trả máy: ops-notes.
+- A100 Slurm ngừng 2026-10-25 (`scancel`, config / token / tunnel đã gỡ); AI về 3090 — web còn trỏ tunnel cũ tới lần restart kế tiếp: đừng chạy việc AI trên web trước restart. Ưu tiên fairshare + dùng lại: ops-notes.
 - Bài đăng sửa 2026-10-24 (#139): 149 bài về bản gốc, backup `~/.local/share/auto-short/backup-posts-2026-10-24T140515Z/`. 6 bài đã đăng sai chờ HUMAN LEAD sửa: VLT T9 S9; CƯT T5 S8, T6 S9, T7 S1, T9 S7, T11 S3. ~106 bài chữ AI cảnh báo khi sao chép.
 - Test chập chờn đã biết: `tests/test_prepare_parallel_cp829.py::test_lower_thread_priority_is_per_thread_and_inherited_by_children` — fail ngẫu nhiên khi chạy full suite; chạy lại riêng thì PASS.
 - CL1 đã gỡ (#107); quy ước host C0 / C1 vẫn hiệu lực.
