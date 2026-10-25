@@ -730,6 +730,7 @@ class JobRunner:
             self._latest.pop(vertical_key(episode_id), None)
             for job_id in [j.id for j in self._jobs.values() if j.episode_id == episode_id]:
                 del self._jobs[job_id]
+            self._save_locked()
         return True
 
     def jobs(self) -> list[Job]:
@@ -1400,6 +1401,9 @@ class JobRunner:
                 "step": step}
 
     def _snapshot_locked(self) -> dict:
+        from ..store.borrow import WAIT_PREFIX
+        from .context import KIND_RESTORE_SOURCE  # context imports this module
+
         lanes: dict[str, list[dict]] = {}
         for lane in self._lane_names:
             heads: list[Job] = []
@@ -1414,6 +1418,11 @@ class JobRunner:
         parked = [self._entry(j, j.step) for j in sorted(self._parked.values(), key=lambda j: int(j.id))]
         out = {"version": 1, "mode": self.mode, "paused": self._paused is not None, "lanes": lanes,
                "parked": parked}
+        store_wait = [dict(self._entry(j, j.step), error=j.error) for j in self._jobs.values()
+                      if j.status == INTERRUPTED and j.kind in (KIND_RENDER, KIND_VERTICAL, KIND_RESTORE_SOURCE)
+                      and (j.error or "").startswith(WAIT_PREFIX) and self._latest.get(j.key) is j]
+        if store_wait:
+            out["store_wait"] = store_wait
         if self._yt_blocked():  # Y3: the block (and its retry time) survives a restart
             out["youtube"] = {k: self._yt[k] for k in ("since", "error", "next_check", "failures")}
         return out
@@ -1444,6 +1453,7 @@ class JobRunner:
         same_mode = data.get("mode") == self.mode
         parked_entries = data.get("parked") if isinstance(data.get("parked"), list) and same_mode \
             and self.mode == MODE_LANES else []
+        store_wait_entries = data.get("store_wait") if isinstance(data.get("store_wait"), list) else []
         entries: list[tuple[str, dict]] = []
         for lane in (self._lane_names if same_mode else LANES + (_SERIAL,)):
             for entry in lanes.get(lane) or []:
@@ -1468,6 +1478,13 @@ class JobRunner:
                         log.warning("web: bỏ qua việc đợi HD đã lưu %r: %s: %s", entry, type(exc).__name__, exc)
                         continue
                     restored += 1 if job is not None else 0
+                for entry in store_wait_entries:
+                    try:
+                        job = self._restore_one_locked(RENDER, entry, same_mode, store_wait=True)
+                    except Exception as exc:
+                        log.warning("web: bỏ qua việc đợi 3090 đã lưu %r: %s: %s", entry, type(exc).__name__, exc)
+                        continue
+                    restored += 1 if job is not None else 0
             finally:
                 self._restoring = False
             self._sync_gpu_wait_locked()
@@ -1489,11 +1506,20 @@ class JobRunner:
         self._yt_next = self._mono() + max(0.0, due - self._wall())
         log.info("web: khôi phục trạng thái YouTube chặn tải, thử lại lúc %s", saved["next_check"])
 
-    def _restore_one_locked(self, lane: str, entry: dict, same_mode: bool, parked: bool = False) -> Job | None:
+    def _restore_one_locked(self, lane: str, entry: dict, same_mode: bool, parked: bool = False,
+                            store_wait: bool = False) -> Job | None:
         kind, episode_id = entry["kind"], entry["episode_id"]
         spec, clip_ids = entry.get("spec") or {}, list(entry.get("clip_ids") or [])
         if not isinstance(kind, str) or not isinstance(episode_id, str) or not isinstance(spec, dict):
             raise ValueError("malformed entry")
+        if store_wait:
+            from ..store.borrow import WAIT_PREFIX
+            from .context import KIND_RESTORE_SOURCE
+
+            error = entry.get("error")
+            if kind not in (KIND_RENDER, KIND_VERTICAL, KIND_RESTORE_SOURCE) \
+                    or not isinstance(error, str) or not error.startswith(WAIT_PREFIX):
+                raise ValueError("malformed store wait entry")
         key = job_key(kind, episode_id)
         latest = self._latest.get(key)
         if latest is not None and latest.active:
@@ -1506,6 +1532,13 @@ class JobRunner:
         job = Job(id=str(next(self._ids)), episode_id=episode_id, kind=kind, target=target, key=key,
                   clip_ids=clip_ids, steps=self._steps(kind, target))
         step = entry.get("step", 0)
+        if store_wait:
+            job.status, job.error = INTERRUPTED, error
+            if same_mode and isinstance(step, int) and 0 <= step < len(job.steps):
+                job.step = step
+            self._jobs[job.id] = job
+            self._latest[key] = job
+            return job
         if parked:  # the step after the ``ai`` lane: the render
             if kind != KIND_PIPELINE or not isinstance(step, int) or not 0 < step < len(job.steps) \
                     or job.steps[step].lane != RENDER:
