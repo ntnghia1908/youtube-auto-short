@@ -10,7 +10,7 @@ import pytest
 
 from auto_short.config import Config, PackagingConfig, RenderConfig, WorkspaceConfig
 from auto_short.hashing import sha256_file
-from auto_short.packaging import episode
+from auto_short.packaging import episode, thumbnail
 from auto_short.publish import PublishError, thumbs, youtube
 from auto_short.publish.__main__ import main
 from auto_short.workspace import atomic_write_json, read_json_dict
@@ -94,7 +94,7 @@ def episodes(tmp_path):
         folder = episode.directory(cfg, ident)
         folder.mkdir(parents=True)
         files = {}
-        for shape in episode.shapes(cfg, ident):
+        for shape in thumbnail.EPISODE_SIZES:
             key = episode.cache_key(fields, settings, shape)
             image = folder / f"{shape}-{key}.jpg"
             image.write_bytes(b"\xff\xd8jpeg:" + shape.encode())
@@ -236,8 +236,11 @@ def test_match_shapes_normalization_skips_and_duplicates(episodes):
     assert [r["shape"] for r in rows[:3]] == ["landscape", "vertical", "landscape"]
     assert all(r["status"] == "sẵn sàng" and r["video_id"] == IDS[0] for r in rows[:3])
     assert all(rows[i]["warning"] for i in (0, 2)) and not rows[1]["warning"]
-    assert all(r["status"] == "bỏ qua" and r["reason"] for r in rows[3:])
+    assert all(r["status"] == "bỏ qua" and r["reason"] for r in rows[3:6])
     assert "bộ kinh khác" in rows[3]["reason"] and "tên file" in rows[4]["reason"]
+    # G8: a vertical thumbnail exists even when the episode has no vertical video.
+    assert rows[6]["status"] == "sẵn sàng" and rows[6]["video_id"] == IDS[1]
+    assert rows[6]["shape"] == "vertical" and not rows[6]["reason"]
     assert not (episodes.workspace.dir / "_publish").exists()
 
 
