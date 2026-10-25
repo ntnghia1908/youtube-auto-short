@@ -191,7 +191,7 @@ def test_add_short_preflight_503(ws, tcfg):
         assert r.status_code == 503 and "ollama preflight" in r.json()["detail"] and _bytes(ws) is None
 
 
-def test_archived_409_and_source_file(ws, tcfg):
+def test_archived_edits_queue_shared_restore_and_source_file(ws, tcfg):
     c, app = make_client(tcfg)
     with c:
         _login(c)
@@ -200,11 +200,21 @@ def test_archived_409_and_source_file(ws, tcfg):
         assert c.get(f"/files/{EID}/source.mp4").status_code == 200
         (ws.dir / "archive.json").write_text("{}", encoding="utf-8")
         assert c.get(f"/files/{EID}/source.mp4").status_code == 404
+        app.state.runner.pause("after")
+        source = (ws.dir / "source.mp4").read_bytes()
+        assert c.post(f"{API}/shorts/k01/cut", json={"start_segment": "missing", "end_segment": "s00009"}).status_code == 422
+        assert c.post(f"{API}/shorts", json={"candidate_id": "missing"}).status_code == 422
+        assert app.state.runner.jobs() == []
         for req in (lambda: c.post(f"{API}/shorts/k01/cut", json={"start_segment": "s00002", "end_segment": "s00009"}),
                     lambda: c.post(f"{API}/shorts/k01/cut", json={"reset": True}),
                     lambda: c.post(f"{API}/shorts", json={"candidate_id": "c00003"})):
             r = req()
-            assert r.status_code == 409 and "đã dọn video nguồn" in r.json()["detail"]
+            assert r.status_code == 202 and r.json()["queued"] == "restore"
+            job, = app.state.runner.jobs()
+            assert r.json()["job"]["id"] == job.id and job.kind == "restore_source"
+            assert job.status == "queued"
+            assert (ws.dir / "source.mp4").read_bytes() == source
+            assert (ws.dir / "archive.json").exists()
         assert _bytes(ws) is None
 
 

@@ -3,16 +3,16 @@
 ``archive_source`` deletes ``work/<id>/source.*`` (only a YouTube download inside the workspace; a local source
 is never touched) and writes the flag ``work/<id>/archive.json``. An archived episode can still be listed,
 played, downloaded, ticked "Đã đăng" and have Shorts deleted (:func:`reject_archived_clip`, no render), but
-nothing that needs the source runs again: title edit, restoring a deleted Short, resubmitting the URL, ingest,
-render (they raise :class:`ArchivedError` / refuse). CP8.37 permits restoring only the exact ingest bytes,
-without rerunning any pipeline stage.
-Canonical contract: docs/decisions/CP8.3-web-contract.md W9.
+source-dependent operations raise :class:`ArchivedError` until restored. SRC3 web edits queue restoration
+automatically. Different ingest bytes require duration and all rendered Shorts to match before installation.
+Contracts: docs/decisions/CP8.3-web-contract.md W9; docs/decisions/SRC3-SRC4-store-first-sources.md G1–G2.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
 import tempfile
@@ -34,11 +34,11 @@ SCHEMA_VERSION = 1
 RENDER_MANIFEST = "render_manifest.json"
 ARCHIVED_MESSAGE = "đã dọn video nguồn; bấm Khôi phục nguồn để sửa"
 RESTORED_NAME = "restored.json"
-MISMATCH_MESSAGE = "video tải lại khác bản gốc; không khôi phục được (xóa tập rồi chạy lại)"
+MISMATCH_MESSAGE = "video tải lại khác bản gốc; không khôi phục được"
 
 
 class ArchivedError(ReviewError):
-    """The episode's source video was cleaned up: the action needs it (web: 409)."""
+    """The episode's source video was cleaned up: the action needs restoration first."""
 
     def __init__(self, episode_id: str):
         super().__init__(f"tập {episode_id}: {ARCHIVED_MESSAGE}")
@@ -174,9 +174,77 @@ def restore_parts(episode_id: str, config: Config) -> list[tuple[Workspace, dict
         raise ReviewError(str(exc)) from exc
 
 
+def _verify_replacement(path: Path, episode_id: str, config: Config, tmp: Path, *, runner=None) -> None:
+    """SRC3 G2a: validate private bytes against every rendered Short of both parts, without writes."""
+    from ..ingest import probe
+    from ..render.stage import RenderError, _run
+    from ..theme_render import audio
+    from ..theme_render.sources import _matches_duration, _positive
+
+    runner = runner or _run
+    try:
+        owner = episode_id.removesuffix(SUFFIX)
+        references = []
+        durations = []
+        for eid in (owner, owner + SUFFIX):
+            folder = Path(config.workspace.dir) / eid
+            if not (folder / "manifest.json").is_file():
+                continue
+            metadata = json.loads((folder / "metadata.json").read_text(encoding="utf-8"))
+            expected = metadata.get("duration")
+            if not _positive(expected):
+                raise ValueError(f"{eid}: metadata.json thiếu thời lượng hợp lệ")
+            out = Path(config.render.output_dir) / eid
+            manifest = out / RENDER_MANIFEST
+            if not manifest.is_file():
+                raise ValueError(f"{eid}: thiếu render_manifest.json để đối chiếu Short")
+            doc = json.loads(manifest.read_text(encoding="utf-8"))
+            for short in doc["shorts"]:
+                if short.get("status") == "rendered":
+                    references.append((eid, out, short))
+            durations.append((eid, expected))
+        if not references:
+            raise ValueError("không có Short đã render để đối chiếu")
+        info = probe.probe(path)
+        for eid, expected in durations:
+            if not _matches_duration(info.get("duration"), expected):
+                raise ValueError(f"{eid}: thời lượng {info.get('duration')} s không khớp bản gốc {expected} s")
+        fps = info.get("fps")
+        if not _positive(fps):
+            raise ValueError("nguồn không có fps hợp lệ để kiểm lệch một khung hình")
+        for eid, out, short in references:
+            reference = (out / short["file"]).resolve()
+            if not reference.is_relative_to(out.resolve()) or not reference.is_file() \
+                    or sha256_file(reference) != short["sha256"]:
+                raise ValueError(f"{eid}/{short.get('clip_id')}: Short bị thiếu / sha256 không khớp")
+            # Render manifests record the actual kept segments, including manual cuts and silence trims.
+            segments = short["segments"]
+            if not segments or any(not isinstance(s, list) or len(s) != 2
+                                   or not all(isinstance(v, (int, float)) and not isinstance(v, bool)
+                                              and math.isfinite(v) for v in s)
+                                   or s[0] < 0 or s[1] <= s[0] for s in segments):
+                raise ValueError("mốc cắt Short không hợp lệ")
+            filters = []
+            for i, (start, end) in enumerate(segments):
+                filters.append(f"[0:a]atrim=start={start}:end={end},asetpts=PTS-STARTPTS[a{i}]")
+            filters.append("".join(f"[a{i}]" for i in range(len(segments)))
+                           + f"concat=n={len(segments)}:v=0:a=1[out]")
+            clip = tmp / "replacement.wav"
+            proc = runner(["ffmpeg", "-nostdin", "-hide_banner", "-v", "error", "-y", "-i", str(path),
+                           "-filter_complex", ";".join(filters), "-map", "[out]", "-c:a", "pcm_s16le", str(clip)])
+            if proc.returncode != 0 or not clip.is_file():
+                raise ValueError("không cắt được audio từ bản nguồn mới")
+            match = audio.compare(clip, reference, tmp, runner)
+            if not math.isfinite(match["lag"]) or abs(match["lag"]) > 1 / fps + 1e-9:
+                raise ValueError(f"{eid}/{short['clip_id']}: lệch audio {match['lag']} s > một khung hình ({1 / fps:.6f} s)")
+            clip.unlink()
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, probe.ProbeError, RenderError) as exc:
+        raise ReviewError(f"{MISMATCH_MESSAGE}: {exc}") from exc
+
+
 def restore_source(episode_id: str, config: Config, *, downloader=None,
-                   lock=None, now: str | None = None, clock=None) -> RestoreResult:
-    """CP8.37: verify all parts against ingest, then install sources and clear archive flags under ``lock``.
+                   lock=None, now: str | None = None, clock=None, runner=None) -> RestoreResult:
+    """Verify exact ingest bytes or SRC3 speech equivalence, then install and clear flags under ``lock``.
 
     A cache hit uses hard links; downloads live only in a private temporary workspace directory until verified.
     A mismatch changes no persistent file. ``YoutubeBlocked`` propagates for the prepare lane to wait/retry.
@@ -184,7 +252,7 @@ def restore_source(episode_id: str, config: Config, *, downloader=None,
     """
     # Lazy imports: ingest / render also import archive guards during package initialization.
     from ..ingest.youtube import DownloadError, YoutubeBlocked, ytdlp_download
-    from ..theme_render.sources import cached_source
+    from ..theme_render.sources import cached_source, workspace_source
 
     downloader = downloader or ytdlp_download
     parts = restore_parts(episode_id, config)
@@ -192,26 +260,23 @@ def restore_source(episode_id: str, config: Config, *, downloader=None,
     with tempfile.TemporaryDirectory(prefix=".restore-source-", dir=parts[0][0].dir) as tmpname:
         tmp = Path(tmpname)
         verified = {}
+        provenance = {}
         downloaded = False
         for ws, source in parts:
             key = (source["sha256"], source["size"])
             if key in verified:
                 continue
-            path = cached
+            path = workspace_source(config, episode_id) or cached
             if config.store.enabled:
                 from ..store.client import StoreClient, StoreError
-                from ..theme_render.sources import workspace_source
-
-                path = workspace_source(config, episode_id) or cached
-                if path is not None and (path.stat().st_size != source["size"]
-                                         or sha256_file(path) != source["sha256"]):
-                    path = None
                 if path is None:
                     remote = tmp / f"store-{len(verified)}.mp4"
                     try:
-                        StoreClient.from_config(config.store).fetch(
-                            ws.episode_id.removesuffix(SUFFIX), "source", remote, source["sha256"])
-                        if remote.stat().st_size == source["size"] and sha256_file(remote) == source["sha256"]:
+                        client = StoreClient.from_config(config.store)
+                        owner = ws.episode_id.removesuffix(SUFFIX)
+                        head = client.head(owner, "source")
+                        client.fetch(owner, "source", remote, head["sha256"])
+                        if remote.stat().st_size == head["size"] and sha256_file(remote) == head["sha256"]:
                             path = remote
                             downloaded = True
                     except (StoreError, OSError):
@@ -228,9 +293,12 @@ def restore_source(episode_id: str, config: Config, *, downloader=None,
                 if not path.resolve().is_relative_to(dest.resolve()) or not path.is_file():
                     raise ReviewError("downloader không trả file trong thư mục tải tạm")
                 downloaded = True
-            if path.stat().st_size != source["size"] or sha256_file(path) != source["sha256"]:
-                raise ReviewError(MISMATCH_MESSAGE)
+            size, sha = path.stat().st_size, sha256_file(path)
+            differs = size != source["size"] or sha != source["sha256"]
+            if differs:
+                _verify_replacement(path, episode_id, config, tmp, runner=runner)
             verified[key] = path
+            provenance[key] = {"differs_from_ingest": True, "sha256": sha, "size": size} if differs else {}
 
         with lock if lock is not None else nullcontext():
             if restore_parts(episode_id, config) != parts:
@@ -257,10 +325,11 @@ def restore_source(episode_id: str, config: Config, *, downloader=None,
                 for link, final in staged:
                     link.replace(final)
                     installed.append(final)
-                for ws, _ in parts:
+                for ws, source in parts:
                     marker = ws.dir / RESTORED_NAME
                     installed.append(marker)
-                    atomic_write_json(marker, {"restored_at": stamp})
+                    atomic_write_json(marker, {"restored_at": stamp,
+                                               **provenance[(source["sha256"], source["size"])]})
                 for ws, _ in parts:
                     flag = archive_path(ws.dir)
                     installed.append(flag)

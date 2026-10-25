@@ -306,6 +306,12 @@ def test_disk_status_and_submit_block(tcfg, free, total, warn, block):
 
 
 def test_archive_route_and_archived_episode_rules(tcfg, episode):
+    from auto_short.hashing import sha256_file
+
+    # G1 needs an actually restorable source; write_episode's display-only manifest omits its fingerprint.
+    manifest = episode.load_manifest()
+    manifest["source"].update(path="source.mp4", sha256=sha256_file(episode.dir / "source.mp4"), size=SOURCE_BYTES)
+    episode.save_manifest(manifest)
     with client(tcfg) as c:
         _login(c)
         assert c.post("/api/episodes/nope/archive").status_code == 404
@@ -324,13 +330,14 @@ def test_archive_route_and_archived_episode_rules(tcfg, episode):
         k02 = d["shorts"][1]
         assert c.get(k02["download_url"]).status_code == 200
         assert c.post(f"{BASE}/k02/published", json={"value": True}).json()["published"] is True
-        # refused with the contract message: title edit, restore, resubmit
+        # Invalid edits still fail before reserving a source restore.
+        assert c.post(f"{BASE}/k01/title", json={"set": ""}).status_code == 422
+        assert c.post(f"{BASE}/k99/restore").status_code == 422
+        assert c.app.state.runner.jobs() == []
+        # Resubmitting the URL remains refused by ingest (SRC4).
         msg = "đã dọn video nguồn; bấm Khôi phục nguồn để sửa"
-        for resp in (c.post(f"{BASE}/k01/title", json={"set": "Tiêu đề mới"}),
-                     c.post(f"{BASE}/k01/title", json={"reset": True}),
-                     c.post(f"{BASE}/k01/restore"),
-                     c.post("/api/episodes", json={"url": f"https://youtu.be/{EID}", "kinds": ["short"]})):
-            assert resp.status_code == 409 and msg in resp.json()["detail"]
+        resp = c.post("/api/episodes", json={"url": f"https://youtu.be/{EID}", "kinds": ["short"]})
+        assert resp.status_code == 409 and msg in resp.json()["detail"]
         assert c.app.state.runner.jobs() == []
         # delete a Short: applied directly, no render job
         r = c.post(f"{BASE}/k01/delete")
@@ -339,6 +346,21 @@ def test_archive_route_and_archived_episode_rules(tcfg, episode):
         assert (k01["deleted"], k01["status"]) == (True, "skipped")
         assert c.get(f"/files/{EID}/k01.mp4").status_code == 404
         assert c.app.state.runner.jobs() == []
+        # G1: valid title edits and restoring the deleted Short join one queued restore.
+        c.app.state.runner.pause("after")
+        review = (episode.dir / "review.json").read_bytes()
+        for resp in (c.post(f"{BASE}/k01/title", json={"set": "Tiêu đề mới"}),
+                     c.post(f"{BASE}/k01/title", json={"reset": True}),
+                     c.post(f"{BASE}/k01/restore")):
+            assert resp.status_code == 202 and resp.json()["queued"] == "restore"
+            job, = c.app.state.runner.jobs()
+            assert resp.json()["job"]["id"] == job.id and job.kind == "restore_source"
+            assert job.status == "queued"
+            assert not (episode.dir / "source.mp4").exists()
+            assert (episode.dir / "archive.json").exists()
+            assert (episode.dir / "review.json").read_bytes() == review
+        # Cancel the pending restore before exercising the existing episode deletion rule.
+        assert c.app.state.runner.cancel("restore_source") == [job]
         # then the whole episode can go
         assert c.delete(f"/api/episodes/{EID}").status_code == 200
         assert c.get("/api/storage").json()["episodes"] == []
