@@ -12,8 +12,9 @@ Ngân sách token: `docs/ai/workflow.md` §10.
 
 Cập nhật 2026-10-25.
 
-- Web 8080 (tmux `youtube:web`, worktree `~/projects/youtube-auto-short-web`): chạy `origin/main` `b05fbaf` (có #148; restart 2026-10-25 ≈ 06:45); `config.toml` `[web]` `render_workers = 3`, `render_max_cpu = 0.75` (HUMAN LEAD 2026-10-25, backup `~/.cache/config.toml.bak-render3-20261025`); `[store]` bật (kho 3090 qua tunnel 18090, chi tiết ops-notes). Mật khẩu `~/.local/share/auto-short/web.env`.
-- Kinh Địa Tạng 41 tập đã giải phóng bản HD (HD1, bản ở kho 3090 `E:\KinhDiaTang_HD`); HUMAN LEAD chạy định kỳ trên 3090 `backup.ps1 -Dest E:\KinhDiaTang_HD -Release` (mặc định trong file là D:). Bản dọc job 51–55 xong 2026-10-25. Đang "Chạy tiếp cả bộ" (không bản dọc): 48 tập prepared, 96 job, ≈ 7,2 h GPU 3090 (≈ 9 phút AI / tập); bản dọc xếp sau khi Short xong.
+- Trọng tâm mới (HUMAN LEAD 2026-10-25): ghép clip AI theo chủ đề (theme_render; task TC1, TC2, TC-AIQ, TC-AIQ2, TC-WEB1).
+- Web 8080 (tmux `youtube:web`, worktree `~/projects/youtube-auto-short-web`): chạy `origin/main` `3394246` (có #151; restart 2026-10-25 ≈ 07:58); `config.toml` `[web]` `render_workers = 3`, `render_max_cpu = 0.75` (HUMAN LEAD 2026-10-25, backup `~/.cache/config.toml.bak-render3-20261025`); `[store]` bật (kho 3090 qua tunnel 18090, chi tiết ops-notes). Mật khẩu `~/.local/share/auto-short/web.env`.
+- Kinh Địa Tạng 41 tập đã giải phóng bản HD (HD1, bản ở kho 3090 `E:\KinhDiaTang_HD`); HUMAN LEAD chạy định kỳ trên 3090 `backup.ps1 -Dest E:\KinhDiaTang_HD -Release` (mặc định trong file là D:). Đợt "Chạy tiếp cả bộ" dừng 2026-10-25 07:58 (HUMAN LEAD): bỏ 76 job chưa bắt đầu khỏi hàng đợi (backup `~/.cache/web_queue.json.bak-kdt-stop-20261025`), các tập dở chạy nốt; HUMAN LEAD tự backup toàn bộ bản dọc.
 - Dự án ở `~/projects/` từ 2026-10-19; backup JSON: ops-notes. `config.toml` `[storage]`: `auto_archive = true`, `auto_archive_grace_minutes = 7200`.
 - Kho nguồn ghép chủ đề `work/_theme_sources/` (13 video, tải dần bằng `python -m auto_short.theme_render.sources`).
 - Codex IMPLEMENTER: ưu tiên Codex (HUMAN LEAD 2026-10-25, tiết kiệm quota Claude); `.claude/rules/execution.md`, quota `scripts/codex-usage.py`.
@@ -25,7 +26,7 @@ Cập nhật 2026-10-25.
 
 ## Next proposed action
 
-1. #150, #151 (RENDER-short-first) đã merge 2026-10-25 (main `3394246`); 8080 chưa có #151 → `auto-short-web-restart --ref origin/main` khi làn rảnh (sau cả bộ Kinh Địa Tạng). Chờ HUMAN LEAD: #149 RV1 decision PROPOSED (chạy lệnh đo §4 trên 3090 rồi trả lời §5).
+1. Ghép clip AI theo chủ đề: đọc task TC*, hỏi HUMAN LEAD hướng cải thiện, viết contract. Chờ HUMAN LEAD: #149 RV1 decision PROPOSED (chạy lệnh đo §4 trên 3090 rồi trả lời §5).
 2. HUMAN LEAD đăng 13 bài tập 10 Thập Thiện `W2d-xS4ttTw` (xử lý lại 2026-10-24).
 3. Đóng gói (`docs/decisions/PKG-video-packaging-authorization.md` ACCEPTED): PKG1, PKG2, VIS1, PKG2.1, PKG2.2, PKG3, PKG3.1, PUB2, FIX-theme-index-summary, AUD1 đã merge; HD1, HD2a cũng vậy. PKG3.1: HUMAN LEAD bấm "Ghép lại" một video ghép Thái Thượng Cảm Ứng Thiên (cả 3 đang stale) rồi xem trang Đóng gói.
    AUD1: HUMAN LEAD chọn −18 / −22 / −26 LU; nhạc YouTube Audio Library do HUMAN LEAD tải từ Studio (G3). Kho: 1 bản CC0 "The Budding of Consciousness"; không nạp "nhạc hòa tấu Niệm Phật" (chưa rõ license), "月下獨酌" (thương mại). PUB1 / PKG1.1: bỏ.
