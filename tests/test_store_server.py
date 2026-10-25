@@ -73,6 +73,27 @@ def request(archive_store, method="GET", path="/index", headers=None, body=b"", 
     return int(status.split()[1]), parsed, result
 
 
+def test_source_put_index_head_get_and_bad_sha(archive):
+    service, folder, _ = archive
+    name = "[Goc] Kinh Địa Tạng - Tập 1.mp4"
+    route = f"/files/{VIDEO}/source"
+    query = "?" + urlencode(dict(series=PLAYLIST, name=name))
+    headers = {"Content-Length": str(len(DATA)), "X-Sha256": SHA}
+    assert request(service, "PUT", route + query, headers, DATA)[0] == 201
+    assert service.index() == [dict(video_id=VIDEO, kind="source", series=PLAYLIST, file=name,
+                                    size=len(DATA), sha256=SHA)]
+    code, fields, result = request(service, "HEAD", route)
+    assert code == 200 and fields["X-Sha256"] == SHA and int(fields["Content-Length"]) == len(DATA)
+    assert result == b"" and request(service, "GET", route)[2] == DATA
+    assert request(service, "PUT", route + query, headers, DATA)[0] == 200
+    with (folder / "index.csv").open(encoding="utf-8-sig") as stream:
+        assert list(csv.DictReader(stream))[0]["loai"] == "Goc"
+    bad = f"/files/zyxWVUT9876/source?" + urlencode(dict(series=PLAYLIST, name="[Goc] bad.mp4"))
+    assert request(service, "PUT", bad, {**headers, "X-Sha256": "0" * 64}, DATA)[0] == 422
+    assert not (folder / "[Goc] bad.mp4").exists()
+    assert len(service.index()) == 1
+
+
 def test_index_backup_formats_cache_and_missing_files(archive, monkeypatch):
     service, folder, _ = archive
     seed(folder, "danh-sach.csv")

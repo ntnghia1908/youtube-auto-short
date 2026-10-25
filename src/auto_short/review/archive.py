@@ -109,6 +109,20 @@ def archive_source(episode_id: str, config: Config, *, now: str | None = None, a
     sizes = [(p, p.lstat().st_size) for p in files]
     doc = {"schema_version": SCHEMA_VERSION, "episode_id": ws.episode_id, "archived_at": now or utc_now(),
            "removed": [{"path": p.name, "size": size} for p, size in sizes]}
+    if config.store.backup_source:
+        from ..store.backup import backup_state
+        from ..store.client import StoreError
+
+        try:
+            if not files:
+                raise ReviewError("không còn file nguồn để đối chiếu")
+            for path, size in sizes:
+                state = backup_state(config, episode_id, path=path)
+                if not state["backed_up"] or state["size"] != size:
+                    raise ReviewError(f"{path.name}: sha256 / kích thước không khớp")
+            doc["backup"] = {"store": "source", "sha256": state["sha256"]}
+        except (StoreError, OSError, ReviewError) as exc:
+            raise ReviewError(f"chưa sao lưu lên 3090: {exc}") from exc
     if auto:
         doc["auto"] = True
     atomic_write_json(archive_path(ws.dir), doc)
@@ -184,6 +198,24 @@ def restore_source(episode_id: str, config: Config, *, downloader=None,
             if key in verified:
                 continue
             path = cached
+            if config.store.enabled:
+                from ..store.client import StoreClient, StoreError
+                from ..theme_render.sources import workspace_source
+
+                path = workspace_source(config, episode_id) or cached
+                if path is not None and (path.stat().st_size != source["size"]
+                                         or sha256_file(path) != source["sha256"]):
+                    path = None
+                if path is None:
+                    remote = tmp / f"store-{len(verified)}.mp4"
+                    try:
+                        StoreClient.from_config(config.store).fetch(
+                            ws.episode_id.removesuffix(SUFFIX), "source", remote, source["sha256"])
+                        if remote.stat().st_size == source["size"] and sha256_file(remote) == source["sha256"]:
+                            path = remote
+                            downloaded = True
+                    except (StoreError, OSError):
+                        pass  # 3090 unavailable / wrong bytes: retain the existing YouTube fallback.
             if path is None:
                 dest = tmp / str(len(verified))
                 dest.mkdir()

@@ -121,7 +121,7 @@ def _verify(path: Path, expected: float, tolerance: float, runner, *, fps: Fract
     return info
 
 
-def _source(config: Config, record: dict, fetched: dict, downloader):
+def _source(config: Config, record: dict, fetched: dict, downloader, tmp: Path | None = None):
     from . import sources
 
     ref = record["source_reference"]
@@ -133,7 +133,19 @@ def _source(config: Config, record: dict, fetched: dict, downloader):
     video_id = sources._owner(record["identity"]["episode_id"])
     if video_id not in fetched:
         try:
-            src = sources.cached_source(config, video_id)
+            src = sources.workspace_source(config, video_id) if config.store.enabled else None
+            src = src or sources.cached_source(config, video_id)
+            if src is None and config.store.enabled and tmp is not None:
+                from ..store.client import StoreClient, StoreError
+
+                dest = tmp / f"source-{video_id}.mp4"
+                try:
+                    client = StoreClient.from_config(config.store)
+                    sha = client.head(video_id, "source")["sha256"]
+                    src = client.fetch(video_id, "source", dest, sha)
+                except (StoreError, OSError):
+                    dest.unlink(missing_ok=True)
+                    dest.with_name(dest.name + ".part").unlink(missing_ok=True)
             if src is None:
                 src = sources.fetch_to_cache(config, video_id, downloader)
         except YoutubeBlocked as exc:
@@ -206,7 +218,7 @@ def render_landscape(config: Config, playlist_id: str, plan_id: str, *, hashtags
             fetched, paths, clips, tolerances = {}, [], [], []
             for n, (snap, record, (reference, title)) in enumerate(zip(approved["clips"], records, references)):
                 try:
-                    source, status, warning = _source(config, record, fetched, downloader)
+                    source, status, warning = _source(config, record, fetched, downloader, tmp)
                     info = probe_media(source, runner)
                     if info["video"] is None or info["audio"] is None:
                         raise RenderError("video nguồn thiếu video / audio")

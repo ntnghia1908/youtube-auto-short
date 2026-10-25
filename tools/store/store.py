@@ -19,7 +19,7 @@ VIDEO_ID = re.compile(r"[A-Za-z0-9_-]{11}(?:\.kt)?")
 SERIES_ID = re.compile(r"[A-Za-z0-9_-]{1,128}")
 SHA256 = re.compile(r"[a-fA-F0-9]{64}")
 COLUMNS = ("tap", "loai", "file", "video_id", "tieu_de")
-KINDS = {"HD": "hd", "Doc": "vertical"}
+KINDS = {"HD": "hd", "Doc": "vertical", "Goc": "source"}
 MAX_BODY = 20 * 1024**3
 CHUNK = 1024 * 1024
 
@@ -212,7 +212,7 @@ class Store:
         """Preserve the backup Export-Csv column order, including existing optional columns."""
         index, sums, fields = self._metadata(folder)
         row = dict.fromkeys(fields, "")
-        row.update(video_id=video_id, loai="HD" if kind == "hd" else "Doc", file=name)
+        row.update(video_id=video_id, loai=next(label for label, value in KINDS.items() if value == kind), file=name)
         # A backup file might lack its final newline. Keep the appended record separate.
         for path in (sums, index):
             if path.exists() and path.stat().st_size:

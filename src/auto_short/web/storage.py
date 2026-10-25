@@ -348,6 +348,14 @@ class StorageCache:
         self._config, self._disk_usage, self._clock, self._mono = config, disk_usage, clock, monotonic
         self._lock = threading.Lock()
         self._cached: tuple[float, frozenset, dict] | None = None
+        self._source_backup: dict | None = None
+
+    def update_source_backup(self, states: dict) -> None:
+        """Background HEAD results only; reporting storage never contacts the store."""
+        done = sum(bool(state["backed_up"]) for state in states.values())
+        with self._lock:
+            self._source_backup = {"backed_up": done, "total": len(states), "pending": len(states) - done}
+            self._cached = None
 
     def invalidate(self) -> None:
         with self._lock:
@@ -384,5 +392,9 @@ class StorageCache:
             "old_days": OLD_DAYS,
         }
         with self._lock:
+            if self._config.store.backup_source:
+                total = len({video_id(row["id"]) for row in rows if row["source_kind"] == "youtube"})
+                report["source_backup"] = dict(self._source_backup) if self._source_backup is not None else {
+                    "backed_up": 0, "total": total, "pending": total}
             self._cached = (self._mono(), key, report)
         return report

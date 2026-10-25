@@ -206,6 +206,91 @@ def test_real_missing_source_download_once_and_cleanup(media, synthetic_source):
     assert_clean(folder)
 
 
+@pytest.mark.parametrize('failure', [None, 'encode', 'cancel'])
+def test_src1_store_source_in_job_tmp_is_removed(media, synthetic_source, monkeypatch, failure):
+    from auto_short.config import StoreConfig
+    from auto_short.store.client import StoreClient
+
+    cfg, ws, folder, _, doc = media
+    cfg = replace(cfg, store=StoreConfig(enabled=True))
+    (ws.dir / 'source.mp4').unlink()
+    borrowed = []
+    sha = hashing.sha256_file(synthetic_source)
+
+    class Client:
+        def head(self, video_id, kind):
+            assert kind == 'source'
+            return dict(sha256=sha, size=synthetic_source.stat().st_size)
+
+        def fetch(self, video_id, kind, dest, expected):
+            assert expected == sha and dest.parent.name.startswith('.render-')
+            shutil.copyfile(synthetic_source, dest)
+            borrowed.append(dest)
+            return dest
+
+    monkeypatch.setattr(StoreClient, 'from_config', lambda cfg: Client())
+
+    def runner(cmd):
+        if '-filter_complex_script' in cmd:
+            if failure == 'encode':
+                raise RenderError('encode failure')
+            if failure == 'cancel':
+                raise KeyboardInterrupt()
+        return checked(cmd)
+
+    if failure:
+        with pytest.raises(KeyboardInterrupt if failure == 'cancel' else RenderError):
+            tr.render_landscape(cfg, 'PLtest', doc['plan_id'], runner=runner, downloader=no_call)
+    else:
+        result = tr.render_landscape(cfg, 'PLtest', doc['plan_id'], runner=runner, downloader=no_call)
+        assert all(c['source'] == 'refetched' for c in result.metadata['clips'])
+    assert len(borrowed) == 1 and not borrowed[0].exists() and not borrowed[0].parent.exists()
+    assert not (ws.dir / 'source.mp4').exists()
+    assert not (cfg.workspace.dir / '_theme_sources').exists()
+    assert_clean(folder)
+
+
+@pytest.mark.parametrize('failure', ['missing', 'down', 'sha'])
+def test_src1_bad_store_falls_back_to_youtube(episode, monkeypatch, tmp_path, failure):
+    from auto_short.config import StoreConfig
+    from auto_short.store.client import StoreClient, StoreMismatch, StoreUnavailable
+    from auto_short.theme_render import sources
+
+    cfg, ws, _, _ = episode
+    cfg = replace(cfg, store=StoreConfig(enabled=True))
+    (ws.dir / 'source.mp4').unlink()
+    record = dict(identity=dict(episode_id=ws.episode_id), source_status='missing',
+                  source_reference=dict(path=str(ws.dir / 'source.mp4'), sha256='0' * 64))
+    seen = []
+
+    class Client:
+        def head(self, *args):
+            seen.append('store')
+            if failure == 'down':
+                raise StoreUnavailable('down')
+            if failure == 'missing':
+                raise StoreMismatch('missing')
+            return dict(sha256='0' * 64, size=10)
+
+        def fetch(self, video_id, kind, dest, sha):
+            dest.with_suffix('.mp4.part').write_bytes(b'bad bytes')
+            raise StoreMismatch('wrong sha')
+
+    def youtube(config, video_id, downloader):
+        seen.append('youtube')
+        dest = tmp_path / 'youtube.mp4'
+        dest.write_bytes(b'fallback')
+        return dest
+
+    monkeypatch.setattr(StoreClient, 'from_config', lambda cfg: Client())
+    monkeypatch.setattr(sources, 'fetch_to_cache', youtube)
+    job = tmp_path / 'job'
+    job.mkdir()
+    path, status, warning = tr._source(cfg, record, {}, no_call, job)
+    assert seen == ['store', 'youtube'] and path.read_bytes() == b'fallback'
+    assert not list(job.iterdir()) and status == 'refetched' and warning
+
+
 @pytest.mark.parametrize('failure', ['offset', 'content', 'blocked', 'download', 'encode', 'cancel'])
 def test_fetch_failure_closed_and_cleanup(media, synthetic_source, failure):
     cfg, ws, folder, _, doc = media

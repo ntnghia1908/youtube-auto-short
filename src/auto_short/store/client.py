@@ -6,17 +6,19 @@ token comes from the env ``AUTO_SHORT_STORE_TOKEN`` and is never logged or put i
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
 import os
 import re
 import urllib.error
 import urllib.request
 from pathlib import Path
+from urllib.parse import urlencode
 
 from ..config import StoreConfig
 
 TOKEN_ENV = "AUTO_SHORT_STORE_TOKEN"
-KINDS = ("hd", "vertical")
+KINDS = ("hd", "vertical", "source")
 _SHA = re.compile(r"[0-9a-f]{64}")
 _ID = re.compile(r"[A-Za-z0-9_-]{11}")
 _CHUNK = 1024 * 1024
@@ -43,10 +45,10 @@ class StoreClient:
         token = (os.environ if env is None else env).get(TOKEN_ENV)
         return cls(cfg.url, token.strip() if token else None, cfg.timeout_seconds)
 
-    def _open(self, path: str, *, method: str = "GET", headers: dict | None = None):
+    def _open(self, path: str, *, method: str = "GET", headers: dict | None = None, data=None):
         if not self.token:
             raise StoreUnavailable(f"thiếu token kho (env {TOKEN_ENV})")
-        req = urllib.request.Request(self.url + path, method=method,
+        req = urllib.request.Request(self.url + path, data=data, method=method,
                                      headers={"Authorization": f"Bearer {self.token}", **(headers or {})})
         try:
             return urllib.request.urlopen(req, timeout=self.timeout)
@@ -56,6 +58,8 @@ class StoreClient:
                 raise StoreMismatch(f"kho không có file {path}") from None
             if exc.code == 416:
                 raise StoreMismatch("kho trả Range không hợp lệ") from None
+            if method == "PUT" and exc.code in (400, 409, 413, 422):
+                raise StoreMismatch(f"kho từ chối file (HTTP {exc.code})") from None
             raise StoreUnavailable(f"kho trả HTTP {exc.code}") from None
         except (urllib.error.URLError, OSError, ValueError) as exc:  # includes timeouts / connection refused
             raise StoreUnavailable(f"không kết nối được kho: {type(exc).__name__}") from None
@@ -95,6 +99,34 @@ class StoreClient:
         if not _SHA.fullmatch(sha):
             raise StoreUnavailable("kho không trả X-Sha256 hợp lệ")
         return {"size": size, "sha256": sha}
+
+    def put(self, video_id: str, kind: str, series: str, name: str, path: Path, sha256: str) -> None:
+        """Stream the file without buffering it in RAM. A failed upload is retried in full by the caller."""
+        route = self._path(video_id, kind)
+        want = (sha256 or "").lower()
+        if not _SHA.fullmatch(want):
+            raise StoreMismatch("sha256 gửi lên không hợp lệ")
+        if not isinstance(series, str) or re.fullmatch(r"[A-Za-z0-9_-]{1,128}", series) is None:
+            raise StoreMismatch("series gửi lên không hợp lệ")
+        try:
+            size = Path(path).stat().st_size
+            try:
+                existing = self.head(video_id, kind)
+            except StoreMismatch:
+                existing = None
+            if existing is not None:
+                if existing["sha256"] != want or existing["size"] != size:
+                    raise StoreMismatch("kho đã có file khác sha256 / kích thước")
+                return
+            route += "?" + urlencode({"series": series, "name": name})
+            with Path(path).open("rb") as stream:
+                headers = {"Content-Length": str(os.fstat(stream.fileno()).st_size), "X-Sha256": want,
+                           "Content-Type": "application/octet-stream"}
+                with self._open(route, method="PUT", headers=headers, data=stream) as resp:
+                    if resp.status not in (200, 201):
+                        raise StoreUnavailable(f"kho trả HTTP {resp.status} khi gửi file")
+        except (OSError, http.client.HTTPException) as exc:
+            raise StoreUnavailable(f"không gửi được file lên kho: {type(exc).__name__}") from None
 
     def fetch(self, video_id: str, kind: str, dest: Path, sha256: str) -> Path:
         """Download to ``dest`` (through ``dest + ".part"``, resumed with ``Range`` when a part exists), verify that the

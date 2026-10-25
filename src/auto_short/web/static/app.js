@@ -2714,6 +2714,14 @@ const AutoShort = (() => {
         el("div", { class: "disk-nums small", text: `Đã dùng ${fmtBytes(k.used)} / ${fmtBytes(k.total)} (${pct} %) · còn trống ${fmtBytes(k.free)}` }));
     }));
     const t = d.totals;
+    const backup = $("#source-backup");
+    if (backup) {
+      backup.hidden = !d.source_backup;
+      if (d.source_backup) {
+        const b = d.source_backup;
+        backup.textContent = `đã sao lưu lên 3090: ${b.backed_up} / ${b.total} video gốc · còn chờ ${b.pending}`;
+      }
+    }
     $("#storage-meta").textContent = `Các tập: ${fmtBytes(t.episodes)} (video nguồn ${fmtBytes(t.source)}, Short ${fmtBytes(t.shorts)}, khác ${fmtBytes(t.other)}` +
       (t.hd || t.enhance_tmp ? `; trong đó bản HD ${fmtBytes(t.hd || 0)}, đoạn enhance tạm ${fmtBytes(t.enhance_tmp || 0)}` : "") + `). ` +
       `Tính lúc ${fmtTime(d.computed_at)} (làm mới tối đa 30 giây một lần).`;

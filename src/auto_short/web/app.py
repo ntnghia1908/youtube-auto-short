@@ -306,6 +306,52 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             storage.invalidate()
         return done
 
+    source_backup_failed: set[str] = set()
+
+    def source_backup_pass(client=None) -> list[str]:
+        """SRC1: one source upload per pass, while the render lane is idle. Blocking I/O runs in a thread."""
+        from ..store.backup import backup_order, push_source
+        from ..store.client import StoreClient, StoreError
+
+        if not config.store.enabled or not config.store.backup_source:
+            return []
+
+        def render_busy():
+            return any(lane in ("render", "serial") for lane in runner.running())
+
+        if render_busy():
+            return []
+        client = client or StoreClient.from_config(config.store)
+        states = {}
+        vid = None
+        try:
+            order = backup_order(config, client=client, states=states, now=clock())
+            storage.update_source_backup(states)
+            if not order or render_busy():
+                return []
+            candidates = [v for v in order if v not in source_backup_failed]
+            if not candidates:
+                source_backup_failed.clear()  # retry conflicts next pass, after other videos got their turn
+                return []
+            vid = candidates[0]
+            states[vid] = push_source(config, vid, client=client)
+            storage.update_source_backup(states)
+            log.info("web: đã sao lưu nguồn %s lên 3090", vid)
+            return [vid]
+        except StoreError as exc:
+            if vid is not None:
+                source_backup_failed.add(vid)
+            log.warning("web: sao lưu nguồn: %s", exc)
+            return []
+
+    async def _source_backup_loop() -> None:
+        while config.store.enabled and config.store.backup_source:
+            try:
+                await asyncio.to_thread(source_backup_pass)
+            except Exception:
+                log.exception("web: sao lưu nguồn: lỗi")
+            await asyncio.sleep(config.store.retry_seconds)
+
     def store_retry_pass(client=None) -> list[str]:
         """HD2a: jobs that ended "đợi 3090" (the HD of a released video is on the store, which could not lend it) are
         submitted again when the store answers and has the file with the sha256 recorded at release. Returns the keys
@@ -494,11 +540,13 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         sampler.start()
         sweeper = asyncio.create_task(_auto_archive_loop())
         store_retry = asyncio.create_task(_store_retry_loop())
+        source_backup = asyncio.create_task(_source_backup_loop())
         try:
             yield
         finally:
             sweeper.cancel()
             store_retry.cancel()
+            source_backup.cancel()
             await asyncio.to_thread(sampler.stop)
             await asyncio.to_thread(runner.stop)
 
@@ -509,6 +557,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     app.state.monitor_sampler = sampler
     app.state.storage = storage
     app.state.auto_archive_pass = auto_archive_pass
+    app.state.source_backup_pass = source_backup_pass
     app.state.store_retry_pass = store_retry_pass
     app.state.sweep_refetched = _sweep_refetched
     app.state.playlists = playlists

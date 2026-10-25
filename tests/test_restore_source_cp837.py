@@ -1,5 +1,6 @@
 """CP8.37: exact ingest restoration, shared parts, prepare jobs and archive grace. No real downloads."""
 
+import hashlib
 import json
 import threading
 import time
@@ -78,6 +79,53 @@ def downloader(data=DATA, calls=None):
 
 def no_download(*args):
     pytest.fail("cache restore must not download")
+
+
+@pytest.mark.parametrize("failure", [None, "missing", "down", "sha", "size", "corrupt"])
+def test_src1_restore_store_before_youtube_exact_ingest(cfg, monkeypatch, failure):
+    from dataclasses import replace
+    from auto_short.config import StoreConfig
+    from auto_short.store.client import StoreClient, StoreMismatch, StoreUnavailable
+
+    folder = make_episode(cfg)
+    cfg = replace(cfg, store=StoreConfig(enabled=True))
+    seen = []
+
+    class Client:
+        def fetch(self, video_id, kind, dest, sha):
+            seen.append("store")
+            assert video_id == EID and kind == "source" and sha == hashlib.sha256(DATA).hexdigest()
+            if failure == "missing":
+                raise StoreMismatch("missing")
+            if failure == "down":
+                raise StoreUnavailable("down")
+            if failure == "sha":
+                raise StoreMismatch("sha mismatch")
+            dest.write_bytes(DATA[:-1] if failure == "size" else b"x" * len(DATA) if failure == "corrupt" else DATA)
+            return dest
+
+    def youtube(*args):
+        seen.append("youtube")
+        return downloader()(*args)
+
+    monkeypatch.setattr(StoreClient, "from_config", lambda cfg: Client())
+    result = restore_source(EID, cfg, downloader=youtube, now=STAMP)
+    assert seen == (["store"] if failure is None else ["store", "youtube"])
+    assert result.downloaded and (folder / "source.webm").read_bytes() == DATA
+    assert not (folder / "archive.json").exists()
+    assert not list(folder.glob(".restore-source-*"))
+
+
+def test_src1_restore_valid_cache_precedes_store(cfg, monkeypatch):
+    from dataclasses import replace
+    from auto_short.config import StoreConfig
+    from auto_short.store.client import StoreClient
+
+    make_episode(cfg)
+    seed_cache(cfg)
+    cfg = replace(cfg, store=StoreConfig(enabled=True))
+    monkeypatch.setattr(StoreClient, "from_config", lambda cfg: pytest.fail("cache should precede store"))
+    assert not restore_source(EID, cfg, downloader=no_download).downloaded
 
 
 def snapshot(root):

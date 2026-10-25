@@ -169,6 +169,21 @@ def test_storage_cache_30s(tcfg, episode):
     assert cache.report() is not first
 
 
+def test_src1_storage_reports_only_background_results(tcfg, episode, monkeypatch):
+    from dataclasses import replace
+    from auto_short.config import StoreConfig
+    from auto_short.store.client import StoreClient
+
+    cfg = replace(tcfg, store=StoreConfig(enabled=True, backup_source=True))
+    cache = StorageCache(cfg, disk_usage=free_disk(50 * GB))
+    monkeypatch.setattr(StoreClient, 'from_config', lambda cfg: pytest.fail('storage request called store'))
+    cache.update_source_backup({'one': {'backed_up': True}, 'two': {'backed_up': False}})
+    assert cache.report()['source_backup'] == dict(backed_up=1, total=2, pending=1)
+    cache.update_source_backup({'one': {'backed_up': True}, 'two': {'backed_up': True}})
+    assert cache.report()['source_backup'] == dict(backed_up=2, total=2, pending=0)
+    assert 'source_backup' not in StorageCache(tcfg, disk_usage=free_disk(50 * GB)).report()
+
+
 # --- S3 source clean-up --------------------------------------------------------------------------------------
 
 def test_archive_source_and_guards(tcfg, episode, tmp_path):
