@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: BUG
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -65,11 +65,11 @@ Không chạm database / security model / public API; manual test là điểm da
 
 ## Result
 
-- Main changes:
-- Tests:
-- Diff + / − (app, test):
-- Helper mới (đã tìm, lý do không tái dùng):
-- Review:
-- Important findings / decisions:
-- Known limitations:
-- PR:
+- Main changes: `_rebuild_job` xử lý `KIND_VERTICAL` trước kiểm `work/<eid>/`: kiểm `work/<enh_state.owner_for(config, eid)>/`; bỏ nhánh vertical cũ.
+- Tests: AC1 `test_restore_vertical_job_with_only_khaithi_workspace`; AC2 `test_restore_skips_vertical_job_whose_workspaces_are_gone`; AC3 test hiện có. Targeted (`test_web_queue_cp822`, `test_hd_owner_kt`, `test_web_vertical_cp832`) 43 passed. Full suite: 2697 passed, 1 failed (test chập chờn `test_lower_thread_priority…`, chạy riêng PASS), 19 error `tests/test_publish_thumbs.py` có sẵn trên main (`episode.shapes` không còn — ngoài scope, xem findings).
+- Diff + / − (app, test): app +4 / −2, test +36.
+- Helper mới (đã tìm, lý do không tái dùng): không.
+- Review: ORCHESTRATOR đọc diff, đúng scope; Codex (gpt-6.1-sol, medium) 1 vòng, 31.788 tokens, sandbox treo TestClient → ORCHESTRATOR chạy test.
+- Important findings / decisions: main có 19 error ở `tests/test_publish_thumbs.py` (`AttributeError: module 'auto_short.packaging.episode' has no attribute 'shapes'`) — cần FIX riêng.
+- Known limitations: —
+- PR: (điền sau khi mở)

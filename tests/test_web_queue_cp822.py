@@ -320,3 +320,39 @@ def test_restore_skips_job_whose_workspace_is_gone(tcfg):
     with client(tcfg, []) as c:
         login(c)
         assert c.get("/api/queue").json() == {"paused": True, "mode": "after", "running": 0, "pending": 0}
+
+
+def test_restore_vertical_job_with_only_khaithi_workspace(tcfg):
+    eid = "abcdefghijk"
+    ws = Path(tcfg.workspace.dir)
+    (ws / (eid + ".kt")).mkdir(parents=True)
+    assert not (ws / eid).exists()
+    (ws / ".web_queue.json").write_text(json.dumps({"version": 1, "mode": "lanes", "paused": True, "lanes": {
+        "prepare": [], "ai": [], "render": [
+            {"kind": "vertical", "episode_id": eid, "spec": {}, "clip_ids": [], "step": 0}]}}),
+        encoding="utf-8")
+    with client(tcfg, []) as c:
+        login(c)
+        assert c.get("/api/queue").json() == {"paused": True, "mode": "after", "running": 0, "pending": 1}
+        runner = c.app.state.runner
+        job = runner.latest_vertical(eid)
+        assert job is not None and job.active and job.kind == "vertical"
+        assert job.target.episode_id == eid
+        assert runner.queue_position(job) == 1
+        assert state(ws / ".web_queue.json")["lanes"][RENDER][0]["episode_id"] == eid
+
+
+def test_restore_skips_vertical_job_whose_workspaces_are_gone(tcfg, caplog):
+    eid = "abcdefghijk"
+    ws = Path(tcfg.workspace.dir)
+    ws.mkdir(parents=True)
+    assert not (ws / eid).exists() and not (ws / (eid + ".kt")).exists()
+    (ws / ".web_queue.json").write_text(json.dumps({"version": 1, "mode": "lanes", "paused": True, "lanes": {
+        "prepare": [], "ai": [], "render": [
+            {"kind": "vertical", "episode_id": eid, "spec": {}, "clip_ids": [], "step": 0}]}}),
+        encoding="utf-8")
+    with caplog.at_level("WARNING", logger="auto_short"), client(tcfg, []) as c:
+        login(c)
+        assert c.get("/api/queue").json() == {"paused": True, "mode": "after", "running": 0, "pending": 0}
+        assert c.app.state.runner.latest_vertical(eid) is None
+    assert any(f"[{eid}] (vertical): không tạo lại được" in message for message in caplog.messages)
