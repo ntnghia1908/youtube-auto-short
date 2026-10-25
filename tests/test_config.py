@@ -8,6 +8,15 @@ def test_example_config_equals_defaults():
     assert config_mod.load(config_mod.Path(__file__).parents[1] / "config.example.toml") == config_mod.Config()
 
 
+def test_source_backup_config():
+    assert not config_mod.Config().store.backup_source
+    assert config_mod.from_dict({"store": {"enabled": True, "backup_source": True}}).store.backup_source
+    with pytest.raises(ConfigError, match=r"backup_source.*enabled"):
+        config_mod.from_dict({"store": {"backup_source": True}})
+    with pytest.raises(ConfigError, match=r"backup_source"):
+        config_mod.from_dict({"store": {"enabled": True, "backup_source": "true"}})
+
+
 @pytest.mark.parametrize("data", [{}, {"storage": {}}, {"storage": {"auto_archive": False}}])
 def test_storage_grace_default(data):
     assert config_mod.from_dict(data).storage.auto_archive_grace_minutes == 7200

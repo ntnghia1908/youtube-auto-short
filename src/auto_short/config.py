@@ -344,6 +344,7 @@ class StoreConfig:
     url: str = "http://127.0.0.1:18090"
     timeout_seconds: float = 30.0
     retry_seconds: int = 300  # a job waiting for the store ("đợi 3090") is tried again this often
+    backup_source: bool = False
 
 
 @dataclass(frozen=True)
@@ -690,8 +691,13 @@ def _storage(data: dict) -> StorageConfig:
 def _store(data: dict) -> StoreConfig:
     st = _section(data, "store")
     d, w = StoreConfig(), "store"
+    enabled = _bool(st, "enabled", d.enabled, w)
+    backup_source = _bool(st, "backup_source", d.backup_source, w)
+    if backup_source and not enabled:
+        raise ConfigError("store.backup_source = true cần store.enabled = true")
     return StoreConfig(
-        enabled=_bool(st, "enabled", d.enabled, w),
+        enabled=enabled,
+        backup_source=backup_source,
         url=_str(st, "url", d.url, w),
         timeout_seconds=_number(st, "timeout_seconds", d.timeout_seconds, w, lo=1, hi=3600),
         retry_seconds=_int(st, "retry_seconds", d.retry_seconds, w, lo=5, hi=86400),

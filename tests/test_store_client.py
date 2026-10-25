@@ -174,6 +174,124 @@ def test_config_store_section():
     assert c.store.enabled and c.store.retry_seconds == 60
 
 
+def test_source_put_real_server_roundtrip(fake, tmp_path):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(BIG)
+    sha = hashlib.sha256(BIG).hexdigest()
+    client = fake.client()
+    name = "[Goc] Kinh Địa Tạng - Tập 1.mp4"
+    client.put(VID, "source", "PL1", name, source, sha)
+    client.put(VID, "source", "PL1", name, source, sha)  # HEAD skips an identical file
+    assert client.head(VID, "source") == {"sha256": sha, "size": len(BIG)}
+    assert client.index()[0]["kind"] == "source"
+    output = tmp_path / "fetched.mp4"
+    assert client.fetch(VID, "source", output, sha).read_bytes() == BIG
+    with pytest.raises(StoreMismatch):
+        client.put(VID, "source", "PL1", name, source, "0" * 64)
+    with pytest.raises(StoreMismatch):
+        client.put("bbbbbbbbbb2", "source", "../bad", "bad.mp4", source, sha)
+    port = fake.stop()
+    with pytest.raises(StoreUnavailable):
+        StoreClient(f"http://127.0.0.1:{port}", TOKEN, timeout=2).put(
+            VID, "source", "PL1", name, source, sha)
+
+
+@pytest.mark.parametrize("status", [200, 201])
+def test_put_streams_file_and_length_without_chunked_encoding(tmp_path, monkeypatch, status):
+    from urllib.parse import parse_qs, urlsplit
+
+    path = tmp_path / "source.mp4"
+    path.write_bytes(BIG)
+    sha = hashlib.sha256(BIG).hexdigest()
+    seen = []
+
+    class Response:
+        def __enter__(self):
+            self.status = status
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    def open_request(req, timeout):
+        assert req.method == "PUT" and req.data.read(100) == BIG[:100]
+        assert hasattr(req.data, "fileno") and int(req.get_header("Content-length")) == len(BIG)
+        assert req.get_header("X-sha256") == sha and req.get_header("Transfer-encoding") is None
+        assert parse_qs(urlsplit(req.full_url).query) == dict(series=["PL1"], name=["[Goc] Kinh - Tập 1.mp4"])
+        seen.append(True)
+        return Response()
+
+    def absent(*args):
+        raise StoreMismatch("missing")
+
+    monkeypatch.setattr(StoreClient, "head", absent)
+    monkeypatch.setattr("urllib.request.urlopen", open_request)
+    StoreClient("http://unused", TOKEN).put(VID, "source", "PL1", "[Goc] Kinh - Tập 1.mp4", path, sha)
+    assert seen
+
+
+@pytest.mark.parametrize("status,error", [(400, StoreMismatch), (409, StoreMismatch), (413, StoreMismatch),
+                                         (422, StoreMismatch), (401, StoreUnavailable),
+                                         (503, StoreUnavailable)])
+def test_put_maps_http_errors_without_token(tmp_path, monkeypatch, status, error):
+    import urllib.error
+
+    path = tmp_path / "source.mp4"
+    path.write_bytes(BIG)
+
+    def failed(*args, **kwargs):
+        if args[0].method == "HEAD":
+            raise urllib.error.HTTPError("http://unused", 404, "missing", {}, None)
+        raise urllib.error.HTTPError("http://unused", status, "failure", {}, None)
+
+    monkeypatch.setattr("urllib.request.urlopen", failed)
+    with pytest.raises(error) as exc:
+        StoreClient("http://unused", TOKEN).put(VID, "source", "PL1", "source.mp4", path,
+                                               hashlib.sha256(BIG).hexdigest())
+    assert TOKEN not in str(exc.value)
+
+
+@pytest.mark.parametrize("difference", [None, "sha", "size"])
+def test_put_heads_existing_identity_without_sending_body(tmp_path, monkeypatch, difference):
+    path = tmp_path / "source.mp4"
+    path.write_bytes(BIG)
+    sha = hashlib.sha256(BIG).hexdigest()
+    calls = []
+
+    class Response:
+        headers = {"X-Sha256": "0" * 64 if difference == "sha" else sha,
+                   "Content-Length": str(len(BIG) + (1 if difference == "size" else 0))}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    def opened(req, **kwargs):
+        calls.append(req.method)
+        assert req.method == "HEAD" and req.data is None
+        return Response()
+
+    monkeypatch.setattr("urllib.request.urlopen", opened)
+    client = StoreClient("http://unused", TOKEN)
+    if difference:
+        with pytest.raises(StoreMismatch):
+            client.put(VID, "source", "PL1", "source.mp4", path, sha)
+    else:
+        client.put(VID, "source", "PL1", "source.mp4", path, sha)
+    assert calls == ["HEAD"]
+
+
+def test_put_rejects_invalid_series_before_sending_body(tmp_path, monkeypatch):
+    path = tmp_path / "source.mp4"
+    path.write_bytes(BIG)
+    monkeypatch.setattr("urllib.request.urlopen", lambda *a, **kw: pytest.fail("invalid series sent to store"))
+    with pytest.raises(StoreMismatch, match="series"):
+        StoreClient("http://unused", TOKEN).put(VID, "source", "../bad", "source.mp4", path,
+                                               hashlib.sha256(BIG).hexdigest())
+
+
 # --- AC2: released episode + store on -> the job uses the fetched file ---------------------------------------------
 
 def release(cfg, eid=VID):
