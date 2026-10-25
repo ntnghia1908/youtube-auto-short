@@ -46,6 +46,7 @@ from ..post import fetch as post_fetch
 from ..post import imgsearch as post_imgsearch
 from ..post import stage as post_stage
 from ..render import RenderError, run_render
+from ..render.stage import StoreWait
 from ..render import full as full_mod
 from ..workspace import atomic_write_json, utc_now
 from . import prepared
@@ -158,6 +159,11 @@ class YoutubeWait(JobFailed):
     """FIX-youtube-botcheck-wait Y1: raised by a pipeline target of the ``prepare`` lane when YouTube blocked the
     download. In lanes mode the runner puts the job back at the head of the ``prepare`` queue and backs off; anywhere
     else it is a plain failure."""
+
+
+class StoreWaitJob(JobFailed):
+    """HD2a: the HD of a released video is on the 3090 store and the store cannot lend it now ("đợi 3090: …"). The job
+    ends ``interrupted`` (not ``failed``); the web app submits it again while the store answers."""
 
 
 def run_preflight(job: "Job", preflight: Callable[[Config], None], config: Config) -> None:
@@ -1074,6 +1080,9 @@ class JobRunner:
                 else:
                     job.status, job.error = FAILED, str(exc)
                     log.error("web: job %s failed [%s]: %s", job.id, job.episode_id, exc)
+            except StoreWaitJob as exc:  # HD2a: not a failure; the web app's retry pass submits the job again
+                job.status, job.error = INTERRUPTED, str(exc)
+                log.info("web: job %s [%s] waits for the store: %s", job.id, job.episode_id, exc)
             except JobFailed as exc:
                 if self._stopping and not job.cancel_requested:  # cut by the stop (its child got the terminal's SIGINT)
                     job.status, job.error = INTERRUPTED, f"interrupted during {job.stage or 'start'}: {exc}"
@@ -1672,6 +1681,8 @@ def render_target(config: Config, *, render: Callable = run_render) -> Callable[
         t0 = time.monotonic()
         try:
             result = render(job.episode_id, config)
+        except StoreWait as exc:
+            raise StoreWaitJob(str(exc)) from exc
         except RenderError as exc:
             raise JobFailed(f"render: {exc}") from exc
         job.stages.append({"stage": "render", "ran": bool(result.ran), "seconds": round(time.monotonic() - t0, 3)})
@@ -1996,6 +2007,8 @@ class VerticalTarget:
             result = (self.vertical or self._run_vertical)(job.episode_id, self.config, **kw)
         except full_mod.SourceBlocked as exc:  # the fallback download inside this step: YouTube still blocks
             raise JobFailed(f"bản dọc: {exc}; bấm lại sau") from exc
+        except StoreWait as exc:
+            raise StoreWaitJob(str(exc)) from exc
         except RenderError as exc:
             raise JobFailed(f"bản dọc: {exc}") from exc
         job.stages.append({"stage": "vertical", "ran": bool(result.ran), "seconds": round(time.monotonic() - t0, 3)})

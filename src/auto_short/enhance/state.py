@@ -317,6 +317,11 @@ def mirror(config: Config, base_id: str, *, only: str | None = None) -> dict | N
                 "segment_frames", "source_sha256", "config_hash", "params", "error", "source_hd_sha256",
                 "source_hd_size", "source_hd_mtime_ns", "finished_at", "redo", "hd_config_hash"):
         doc[key] = base.get(key)
+    for key in ("released", "released_at"):  # HD1 G3: only present once the HD source was moved off the VM
+        if key in base:
+            doc[key] = base[key]
+        else:
+            doc.pop(key, None)
     doc.update(follows=base_id, lease=None, segments={}, profile=None, workers=[])
     if _hd_usable(base) and hd_path(root / base_id).is_file():
         link_hd(root / base_id, root / kid, doc)
@@ -414,15 +419,27 @@ def owner_id(episode_id: str) -> str:
     return episode_id[:-len(sfx)] if episode_id.endswith(sfx) and len(episode_id) > len(sfx) else episode_id
 
 
+def owner_for(config: Config, episode_id: str) -> str:
+    """FIX-hd-owner-kt: the workspace that holds the HD source / vertical file of the video of ``episode_id``:
+    ``<id>`` when ``work/<id>/`` exists, else ``<id>.kt`` when only the khai thị workspace is left, else ``<id>``."""
+    base = owner_id(episode_id)
+    root = Path(config.workspace.dir)
+    if not (root / base).is_dir() and (root / (base + khaithi.SUFFIX)).is_dir():
+        return base + khaithi.SUFFIX
+    return base
+
+
 def effective_source(config: Config, episode_id: str) -> EffectiveSource | None:
     """CP8.32 V1 / V2, the one decision used by the landscape HD route, the vertical job and the views: (a) a valid
     ``source_hd.mp4``; (b) else the original download when its height (``metadata.json``) is >= ``[enhance] min_height``
     (the threshold of :func:`decide`), or, for an archived episode, the fact that it could be fetched again; (c) else
     None. ``episode_id`` must be a valid id (the caller checks)."""
-    d = Path(config.workspace.dir) / owner_id(episode_id)
+    d = Path(config.workspace.dir) / owner_for(config, episode_id)
     fp = hd_fingerprint(d)
     if fp is not None:
         return EffectiveSource(SRC_HD, fp.path, fp.sha256)
+    if is_released(d):  # HD1 G3: no silent fall-back to the (lower quality) original
+        return None
     manifest = read_json_dict(d / "manifest.json")
     source = (manifest or {}).get("source") or {}
     sha = source.get("sha256")
@@ -438,6 +455,16 @@ def effective_source(config: Config, episode_id: str) -> EffectiveSource | None:
         return EffectiveSource(SRC_ORIGINAL, path, sha, height)
     from ..review.archive import is_archived  # lazy: review imports the web-free core
     return EffectiveSource(SRC_ARCHIVED, None, sha, height) if is_archived(d) else None
+
+
+RELEASED_MESSAGE = "HD đã chuyển ra máy ngoài"
+
+
+def is_released(ws_dir: Path) -> bool:
+    """HD1 G3: the HD source of the video was moved to an external machine (``enhance.json`` ``released``) and the file
+    is gone. The Shorts rendered from it stay current; nothing may fall back to the original silently."""
+    doc = read(ws_dir)
+    return bool(doc and doc.get("released")) and not hd_path(ws_dir).is_file()
 
 
 def has_hd(ws_dir: Path) -> bool:

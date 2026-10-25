@@ -68,6 +68,11 @@ class RenderError(Exception):
     """Render failed; the manifest records status ``failed`` (except for invalid arguments)."""
 
 
+class StoreWait(RenderError):
+    """HD2a: the HD source of a released video is on the 3090 store and the store cannot lend it now (off the air, file
+    missing, sha256 differs, no token). Not a render failure: the job waits ("đợi 3090") and is tried again."""
+
+
 @dataclass(frozen=True)
 class RenderResult:
     episode_id: str
@@ -509,7 +514,8 @@ def _encode_all(tasks: list[_Encode], run: Runner, fps: Fraction, jobs: int) -> 
 
 # --- stage -------------------------------------------------------------------------------------------------------
 
-def run_render(episode_id: str, config: Config, *, force: bool = False, run: Runner | None = None) -> RenderResult:
+def run_render(episode_id: str, config: Config, *, force: bool = False, run: Runner | None = None,
+               _hd_borrowed: bool = False) -> RenderResult:
     """Render the episode's Shorts (CP7), applying ``review.json`` title overrides and reusing every Short whose
     render_key is unchanged (CP8.2 T4/T5); ``force`` re-runs the stage and encodes every Short."""
     runner = run or _run
@@ -525,6 +531,19 @@ def run_render(episode_id: str, config: Config, *, force: bool = False, run: Run
         # CP8.6 S3: the source video was cleaned up; the last render stays as it is (manifest untouched).
         raise RenderError(f"episode {ws.episode_id!r} is archived (source video cleaned up); its Shorts are kept "
                           "as they are — delete the episode and run it again to change them")
+    if not _hd_borrowed and (enhance_state.is_released(ws.dir)
+                             or enhance_state.is_released(Path(ws.root) / enhance_state.owner_id(ws.episode_id))):
+        # HD1 G3: the HD source was moved to an external machine; never fall back to the original silently, and the
+        # manifest stays untouched (the Shorts rendered from the HD source stay current).
+        if config.store.enabled:  # HD2a G4: lend the HD from the 3090 store for this render, delete it afterwards
+            from ..store.borrow import borrow_hd  # lazy: store.borrow imports this module
+            with borrow_hd(config, ws.episode_id, ws.dir):
+                if enhance_state.hd_fingerprint(ws.dir) is None:
+                    raise RenderError(f"episode {ws.episode_id!r}: bản HD lấy từ kho không khớp enhance.json; "
+                                      "không render từ bản gốc")
+                return run_render(episode_id, config, force=force, run=run, _hd_borrowed=True)
+        raise RenderError(f"episode {ws.episode_id!r}: {enhance_state.RELEASED_MESSAGE} (HD1); "
+                          "không render lại từ bản gốc — lấy lại nguồn HD trước")
     out_dir = (cfg.output_dir / ws.episode_id).resolve()
     prior = list((manifest["stages"].get(STAGE) or {}).get("artifacts", []))
 

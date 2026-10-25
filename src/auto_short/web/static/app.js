@@ -766,6 +766,8 @@ const AutoShort = (() => {
     return !!j && (j.status === "queued" || j.status === "running");
   }
 
+  function hdReleasedText(at) { return `HD đã chuyển ra máy ngoài${at ? " (" + String(at).slice(0, 10) + ")" : ""}`; }
+
   function fmtGb(n) { return n >= 1e9 ? (n / 1e9).toFixed(1).replace(".", ",") + " GB" : Math.round(n / 1e6) + " MB"; }
 
   let thumbnailLinksFor = null;
@@ -790,6 +792,17 @@ const AutoShort = (() => {
     box.hidden = !h;
     if (!h) return;
     const land = $("#hd-landscape");
+    if (h.released && !h.store) { // HD1 G3: the HD / vertical files were moved to an external machine
+      land.hidden = true;
+      $("#hd-vertical-dl").hidden = true;
+      $("#hd-vertical-make").hidden = true;
+      $("#hd-vertical-cancel").hidden = true;
+      const rn = $("#hd-vertical-note");
+      rn.hidden = false;
+      rn.classList.remove("error");
+      rn.textContent = hdReleasedText(h.released_at);
+      return;
+    }
     land.hidden = !h.url; // CP8.32: no landscape download for an archived original (it is fetched again for the vertical only)
     if (h.url) {
       land.href = h.url;
@@ -806,7 +819,8 @@ const AutoShort = (() => {
     make.hidden = !!v.ready;
     make.disabled = active;
     make.textContent = active ? (job.status === "queued" ? "Bản dọc: đang chờ…" : "Bản dọc: đang tạo…") : "Tạo bản dọc";
-    make.title = h.source === "archived" ? "Video gốc đã được dọn: sẽ tải lại từ YouTube rồi dọn lại sau khi tạo bản dọc 1080x1920 (tốn CPU, hàng đợi render)"
+    make.title = h.store ? "HD nằm trên 3090: tải về tạm để dựng bản dọc 1080x1920 rồi xóa (kho tắt thì đợi 3090)"
+      : h.source === "archived" ? "Video gốc đã được dọn: sẽ tải lại từ YouTube rồi dọn lại sau khi tạo bản dọc 1080x1920 (tốn CPU, hàng đợi render)"
       : "Video dọc 1080x1920 cả tập, có banner tựa ở trên (tốn CPU, chạy ở hàng đợi render)";
     make.onclick = async () => {
       make.disabled = true;
@@ -825,9 +839,13 @@ const AutoShort = (() => {
       refreshEpisode();
     };
     const note = $("#hd-vertical-note");
-    note.hidden = !(job && (job.status === "failed" || job.status === "cancelled"));
+    note.classList.add("error");
+    const storeWait = !!job && job.status === "interrupted" && String(job.error || "").startsWith("đợi 3090");
+    note.hidden = !(job && (job.status === "failed" || job.status === "cancelled")) && !storeWait && !h.store;
     if (job && job.status === "failed") note.textContent = `Lỗi tạo bản dọc: ${job.error || "?"}`;
     else if (job && job.status === "cancelled") note.textContent = "Đã hủy bản dọc (bấm \"Tạo bản dọc\" để làm lại).";
+    else if (storeWait) { note.classList.remove("error"); note.textContent = `${job.error} — tự thử lại khi kho 3090 trả lời.`; }
+    else if (h.store) { note.classList.remove("error"); note.textContent = hdReleasedText(h.released_at).replace("đã chuyển ra máy ngoài", "trên 3090 (kho)"); }
   }
 
   // CP8.31 D1 / round 6: the server ticks "Đã đăng" when the zip request arrives, which on a phone can be late
@@ -881,6 +899,7 @@ const AutoShort = (() => {
       }
     } else if (job && job.status === "done") setJobStatus(`Xong: ${job.summary || ""} (${fmtTime(job.finished_at)})`, "ok");
     else if (job && job.status === "failed") setJobStatus(`Lỗi: ${job.error}`, "error");
+    else if (job && job.status === "interrupted" && String(job.error || "").startsWith("đợi 3090")) setJobStatus(`${job.error} — tự thử lại khi kho trả lời.`, "busy");
     else if (job && job.status === "interrupted") setJobStatus(`Bị ngắt (${job.error}). Bấm chạy tiếp để tiếp tục.`, "error");
     else setJobStatus("", "");
     applyStagesOpen(d);
@@ -3294,6 +3313,9 @@ const AutoShort = (() => {
         if (e.action !== "resume" && !plKinds().kinds.length) b.disabled = true;
         b.addEventListener("click", () => processEntry(e, b));
         actions.append(b);
+      }
+      if (e.hd_released) { // HD1 G3: no download link, only the fact
+        actions.append(el("span", { class: "muted", title: hdReleasedText(e.hd_released_at), text: "HD đã chuyển ra máy ngoài" }));
       }
       if (e.hd_url) { // CP8.27 H2: the landscape HD video of this episode
         actions.append(el("a", { class: "btn icon-btn", href: e.hd_url, download: e.hd_name || "", title: "Tải video HD (bản ngang)",

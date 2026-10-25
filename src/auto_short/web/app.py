@@ -77,6 +77,7 @@ from .jobs import (
     KIND_POST,
     KIND_POST_SEARCH,
     KIND_RENDER,
+    INTERRUPTED,
     KIND_VERTICAL,
     PREPARE,
     JobFailed,
@@ -240,6 +241,8 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                 svc.clear_waiting(eid)
                 return "unparked"
             doc = enh_state.read(Path(config.workspace.dir) / eid)
+            if doc and doc.get("released"):
+                return "none"  # HD1 G3: the HD source is off the VM; the Shorts rendered from it stay as they are
             waiting = bool(doc and doc.get("waiting_hd"))
             current = runner.latest(eid)
             if current is not None and current.active:
@@ -302,6 +305,48 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         if done:
             storage.invalidate()
         return done
+
+    def store_retry_pass(client=None) -> list[str]:
+        """HD2a: jobs that ended "đợi 3090" (the HD of a released video is on the store, which could not lend it) are
+        submitted again when the store answers and has the file with the sha256 recorded at release. Returns the keys
+        of the episodes re-queued."""
+        from ..store.borrow import WAIT_PREFIX, released_hd_sha
+        from ..store.client import StoreClient, StoreError
+        if not config.store.enabled:
+            return []
+        waiting = []
+        for job in runner.jobs():
+            if job.status != INTERRUPTED or job.kind not in (KIND_RENDER, KIND_VERTICAL) \
+                    or not (job.error or "").startswith(WAIT_PREFIX):
+                continue
+            newest = runner.latest_vertical(job.episode_id) if job.kind == KIND_VERTICAL else runner.latest(job.episode_id)
+            if newest is job:
+                waiting.append(job)
+        if not waiting:
+            return []
+        client = client or StoreClient.from_config(config.store)
+        done = []
+        for job in waiting:
+            owner = enh_state.owner_for(config, job.episode_id)
+            want = released_hd_sha(config, owner, Path(config.workspace.dir) / owner)
+            try:
+                if want is None or client.head(enh_state.owner_id(job.episode_id), "hd")["sha256"] != want:
+                    continue
+            except StoreError:
+                break  # the store is still down: nothing else will answer either
+            with submit_lock:
+                runner.submit(job.episode_id, job.kind, job.target)
+            log.info("web: kho 3090 đã sẵn sàng, chạy lại %s [%s]", job.kind, job.episode_id)
+            done.append(job.episode_id)
+        return done
+
+    async def _store_retry_loop() -> None:
+        while config.store.enabled:
+            await asyncio.sleep(config.store.retry_seconds)
+            try:
+                await asyncio.to_thread(store_retry_pass)
+            except Exception:  # never stop the loop
+                log.exception("web: thử lại việc đợi 3090: lỗi")
 
     async def _auto_archive_loop() -> None:
         while True:
@@ -446,10 +491,12 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         runner.recheck_parked()  # CP13.1b: "đợi HD" jobs whose HD is ready by now
         sampler.start()
         sweeper = asyncio.create_task(_auto_archive_loop())
+        store_retry = asyncio.create_task(_store_retry_loop())
         try:
             yield
         finally:
             sweeper.cancel()
+            store_retry.cancel()
             await asyncio.to_thread(sampler.stop)
             await asyncio.to_thread(runner.stop)
 
@@ -460,6 +507,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     app.state.monitor_sampler = sampler
     app.state.storage = storage
     app.state.auto_archive_pass = auto_archive_pass
+    app.state.store_retry_pass = store_retry_pass
     app.state.sweep_refetched = _sweep_refetched
     app.state.playlists = playlists
     app.state.compilations = compilations
