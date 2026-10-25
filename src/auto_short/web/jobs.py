@@ -929,6 +929,11 @@ class JobRunner:
                          if running else True)
         if job is None:
             return None, False
+        # Keep one slot for Shorts arriving from AI; vertical-only work may otherwise fill every slot.
+        if job.kind == KIND_VERTICAL and self.render_workers > 1 \
+                and (self._queues[AI] or self._lane_running_locked(AI)) \
+                and sum(j.kind == KIND_VERTICAL for j in running) >= self.render_workers - 1:
+            return None, False
         if extra and not self._cpu_idle():
             return None, True
         return self._pop(queue, lambda j: j is job), False
