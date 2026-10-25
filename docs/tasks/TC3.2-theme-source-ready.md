@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: IN_PROGRESS
 - Type: CHANGE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -14,7 +14,7 @@
 - Parallel group: —
 - Owned paths: `src/auto_short/web/theme_plan.py`; `src/auto_short/web/static/theme_plan.js`; `pyproject.toml` (chỉ dòng `yt-dlp`, G3); `tests/test_web_theme_plan.py`; file này
 - Dependencies: SRC1 (G5 thứ tự lấy nguồn có kho 3090); SRC2 (đường tải dùng chung trong `sources.py`, 403 = chặn) — làm sau SRC2
-- Base commit / branch: sau SRC2 / `feature/tc3.2-theme-source`
+- Base commit / branch: `bf75ab4` (`feature/src2-source-redownload`, PR #155 READY; xếp chồng SRC1 #154) / `feature/tc3.2-theme-source`. G3 đã tách thành PR #153 (`chore/ytdlp-2026.10.21`, `2979a46`); branch này không sửa `pyproject.toml`
 - Human Lead approval: accepted — HUMAN LEAD 2026-10-25 "Duyệt tất cả theo đề xuất"
 - Implementation authorized: YES
 
