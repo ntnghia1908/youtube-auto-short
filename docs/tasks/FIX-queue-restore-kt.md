@@ -72,4 +72,4 @@ Không chạm database / security model / public API; manual test là điểm da
 - Review: ORCHESTRATOR đọc diff, đúng scope; Codex (gpt-6.1-sol, medium) 1 vòng, 31.788 tokens, sandbox treo TestClient → ORCHESTRATOR chạy test.
 - Important findings / decisions: main có 19 error ở `tests/test_publish_thumbs.py` (`AttributeError: module 'auto_short.packaging.episode' has no attribute 'shapes'`) — cần FIX riêng.
 - Known limitations: —
-- PR: (điền sau khi mở)
+- PR: #148
