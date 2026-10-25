@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from types import SimpleNamespace
 from urllib.parse import unquote
@@ -17,6 +18,7 @@ from auto_short.ingest.youtube import DownloadError, YoutubeBlocked
 from auto_short.pipeline import OllamaUnavailable, PreflightError
 from auto_short.render.full import SourceBlocked
 from auto_short.selection.client import ChatError, ChatUnavailable
+from auto_short.store import index_cache
 from auto_short.web import theme_plan as web
 from auto_short.web.auth import COOKIE_NAME
 from auto_short.web.jobs import AI, PREPARE, RENDER, GpuUnavailable, JobFailed, JobRunner, YoutubeWait
@@ -29,6 +31,14 @@ from wait_helpers import wait_for
 PID = "PLeligible"
 BASE = f"/api/playlists/{PID}"
 PW = "pw"
+
+
+@pytest.fixture(autouse=True)
+def isolated_index_cache():
+    index_cache.invalidate()
+    yield
+    wait_for(lambda: index_cache._REFRESHING is None, what="store refresh finished")
+    index_cache.invalidate()
 
 
 @pytest.fixture
@@ -510,15 +520,21 @@ def source_target(monkeypatch):
     monkeypatch.setattr(web.sources, "fetch_to_cache", fetch)
     monkeypatch.setattr(web, "local_source_ready", lambda cfg, vid: vid in workspace or vid in cached)
     monkeypatch.setattr(web.StoreClient, "from_config", lambda cfg: SimpleNamespace(head=head))
+    monkeypatch.setattr(index_cache, "source_ids", lambda cfg, *, blocking=False: frozenset())
     monkeypatch.setattr(web.theme_render, "render_landscape", lambda *args, **kw: SimpleNamespace(
         metadata={"duration": 120}))
     return SimpleNamespace(target=target, workspace=workspace, cached=cached, remote=remote, calls=calls)
 
 
-def test_needs_download_store_snapshot_bypasses_youtube_backoff_without_http(source_target):
+def test_needs_download_store_snapshot_bypasses_youtube_backoff_without_http(source_target, monkeypatch):
     s = source_target
     store_videos = {"a", "b"}
-    s.target.service.store_sources = SimpleNamespace(snapshot=lambda: frozenset(store_videos))
+
+    def source_ids(config, *, blocking):
+        assert config is s.target.service.config and blocking is False
+        return frozenset(store_videos)
+
+    monkeypatch.setattr(index_cache, "source_ids", source_ids)
     runner = JobRunner()
     job, _ = runner.submit("theme-test", web.KIND_THEME_RENDER, s.target)
     with runner._lock:
@@ -533,7 +549,7 @@ def test_needs_download_store_snapshot_bypasses_youtube_backoff_without_http(sou
     s.target.youtube_wait = True
     assert s.target.needs_download() is True
     s.target.youtube_wait = False
-    del s.target.service.store_sources
+    store_videos.clear()
     assert s.target.needs_download() is True
     assert not s.calls
 
@@ -707,7 +723,12 @@ def test_sources_view_counts_distinct_owners_without_io(tmp_path, monkeypatch):
             "clips": [{"episode_id": vid} for vid in ["a.kt", "a", "b.kt", "c.kt", "d.kt"]]}
     service = web.ThemePlans(cfg, None, SimpleNamespace(latest=lambda *a: None))
     service.plans = lambda *a, **kw: [plan]
-    service.store_sources.snapshot = lambda: frozenset({"a", "b", "c"})
+
+    def source_ids(config, *, blocking):
+        assert config is cfg and blocking is False
+        return frozenset({"a", "b", "c"})
+
+    monkeypatch.setattr(index_cache, "source_ids", source_ids)
     monkeypatch.setattr(web.theme_index, "build_index", lambda *a, **kw: {"records": []})
     monkeypatch.setattr(tp, "read_proposals", lambda *a: None)
     monkeypatch.setattr(hashing, "sha256_file", lambda *a: pytest.fail("display hashed media"))
@@ -740,9 +761,8 @@ def test_sources_real_view_without_http(tmp_path, monkeypatch):
 def test_sources_store_snapshot_async_ttl_and_failure_without_http(monkeypatch):
     cfg = Config()
     cfg = replace(cfg, store=replace(cfg.store, enabled=True))
-    cache = web.StoreSources(cfg)
     clock = [1.0]
-    monkeypatch.setattr(web, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setattr(index_cache, "time", SimpleNamespace(monotonic=lambda: clock[0]))
     entered, release = threading.Event(), threading.Event()
     calls = []
     error = [False]
@@ -756,28 +776,34 @@ def test_sources_store_snapshot_async_ttl_and_failure_without_http(monkeypatch):
         if error[0]:
             raise web.StoreError("offline")
         return [{"video_id": "a", "kind": "source", "sha256": "a" * 64},
-                {"video_id": "hd", "kind": "hd", "sha256": "a" * 64}, {"kind": "source"}]
+                {"video_id": "hd", "kind": "hd", "sha256": "a" * 64}, {"kind": "source"},
+                *({"video_id": f"bad{i}", "kind": "source", "sha256": sha}
+                  for i, sha in enumerate([None, 123, "A" * 64, "g" * 64, "a" * 63, "a" * 65])),
+                {"video_id": "missing", "kind": "source"}]
 
     monkeypatch.setattr(web.StoreClient, "from_config", lambda cfg: SimpleNamespace(index=index))
     try:
-        assert cache.snapshot() == frozenset()
+        with ThreadPoolExecutor(max_workers=1) as reader:
+            assert reader.submit(index_cache.source_ids, cfg).result(timeout=1) == frozenset()
         assert entered.wait(3)
-        assert cache.snapshot() == frozenset() and len(calls) == 1
+        assert index_cache.source_ids(cfg) == frozenset() and len(calls) == 1
     finally:
         release.set()
-    wait_for(lambda: not cache.refreshing, timeout=3)
+    wait_for(lambda: index_cache._REFRESHING is None, timeout=3)
     clock[0] = 300
-    assert cache.snapshot() == {"a"} and len(calls) == 1
-    assert cache.TTL >= 300
+    assert index_cache.source_ids(cfg) == {"a"} and len(calls) == 1
+    assert index_cache.has_source(cfg, "missing")  # SRC4 keeps rows without SHA.
+    assert index_cache.source_entry(cfg, "a")["sha256"] == "a" * 64
+    assert len(calls) == 1  # all readers share the same snapshot
+    assert index_cache.TTL_SECONDS == 300
     error[0] = True
-    clock[0] = 302
-    cache.snapshot()
-    wait_for(lambda: not cache.refreshing, timeout=3)
-    assert cache.snapshot() == frozenset() and len(calls) == 2
-    clock[0] = 601
-    assert cache.snapshot() == frozenset() and len(calls) == 2
-    disabled = web.StoreSources(Config())
-    assert disabled.snapshot() == frozenset() and len(calls) == 2
+    clock[0] = 301
+    assert index_cache.source_ids(cfg) == {"a"}  # stale snapshot during refresh
+    wait_for(lambda: index_cache._REFRESHING is None, timeout=3)
+    assert index_cache.source_ids(cfg) == frozenset() and len(calls) == 2
+    clock[0] = 600.9
+    assert index_cache.source_ids(cfg) == frozenset() and len(calls) == 2
+    assert index_cache.source_ids(Config()) == frozenset() and len(calls) == 2
 
 
 NODE = r"""

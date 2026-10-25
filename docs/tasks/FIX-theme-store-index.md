@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: REFACTOR
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -80,4 +80,23 @@ Một snapshot `/index` kho duy nhất trong tiến trình web: TC3.2 (`theme_pl
 
 ## Result
 
-- (điền khi READY)
+- Main changes: thêm `index_cache.source_ids(config, *, blocking=False)` trả `frozenset[str]` đã lọc SHA `[a-f0-9]{64}`, dùng `_snapshot` chung với `source_entry`; `theme_plan` dùng cache chung ở `needs_download` / `view`, xóa `StoreSources`. Giữ `SHA`, `StoreClient`, `StoreError` vì vẫn có caller khác. `push_source` / `redownload.step` invalidate ngay sau HEAD xác nhận, không tạo import vòng.
+- AC → test:
+  - AC1: `grep -rn "StoreSources\|store_sources" src/ tests/` không có kết quả; `grep -rn "StoreClient.from_config(.*).index()" src/` chỉ còn `store/index_cache.py`.
+  - AC2: `tests/test_web_theme_plan.py::test_sources_store_snapshot_async_ttl_and_failure_without_http` kiểm cache nguội, gọi từ thread khác không chặn, refresh nền, TTL đúng 300 s, lỗi được cache, kho tắt, lọc kind / SHA và dùng chung snapshot với `source_entry` / `has_source`. Test `test_needs_download_store_snapshot_bypasses_youtube_backoff_without_http`, `test_sources_view_counts_distinct_owners_without_io`, `test_sources_real_view_without_http` giữ assertion và kiểm `blocking=False`; tests SRC4 giữ nguyên.
+  - AC3: `tests/test_store_index_cache.py::test_confirmed_upload_invalidates_source_snapshot` (4 cases: push / redownload × HEAD khớp / không khớp) kiểm generation/cache và lượt đọc sau thấy nguồn mới, HEAD không khớp không invalidate. Cache được invalidate setup/teardown; fake store/downloader, không mạng thật.
+  - AC4 (ORCHESTRATOR 2026-10-26): targeted `test_store_index_cache.py test_web_theme_plan.py test_src4_ingest_store.py test_theme_index.py test_store_client.py` **259 passed**; full suite `-n auto` **2996 passed, 1 skipped**; `framework-check` PASS; `git diff --check` PASS. ORCHESTRATOR review: regex sha256 biên dịch sẵn (`index_cache.SHA256`). Codex: 1 vòng, ~70,4k tokens, effort medium.
+- Verification đã chạy (mọi lệnh pytest dùng prefix `timeout 300 env PYTHONPATH=$PWD/src /home/ntnghia/miniconda3/envs/auto-short/bin/python -m pytest`):
+  - `-q -x tests/test_store_index_cache.py tests/test_web_theme_plan.py -k 'source'`: **43 passed, 55 deselected**.
+  - `-q -x tests/test_web_theme_plan.py -k 'without_http or without_io or without_hash or js_ or favorites_tab_panel'`: **68 passed, 26 deselected**.
+  - `-q -x tests/test_store_index_cache.py tests/test_src4_ingest_store.py tests/test_theme_index.py tests/test_store_backup.py tests/test_store_redownload.py -k 'not background'`: **195 passed, 19 deselected**.
+  - `-q -x tests/test_store_index_cache.py tests/test_store_client.py tests/test_store_backup.py tests/test_store_redownload.py`: **4 passed, 1 setup error** tại `test_client_index_head_fetch`: `PermissionError: [Errno 1] Operation not permitted` khi tạo socket loopback. Các file sau đó không chạy trong lệnh này.
+  - `timeout 300 node scripts/framework-check.mjs`: **PASS**.
+  - `git diff --check`: **PASS**.
+- Verification bị sandbox chặn:
+  - `-q -x tests/test_web_theme_plan.py tests/test_src4_ingest_store.py tests/test_theme_index.py`: **timeout 300 s, exit 124**, chưa có output (TestClient).
+  - `-q -x tests/test_store_index_cache.py tests/test_src4_ingest_store.py tests/test_theme_index.py tests/test_store_backup.py tests/test_store_redownload.py`: **timeout 300 s, exit 124**, có tiến độ test nhưng không có summary.
+  - Cùng lệnh trên với `-k 'not a2_background_group_progress_and_readonly_storage'`: **timeout 300 s, exit 124**. Sau đó chạy `-k 'not background'` PASS 195 tests như trên.
+  - `-q -x tests/test_store_backup.py -k background -vv`: **timeout 300 s, exit 124** tại `test_background_io_uses_thread_and_waits_retry_seconds`; `test_background_one_upload_cache_report_and_render_pause` đã PASS.
+- ORCHESTRATOR cần chạy lại required verification có TestClient / socket, test background async, full suite `-q -n auto`. Không tuyên bố AC4 PASS trong sandbox.
+- Không commit / push / PR; chỉ sửa owned paths và mục Result. Status contract giữ nguyên để ORCHESTRATOR review và hoàn tất required verification.

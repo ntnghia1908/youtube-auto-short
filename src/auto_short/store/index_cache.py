@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 from collections.abc import Callable
@@ -11,6 +12,7 @@ from ..config import Config, StoreConfig
 from .client import StoreClient
 
 TTL_SECONDS = 300.0
+SHA256 = re.compile(r"[a-f0-9]{64}")
 _CHANGED = threading.Condition()
 _CACHE: dict[StoreConfig, tuple[float, dict[str, dict]]] = {}
 _REFRESHING: object | None = None
@@ -64,16 +66,11 @@ def _refresh(config: StoreConfig, generation: int) -> None:
             log.debug("store index listener failed", exc_info=True)
 
 
-def source_entry(config: Config, video_id: str, *, blocking: bool = True) -> dict | None:
-    """Read a source row; optionally wait for a fresh index (ingest, outside scheduler locks).
-
-    Nonblocking readers return the existing snapshot, even when stale, or None on a cold cache.
-    An expired snapshot starts one background refresh at a time across store configurations.
-    Neither mode holds the cache lock during network IO; failures are cached for five minutes.
-    """
+def _snapshot(config: Config, *, blocking: bool) -> dict[str, dict]:
+    """Read the shared snapshot, starting a refresh when expired."""
     global _REFRESHING
     if not config.store.enabled:
-        return None
+        return {}
     with _CHANGED:
         while True:
             cached = _CACHE.get(config.store)
@@ -89,12 +86,29 @@ def source_entry(config: Config, video_id: str, *, blocking: bool = True) -> dic
                     _REFRESHING = None
                     _CACHE[config.store] = (time.monotonic() + TTL_SECONDS, {})
                     _CHANGED.notify_all()
-                    return None
+                    return {}
             if not blocking:
                 break
             _CHANGED.wait()
-        entry = cached[1].get(video_id) if cached else None
-        return dict(entry) if entry is not None else None
+        return cached[1] if cached else {}
+
+
+def source_entry(config: Config, video_id: str, *, blocking: bool = True) -> dict | None:
+    """Read a source row; optionally wait for a fresh index (ingest, outside scheduler locks).
+
+    Nonblocking readers return the existing snapshot, even when stale, or None on a cold cache.
+    An expired snapshot starts one background refresh at a time across store configurations.
+    Neither mode holds the cache lock during network IO; failures are cached for five minutes.
+    """
+    entry = _snapshot(config, blocking=blocking).get(video_id)
+    return dict(entry) if entry is not None else None
+
+
+def source_ids(config: Config, *, blocking: bool = False) -> frozenset[str]:
+    """Source IDs with usable SHA256; nonblocking cold reads return an empty set."""
+    return frozenset(video_id for video_id, row in _snapshot(config, blocking=blocking).items()
+                     if isinstance(row.get("sha256"), str)
+                     and SHA256.fullmatch(row["sha256"]))
 
 
 def has_source(config: Config, video_id: str, *, blocking: bool = True) -> bool:

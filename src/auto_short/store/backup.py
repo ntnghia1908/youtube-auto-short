@@ -18,6 +18,7 @@ from ..theme_render.sources import _owner, cached_source, favorite_videos, works
 from ..titling.logic import match_title
 from ..titling.playlist import stored_series
 from ..workspace import iter_manifests, read_json_dict
+from . import index_cache
 from .client import StoreClient, StoreMismatch, StoreUnavailable
 
 
@@ -200,6 +201,7 @@ def push_source(config: Config, video_id: str, *, client=None) -> dict:
         remote = client.head(video_id, "source")
         if not _matches(remote, state["sha256"], state["size"]):
             raise StoreMismatch("kho chưa xác nhận đúng sha256 / kích thước sau khi gửi")
+        index_cache.invalidate()
         state["backed_up"] = True
         key = (str(Path(config.workspace.dir).resolve()), config.store.url, video_id)
         with _MEMO_LOCK:

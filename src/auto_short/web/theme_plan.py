@@ -9,7 +9,6 @@ import json
 import math
 import re
 import threading
-import time
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -27,6 +26,7 @@ from ..render import RenderError
 from ..render.full import SourceBlocked
 from ..review import content_disposition
 from ..selection.client import ChatError, ChatUnavailable
+from ..store import index_cache
 from ..store.client import StoreClient, StoreError
 from ..theme_render import sources
 from .jobs import AI, PREPARE, RENDER, GpuUnavailable, JobFailed, JobRunner, Step, YoutubeWait, run_preflight
@@ -87,40 +87,6 @@ def local_source_ready(config, video_id):
         return path.parent == folder and path.is_file() and path.stat().st_size == meta["size"]
     except (RenderError, OSError, KeyError, TypeError, ValueError):
         return False
-
-
-class StoreSources:
-    """Lazy index snapshot. Request threads never contact or wait for the store."""
-
-    TTL = 300.0
-
-    def __init__(self, config):
-        self.config = config
-        self.lock = threading.Lock()
-        self.videos = frozenset()
-        self.expires = 0.0
-        self.refreshing = False
-
-    def snapshot(self):
-        if not self.config.store.enabled:
-            return frozenset()
-        with self.lock:
-            videos = self.videos
-            if not self.refreshing and time.monotonic() >= self.expires:
-                self.refreshing = True
-                threading.Thread(target=self._refresh, name="theme-store-index", daemon=True).start()
-            return videos
-
-    def _refresh(self):
-        try:
-            rows = StoreClient.from_config(self.config.store).index()
-            videos = frozenset(row["video_id"] for row in rows if isinstance(row, dict)
-                               and row.get("kind") == "source" and isinstance(row.get("video_id"), str)
-                               and isinstance(row.get("sha256"), str) and SHA.fullmatch(row["sha256"]))
-        except (StoreError, OSError, ValueError, TypeError):
-            videos = frozenset()
-        with self.lock:
-            self.videos, self.expires, self.refreshing = videos, time.monotonic() + self.TTL, False
 
 
 def generate_key(pid):
@@ -195,8 +161,7 @@ class RenderTarget:
         # A stat hint may look ready while the prepare hash rejects corrupt bytes.
         if self.youtube_wait:
             return True
-        store_sources = getattr(self.service, "store_sources", None)
-        store_videos = store_sources.snapshot() if store_sources is not None else frozenset()
+        store_videos = index_cache.source_ids(self.service.config, blocking=False)
         return any(not local_source_ready(self.service.config, vid) and vid not in store_videos
                    for vid in source_videos(self.plan))
 
@@ -260,7 +225,6 @@ class ThemePlans:
     def __init__(self, config: Config, playlists: PlaylistStore, runner: JobRunner, *, preflight=None):
         self.config, self.playlists, self.runner, self.preflight = config, playlists, runner, preflight
         self.lock = threading.RLock()
-        self.store_sources = StoreSources(config)
 
     def source_counts(self, plan, store_videos):
         if plan.get("check", {}).get("state") == "invalid":
@@ -378,7 +342,7 @@ class ThemePlans:
                         or not isinstance(proposal.get("total_duration"), (int, float)):
                     raise BrokenArtifact()
         out_plans = []
-        store_videos = self.store_sources.snapshot()
+        store_videos = index_cache.source_ids(self.config, blocking=False)
         for plan in self.plans(pid, index=index):
             view = safe(plan)
             output = self.output(pid, plan)
