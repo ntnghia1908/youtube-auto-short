@@ -25,7 +25,7 @@ Cập nhật 2026-10-25.
 
 ## Next proposed action
 
-1. PR chờ HUMAN LEAD: #151 RENDER-short-first (giữ slot render cho Short khi AI còn việc; sau merge: restart 8080 khi làn rảnh), #150 FIX-publish-thumbs-shapes (main hết 19 error `test_publish_thumbs`), #149 RV1 decision PROPOSED (chạy lệnh đo §4 trên 3090 rồi trả lời §5).
+1. #150, #151 (RENDER-short-first) đã merge 2026-10-25 (main `3394246`); 8080 chưa có #151 → `auto-short-web-restart --ref origin/main` khi làn rảnh (sau cả bộ Kinh Địa Tạng). Chờ HUMAN LEAD: #149 RV1 decision PROPOSED (chạy lệnh đo §4 trên 3090 rồi trả lời §5).
 2. HUMAN LEAD đăng 13 bài tập 10 Thập Thiện `W2d-xS4ttTw` (xử lý lại 2026-10-24).
 3. Đóng gói (`docs/decisions/PKG-video-packaging-authorization.md` ACCEPTED): PKG1, PKG2, VIS1, PKG2.1, PKG2.2, PKG3, PKG3.1, PUB2, FIX-theme-index-summary, AUD1 đã merge; HD1, HD2a cũng vậy. PKG3.1: HUMAN LEAD bấm "Ghép lại" một video ghép Thái Thượng Cảm Ứng Thiên (cả 3 đang stale) rồi xem trang Đóng gói.
    AUD1: HUMAN LEAD chọn −18 / −22 / −26 LU; nhạc YouTube Audio Library do HUMAN LEAD tải từ Studio (G3). Kho: 1 bản CC0 "The Budding of Consciousness"; không nạp "nhạc hòa tấu Niệm Phật" (chưa rõ license), "月下獨酌" (thương mại). PUB1 / PKG1.1: bỏ.
