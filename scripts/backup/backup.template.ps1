@@ -1,7 +1,7 @@
 # Sao lưu bản HD ngang + bản dọc ("[HD Mobile]") của @@SERIES@@ từ web 8080 về máy này (chạy qua đêm).
 # Chạy lại bao nhiêu lần cũng được: file đã tải và kiểm tra xong sẽ bỏ qua, file dở sẽ tải tiếp.
 #
-#   powershell -ExecutionPolicy Bypass -File .\backup.ps1 -Dest D:\@@DESTNAME@@
+#   powershell -ExecutionPolicy Bypass -File .\backup.ps1 -Dest E:\@@DESTNAME@@
 #   bỏ bản dọc tập 1-10 đã có:        ... -SkipDoc "1-10"
 #   hoặc kiểm và nhận file đã tải:    ... -Have "C:\Users\<tên>\Downloads"
 #   chỉ tải thumbnail (không tải video): ... -ThumbsOnly
@@ -15,7 +15,7 @@
 # Sinh tự động ngày @@GENERATED@@ (bảng sha256 bên dưới); file mới hơn bảng chỉ kiểm theo dung lượng.
 param(
     [string]$Server = "http://10.8.102.102:8080",
-    [string]$Dest = 'D:\@@DESTNAME@@',
+    [string]$Dest = 'E:\@@DESTNAME@@',
     [string]$Playlist = '@@PLAYLIST@@',
     [string]$Series = '@@SERIES@@',   # tên bộ kinh trong tên file
     [int]$Retries = 30,
@@ -325,7 +325,27 @@ if (-not $ThumbsOnly) {
 }
 
 $Host.UI.RawUI.WindowTitle = "Backup xong"
-$rows | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $Index
+# Giữ dòng của tập đã giải phóng trên VM; dòng lượt này thắng khi trùng tập / loại.
+$newKeys = @{}
+foreach ($r in $rows) { $newKeys["$($r.tap)|$($r.loai)"] = $true }
+$keptRows = @()
+if (Test-Path -LiteralPath $Index) {
+    try {
+        $oldRows = @(Import-Csv -LiteralPath $Index -Encoding UTF8 -ErrorAction Stop)
+        foreach ($old in $oldRows) {
+            $key = "$($old.tap)|$($old.loai)"
+            if (-not $newKeys.ContainsKey($key) -and $old.file -and (Test-Path -LiteralPath (Join-Path $Dest $old.file))) {
+                $keptRows += $old
+            }
+        }
+    } catch {
+        Log "Cảnh báo: không đọc được CSV cũ ($Index): $_; chỉ ghi dòng mới."
+        $keptRows = @()
+    }
+}
+Log "Giữ lại $($keptRows.Count) dòng CSV cũ."
+($rows + $keptRows) | Sort-Object tap, loai | Select-Object tap, loai, file, video_id, tieu_de |
+    Export-Csv -NoTypeInformation -Encoding UTF8 -Path $Index
 Remove-Item (Join-Path $Dest ".api.json") -Force -ErrorAction SilentlyContinue
 if ($releasedOnVm) { Log ("Đã giải phóng trên VM từ trước: " + ($releasedOnVm -join ", ")) }
 Log "=== Xong: tải mới $ok, đã có $skip, lỗi $($failed.Count), chưa sẵn sàng trên server $($notReady.Count)"

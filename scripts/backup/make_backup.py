@@ -77,7 +77,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--playlist", required=True, help="playlist id of the bộ kinh (work/_playlists/<id>.json)")
     ap.add_argument("--series", required=True, help='bộ kinh name used in file names, e.g. "Kinh Địa Tạng Bồ Tát Bổn Nguyện"')
-    ap.add_argument("--dest-name", default="KinhHD", help="default folder name on the backup drive (D:\\<name>)")
+    ap.add_argument("--dest-name", default="KinhHD", help="default folder name on the backup drive (E:\\<name>)")
     ap.add_argument("--out", type=Path, default=ROOT / "work" / "_backup", help="where the .ps1 files + sha cache go")
     ap.add_argument("--config", type=Path, default=None, help="config.toml (default: ./config.toml of the repository)")
     args = ap.parse_args(argv)
