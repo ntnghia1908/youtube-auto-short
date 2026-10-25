@@ -67,13 +67,14 @@ class FullResult:
     size: int
 
 
-def owner_of(episode_id: str) -> str:
-    """The video a khai thị episode (``<id>.kt``) belongs to; the HD source and the vertical file are the video's."""
-    return enhance_state.owner_id(episode_id)
+def owner_of(config: Config, episode_id: str) -> str:
+    """The workspace holding the HD source and the vertical file of the video of ``episode_id`` (``<id>``; ``<id>.kt``
+    when only the khai thị workspace is left, FIX-hd-owner-kt)."""
+    return enhance_state.owner_for(config, episode_id)
 
 
 def vertical_dir(config: Config, episode_id: str) -> Path:
-    return (Path(config.render.output_dir) / owner_of(episode_id) / FULL_DIR).resolve()
+    return (Path(config.render.output_dir) / owner_of(config, episode_id) / FULL_DIR).resolve()
 
 
 def vertical_path(config: Config, episode_id: str) -> Path:
@@ -106,7 +107,7 @@ def current(config: Config, episode_id: str) -> bool:
     meta = read_meta(config, episode_id)
     if path is None or meta is None:
         return False
-    src = enhance_state.effective_source(config, owner_of(episode_id))
+    src = enhance_state.effective_source(config, owner_of(config, episode_id))
     return src is not None and meta.get("hd_sha256") == src.sha256
 
 
@@ -121,7 +122,7 @@ def fetch_original(episode_id: str, config: Config, *, downloader=ytdlp_download
     ingest, ``[ingest]`` format) WITHOUT touching the manifest / ``archive.json`` / any stage. Verified: readable, height
     >= ``[enhance] min_height``, duration within 2 s / 1 % of ``metadata.json``; size / sha256 differing from the ingest
     manifest only give a warning. YouTube blocking -> :class:`SourceBlocked`."""
-    owner = owner_of(episode_id)
+    owner = owner_of(config, episode_id)
     src = enhance_state.effective_source(config, owner)
     if src is None or src.kind == enhance_state.SRC_HD:
         raise RenderError(f"{owner!r}: không có video gốc ≥ {config.enhance.min_height}p để tải lại")
@@ -171,7 +172,7 @@ def remove_refetched_source(config: Config, episode_id: str) -> int:
     """K2: an archived episode (``archive.json``) keeps no ``source.*``: remove what a vertical job downloaded again.
     No-op for an episode that is not archived. Returns the bytes freed."""
     from ..review.archive import is_archived, source_files
-    d = Path(config.workspace.dir) / owner_of(episode_id)
+    d = Path(config.workspace.dir) / owner_of(config, episode_id)
     if not is_archived(d):
         return 0
     freed = 0
@@ -304,7 +305,7 @@ def run_vertical(episode_id: str, config: Config, *, run=None, force: bool = Fal
     CP8.32: the source is the effective HD source. An archived episode whose file is gone (the web job normally fetched
     it in the prepare lane; this is the fallback) downloads the original here; whatever was downloaded again is
     removed afterwards (K2) and ``archive.json`` / the manifest are never changed."""
-    owner = owner_of(episode_id)
+    owner = owner_of(config, episode_id)
     note = None
     src0 = enhance_state.effective_source(config, owner)
     if src0 is not None and src0.kind == enhance_state.SRC_ARCHIVED:
@@ -322,7 +323,7 @@ def run_vertical(episode_id: str, config: Config, *, run=None, force: bool = Fal
 
 def _run_vertical(episode_id: str, config: Config, *, run, force: bool, note: str | None) -> FullResult:
     runner = run or _run
-    owner = owner_of(episode_id)
+    owner = owner_of(config, episode_id)
     try:
         ws = Workspace(config.workspace.dir, validate_episode_id(owner))
     except WorkspaceError as exc:
@@ -427,7 +428,7 @@ def sweep_refetched_sources(config: Config, active_owners: set[str]) -> int:
     except OSError:
         return 0
     for d in dirs:
-        if owner_of(d.name) in active_owners or not (d / "archive.json").exists():
+        if enhance_state.owner_id(d.name) in active_owners or not (d / "archive.json").exists():
             continue
         tmp = d / ".vertical-fetch-tmp"
         if tmp.is_dir():

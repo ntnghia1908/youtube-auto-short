@@ -42,12 +42,14 @@ def sha_table(workspace: Path, output: Path, ids: list[str], cache_path: Path) -
     cache = json.loads(cache_path.read_text(encoding="utf-8")) if cache_path.is_file() else {}
     table: dict[str, str] = {}
     for vid in ids:
-        doc, hd = workspace / vid / "enhance.json", workspace / vid / "source_hd.mp4"
+        # FIX-hd-owner-kt: a video whose Shorts were deleted keeps its HD / vertical under <id>.kt
+        own = vid if (workspace / vid).is_dir() or not (workspace / (vid + ".kt")).is_dir() else vid + ".kt"
+        doc, hd = workspace / own / "enhance.json", workspace / own / "source_hd.mp4"
         if doc.is_file() and hd.is_file():
             d = json.loads(doc.read_text(encoding="utf-8"))
             if d.get("source_hd_sha256") and d.get("source_hd_size") == hd.stat().st_size:
                 table[f"{vid}|HD"] = d["source_hd_sha256"]
-        mp4 = output / vid / "full" / "vertical.mp4"
+        mp4 = output / own / "full" / "vertical.mp4"
         if mp4.is_file():
             st = mp4.stat()
             stamp = f"{st.st_size}:{st.st_mtime_ns}"

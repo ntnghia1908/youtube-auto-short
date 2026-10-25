@@ -407,7 +407,7 @@ def hd_source(config: Config, episode_id: str) -> enh_state.EffectiveSource | No
     threshold, else an archived original that a vertical job could fetch again); None for an invalid id / nothing."""
     if not valid_episode_id(episode_id):
         return None
-    return enh_state.effective_source(config, hd_owner(episode_id))
+    return enh_state.effective_source(config, episode_id)
 
 
 def hd_file(config: Config, episode_id: str) -> Path | None:
@@ -431,7 +431,7 @@ def video_download_name(config: Config, episode_id: str, suffix: str) -> str:
     """CP8.27: ``[<series>_]Tập<N>_HD.mp4`` (landscape) / ``…_Doc.mp4`` (vertical); no episode number ->
     ``<video id>_<suffix>.mp4``. Series / episode come from the video's own titles.json (CP8.17 D4)."""
     owner = hd_owner(episode_id)
-    doc = read_json_dict(Path(config.workspace.dir) / owner / "titles.json") or {}
+    doc = read_json_dict(Path(config.workspace.dir) / enh_state.owner_for(config, episode_id) / "titles.json") or {}
     fields = (doc.get("header") or {}).get("fields") or {}
     episode = fields.get("episode") if isinstance(fields, dict) else None
     return video_name(episode if isinstance(episode, str) else None, owner, suffix,

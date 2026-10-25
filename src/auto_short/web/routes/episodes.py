@@ -550,7 +550,7 @@ def build(ctx: WebContext) -> APIRouter:
     def api_backup_confirm(episode_id: str, body: BackupIn):
         """HD1 G1: record that the external copy exists; only the sha256 of the file the VM holds now is accepted.
         404 unknown id; 409 job running; 422 no file / sha mismatch."""
-        if not ep.valid_episode_id(episode_id) or not (Path(ctx.config.workspace.dir) / ep.hd_owner(episode_id)).is_dir():
+        if not ep.valid_episode_id(episode_id) or not (Path(ctx.config.workspace.dir) / enh_state.owner_for(ctx.config, episode_id)).is_dir():
             return JSONResponse({"detail": "không có episode này"}, status_code=404)
         owner = ep.hd_owner(episode_id)
         with ctx.submit_lock:
@@ -566,7 +566,7 @@ def build(ctx: WebContext) -> APIRouter:
     def api_release(episode_id: str, body: ReleaseIn | None = None):
         """HD1 G2: delete source_hd.mp4 + full/vertical.mp4 of the video once both were confirmed. 404 unknown id; 409
         job / enhance lease running; 422 conditions unmet (nothing deleted)."""
-        if not ep.valid_episode_id(episode_id) or not (Path(ctx.config.workspace.dir) / ep.hd_owner(episode_id)).is_dir():
+        if not ep.valid_episode_id(episode_id) or not (Path(ctx.config.workspace.dir) / enh_state.owner_for(ctx.config, episode_id)).is_dir():
             return JSONResponse({"detail": "không có episode này"}, status_code=404)
         owner = ep.hd_owner(episode_id)
         with ctx.submit_lock:

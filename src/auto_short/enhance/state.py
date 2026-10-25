@@ -419,12 +419,22 @@ def owner_id(episode_id: str) -> str:
     return episode_id[:-len(sfx)] if episode_id.endswith(sfx) and len(episode_id) > len(sfx) else episode_id
 
 
+def owner_for(config: Config, episode_id: str) -> str:
+    """FIX-hd-owner-kt: the workspace that holds the HD source / vertical file of the video of ``episode_id``:
+    ``<id>`` when ``work/<id>/`` exists, else ``<id>.kt`` when only the khai thị workspace is left, else ``<id>``."""
+    base = owner_id(episode_id)
+    root = Path(config.workspace.dir)
+    if not (root / base).is_dir() and (root / (base + khaithi.SUFFIX)).is_dir():
+        return base + khaithi.SUFFIX
+    return base
+
+
 def effective_source(config: Config, episode_id: str) -> EffectiveSource | None:
     """CP8.32 V1 / V2, the one decision used by the landscape HD route, the vertical job and the views: (a) a valid
     ``source_hd.mp4``; (b) else the original download when its height (``metadata.json``) is >= ``[enhance] min_height``
     (the threshold of :func:`decide`), or, for an archived episode, the fact that it could be fetched again; (c) else
     None. ``episode_id`` must be a valid id (the caller checks)."""
-    d = Path(config.workspace.dir) / owner_id(episode_id)
+    d = Path(config.workspace.dir) / owner_for(config, episode_id)
     fp = hd_fingerprint(d)
     if fp is not None:
         return EffectiveSource(SRC_HD, fp.path, fp.sha256)

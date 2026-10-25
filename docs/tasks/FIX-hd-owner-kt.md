@@ -13,7 +13,7 @@
 - Authorization mode: task
 - Authorization source: HUMAN LEAD 2026-10-25 "ok cả hai" (sửa lỗi tập 1–9 Kinh Địa Tạng: dùng thư mục `.kt` khi video gốc đã xóa)
 - Parallel group: —
-- Owned paths: `src/auto_short/enhance/state.py`, `src/auto_short/render/full.py`, `src/auto_short/review/backup.py`, `src/auto_short/web/episodes.py`, `src/auto_short/web/routes/episodes.py`, `src/auto_short/web/routes/playlists.py`, `src/auto_short/web/app.py`, `src/auto_short/web/context.py`, `tests/test_hd_owner_kt.py` (mới), test hiện có của module trên chỉ khi hành vi đổi theo task, contract này.
+- Owned paths: `src/auto_short/enhance/state.py`, `src/auto_short/render/full.py`, `src/auto_short/review/backup.py`, `src/auto_short/web/episodes.py`, `src/auto_short/web/routes/episodes.py`, `src/auto_short/web/routes/playlists.py`, `src/auto_short/web/app.py`, `src/auto_short/web/context.py`, `src/auto_short/web/playlists.py` (`hd_progress`, bổ sung khi review 2026-10-25), `scripts/backup/make_backup.py` (bảng sha, bổ sung khi review), `tests/test_hd_owner_kt.py` (mới), test hiện có của module trên chỉ khi hành vi đổi theo task, contract này.
 - Dependencies: HD1a (cùng branch, PR #144)
 - Base commit / branch: `0882b2c` / `feature/hd1a-backup-release`
 - Human Lead approval: HUMAN LEAD 2026-10-25

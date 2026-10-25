@@ -72,7 +72,7 @@ def _owner_dir(config: Config, episode_id: str) -> tuple[str, Path]:
         eid = validate_episode_id(episode_id)
     except WorkspaceError as exc:
         raise BackupError(f"không có tập {episode_id!r}", 404) from exc
-    owner = enh.owner_id(eid)
+    owner = enh.owner_for(config, eid)
     d = Path(config.workspace.dir) / owner
     if not (d / "manifest.json").is_file():
         raise BackupError(f"không có tập {owner!r}", 404)
@@ -139,7 +139,7 @@ def confirm(config: Config, episode_id: str, kind: str, sha256: str, *, now: str
 
 def view(config: Config, episode_id: str) -> dict:
     """Fields for the web views: ``released`` / ``released_at`` + the confirmations (read-only; no hashing)."""
-    owner = enh.owner_id(episode_id)
+    owner = enh.owner_for(config, episode_id)
     d = Path(config.workspace.dir) / owner
     edoc = enh.read(d) or {}
     doc = read_backup(d)
@@ -199,8 +199,10 @@ def release(config: Config, episode_id: str, *, allow_no_vertical: bool = False,
         atomic_write_json(backup_path(d), doc)
         edoc.update(released=True, released_at=stamp)
         enh.write(d, edoc)
-        enh.mirror(config, owner)
-        targets = [hd_file, enh.hd_path(d.parent / (owner + SUFFIX))]
+        targets = [hd_file]
+        if not owner.endswith(SUFFIX):  # a ``.kt``-only video has no further khai thị mirror / hard link
+            enh.mirror(config, owner)
+            targets.append(enh.hd_path(d.parent / (owner + SUFFIX)))
         if vgot is not None:
             targets.append(vpath)
         freed = cur_hd[1] + (vgot[1] if vgot is not None else 0)
