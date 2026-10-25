@@ -79,4 +79,4 @@ Không chạm database / security model / public API; manual test là điểm da
 - Review: ORCHESTRATOR đọc diff + test, ACCEPTED vòng 1. IMPLEMENTER Codex (`gpt-6.1-sol`, effort high), 1 vòng, ≈ 80 k token; sandbox Codex timeout ở test TestClient (đã biết) → ORCHESTRATOR chạy.
 - Important findings / decisions: scope 1–2 (không phải `vertical` trước) **đã có sẵn** từ `_rank` (CP8.32: `vertical` xếp sau mọi job khác); Short tập 21 chờ 6 phút vì cả 2 slot đã bị bản dọc chiếm *trước khi* Short tới — giữ chỗ là phần thực sự mới; AC1 / AC4 thành test khóa hành vi.
 - Known limitations: slot giữ chỗ vẫn chịu CPU gate (`render_max_cpu`) khi là slot phụ — nếu bản dọc đẩy CPU vượt ngưỡng, Short vẫn chờ CPU (ngoài scope). Làn ai "down" (GPU tắt) mà còn job chờ thì slot giữ chỗ để trống tới khi ai trống.
-- PR:
+- PR: #151
