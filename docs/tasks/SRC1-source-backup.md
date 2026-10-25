@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS (chờ chạy thật 3090)
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -130,4 +130,4 @@ timeout 120 env PYTHONPATH=/home/ntnghia/projects/youtube-auto-short/.claude/wor
 - Finding vòng 2 (đã sửa vòng 3): F1 PUT vào kho đã có bản khác sha → server trả 409 trước khi đọc body, client thấy `URLError` → `StoreUnavailable`, vòng nền kẹt đầu hàng mãi (`test_source_put_real_server_roundtrip` FAIL ngoài sandbox); F2 `backup_order` băm lại mọi nguồn (≈ 63 GB × 2) mỗi `retry_seconds`; F3 `push_source` băm 3 lần.
 - Còn lại (chấp nhận): lượt đầu sau mỗi lần khởi động web băm toàn bộ nguồn một lần (memo trong tiến trình); video push lỗi bị bỏ qua tới khi mọi ứng viên khác đã thử.
 - Verification ngoài sandbox trên diff cuối: 7 file required + `tests/test_web_app.py`: **309 PASS**; full suite `-n auto`: **2796 PASS, 1 skipped** (132 s); `node scripts/framework-check.mjs` PASS; `git diff --check` PASS.
-- Chưa chạy: "chạy thật" 3090 (cần HUMAN LEAD chép `tools/store/store.py` lên 3090) → PR mở draft, READY sau bước này.
+- Chạy thật 3090 (ORCHESTRATOR, 2026-10-25, sau khi HUMAN LEAD chép `store.py`): `push_source` `xMUOoyHdIDs` (cache `_theme_sources`, 386 956 957 B) 10,8 s → HEAD khớp sha `ab7c02d5…` + size; `fetch` vào thư mục tạm 9,4 s, sha khớp; `index` có dòng `source` `PLOynZc0cJJfA6C9mATbfggiF7ATJmwSJa/[Goc] Thái Thượng Cảm Ứng Thiên - Tập 10.mp4`. **PASS**.
