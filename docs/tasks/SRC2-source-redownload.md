@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -110,4 +110,4 @@ timeout 60 node --check src/auto_short/web/static/app.js
 - ORCHESTRATOR review + verification ngoài sandbox (2026-10-25): Codex 2 lượt cùng session (`01a17308…`): lượt 1 117 696 tokens, A2 176 063 tokens; không chuyển Sonnet (quota 5 giờ 26 %). Review không có finding chặn.
 - 6 file targeted (redownload, theme_source_cache, store_backup, config, storage_cp86, web_app; gồm test async SRC1 từng treo trong sandbox): **228 PASS**. Full suite `-n auto`: **2856 PASS, 1 skipped** (135 s). `node scripts/framework-check.mjs`, `git diff --check`: PASS.
 - Dry-run dữ liệu thật: **Đã dọn 49 video (49,3 giờ, ≈ 26,8 GB), 0 ♥; Chưa xử lý 488 video (479,4 giờ)**; tổng 537. Chênh với kiểm kê "116 / 4 ♥": 130 `archive.json` là workspace (Short + `.kt`) của 68 video; 18 video đã có trong `_theme_sources` (4 ♥ đã được job ghép VLT tải về) → còn 49.
-- Còn lại trước READY: bật `[store] backup_source` + `redownload` trên 8080 (HUMAN LEAD duyệt sửa `config.toml` / restart) và xác nhận 1 video lên 3090.
+- Chạy thật 8080 (2026-10-25, HUMAN LEAD duyệt "Có, bật cả hai"): `config.toml` `[store] backup_source = true`, `redownload = true`; 8080 restart ở `c3355ed`. Lượt đầu: SRC1 sao lưu `5wv5_Q0Utn8` (♥ VLT T17, 491 331 773 B), sha kho = sha `_theme_sources` `a5ca8fac…`; SRC2 tải lại `Bi7kVGbnPfE` (VLT T1, đã dọn) → kho xác nhận sha `e2c35af2…` 689 211 693 B, không còn thư mục `.…-redownload-` trên VM. **PASS**. Manual 1–2 giờ (tiến độ tab Bộ nhớ, `[Goc] …` trên E:) do HUMAN LEAD xem.
