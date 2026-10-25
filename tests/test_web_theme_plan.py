@@ -2,7 +2,9 @@
 import json
 import shutil
 import subprocess
+import threading
 import time
+from dataclasses import replace
 from types import SimpleNamespace
 from urllib.parse import unquote
 
@@ -10,16 +12,19 @@ import pytest
 from fastapi.testclient import TestClient
 
 from auto_short import hashing, theme_plan as tp
+from auto_short.config import Config, WorkspaceConfig
+from auto_short.ingest.youtube import DownloadError, YoutubeBlocked
 from auto_short.pipeline import OllamaUnavailable, PreflightError
 from auto_short.render.full import SourceBlocked
 from auto_short.selection.client import ChatError, ChatUnavailable
 from auto_short.web import theme_plan as web
 from auto_short.web.auth import COOKIE_NAME
-from auto_short.web.jobs import AI, RENDER, GpuUnavailable, JobFailed
+from auto_short.web.jobs import AI, PREPARE, RENDER, GpuUnavailable, JobFailed, JobRunner, YoutubeWait
 from auto_short.workspace import atomic_write_json
 
 from test_theme_plan import Planner
 from test_web_theme_index import STATIC, fx, snapshot
+from wait_helpers import wait_for
 
 PID = "PLeligible"
 BASE = f"/api/playlists/{PID}"
@@ -29,6 +34,13 @@ PW = "pw"
 @pytest.fixture
 def setup(tmp_path, monkeypatch):
     cfg = fx.seed(tmp_path / "scratch")
+    # The preview fixture predates shared originals: give prepare the ingest owner.
+    for episode in cfg.workspace.dir.glob("*.kt"):
+        if (episode / "source.mp4").is_file():
+            owner = cfg.workspace.dir / episode.name.removesuffix(".kt")
+            owner.mkdir(exist_ok=True)
+            for name in ("manifest.json", "source.mp4"):
+                shutil.copyfile(episode / name, owner / name)
     app = fx.build_app(cfg, PW, restrict=False)
     c = TestClient(app, follow_redirects=False)
     c.cookies.set(COOKIE_NAME, c.post("/login", json={"password": PW}).cookies[COOKIE_NAME])
@@ -118,6 +130,7 @@ def test_get_is_read_only_without_ai_and_redacts(setup, monkeypatch):
     s = setup
     create(s)
     monkeypatch.setattr(tp, "propose", lambda *a, **kw: pytest.fail("GET called propose"))
+    monkeypatch.setattr(hashing, "sha256_file", lambda *a: pytest.fail("warm GET hashed media"))
     before = snapshot(s.root)
     r = s.c.get(BASE + "/theme-plan")
     assert r.status_code == 200 and r.headers["cache-control"] == "no-store"
@@ -126,6 +139,7 @@ def test_get_is_read_only_without_ai_and_redacts(setup, monkeypatch):
     assert body["clips_available"][0]["duration"] == 350
     assert "Tập" in body["clips_available"][0]["label"]
     assert body["plans"][0]["check"]["state"] == "draft"
+    assert body["plans"][0]["sources"] == {"total": 1, "ready": 1, "store": 0, "youtube": 0}
     assert str(s.root) not in r.text and str(s.root.parent) not in r.text
     assert before == snapshot(s.root)
 
@@ -235,7 +249,7 @@ def test_render_approved_only_dedup_and_delete_busy(setup, monkeypatch):
     assert s.c.post(path + "/render").json()["job"]["id"] == r.json()["job"]["id"]
     assert s.c.post(path + "/render").status_code == 200
     job = s.runner.latest(web.render_key(PID, plan["plan_id"]))
-    assert job.steps[0].lane == RENDER
+    assert [step.lane for step in job.steps] == [PREPARE, RENDER]
     assert s.c.delete(path).status_code == 409
     assert s.c.put(path, json={"revision": 1, "title": "x", "clip_ids": [c["id"] for c in plan["clips"]]}).status_code == 409
     s.runner.start()
@@ -395,7 +409,7 @@ def test_youtube_blocked_has_retry_message(setup, monkeypatch):
     s.runner.start()
     try:
         assert s.runner.wait_idle(5)
-        assert job.status == "failed" and job.error == "YouTube đang chặn tải, thử lại sau"
+        assert job.status == "failed" and job.error == "Nguồn chưa sẵn sàng, bấm Ghép lại"
         view = s.c.get(BASE + "/theme-plan").json()["plans"][0]
         assert view["render_job"]["error"] == job.error
     finally:
@@ -466,6 +480,304 @@ def test_render_target_passes_playlist_hashtags_without_http(monkeypatch):
     web.RenderTarget(service, PID, plan)(job)
     assert calls == [(service.config, PID, plan['plan_id'], ['#DiaTang', '#PhatPhap'])]
     assert job.stage is None and '2.0' in job.summary
+
+
+@pytest.fixture
+def source_target(monkeypatch):
+    plan = {"plan_id": "12345678", "revision": 1,
+            "clips": [{"episode_id": "a.kt"}, {"episode_id": "a"}, {"episode_id": "b.kt"}]}
+    cfg = Config()
+    cfg = replace(cfg, store=replace(cfg.store, enabled=True))
+    service = SimpleNamespace(config=cfg, playlists=SimpleNamespace(
+        load=lambda pid: {}, effective_hashtags=lambda doc: ([], False)))
+    target = web.RenderTarget(service, PID, plan)
+    monkeypatch.setattr(tp, "approved_plan", lambda *args: plan)
+    workspace, cached, remote, calls = set(), set(), set(), []
+
+    def head(vid, kind):
+        calls.append(("head", vid, kind))
+        if vid not in remote:
+            raise web.StoreError("store missing or down")
+        return {"sha256": "a" * 64, "size": 10}
+
+    def fetch(config, vid):
+        calls.append(("youtube", vid))
+        cached.add(vid)
+        return "cached.mp4"
+
+    monkeypatch.setattr(web.sources, "workspace_source", lambda cfg, vid: "source.mp4" if vid in workspace else None)
+    monkeypatch.setattr(web.sources, "cached_source", lambda cfg, vid: "cached.mp4" if vid in cached else None)
+    monkeypatch.setattr(web.sources, "fetch_to_cache", fetch)
+    monkeypatch.setattr(web, "local_source_ready", lambda cfg, vid: vid in workspace or vid in cached)
+    monkeypatch.setattr(web.StoreClient, "from_config", lambda cfg: SimpleNamespace(head=head))
+    monkeypatch.setattr(web.theme_render, "render_landscape", lambda *args, **kw: SimpleNamespace(
+        metadata={"duration": 120}))
+    return SimpleNamespace(target=target, workspace=workspace, cached=cached, remote=remote, calls=calls)
+
+
+def test_needs_download_store_snapshot_bypasses_youtube_backoff_without_http(source_target):
+    s = source_target
+    store_videos = {"a", "b"}
+    s.target.service.store_sources = SimpleNamespace(snapshot=lambda: frozenset(store_videos))
+    runner = JobRunner()
+    job, _ = runner.submit("theme-test", web.KIND_THEME_RENDER, s.target)
+    with runner._lock:
+        runner._set_yt_blocked_locked("HTTP Error 403")
+    assert job.yt_wait
+    assert s.target.needs_download() is False
+    assert runner._no_download(job)
+    store_videos.remove("b")
+    assert s.target.needs_download() is True
+    assert not runner._no_download(job)
+    store_videos.add("b")
+    s.target.youtube_wait = True
+    assert s.target.needs_download() is True
+    s.target.youtube_wait = False
+    del s.target.service.store_sources
+    assert s.target.needs_download() is True
+    assert not s.calls
+
+
+@pytest.mark.parametrize("location", ["workspace", "cache", "store", "youtube", "store-disabled"])
+def test_sources_prepare_order_and_dedup_without_http(source_target, location):
+    s = source_target
+    if location == "workspace":
+        s.workspace.update(["a", "b"])
+    elif location == "cache":
+        s.cached.update(["a", "b"])
+    elif location == "store":
+        s.remote.update(["a", "b"])
+    elif location == "store-disabled":
+        cfg = s.target.service.config
+        s.target.service.config = replace(cfg, store=replace(cfg.store, enabled=False))
+    job = SimpleNamespace(stage=None, youtube_ok=lambda: s.calls.append(("ok",)))
+    steps = s.target.lane_steps()
+    assert [step.lane for step in steps] == [PREPARE, RENDER]
+    steps[0].run(job)
+    steps[1].run(job)
+    assert job.stage is None and "2.0" in job.summary
+    if location in ("workspace", "cache"):
+        assert s.calls == []
+        assert not s.target.needs_download()
+    elif location == "store":
+        assert s.calls == [("head", "a", "source"), ("head", "b", "source")]
+    elif location == "youtube":
+        assert s.calls == [("head", "a", "source"), ("youtube", "a"), ("ok",),
+                           ("head", "b", "source"), ("youtube", "b"), ("ok",)]
+    else:
+        assert s.calls == [("youtube", "a"), ("ok",), ("youtube", "b"), ("ok",)]
+
+
+@pytest.mark.parametrize("error", [
+    YoutubeBlocked("bot-check"), SourceBlocked("blocked"),
+    DownloadError("Sign in to confirm you’re not a bot"),
+    DownloadError("HTTP Error 429"), DownloadError("HTTP Error 403: Forbidden"),
+    web.RenderError("tải lại: HTTP 403"), web.RenderError("HTTP:403"),
+    DownloadError("unavailable format"), web.RenderError("bad duration"), OSError("disk full"),
+])
+def test_sources_prepare_errors_without_http(source_target, monkeypatch, error):
+    def fail(*args):
+        raise error
+    monkeypatch.setattr(web.sources, "fetch_to_cache", fail)
+    wait = isinstance(error, (YoutubeBlocked, SourceBlocked)) or "HTTP" in str(error) or "bot" in str(error)
+    with pytest.raises(YoutubeWait if wait else JobFailed) as raised:
+        source_target.target.prepare(SimpleNamespace(stage=None))
+    assert isinstance(raised.value, YoutubeWait) is wait
+
+
+def test_sources_prepare_rejects_changed_plan_before_io_without_http(source_target, monkeypatch):
+    plan = {**source_target.target.plan, "revision": 2}
+    monkeypatch.setattr(tp, "approved_plan", lambda *args: plan)
+    with pytest.raises(JobFailed, match="kế hoạch đã thay đổi"):
+        source_target.target.prepare(SimpleNamespace(stage=None))
+    assert not source_target.calls
+
+
+@pytest.mark.parametrize("error", [SourceBlocked("bot"), DownloadError("HTTP Error 403"),
+                                  web.RenderError("HTTP 403")])
+def test_sources_render_race_requests_retry_without_http(source_target, monkeypatch, error):
+    def fail(*args, **kw):
+        raise error
+    monkeypatch.setattr(web.theme_render, "render_landscape", fail)
+    with pytest.raises(JobFailed, match="Nguồn chưa sẵn sàng, bấm Ghép lại") as raised:
+        source_target.target(SimpleNamespace(stage=None))
+    assert not isinstance(raised.value, YoutubeWait)
+
+
+@pytest.mark.parametrize("optimistic_stat", [False, True])
+def test_sources_queue_backoff_retains_cache_and_frees_render_without_http(source_target, monkeypatch, optimistic_stat):
+    s = source_target
+    if optimistic_stat:
+        monkeypatch.setattr(web, "local_source_ready", lambda *a: True)
+    clock = [0.0]
+    runner = JobRunner(monotonic=lambda: clock[0], wall=lambda: 1_800_000_000 + clock[0],
+                       youtube_retry_seconds=60, youtube_retry_max_seconds=120)
+    attempts = []
+    failures = [2]
+    rendered = []
+
+    def fetch(config, vid):
+        attempts.append(vid)
+        if vid == "b" and failures[0]:
+            failures[0] -= 1
+            raise DownloadError("HTTP Error 403: Forbidden")
+        s.cached.add(vid)
+        return "cached.mp4"
+
+    monkeypatch.setattr(web.sources, "fetch_to_cache", fetch)
+    monkeypatch.setattr(web.theme_render, "render_landscape", lambda *args, **kw:
+                        (rendered.append("theme") or SimpleNamespace(metadata={"duration": 120})))
+    job, _ = runner.submit("theme-test", web.KIND_THEME_RENDER, s.target)
+    runner.start()
+    try:
+        wait_for(lambda: job.yt_wait, timeout=3)
+        assert job.status == "queued" and job.step == 0 and not rendered
+        assert attempts == ["a", "b"] and s.cached == {"a"}
+        other, _ = runner.submit("other", "render", lambda job: rendered.append("other"))
+        wait_for(lambda: other.status == "done", timeout=3)
+        assert attempts == ["a", "b"] and rendered == ["other"]
+        for moment, count in [(60, 3), (179, 3), (180, 4)]:
+            with runner._lock:
+                clock[0] = moment
+                runner._lock.notify_all()
+            if moment != 179:
+                wait_for(lambda: len(attempts) == count, timeout=3)
+                wait_for(lambda: job.yt_wait if moment == 60 else job.status == "done", timeout=3)
+            assert len(attempts) == count
+        assert runner.wait_idle(3)
+        assert attempts == ["a", "b", "b", "b"] and rendered == ["other", "theme"]
+    finally:
+        runner.stop(timeout=3)
+
+
+def test_sources_other_error_fails_queue_without_http(source_target, monkeypatch):
+    def fail(*args):
+        raise DownloadError("format missing")
+    monkeypatch.setattr(web.sources, "fetch_to_cache", fail)
+    runner = JobRunner()
+    job, _ = runner.submit("theme-test", web.KIND_THEME_RENDER, source_target.target)
+    runner.start()
+    try:
+        assert runner.wait_idle(3)
+        assert job.status == "failed" and "format missing" in job.error and not job.yt_wait
+        assert job.step == 0
+    finally:
+        runner.stop(timeout=3)
+
+
+def source_fixture(tmp_path, vid, *, workspace=False):
+    cfg = Config(workspace=WorkspaceConfig(dir=tmp_path / "work"))
+    folder = cfg.workspace.dir / vid
+    source = {"path": "source.mp4", "sha256": "a" * 64, "uri": f"https://youtube.test/{vid}"}
+    atomic_write_json(folder / "manifest.json", {"source": source})
+    atomic_write_json(folder / "metadata.json", {"duration": 360})
+    if workspace:
+        (folder / "source.mp4").write_bytes(b"video")
+    cached = web.sources.cache_dir(cfg) / vid
+    meta = {"schema_version": 1, "video_id": vid, "uri": source["uri"], "file": "source.mp4",
+            "sha256": "b" * 64, "ingest_sha256": source["sha256"], "differs_from_ingest": True,
+            "height": 720, "size": 5, "duration": 360, "downloaded_at": "2026-10-25T00:00:00Z"}
+    atomic_write_json(cached / "meta.json", meta)
+    (cached / "source.mp4").write_bytes(b"video")
+    return cfg, cached, meta
+
+
+@pytest.mark.parametrize("damage", [None, "size", "duration", "ingest_sha256", "sha256", "uri", "file",
+                                    "height", "differs_from_ingest", "downloaded_at", "missing", "symlink"])
+def test_sources_light_cache_validation_without_hash(tmp_path, monkeypatch, damage):
+    cfg, folder, meta = source_fixture(tmp_path, "a")
+    if damage == "missing":
+        (folder / "source.mp4").unlink()
+    elif damage == "symlink":
+        outside = tmp_path / "outside.mp4"
+        outside.write_bytes(b"video")
+        (folder / "source.mp4").unlink()
+        (folder / "source.mp4").symlink_to(outside)
+    elif damage is not None:
+        meta[damage] = {"size": 9, "duration": 20, "height": False, "differs_from_ingest": False}.get(damage, "bad")
+        atomic_write_json(folder / "meta.json", meta)
+    monkeypatch.setattr(hashing, "sha256_file", lambda *a: pytest.fail("display hashed media"))
+    assert web.local_source_ready(cfg, "a") is (damage is None)
+
+
+def test_sources_view_counts_distinct_owners_without_io(tmp_path, monkeypatch):
+    cfg, _, _ = source_fixture(tmp_path, "a", workspace=True)
+    source_fixture(tmp_path, "b")
+    plan = {"plan_id": "12345678", "revision": 1, "check": {"state": "draft"},
+            "clips": [{"episode_id": vid} for vid in ["a.kt", "a", "b.kt", "c.kt", "d.kt"]]}
+    service = web.ThemePlans(cfg, None, SimpleNamespace(latest=lambda *a: None))
+    service.plans = lambda *a, **kw: [plan]
+    service.store_sources.snapshot = lambda: frozenset({"a", "b", "c"})
+    monkeypatch.setattr(web.theme_index, "build_index", lambda *a, **kw: {"records": []})
+    monkeypatch.setattr(tp, "read_proposals", lambda *a: None)
+    monkeypatch.setattr(hashing, "sha256_file", lambda *a: pytest.fail("display hashed media"))
+    monkeypatch.setattr(web.StoreClient, "from_config", lambda *a: pytest.fail("request contacted store"))
+    result = service.view(PID)
+    assert result["plans"][0]["sources"] == {"total": 4, "ready": 3, "store": 1, "youtube": 1}
+    plan.update(check={"state": "invalid"}, clips="broken")
+    assert service.view(PID)["plans"][0]["sources"] == {"total": 0, "ready": 0, "store": 0, "youtube": 0}
+
+
+def test_sources_real_view_without_http(tmp_path, monkeypatch):
+    cfg = fx.seed(tmp_path / "scratch")
+    proposal = tp.propose(cfg, PID, client=Planner())["proposals"][0]
+    plan = tp.create_plan(cfg, PID, proposal["proposal_id"])
+    tp.approve_plan(cfg, PID, plan["plan_id"], revision=1, duration_override=True)
+    for clip in plan["clips"]:
+        episode = cfg.workspace.dir / clip["episode_id"]
+        owner = cfg.workspace.dir / clip["episode_id"].removesuffix(".kt")
+        owner.mkdir(exist_ok=True)
+        for name in ("manifest.json", "source.mp4"):
+            shutil.copyfile(episode / name, owner / name)
+    service = web.ThemePlans(cfg, None, SimpleNamespace(latest=lambda *a: None))
+    monkeypatch.setattr(hashing, "sha256_file", lambda *a: pytest.fail("warm view hashed media"))
+    monkeypatch.setattr(web.StoreClient, "from_config", lambda *a: pytest.fail("view contacted store"))
+    result = service.view(PID)["plans"][0]
+    assert result["check"]["state"] == "approved"
+    assert result["sources"] == {"total": 1, "ready": 1, "store": 0, "youtube": 0}
+
+
+def test_sources_store_snapshot_async_ttl_and_failure_without_http(monkeypatch):
+    cfg = Config()
+    cfg = replace(cfg, store=replace(cfg.store, enabled=True))
+    cache = web.StoreSources(cfg)
+    clock = [1.0]
+    monkeypatch.setattr(web, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    entered, release = threading.Event(), threading.Event()
+    calls = []
+    error = [False]
+    request_thread = threading.get_ident()
+
+    def index():
+        assert threading.get_ident() != request_thread
+        calls.append("index")
+        entered.set()
+        assert release.wait(3)
+        if error[0]:
+            raise web.StoreError("offline")
+        return [{"video_id": "a", "kind": "source", "sha256": "a" * 64},
+                {"video_id": "hd", "kind": "hd", "sha256": "a" * 64}, {"kind": "source"}]
+
+    monkeypatch.setattr(web.StoreClient, "from_config", lambda cfg: SimpleNamespace(index=index))
+    try:
+        assert cache.snapshot() == frozenset()
+        assert entered.wait(3)
+        assert cache.snapshot() == frozenset() and len(calls) == 1
+    finally:
+        release.set()
+    wait_for(lambda: not cache.refreshing, timeout=3)
+    clock[0] = 300
+    assert cache.snapshot() == {"a"} and len(calls) == 1
+    assert cache.TTL >= 300
+    error[0] = True
+    clock[0] = 302
+    cache.snapshot()
+    wait_for(lambda: not cache.refreshing, timeout=3)
+    assert cache.snapshot() == frozenset() and len(calls) == 2
+    clock[0] = 601
+    assert cache.snapshot() == frozenset() and len(calls) == 2
+    disabled = web.StoreSources(Config())
+    assert disabled.snapshot() == frozenset() and len(calls) == 2
 
 
 NODE = r"""
@@ -569,6 +881,16 @@ if (process.argv[2] === 'summary-zero') fixture.index_summary = {usable:4, pendi
   assert.ok(ns.filter(n=>n.tagName==='DETAILS').every(n=>!n.open));
   assert.ok(!ns.some(n=>n.type==='checkbox' || n.tagName==='SCRIPT'));
   assert.equal(btn('tp-proposals','Ghép video').disabled,false);
+ } else if (scenario === 'sources' || scenario === 'sources-ready') {
+  await made();
+  fixture.plans[0].sources=scenario==='sources'?{total:7,ready:6,store:2,youtube:1}:{total:7,ready:7,store:0,youtube:0};
+  fixture.plans[0].render_job={active:true,status:'queued',yt_wait:true};await refresh();
+  for(const id of ['tp-proposals','tp-plans']) {
+   const text=app.els[id].textContent;
+   assert.ok(text.includes(scenario==='sources'?'Video gốc: 6 / 7 sẵn sàng (3090: 2) · 1 cần tải YouTube':'Video gốc: 7 / 7 sẵn sàng'));
+   if(scenario==='sources-ready')assert.ok(!text.includes('3090:') && !text.includes('cần tải YouTube'));
+  }
+  assert.ok(app.els['tp-plans'].textContent.includes('đang chờ YouTube'));
  } else if (scenario === 'one-click' || scenario === 'radio' || scenario === 'custom') {
   if (scenario === 'radio') nodes('tp-proposals').filter(n=>n.type==='radio')[1].listeners.change();
   if (scenario === 'custom') setTitle('tp-proposals','Tựa tự sửa');
@@ -730,7 +1052,7 @@ if (process.argv[2] === 'summary-zero') fixture.index_summary = {usable:4, pendi
 
 
 @pytest.mark.parametrize("scenario", [
-    "display", "summary", "summary-zero", "one-click", "radio", "custom", "double-reload",
+    "display", "summary", "summary-zero", "sources", "sources-ready", "one-click", "radio", "custom", "double-reload",
     "card-poll", "card-reload", "card-retitle",
     "failure-create", "failure-edit", "failure-approve", "failure-render",
     "lost-create-response", "edit-clips", "edit-retry-failure", "failed-job", "read-failure",

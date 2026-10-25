@@ -13,7 +13,11 @@ const ThemePlan = (() => {
   const drafts = new Map(), choices = new Map(), opened = new Map(), inputs = new Set();
   let base = "", data = null, timer = null, loading = false, pending = false, refreshAgain = false;
   const active = (job) => !!(job && job.active);
-  const jobText = (job) => job ? `${job.gpu_wait ? "đang chờ GPU / Ollama" : jobs[job.status] || job.status}${job.summary ? " · " + job.summary : ""}${job.error ? ": " + job.error : ""}` : "";
+  const jobText = (job) => job ? `${job.yt_wait ? "đang chờ YouTube" : job.gpu_wait ? "đang chờ GPU / Ollama" : jobs[job.status] || job.status}${job.summary ? " · " + job.summary : ""}${job.error ? ": " + job.error : ""}` : "";
+  function sourceStatus(plan) {
+    const s = plan && plan.sources;
+    return el("p", { class: "small muted", text: s ? `Video gốc: ${s.ready} / ${s.total} sẵn sàng${s.store ? " (3090: " + s.store + ")" : ""}${s.youtube ? " · " + s.youtube + " cần tải YouTube" : ""}` : "" });
+  }
   function say(text, error = false) {
     $("tp-msg").textContent = text;
     $("tp-msg").className = "small" + (error ? " error" : "");
@@ -142,6 +146,7 @@ const ThemePlan = (() => {
     drawActions();
     return el("article", { class: "tp-plan" }, el("h4", { text: (p.titles || [])[0] || p.label }), options, title,
       el("p", { class: "small muted", text: `${p.clips.length} clip · ${duration(p.total_duration)} · ${p.label} · ${p.rationale}${p.dropped_for_length ? " · đã bớt " + p.dropped_for_length + " clip cho vừa thời lượng" : ""}` }),
+      sourceStatus(existing),
       details("proposal-" + p.proposal_id, `Xem ${p.clips.length} khai thị`, clips), actions);
   }
   function appendOutput(actions, output) {
@@ -168,6 +173,7 @@ const ThemePlan = (() => {
     const status = broken ? "Nội dung clip đã đổi hoặc không dùng được — hãy Gợi ý lại."
       : jobText(plan.render_job) || (plan.output ? "xong" : "Chưa ghép — bấm Ghép lại để tiếp tục.");
     box.append(el("p", { class: "small" + (broken || (plan.render_job && plan.render_job.error) ? " error" : ""), role: "status", text: status }));
+    box.append(sourceStatus(plan));
     for (const why of check.problems || []) box.append(el("p", { class: "error small", text: why }));
     const actions = el("div", { class: "actions" });
     if (broken) actions.append(button("Gợi ý lại", generate, busy || active(data.generate_job)));

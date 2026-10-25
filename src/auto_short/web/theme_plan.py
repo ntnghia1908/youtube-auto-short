@@ -9,7 +9,9 @@ import json
 import math
 import re
 import threading
+import time
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -19,13 +21,15 @@ from pydantic import BaseModel, Field, StrictBool, StrictInt, StrictStr
 from .. import hashing, theme_index, theme_plan, theme_render
 from ..compilation import store
 from ..config import Config
-from ..ingest.youtube import YoutubeBlocked
+from ..ingest.youtube import DownloadError, YoutubeBlocked, is_blocked_message
 from ..pipeline import OllamaUnavailable, PreflightError
 from ..render import RenderError
 from ..render.full import SourceBlocked
 from ..review import content_disposition
 from ..selection.client import ChatError, ChatUnavailable
-from .jobs import AI, RENDER, GpuUnavailable, JobFailed, JobRunner, Step, run_preflight
+from ..store.client import StoreClient, StoreError
+from ..theme_render import sources
+from .jobs import AI, PREPARE, RENDER, GpuUnavailable, JobFailed, JobRunner, Step, YoutubeWait, run_preflight
 from .playlists import PlaylistError, PlaylistStore
 from .theme_index import GENERATION_DISABLED, RefusingClient, project_record, redact
 from .urls import valid_playlist_id
@@ -34,6 +38,89 @@ KIND_GENERATE, KIND_THEME_RENDER = "theme_plan", "theme_render"
 PLAN_ID = re.compile(r"[a-z0-9]{8,32}")
 FILE_NAME = re.compile(r"([a-z0-9]{8,32})-r([1-9][0-9]{0,9})\.mp4")
 SHA = re.compile(r"[a-f0-9]{64}")
+
+
+def source_videos(plan):
+    """Count/download each original once, even when several clips use it."""
+    return sorted({sources._owner(c["episode_id"]) for c in plan.get("clips", [])})
+
+
+def youtube_blocked(exc):
+    # Match SRC2's signed-media 403 policy without changing ingest globally.
+    return isinstance(exc, (YoutubeBlocked, SourceBlocked)) or is_blocked_message(str(exc)) or bool(
+        re.search(r"\b(?:HTTP(?: Error)?\s*:?\s*)403\b", str(exc), re.I))
+
+
+def local_source_ready(config, video_id):
+    """Display hint only: stat + provenance/size metadata; render still verifies sha256."""
+    try:
+        folder = (Path(config.workspace.dir) / video_id).resolve()
+        source = sources._source(config, video_id)
+        name = source.get("path")
+        if isinstance(name, str):
+            path = (folder / name).resolve()
+            if path.is_relative_to(folder) and path.is_file() and path.stat().st_size > 0 \
+                    and isinstance(source.get("sha256"), str) and SHA.fullmatch(source["sha256"]):
+                return True
+    except (RenderError, OSError, TypeError, ValueError):
+        pass
+    try:
+        source = sources._source(config, video_id)
+        expected = sources._duration(config, video_id)
+        folder = (sources.cache_dir(config) / video_id).resolve()
+        meta = sources._read(folder / "meta.json")
+        name = meta.get("file")
+        if not isinstance(name, str) or not re.fullmatch(r"source\.[A-Za-z0-9]+", name):
+            return False
+        path = (folder / name).resolve()
+        if meta.get("schema_version") != 1 or meta.get("video_id") != video_id \
+                or not isinstance(meta.get("uri"), str) or not meta["uri"] or meta["uri"] != source.get("uri") \
+                or not isinstance(meta.get("ingest_sha256"), str) or not meta["ingest_sha256"] \
+                or meta["ingest_sha256"] != source.get("sha256") \
+                or not isinstance(meta.get("sha256"), str) or not SHA.fullmatch(meta["sha256"]) \
+                or not isinstance(meta.get("differs_from_ingest"), bool) \
+                or meta["differs_from_ingest"] != (meta["sha256"] != source.get("sha256")) \
+                or not sources._positive(meta.get("height")) or not sources._positive(meta.get("size")) \
+                or not sources._matches_duration(meta.get("duration"), expected):
+            return False
+        datetime.strptime(meta["downloaded_at"], "%Y-%m-%dT%H:%M:%SZ")
+        return path.parent == folder and path.is_file() and path.stat().st_size == meta["size"]
+    except (RenderError, OSError, KeyError, TypeError, ValueError):
+        return False
+
+
+class StoreSources:
+    """Lazy index snapshot. Request threads never contact or wait for the store."""
+
+    TTL = 300.0
+
+    def __init__(self, config):
+        self.config = config
+        self.lock = threading.Lock()
+        self.videos = frozenset()
+        self.expires = 0.0
+        self.refreshing = False
+
+    def snapshot(self):
+        if not self.config.store.enabled:
+            return frozenset()
+        with self.lock:
+            videos = self.videos
+            if not self.refreshing and time.monotonic() >= self.expires:
+                self.refreshing = True
+                threading.Thread(target=self._refresh, name="theme-store-index", daemon=True).start()
+            return videos
+
+    def _refresh(self):
+        try:
+            rows = StoreClient.from_config(self.config.store).index()
+            videos = frozenset(row["video_id"] for row in rows if isinstance(row, dict)
+                               and row.get("kind") == "source" and isinstance(row.get("video_id"), str)
+                               and isinstance(row.get("sha256"), str) and SHA.fullmatch(row["sha256"]))
+        except (StoreError, OSError, ValueError, TypeError):
+            videos = frozenset()
+        with self.lock:
+            self.videos, self.expires, self.refreshing = videos, time.monotonic() + self.TTL, False
 
 
 def generate_key(pid):
@@ -100,26 +187,70 @@ class GenerateTarget:
 class RenderTarget:
     def __init__(self, service, pid, plan):
         self.service, self.pid, self.plan = service, pid, plan
+        self.youtube_wait = False
+
+    def needs_download(self):
+        # Called with the scheduler lock held: no network or media hashing here.
+        # The store snapshot lets store-only sources bypass YouTube backoff; HEAD belongs to prepare.
+        # A stat hint may look ready while the prepare hash rejects corrupt bytes.
+        if self.youtube_wait:
+            return True
+        store_sources = getattr(self.service, "store_sources", None)
+        store_videos = store_sources.snapshot() if store_sources is not None else frozenset()
+        return any(not local_source_ready(self.service.config, vid) and vid not in store_videos
+                   for vid in source_videos(self.plan))
+
+    def current_plan(self):
+        current = theme_plan.approved_plan(self.service.config, self.pid, self.plan["plan_id"])
+        if theme_plan.plan_fingerprint(current) != theme_plan.plan_fingerprint(self.plan):
+            raise theme_plan.PlanConflict("kế hoạch đã thay đổi, cần xuất lại")
+        return current
+
+    def prepare(self, job):
+        job.stage = "theme_sources"
+        self.youtube_wait = False
+        config = self.service.config
+        try:
+            for video_id in source_videos(self.current_plan()):
+                if sources.workspace_source(config, video_id) or sources.cached_source(config, video_id):
+                    continue
+                if config.store.enabled:
+                    try:
+                        StoreClient.from_config(config.store).head(video_id, "source")
+                        continue  # SRC1 borrows into the render job's temporary directory.
+                    except (StoreError, OSError):
+                        pass
+                sources.fetch_to_cache(config, video_id)
+                if getattr(job, "youtube_ok", None) is not None:
+                    job.youtube_ok()
+        except (DownloadError, SourceBlocked, RenderError) as exc:
+            if youtube_blocked(exc):
+                self.youtube_wait = True
+                raise YoutubeWait(redact(f"Chuẩn bị nguồn: {exc}")) from exc
+            raise JobFailed(redact(f"Chuẩn bị nguồn lỗi: {exc}")) from exc
+        except (theme_plan.PlanError, theme_index.IndexError, OSError) as exc:
+            raise JobFailed(redact(f"Chuẩn bị nguồn lỗi: {exc}")) from exc
+        job.stage = None
 
     def __call__(self, job):
         job.stage = "theme_render"
         try:
-            current = theme_plan.approved_plan(self.service.config, self.pid, self.plan["plan_id"])
-            if theme_plan.plan_fingerprint(current) != theme_plan.plan_fingerprint(self.plan):
-                raise theme_plan.PlanConflict("kế hoạch đã thay đổi, cần xuất lại")
+            self.current_plan()
             doc = self.service.playlists.load(self.pid)
             hashtags = self.service.playlists.effective_hashtags(doc)[0]
             result = theme_render.render_landscape(self.service.config, self.pid, self.plan["plan_id"],
                                                    hashtags=hashtags)
-        except (SourceBlocked, YoutubeBlocked) as exc:
-            raise JobFailed("YouTube đang chặn tải, thử lại sau") from exc
-        except (theme_plan.PlanError, theme_index.IndexError, RenderError, OSError) as exc:
+        except (SourceBlocked, DownloadError, RenderError) as exc:
+            if youtube_blocked(exc):
+                raise JobFailed("Nguồn chưa sẵn sàng, bấm Ghép lại") from exc
+            raise JobFailed(redact(f"Xuất video lỗi: {exc}")) from exc
+        except (theme_plan.PlanError, theme_index.IndexError, OSError) as exc:
             raise JobFailed(redact(f"Xuất video lỗi: {exc}")) from exc
         job.stage = None
         job.summary = f"Video ngang {result.metadata['duration'] / 60:.1f} phút"
 
     def lane_steps(self):
-        return [Step(RENDER, self)]
+        return [Step(PREPARE, self.prepare), Step(RENDER, self)]
 
     def spec(self):
         return {"playlist_id": self.pid, "plan_id": self.plan["plan_id"], "revision": self.plan["revision"]}
@@ -129,6 +260,16 @@ class ThemePlans:
     def __init__(self, config: Config, playlists: PlaylistStore, runner: JobRunner, *, preflight=None):
         self.config, self.playlists, self.runner, self.preflight = config, playlists, runner, preflight
         self.lock = threading.RLock()
+        self.store_sources = StoreSources(config)
+
+    def source_counts(self, plan, store_videos):
+        if plan.get("check", {}).get("state") == "invalid":
+            return {"total": 0, "ready": 0, "store": 0, "youtube": 0}
+        videos = source_videos(plan)
+        local = {vid for vid in videos if local_source_ready(self.config, vid)}
+        remote = (set(videos) - local) & store_videos
+        ready = len(local) + len(remote)
+        return {"total": len(videos), "ready": ready, "store": len(remote), "youtube": len(videos) - ready}
 
     def checked(self, pid):
         if not valid_playlist_id(pid):
@@ -237,11 +378,13 @@ class ThemePlans:
                         or not isinstance(proposal.get("total_duration"), (int, float)):
                     raise BrokenArtifact()
         out_plans = []
+        store_videos = self.store_sources.snapshot()
         for plan in self.plans(pid, index=index):
             view = safe(plan)
             output = self.output(pid, plan)
             view["render_job"] = job_view(self.runner.latest(render_key(pid, plan.get("plan_id"))))
             view["output"] = None
+            view["sources"] = self.source_counts(plan, store_videos)
             if output is not None:
                 _, meta = output
                 view["output"] = {**safe(meta), "download_url":
