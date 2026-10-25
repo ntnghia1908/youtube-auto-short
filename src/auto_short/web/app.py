@@ -433,14 +433,16 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                                    episode=episode if isinstance(episode, str) else None, pipeline=pipeline,
                                    preflight=preflight, episode_id=kt, disk_blocked=storage.block_message,
                                    enhance=svc, prepare_only=bool(spec.get("prepare_only")) and kt is None)
+        if kind == KIND_VERTICAL:
+            if not (ws / enh_state.owner_for(config, eid)).is_dir():
+                return None
+            return ctx.vertical_target(eid)
         if not (ws / eid).is_dir():
             return None
         if kind == KIND_RENDER:
             return render_target(config, render=render)
         if kind == KIND_ENHANCE:
             return enhance_assemble_target(svc, after=_hd_ready)
-        if kind == KIND_VERTICAL:
-            return ctx.vertical_target(eid)
         if kind == KIND_ADD:
             clip = spec.get("clip_id")
             return add_short_target(config, clip, render=render, preflight=preflight, titler=titler) \
