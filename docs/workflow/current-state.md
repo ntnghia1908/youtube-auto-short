@@ -13,7 +13,7 @@ Ngân sách token: `docs/ai/workflow.md` §10.
 Cập nhật 2026-10-25.
 
 - Web 8080 (tmux `youtube:web`, worktree `~/projects/youtube-auto-short-web`): chạy `origin/main` `2c29133` (detached; restart 2026-10-25 sau #159 SRC2+SRC4+SRC3, #160 TC3.2, #161 FIX backup CSV); `[store]` bật (kho 3090 qua tunnel 18090, chi tiết ops-notes). Script restart từ chối khi làn bận; mật khẩu `~/.local/share/auto-short/web.env`.
-- Kinh Địa Tạng 41 tập đã giải phóng bản HD (HD1, bản ở kho 3090 `E:\KinhDiaTang_HD`); HUMAN LEAD chạy định kỳ trên 3090 `backup.ps1 -Release` (#161: mặc định `-Dest` ổ E:, `danh-sach.csv` giữ dòng tập đã giải phóng). Chờ lần chạy thật đầu tiên bản mới → kiểm `GET /index` kho vẫn đủ 52 bản dọc (2026-10-25 trước khi chạy: 52 vertical, 102 hd).
+- Kinh Địa Tạng 41 tập đã giải phóng bản HD (HD1, bản ở kho 3090 `E:\KinhDiaTang_HD`); HUMAN LEAD chạy định kỳ trên 3090 `backup.ps1 -Release` (#161: mặc định `-Dest` ổ E:, `danh-sach.csv` giữ dòng tập đã giải phóng). Chạy thật 2026-10-26 (#161 PASS): giữ 22 dòng CSV cũ, kho vẫn 52 bản dọc + 102 HD, E: còn 1.642 GB. Tập chưa giải phóng: 12 tập (21–26, 29–34) đã có Short + HD nhưng chưa xếp job dọc; 38 tập (35 trở đi trừ đã giải phóng, và 100) mới có HD, chưa xử lý Short.
 - Dự án ở `~/projects/` từ 2026-10-19; backup JSON: ops-notes. `config.toml` `[storage]`: `auto_archive = true`, `auto_archive_grace_minutes = 7200`.
 - Kho nguồn ghép chủ đề `work/_theme_sources/` (13 video, tải dần bằng `python -m auto_short.theme_render.sources`).
 - Codex IMPLEMENTER: ưu tiên Codex (HUMAN LEAD 2026-10-25, tiết kiệm quota Claude); `.claude/rules/execution.md`, quota `scripts/codex-usage.py`.
