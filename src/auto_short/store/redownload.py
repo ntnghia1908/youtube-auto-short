@@ -17,6 +17,7 @@ from ..theme_render.sources import _owner, _positive, cache_dir, cached_source, 
 from ..workspace import WorkspaceError, atomic_write_json, iter_manifests, read_json_dict
 from ..youtube_url import canonical_url
 from .backup import _destination, _local_source, _matches, _source
+from . import index_cache
 from .client import StoreClient, StoreError, StoreMismatch, StoreUnavailable
 
 MIN_FREE_BYTES = 20 * 10**9
@@ -138,6 +139,7 @@ def step(config: Config, video_id: str, *, downloader=ytdlp_download, client=Non
             client.put(video_id, "source", series, name, path, meta["sha256"])
             if not _matches(client.head(video_id, "source"), meta["sha256"], meta["size"]):
                 raise StoreMismatch("kho chưa xác nhận đúng sha256 / kích thước sau khi gửi")
+            index_cache.invalidate()
             cached = reference is None and video_id in favorite_videos(config)
             if cached:
                 _publish_cache(config, video_id, path, meta)
