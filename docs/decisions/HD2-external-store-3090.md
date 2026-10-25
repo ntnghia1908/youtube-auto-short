@@ -2,7 +2,7 @@
 
 | Metadata | Value |
 |---|---|
-| Status | PROPOSED — chờ HUMAN LEAD xác nhận G1–G8 |
+| Status | ACCEPTED — HUMAN LEAD 2026-10-25 "ok cả hai" |
 | Authority | HUMAN LEAD 2026-10-25: "đã sao lưu xong … trong thời gian chuyển lên youtube tôi sẽ dùng 3090 như ổ cứng của web"; chọn: tạo bản dọc HD còn thiếu, làm Short / khai thị / ghép chủ đề, tải về qua web, lưu luôn file mới lên 3090 — từ file trên 3090; sau khi upload xong vẫn giữ 3090 làm kho lâu dài |
 | Change class | S2 (architecture: thêm tầng lưu trữ ngoài; sửa `HD1-hd-backup-release.md` G4 / G5 và CP13.1 E5 / E6; security model: kênh VM ↔ 3090 mới) |
 | Integration | Push / PR / merge vẫn cần HUMAN LEAD duyệt riêng |
