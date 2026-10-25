@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -157,3 +157,10 @@ Chạy thật 8080 (2026-10-25, commit gộp `8309ab8` = SRC3 `e546953` + TC3.2 
 - `0SpL5Dohu-g` (Thập Thiện 17, dọn 2026-10-18): POST thêm Short đoạn có nhạc → 422, không xếp job (đúng). Đoạn s00632–s00641 → 202, job 2: khôi phục cả tập chính + `.kt` (209 s), AI đặt tiêu đề m01 "Hành thiện hay ác, quả báo sẽ đến như thế nào?", render 18/18 (1 encoded, 17 reused — nguồn khôi phục khớp render_key) → **AC1 PASS**.
 - Cả hai lần nguồn lấy từ **YouTube** (log yt-dlp), đúng sha ingest: kho 3090 chưa có `source` của 2 tập này (`/api/storage` redownload 1 / 531 sau restart, archived 1 / 43). Nhánh "3090 trước YouTube" (AC2) và G2 a (AC3) chưa chạy thật — chỉ có test tự động; chạy lại khi SRC2 đã đẩy nguồn tập đã dọn lên kho.
 - Sau F2: full suite `-n auto` **2950 passed, 1 skipped**.
+
+Chạy thật 8080 lần 2 (2026-10-25 17:09–17:14, `66ccddb` = SRC3 `085b74c` + SRC4 `f7849ae` + TC3.2 `387c332`; kho 3090 có 55 `source`):
+- `sMO7wrxLTQ4` (VLT 5, dọn 2026-10-09, không có trong `_theme_sources`): POST thêm Short s00273–s00297 → 202, job `restore_source` khôi phục cả tập chính + `.kt` trong 20 s (704 MB, log `restored source … (download)`, **không có dòng yt-dlp**); sha `e745e496…` / 704 025 214 B = sha ingest = sha kho → **AC2 PASS** (kho 3090 trước YouTube). AI đặt tiêu đề m01, render 7/7 (1 encoded, 6 reused).
+- `xMUOoyHdIDs` (Cảm Ứng Thiên 10): khôi phục từ cache `_theme_sources` (hard link, log `(cache)`) trong 2 s, render 14/14 (1 encoded, 13 reused) — đúng thứ tự cache → kho → YouTube.
+- Hai Short thử m01 đã xóa lại (chưa đăng, khôi phục được). Hai tập giờ ở trạng thái đã khôi phục; tự dọn lại theo G4 (giữ 5 ngày).
+- G2 a (AC3): không có ca thật — đối chiếu toàn bộ 55 `source` trên kho với `manifest.source` thì đều trùng byte bản ingest; chỉ có test tự động (`test_src3_auto_restore.py`).
+- READY; manual checklist (sửa tiêu đề trên giao diện) do HUMAN LEAD.
