@@ -22,6 +22,7 @@ from ..ingest import probe
 from ..ingest.youtube import DownloadError, YoutubeBlocked, ytdlp_download
 from ..render.stage import RenderError
 from ..workspace import WorkspaceError, atomic_write_json, validate_episode_id
+from ..youtube_url import parse_youtube_url
 
 
 def cache_dir(config: Config) -> Path:
@@ -84,12 +85,21 @@ def workspace_source(config: Config, video_id: str) -> Path | None:
     return None
 
 
-def cached_source(config: Config, video_id: str) -> Path | None:
-    """A committed cache entry with intact bytes and current ingest duration/provenance."""
+def cached_source(config: Config, video_id: str, *, reference: dict | None = None) -> Path | None:
+    """Intact TC3 cache; a playlist reference can validate it after its workspace was removed."""
     try:
         folder = (cache_dir(config) / _owner(video_id)).resolve()
         meta = _read(folder / "meta.json")
-        source = _source(config, video_id)
+        if reference is None:
+            source = _source(config, video_id)
+            expected = _duration(config, video_id)
+        else:
+            if not isinstance(meta.get("uri"), str) or parse_youtube_url(meta["uri"])[0] != _owner(video_id):
+                return None
+            source = {"uri": meta["uri"], "sha256": meta.get("ingest_sha256")}
+            expected = reference.get("duration")
+            if not _positive(expected):
+                return None
         name = meta.get("file")
         if not isinstance(name, str) or not re.fullmatch(r"source\.[A-Za-z0-9]+", name):
             return None
@@ -102,7 +112,7 @@ def cached_source(config: Config, video_id: str) -> Path | None:
                 or not isinstance(meta.get("differs_from_ingest"), bool) \
                 or meta["differs_from_ingest"] != (meta["sha256"] != source.get("sha256")) \
                 or not _positive(meta.get("height")) or not _positive(meta.get("size")) \
-                or not _matches_duration(meta.get("duration"), _duration(config, video_id)):
+                or not _matches_duration(meta.get("duration"), expected):
             return None
         datetime.strptime(meta["downloaded_at"], "%Y-%m-%dT%H:%M:%SZ")
         if path.parent == folder and path.is_file() and path.stat().st_size == meta["size"] \
@@ -113,25 +123,32 @@ def cached_source(config: Config, video_id: str) -> Path | None:
     return None
 
 
-def download_verified(config: Config, video_id: str, dest_dir: Path, downloader=ytdlp_download, *, clock=time.time
-                      ) -> tuple[Path, dict]:
+def download_verified(config: Config, video_id: str, dest_dir: Path, downloader=ytdlp_download, *, clock=time.time,
+                      reference: dict | None = None) -> tuple[Path, dict]:
     """Download and validate private bytes; the caller owns cleanup and publication.
 
+    A playlist reference supplies URI/duration without inventing ingest provenance.
     Keep DownloadError unwrapped so callers can choose their own retry policy.
     """
     from ..enhance.state import owner_for
 
     video_id = _owner(video_id)
-    folder = Path(config.workspace.dir) / owner_for(config, video_id)
-    source = _read(folder / "manifest.json").get("source")
-    if not isinstance(source, dict):
-        raise RenderError("manifest không có nguồn ingest")
-    uri, ingest_sha = source.get("uri"), source.get("sha256")
-    if not isinstance(uri, str) or not uri or not isinstance(ingest_sha, str) or not ingest_sha:
-        raise RenderError("manifest không có URI / sha256 để tải lại video nguồn")
-    expected = _read(folder / "metadata.json").get("duration")
-    if not _positive(expected):
-        raise RenderError("metadata.json không có thời lượng nguồn hợp lệ")
+    if reference is None:
+        folder = Path(config.workspace.dir) / owner_for(config, video_id)
+        source = _read(folder / "manifest.json").get("source")
+        if not isinstance(source, dict):
+            raise RenderError("manifest không có nguồn ingest")
+        uri, ingest_sha = source.get("uri"), source.get("sha256")
+        if not isinstance(uri, str) or not uri or not isinstance(ingest_sha, str) or not ingest_sha:
+            raise RenderError("manifest không có URI / sha256 để tải lại video nguồn")
+        expected = _read(folder / "metadata.json").get("duration")
+        if not _positive(expected):
+            raise RenderError("metadata.json không có thời lượng nguồn hợp lệ")
+    else:
+        uri, ingest_sha = reference.get("uri"), None
+        expected = reference.get("duration")
+        if not isinstance(uri, str) or not uri or not _positive(expected):
+            raise RenderError("playlist entry không có URI / thời lượng nguồn hợp lệ")
     expected = float(expected)
     dest = Path(dest_dir)
     got = downloader(uri, dest, config.ingest)
@@ -148,8 +165,9 @@ def download_verified(config: Config, video_id: str, dest_dir: Path, downloader=
     sha = hashing.sha256_file(path)
     meta = {"schema_version": 1, "video_id": video_id, "file": f"source{path.suffix}", "uri": uri,
             "downloaded_at": datetime.fromtimestamp(clock(), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "size": path.stat().st_size, "sha256": sha, "duration": info["duration"], "height": info["height"],
-            "ingest_sha256": ingest_sha, "differs_from_ingest": sha != ingest_sha}
+            "size": path.stat().st_size, "sha256": sha, "duration": info["duration"], "height": info["height"]}
+    if ingest_sha is not None:
+        meta.update(ingest_sha256=ingest_sha, differs_from_ingest=sha != ingest_sha)
     return path, meta
 
 

@@ -2735,7 +2735,9 @@ const AutoShort = (() => {
         } else if (r.status === "blocked") detail = ", đang chờ YouTube";
         else if (r.status === "paused") detail = `, tạm dừng: ${r.reason || "chờ lượt tiếp"}`;
         else if (r.status === "waiting") detail = ", chờ lượt tiếp";
-        redownload.textContent = `Tải lại nguồn: đã xong ${r.done} / ${r.total}${detail}`;
+        const archived = r.groups?.archived || { done: 0, total: 0 };
+        const unprocessed = r.groups?.unprocessed || { done: 0, total: 0 };
+        redownload.textContent = `Tải lại nguồn: đã dọn: ${archived.done} / ${archived.total}; chưa xử lý: ${unprocessed.done} / ${unprocessed.total}${detail}`;
       }
     }
     $("#storage-meta").textContent = `Các tập: ${fmtBytes(t.episodes)} (video nguồn ${fmtBytes(t.source)}, Short ${fmtBytes(t.shorts)}, khác ${fmtBytes(t.other)}` +

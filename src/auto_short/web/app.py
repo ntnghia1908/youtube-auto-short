@@ -354,7 +354,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             await asyncio.sleep(config.store.retry_seconds)
 
     redownload_failed: set[str] = set()
-    redownload_total: set[str] = set()
+    redownload_total: dict[str, str] = {}
     redownload_done: set[str] = set()
     redownload_next = 0.0
     redownload_wait = 3600.0
@@ -369,7 +369,11 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
 
         def publish(status, **fields):
             nonlocal redownload_snapshot
-            redownload_snapshot = dict(status=status, done=len(redownload_done), total=len(redownload_total), **fields)
+            redownload_snapshot = dict(
+                status=status, done=len(redownload_done), total=len(redownload_total),
+                groups={group: {"done": sum(vid in redownload_done for vid, kind in redownload_total.items() if kind == group),
+                                "total": sum(kind == group for kind in redownload_total.values())}
+                        for group in ("archived", "unprocessed")}, **fields)
             storage.update_redownload(redownload_snapshot)
             return dict(redownload_snapshot)
 
@@ -396,8 +400,9 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                 return publish("paused", reason="work/ còn dưới 20 GB trống")
             if not shutil.which("node"):
                 return publish("paused", reason="không tìm thấy node trên PATH")
-            order = redownload.pending(config, client=client)
-            redownload_total.update(order)
+            groups = {}
+            order = redownload.pending(config, client=client, groups=groups)
+            redownload_total.update({vid: group for group, videos in groups.items() for vid in videos})
             if not order:
                 return publish("idle")
             candidates = [v for v in order if v not in redownload_failed]

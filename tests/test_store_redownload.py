@@ -375,3 +375,125 @@ def test_background_thread_sleep_snapshot_and_lifespan_cancellation(background, 
     assert threads and all(t != main_thread for t in threads)
     assert sleeps == [rcfg.store.retry_seconds]
     assert snapshots[0]["status"] == "downloading"
+
+
+def playlist(cfg, playlist_id, *entries, series="Bộ kinh A"):
+    path = cfg.workspace.dir / "_playlists" / f"{playlist_id}.json"
+    atomic_write_json(path, dict(series=series, title="Tên playlist", entries=list(entries)))
+    return path
+
+
+def entry(vid, episode, *, duration=3600, available=True):
+    return dict(video_id=vid, episode=str(episode), duration=duration,
+                title=f"Kinh Vô Lượng Thọ tập {episode}", available=available)
+
+
+def test_a2_pending_groups_order_cache_workspace_and_offline_hours(rcfg, monkeypatch, tmp_path, capsys):
+    archived, new10, new2, later, remote, cached = VIDS
+    seed(rcfg, archived, title="Kinh Vô Lượng Thọ tập 99")
+    seed(rcfg, "ggggggggggg", archived=False)
+    (rcfg.workspace.dir / "hhhhhhhhhhh.kt").mkdir()  # existing owner without even a manifest blocks A2
+    (rcfg.workspace.dir / "iiiiiiiiiii").mkdir()
+    cache_ws = seed(rcfg, cached)
+    path = sc.fetch_to_cache(rcfg, cached, download)
+    rd.shutil.rmtree(cache_ws)
+    broken = "jjjjjjjjjjj"
+    broken_ws = seed(rcfg, broken)
+    broken_path = sc.fetch_to_cache(rcfg, broken, download)
+    rd.shutil.rmtree(broken_ws)
+    broken_path.write_bytes(b"bad")
+    playlist(rcfg, "PL_A", entry(new10, 10), entry(new2, 2, duration=7200), entry(remote, 4),
+             entry(cached, 5), entry("ggggggggggg", 6), entry("hhhhhhhhhhh", 7), entry("iiiiiiiiiii", 8),
+             entry("kkkkkkkkkkk", 9, available=False), entry(None, 11), entry("../invalid", 12),
+             entry(broken, 3), "bad entry")
+    playlist(rcfg, "PL_Z", entry(later, 1, duration=1800), entry(new2, 2))  # deduplicate
+    playlist(rcfg, "PL_bad", None)
+    (rcfg.workspace.dir / "_playlists" / "PL_corrupt.json").write_text("{")
+    client, groups = MemoryStore(), {}
+    client.files[remote] = ORIGINAL
+    assert rd.pending(rcfg, client=client, groups=groups) == [archived, new2, broken, new10, later]
+    assert groups == dict(archived=[archived], unprocessed=[new2, broken, new10, later])
+    assert client.index_calls == 1 and not client.heads
+    assert sc.cached_source(rcfg, cached, reference=entry(cached, 5)) == path
+    config = tmp_path / "config-a2.toml"
+    config.write_text(f'[workspace]\ndir = "{rcfg.workspace.dir}"\n[render]\noutput_dir = "{rcfg.render.output_dir}"\n')
+    monkeypatch.setattr(StoreClient, "from_config", forbidden)
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    assert rd.main(["--config", str(config), "--dry-run"]) == 0
+    text = capsys.readouterr().out
+    assert "Đã dọn: 1 video, 1.00 giờ" in text and "Chưa xử lý: 5 video, 5.50 giờ" in text
+    assert "Tổng: 6 video, 0 ♥; 6.50 giờ" in text and "chưa đối chiếu kho" in text
+    assert text.index(archived) < text.index("Chưa xử lý:") < text.index(new2) < text.index(new10) < text.index(later)
+    assert {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()} == before
+
+
+@pytest.mark.parametrize("case", ["ok", "title_number", "duration_edge", "duration_bad", "duration_missing",
+                                  "duration_nan", "duration_zero", "unavailable", "download", "put", "head", "head_sha", "blocked", "cancel"])
+def test_a2_step_playlist_duration_naming_no_provenance_or_workspace(rcfg, monkeypatch, case):
+    vid = VIDS[0]
+    ref = entry(vid, 2)
+    if case == "unavailable":
+        ref["available"] = False
+    elif case == "title_number":
+        ref["episode"] = None
+    elif case.startswith("duration_") and case not in ("duration_bad", "duration_edge"):
+        ref["duration"] = {"duration_missing": None, "duration_nan": float("nan"), "duration_zero": 0}[case]
+    doc = playlist(rcfg, "PL_A", ref)
+    favorite(rcfg, vid)  # stale favorites must never turn an unprocessed download into a TC3 cache
+    before = doc.read_bytes()
+    client, metadata = MemoryStore(), []
+    verify = rd.download_verified
+    def checked(*args, **kwargs):
+        got = verify(*args, **kwargs)
+        metadata.append(got[1])
+        return got
+    monkeypatch.setattr(rd, "download_verified", checked)
+    if case in ("duration_edge", "duration_bad"):
+        monkeypatch.setattr(sc.probe, "probe", lambda _: dict(duration=3636 if case == "duration_edge" else 3636.01, height=720))
+    if case in ("put", "head"):
+        monkeypatch.setattr(client, case, lambda *a: (_ for _ in ()).throw(StoreUnavailable("down")))
+    elif case == "head_sha":
+        monkeypatch.setattr(client, "head", lambda *a: dict(sha256="0" * 64, size=len(DOWNLOADED)))
+    def downloading(uri, dest, cfg):
+        assert uri == f"https://youtu.be/{vid}"
+        got = download(uri, dest, cfg)
+        if case in ("download", "blocked", "cancel"):
+            raise {"download": DownloadError("format unavailable"), "blocked": DownloadError("HTTP Error 403"),
+                   "cancel": KeyboardInterrupt()}[case]
+        return got
+    if case == "cancel":
+        with pytest.raises(KeyboardInterrupt):
+            rd.step(rcfg, vid, client=client, downloader=downloading, disk_usage=enough_disk)
+    else:
+        result = rd.step(rcfg, vid, client=client, downloader=downloading, disk_usage=enough_disk)
+        expected = "done" if case in ("ok", "title_number", "duration_edge") else "store_unavailable" if case in ("put", "head") else "blocked" if case == "blocked" else "failed"
+        assert result["status"] == expected and "differs_from_ingest" not in result
+        if expected == "done":
+            assert client.uploads[0][1:3] == ("PL_A", "[Goc] Bộ kinh A - Tập 2.mp4")
+            assert client.heads == [(vid, "source")] and client.files[vid] == DOWNLOADED
+            assert result["cached"] is False
+    assert all("ingest_sha256" not in meta and "differs_from_ingest" not in meta for meta in metadata)
+    assert not (rcfg.workspace.dir / vid).exists() and not (rcfg.workspace.dir / f"{vid}.kt").exists()
+    assert doc.read_bytes() == before
+    assert not sc.cache_dir(rcfg).exists() or not list(sc.cache_dir(rcfg).iterdir())
+
+
+def test_a2_background_group_progress_and_readonly_storage(background, rcfg, monkeypatch):
+    app, now = background
+    a, b, c, d = VIDS[:4]
+    seed(rcfg, a)
+    seed(rcfg, b)
+    playlist(rcfg, "PL_A", entry(c, 2), entry(d, 10))
+    monkeypatch.setattr(StoreClient, "from_config", forbidden)
+    assert app.state.storage.report()["redownload"]["groups"] == {
+        "archived": dict(done=0, total=0), "unprocessed": dict(done=0, total=0)}
+    client = MemoryStore()
+    rng = SimpleNamespace(uniform=lambda lo, hi: 900)
+    for i, vid in enumerate((a, b, c, d), 1):
+        result = app.state.redownload_pass(client, downloader=download, rng=rng)
+        assert result["video_id"] == vid and result["done"] == i and result["total"] == 4
+        assert result["groups"] == {"archived": dict(done=min(i, 2), total=2),
+                                     "unprocessed": dict(done=max(i - 2, 0), total=2)}
+        assert app.state.storage.report()["redownload"] == result
+        now[0] = result["retry_at"]
+    assert app.state.redownload_pass(client, downloader=forbidden)["status"] == "idle"

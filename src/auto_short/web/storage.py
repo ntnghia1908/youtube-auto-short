@@ -405,6 +405,7 @@ class StorageCache:
                     "backed_up": 0, "total": total, "pending": total}
             if self._config.store.redownload:
                 report["redownload"] = dict(self._redownload) if self._redownload is not None else {
-                    "status": "paused", "reason": "chờ kiểm kê", "done": 0, "total": 0}
+                    "status": "paused", "reason": "chờ kiểm kê", "done": 0, "total": 0,
+                    "groups": {group: {"done": 0, "total": 0} for group in ("archived", "unprocessed")}}
             self._cached = (self._mono(), key, report)
         return report
