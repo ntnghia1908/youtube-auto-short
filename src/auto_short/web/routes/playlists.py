@@ -103,9 +103,12 @@ def build(ctx: WebContext) -> APIRouter:
         if e.get("state") not in (playlists_mod.RENDERED, playlists_mod.COMPLETE):
             return "skip", "chưa xong Short"
         src = ep.hd_source(ctx.config, vid)
+        on_store = False
         if src is None and review_backup.view(ctx.config, vid)["released"]:
-            return "skip", enh_state.RELEASED_MESSAGE
-        if src is None:
+            if not ctx.config.store.enabled:
+                return "skip", enh_state.RELEASED_MESSAGE
+            on_store = True  # HD2a: the vertical job borrows the HD from the 3090 store
+        if src is None and not on_store:
             return "skip", f"không có bản HD / video gốc < {ctx.config.enhance.min_height}p"
         if render_full.current(ctx.config, vid):
             return "skip", "đã có bản dọc"

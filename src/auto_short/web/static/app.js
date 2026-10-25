@@ -792,7 +792,7 @@ const AutoShort = (() => {
     box.hidden = !h;
     if (!h) return;
     const land = $("#hd-landscape");
-    if (h.released) { // HD1 G3: the HD / vertical files were moved to an external machine
+    if (h.released && !h.store) { // HD1 G3: the HD / vertical files were moved to an external machine
       land.hidden = true;
       $("#hd-vertical-dl").hidden = true;
       $("#hd-vertical-make").hidden = true;
@@ -819,7 +819,8 @@ const AutoShort = (() => {
     make.hidden = !!v.ready;
     make.disabled = active;
     make.textContent = active ? (job.status === "queued" ? "Bản dọc: đang chờ…" : "Bản dọc: đang tạo…") : "Tạo bản dọc";
-    make.title = h.source === "archived" ? "Video gốc đã được dọn: sẽ tải lại từ YouTube rồi dọn lại sau khi tạo bản dọc 1080x1920 (tốn CPU, hàng đợi render)"
+    make.title = h.store ? "HD nằm trên 3090: tải về tạm để dựng bản dọc 1080x1920 rồi xóa (kho tắt thì đợi 3090)"
+      : h.source === "archived" ? "Video gốc đã được dọn: sẽ tải lại từ YouTube rồi dọn lại sau khi tạo bản dọc 1080x1920 (tốn CPU, hàng đợi render)"
       : "Video dọc 1080x1920 cả tập, có banner tựa ở trên (tốn CPU, chạy ở hàng đợi render)";
     make.onclick = async () => {
       make.disabled = true;
@@ -839,9 +840,12 @@ const AutoShort = (() => {
     };
     const note = $("#hd-vertical-note");
     note.classList.add("error");
-    note.hidden = !(job && (job.status === "failed" || job.status === "cancelled"));
+    const storeWait = !!job && job.status === "interrupted" && String(job.error || "").startsWith("đợi 3090");
+    note.hidden = !(job && (job.status === "failed" || job.status === "cancelled")) && !storeWait && !h.store;
     if (job && job.status === "failed") note.textContent = `Lỗi tạo bản dọc: ${job.error || "?"}`;
     else if (job && job.status === "cancelled") note.textContent = "Đã hủy bản dọc (bấm \"Tạo bản dọc\" để làm lại).";
+    else if (storeWait) { note.classList.remove("error"); note.textContent = `${job.error} — tự thử lại khi kho 3090 trả lời.`; }
+    else if (h.store) { note.classList.remove("error"); note.textContent = hdReleasedText(h.released_at).replace("đã chuyển ra máy ngoài", "trên 3090 (kho)"); }
   }
 
   // CP8.31 D1 / round 6: the server ticks "Đã đăng" when the zip request arrives, which on a phone can be late
@@ -895,6 +899,7 @@ const AutoShort = (() => {
       }
     } else if (job && job.status === "done") setJobStatus(`Xong: ${job.summary || ""} (${fmtTime(job.finished_at)})`, "ok");
     else if (job && job.status === "failed") setJobStatus(`Lỗi: ${job.error}`, "error");
+    else if (job && job.status === "interrupted" && String(job.error || "").startsWith("đợi 3090")) setJobStatus(`${job.error} — tự thử lại khi kho trả lời.`, "busy");
     else if (job && job.status === "interrupted") setJobStatus(`Bị ngắt (${job.error}). Bấm chạy tiếp để tiếp tục.`, "error");
     else setJobStatus("", "");
     applyStagesOpen(d);

@@ -1,0 +1,138 @@
+"""HD2a: HTTP client (urllib, stdlib) of the 3090 store (tools/store/store.py; protocol in that file).
+
+``GET /index``, ``HEAD|GET /files/<video_id>/<kind>`` (``Range``, header ``X-Sha256``), ``Authorization: Bearer``. The
+token comes from the env ``AUTO_SHORT_STORE_TOKEN`` and is never logged or put in an error text."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+from ..config import StoreConfig
+
+TOKEN_ENV = "AUTO_SHORT_STORE_TOKEN"
+KINDS = ("hd", "vertical")
+_SHA = re.compile(r"[0-9a-f]{64}")
+_ID = re.compile(r"[A-Za-z0-9_-]{11}")
+_CHUNK = 1024 * 1024
+
+
+class StoreError(Exception):
+    """Base of every store failure that is not a bug: the job should wait ("đợi 3090"), not fail."""
+
+
+class StoreUnavailable(StoreError):
+    """No token, unreachable, timed out, 401 or any other HTTP / network error."""
+
+
+class StoreMismatch(StoreError):
+    """The store has no such file, or its bytes / sha256 differ from the expected one."""
+
+
+class StoreClient:
+    def __init__(self, url: str, token: str | None, timeout: float = 30.0):
+        self.url, self.token, self.timeout = url.rstrip("/"), token, timeout
+
+    @classmethod
+    def from_config(cls, cfg: StoreConfig, env=None) -> "StoreClient":
+        token = (os.environ if env is None else env).get(TOKEN_ENV)
+        return cls(cfg.url, token.strip() if token else None, cfg.timeout_seconds)
+
+    def _open(self, path: str, *, method: str = "GET", headers: dict | None = None):
+        if not self.token:
+            raise StoreUnavailable(f"thiếu token kho (env {TOKEN_ENV})")
+        req = urllib.request.Request(self.url + path, method=method,
+                                     headers={"Authorization": f"Bearer {self.token}", **(headers or {})})
+        try:
+            return urllib.request.urlopen(req, timeout=self.timeout)
+        except urllib.error.HTTPError as exc:
+            exc.close()
+            if exc.code == 404:
+                raise StoreMismatch(f"kho không có file {path}") from None
+            if exc.code == 416:
+                raise StoreMismatch("kho trả Range không hợp lệ") from None
+            raise StoreUnavailable(f"kho trả HTTP {exc.code}") from None
+        except (urllib.error.URLError, OSError, ValueError) as exc:  # includes timeouts / connection refused
+            raise StoreUnavailable(f"không kết nối được kho: {type(exc).__name__}") from None
+
+    @staticmethod
+    def _path(video_id: str, kind: str) -> str:
+        if kind not in KINDS or not _ID.fullmatch(video_id):
+            raise StoreMismatch(f"video_id/kind không hợp lệ: {video_id!r}/{kind!r}")
+        return f"/files/{video_id}/{kind}"
+
+    def available(self) -> bool:
+        """Does the store answer (with our token)?"""
+        try:
+            with self._open("/index"):
+                return True
+        except StoreError:
+            return False
+
+    def index(self) -> list[dict]:
+        with self._open("/index") as resp:
+            try:
+                data = json.loads(resp.read().decode("utf-8"))
+            except (OSError, ValueError) as exc:
+                raise StoreUnavailable("kho trả index không đọc được") from exc
+        if not isinstance(data, list):
+            raise StoreUnavailable("kho trả index không đúng dạng")
+        return data
+
+    def head(self, video_id: str, kind: str) -> dict:
+        """``{"size": int, "sha256": str}`` of the stored file (StoreMismatch when the store has none)."""
+        with self._open(self._path(video_id, kind), method="HEAD") as resp:
+            sha = (resp.headers.get("X-Sha256") or "").lower()
+            try:
+                size = int(resp.headers.get("Content-Length") or "")
+            except ValueError:
+                raise StoreUnavailable("kho không trả Content-Length") from None
+        if not _SHA.fullmatch(sha):
+            raise StoreUnavailable("kho không trả X-Sha256 hợp lệ")
+        return {"size": size, "sha256": sha}
+
+    def fetch(self, video_id: str, kind: str, dest: Path, sha256: str) -> Path:
+        """Download to ``dest`` (through ``dest + ".part"``, resumed with ``Range`` when a part exists), verify that the
+        bytes hash to ``sha256`` (and that the store announces it), then rename atomically. Wrong sha256 deletes the
+        part and raises :class:`StoreMismatch`; network errors keep the part and raise :class:`StoreUnavailable`."""
+        want = (sha256 or "").lower()
+        if not _SHA.fullmatch(want):
+            raise StoreMismatch("sha256 mong đợi không hợp lệ")
+        dest = Path(dest)
+        part = dest.with_name(dest.name + ".part")
+        info = self.head(video_id, kind)
+        if info["sha256"] != want:
+            raise StoreMismatch("kho có file khác (sha256 không khớp bản đã giải phóng)")
+        size = info["size"]
+        have = part.stat().st_size if part.is_file() else 0
+        if have > size:
+            part.unlink()
+            have = 0
+        if have < size or size == 0:
+            headers = {"Range": f"bytes={have}-"} if have else {}
+            with self._open(self._path(video_id, kind), headers=headers) as resp:
+                if have and resp.status != 206:  # the server ignored Range: start again
+                    have = 0
+                try:
+                    with part.open("ab" if have else "wb") as out:
+                        while chunk := resp.read(_CHUNK):
+                            out.write(chunk)
+                except Exception as exc:  # reset / timeout / IncompleteRead: the part stays for the next try
+                    raise StoreUnavailable(f"đứt kết nối khi tải: {type(exc).__name__}") from None
+        got = part.stat().st_size
+        if got < size:
+            raise StoreUnavailable("tải chưa đủ byte, sẽ thử tiếp")
+        digest = hashlib.sha256()
+        with part.open("rb") as fh:
+            while chunk := fh.read(_CHUNK):
+                digest.update(chunk)
+        if digest.hexdigest() != want:
+            part.unlink(missing_ok=True)
+            raise StoreMismatch("sha256 file tải về không khớp")
+        os.replace(part, dest)
+        return dest

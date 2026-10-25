@@ -227,6 +227,15 @@ lease_hours = 48             # a worker that is silent this long loses the video
 max_segment_mb = 200         # PUT size limit of one segment
 yield_workers = []           # token names that give way to Ollama (e.g. ["rtx3090"]: the machine that hosts Ollama)
 
+[store]
+# HD2a: external store on the 3090 (tools/store/, guide docs/guides/store-3090.md), reached at 127.0.0.1 through the SSH
+# RemoteForward. A released video (HD1) is rendered from the store copy (sha256 checked, deleted after the job);
+# store off / down -> the job waits ("đợi 3090"). The token comes from the env AUTO_SHORT_STORE_TOKEN (never this file).
+enabled = false
+url = "http://127.0.0.1:18090"
+timeout_seconds = 30
+retry_seconds = 300          # a waiting job is tried again this often
+
 [post]
 # Community post text of a Short (docs/decisions/CP8.15-community-post-contract.md): AI adds punctuation /
 # paragraph breaks only (never changes words) to the Short's caption text via Ollama, plus the image library
