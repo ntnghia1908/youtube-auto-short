@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import shutil
 import threading
 import time
 from collections.abc import Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -79,6 +80,8 @@ from .jobs import (
     KIND_RENDER,
     INTERRUPTED,
     KIND_VERTICAL,
+    AI,
+    RENDER,
     PREPARE,
     JobFailed,
     JobRunner,
@@ -100,20 +103,32 @@ log = logging.getLogger("auto_short")
 
 
 class RestoreSourceTarget:
-    """CP8.37: exact source restoration; download work stays outside the submit/publication lock."""
+    """SRC3: restore privately, then apply validated edits in order and render on the existing lanes."""
 
     def __init__(self, config, episode_id, *, downloader=None, lock=None, disk_blocked=None,
-                 clock=time.time, after=None):
+                 clock=time.time, after=None, edits=None, apply_edit=None, restored=False, render=run_render):
         self.config, self.episode_id = config, episode_id
         self.downloader, self.lock, self.disk_blocked = downloader, lock, disk_blocked
         self.clock, self.after = clock, after
+        self.edits = list(edits or [])
+        self.apply_edit = apply_edit
+        self.accepting_edits = not restored
+        self.restored = restored
+        self.render_fn = render
 
     def needs_download(self):
-        from ..theme_render.sources import cached_source
-        return cached_source(self.config, self.episode_id) is None
+        from ..theme_render.sources import cached_source, workspace_source
+        if self.restored or workspace_source(self.config, self.episode_id) or cached_source(self.config, self.episode_id):
+            return False
+        if self.config.store.enabled:
+            from ..store import index_cache
+            return not index_cache.has_source(self.config, ep.hd_owner(self.episode_id), blocking=False)
+        return True
 
-    def __call__(self, job):
+    def prepare(self, job):
         from ..ingest.youtube import YoutubeBlocked
+        if self.restored:
+            return
         job.stage = "ingest"
         if self.disk_blocked is not None and (message := self.disk_blocked()):
             raise JobFailed(message)
@@ -132,12 +147,58 @@ class RestoreSourceTarget:
         job.stages.append({"stage": "ingest", "ran": result.downloaded, "seconds": round(time.monotonic() - t0, 3)})
         job.stage = None
         job.summary = "Đã khôi phục nguồn: " + ", ".join(result.episodes)
+        with self.lock if self.lock is not None else nullcontext():
+            self.restored = True
+            self.accepting_edits = False
+            # A request may have joined a manual restore after its prepare-only steps were created.
+            if self.edits and len(job.steps) == 1 and job.steps[0].lane == PREPARE:
+                job.steps.extend([Step(AI, self.edit), Step(RENDER, self.render_edits)])
+
+    def edit(self, job):
+        with self.lock if self.lock is not None else nullcontext():
+            self.accepting_edits = False
+        job.stage = "titling" if self.edits else None
+        try:
+            for edit in self.edits:
+                if edit.get("applied"):
+                    continue
+                # Each request uses exactly the same mutation and targets as the normal editing route.
+                with self.lock if self.lock is not None else nullcontext():
+                    clip, target = self.apply_edit(edit)
+                child = replace(job, episode_id=edit["episode_id"], clip_ids=[clip])
+                if hasattr(target, "ai"):
+                    target.ai(child)
+                    edit["title_error"] = target.title_error
+                edit["result_clip"] = clip
+                edit["applied"] = True
+                if clip not in job.clip_ids:
+                    job.clip_ids.append(clip)
+        except (ReviewError, OSError) as exc:
+            raise JobFailed(f"thao tác sau khôi phục: {exc}") from exc
+
+    def render_edits(self, job):
+        # The persisted edits are sufficient to resume directly in the render lane after restart.
+        for eid in dict.fromkeys(edit["episode_id"] for edit in self.edits):
+            clips = [edit["result_clip"] for edit in self.edits if edit["episode_id"] == eid]
+            child = replace(job, episode_id=eid, kind=KIND_RENDER, clip_ids=clips)
+            render_target(self.config, render=self.render_fn)(child)
+            job.summary = child.summary
+        errors = [edit["title_error"] for edit in self.edits if edit.get("title_error")]
+        if errors:
+            raise JobFailed("; ".join(errors) + " — Short đã thêm nhưng chưa có tiêu đề: gõ tiêu đề tay")
+        job.stage = None
+
+    def __call__(self, job):
+        self.prepare(job)
+        self.edit(job)
+        self.render_edits(job)
 
     def lane_steps(self):
-        return [Step(PREPARE, self)]
+        return [Step(PREPARE, self.prepare)] + ([Step(AI, self.edit), Step(RENDER, self.render_edits)]
+                                                if self.edits else [])
 
     def spec(self):
-        return {"episode_id": self.episode_id}
+        return {"episode_id": self.episode_id, "edits": list(self.edits), "restored": self.restored}
 
 STATIC_DIR = Path(__file__).parent / "static"
 # Reachable without a session: the login page and its stylesheet only.
@@ -352,6 +413,109 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                 log.exception("web: sao lưu nguồn: lỗi")
             await asyncio.sleep(config.store.retry_seconds)
 
+    redownload_failed: set[str] = set()
+    redownload_total: dict[str, str] = {}
+    redownload_done: set[str] = set()
+    redownload_next = 0.0
+    redownload_wait = 3600.0
+    redownload_snapshot = dict(status="paused", reason="chờ kiểm kê", done=0, total=0)
+
+    def redownload_pass(client=None, *, downloader=None, rng=random) -> dict:
+        """SRC2: one download per pass; private backoff never changes the real prepare queue."""
+        from ..store import redownload
+        from ..store.client import StoreError
+
+        nonlocal redownload_next, redownload_wait, redownload_snapshot
+
+        def publish(status, **fields):
+            nonlocal redownload_snapshot
+            redownload_snapshot = dict(
+                status=status, done=len(redownload_done), total=len(redownload_total),
+                groups={group: {"done": sum(vid in redownload_done for vid, kind in redownload_total.items() if kind == group),
+                                "total": sum(kind == group for kind in redownload_total.values())}
+                        for group in ("archived", "unprocessed")}, **fields)
+            storage.update_redownload(redownload_snapshot)
+            return dict(redownload_snapshot)
+
+        def prepare_busy():
+            if any(lane in ("prepare", "serial") for lane in runner.running()):
+                return True
+            lanes = runner.monitor_queue(limit=1)["lanes"]
+            return any(lanes.get(lane, {}).get("pending_total", 0) for lane in ("prepare", "serial"))
+
+        if not config.store.enabled or not config.store.redownload:
+            return publish("paused", reason="chưa bật tải lại nguồn")
+        if clock() < redownload_next:
+            return dict(redownload_snapshot)
+        vid = None
+        try:
+            if prepare_busy():
+                return publish("paused", reason="làn prepare đang bận")
+            youtube = runner.youtube_status()
+            if youtube["blocked"]:
+                return publish("blocked", reason="YouTube đang chặn hàng đợi prepare",
+                               retry_at=parse_time(youtube.get("next_check")))
+            if redownload.free_bytes(config, disk_usage) < redownload.MIN_FREE_BYTES:
+                log.warning("web: tải lại nguồn: work/ còn dưới 20 GB trống")
+                return publish("paused", reason="work/ còn dưới 20 GB trống")
+            if not shutil.which("node"):
+                return publish("paused", reason="không tìm thấy node trên PATH")
+            groups = {}
+            order = redownload.pending(config, client=client, groups=groups)
+            redownload_total.update({vid: group for group, videos in groups.items() for vid in videos})
+            if not order:
+                return publish("idle")
+            candidates = [v for v in order if v not in redownload_failed]
+            if not candidates:
+                redownload_failed.clear()
+                return publish("paused", reason="đã thử hết lượt; sẽ thử lại các video lỗi")
+            # Inventory can involve disk/network waits; give newly queued prepare jobs priority too.
+            if prepare_busy() or runner.youtube_status()["blocked"]:
+                return publish("paused", reason="nhường làn prepare / YouTube")
+            vid = candidates[0]
+            publish("downloading", video_id=vid)
+            kwargs = dict(client=client, clock=clock, disk_usage=disk_usage)
+            if downloader is not None:
+                kwargs["downloader"] = downloader
+            result = redownload.step(config, vid, **kwargs)
+            status = result["status"]
+            if status == "blocked":
+                redownload_next = clock() + redownload_wait
+                redownload_wait = min(redownload_wait * 2, 21600)
+                log.warning("web: tải lại nguồn %s: YouTube chặn: %s", vid, result.get("reason"))
+                return publish("blocked", video_id=vid, reason=result.get("reason"), retry_at=redownload_next)
+            if status == "store_unavailable":
+                redownload_next = clock() + config.store.retry_seconds
+                log.warning("web: tải lại nguồn: %s", result.get("reason"))
+                return publish("paused", reason=result.get("reason"), retry_at=redownload_next)
+            if status == "done":
+                redownload_done.add(vid)
+                redownload_failed.discard(vid)
+                redownload_wait = 3600
+                log.info("web: tải lại nguồn %s: đã xác nhận trên 3090", vid)
+            elif status == "failed":
+                redownload_failed.add(vid)
+                log.warning("web: tải lại nguồn %s: %s", vid, result.get("reason"))
+            redownload_next = clock() + rng.uniform(600, 1200)
+            return publish("waiting" if status == "done" else "paused", video_id=vid,
+                           reason=result.get("reason"), retry_at=redownload_next)
+        except StoreError as exc:
+            redownload_next = clock() + config.store.retry_seconds
+            log.warning("web: tải lại nguồn: %s", exc)
+            return publish("paused", reason=str(exc), retry_at=redownload_next)
+        except Exception as exc:
+            if vid is not None:
+                redownload_failed.add(vid)
+            redownload_next = clock() + config.store.retry_seconds
+            log.exception("web: tải lại nguồn: lỗi")
+            return publish("paused", reason=str(exc), retry_at=redownload_next)
+
+    async def _redownload_loop() -> None:
+        while config.store.enabled and config.store.redownload:
+            await asyncio.to_thread(redownload_pass)
+            await asyncio.sleep(max(1, redownload_next - clock()) if redownload_next > clock()
+                                else config.store.retry_seconds)
+
     def store_retry_pass(client=None) -> list[str]:
         """HD2a: jobs that ended "đợi 3090" (the HD of a released video is on the store, which could not lend it) are
         submitted again when the store answers and has the file with the sha256 recorded at release. Returns the keys
@@ -362,8 +526,10 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             return []
         waiting = []
         for job in runner.jobs():
-            if job.status != INTERRUPTED or job.kind not in (KIND_RENDER, KIND_VERTICAL) \
+            if job.status != INTERRUPTED or job.kind not in (KIND_RENDER, KIND_VERTICAL, KIND_RESTORE_SOURCE) \
                     or not (job.error or "").startswith(WAIT_PREFIX):
+                continue
+            if job.kind == KIND_RESTORE_SOURCE and getattr(job.target, "restored", False) is not True:
                 continue
             newest = runner.latest_vertical(job.episode_id) if job.kind == KIND_VERTICAL else runner.latest(job.episode_id)
             if newest is job:
@@ -381,6 +547,8 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             except StoreError:
                 break  # the store is still down: nothing else will answer either
             with submit_lock:
+                if job.kind == KIND_RESTORE_SOURCE and runner.latest(job.episode_id) is not job:
+                    continue  # a newer edit may have arrived while HEAD was in flight
                 runner.submit(job.episode_id, job.kind, job.target)
             log.info("web: kho 3090 đã sẵn sàng, chạy lại %s [%s]", job.kind, job.episode_id)
             done.append(job.episode_id)
@@ -409,9 +577,12 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         for eid in episodes:
             playlists.invalidate(eid)
 
-    def _restore_target(eid: str):
+    def _restore_target(eid: str, *, edits=None, restored=False):
         return RestoreSourceTarget(config, eid, downloader=restore_downloader, lock=submit_lock,
-                                   disk_blocked=storage.block_message, clock=clock, after=_restored)
+                                   disk_blocked=storage.block_message, clock=clock, after=_restored,
+                                   edits=edits, restored=restored,
+                                   render=render,
+                                   apply_edit=lambda edit: episode_edit.apply_restore_edit(ctx, edit))
 
     def _auto_vertical_check(eid: str) -> None:
         """CP8.35 D4: the wish "tự tạo bản dọc" of the video is met when its Shorts are rendered and the best HD source is
@@ -464,10 +635,22 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             if not isinstance(target_id, str) or not ep.valid_episode_id(target_id) or ep.hd_owner(target_id) != eid:
                 return None
             try:
-                restore_parts(target_id, config)
-            except (ReviewError, OSError):
+                edits = spec.get("edits", [])
+                if not isinstance(edits, list):
+                    return None
+                for edit in edits:
+                    if ep.hd_owner(edit["episode_id"]) != eid:
+                        return None
+                    episode_edit.validate_restore_edit(config, edit)
+                restored = spec.get("restored") is True
+                if restored:
+                    if any(is_archived(ws / part) for part in (eid, eid + khaithi.SUFFIX)):
+                        return None
+                else:
+                    restore_parts(target_id, config)
+            except (ReviewError, OSError, ValueError, KeyError, TypeError):
                 return None
-            return _restore_target(target_id)
+            return _restore_target(target_id, edits=edits, restored=restored)
         if is_archived(ws / eid) and kind != KIND_VERTICAL:
             return None
         if kind == KIND_PIPELINE:
@@ -541,12 +724,15 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         sweeper = asyncio.create_task(_auto_archive_loop())
         store_retry = asyncio.create_task(_store_retry_loop())
         source_backup = asyncio.create_task(_source_backup_loop())
+        source_redownload = asyncio.create_task(_redownload_loop())
         try:
             yield
         finally:
             sweeper.cancel()
             store_retry.cancel()
             source_backup.cancel()
+            source_redownload.cancel()
+            await asyncio.gather(source_redownload, return_exceptions=True)
             await asyncio.to_thread(sampler.stop)
             await asyncio.to_thread(runner.stop)
 
@@ -558,6 +744,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     app.state.storage = storage
     app.state.auto_archive_pass = auto_archive_pass
     app.state.source_backup_pass = source_backup_pass
+    app.state.redownload_pass = redownload_pass
     app.state.store_retry_pass = store_retry_pass
     app.state.sweep_refetched = _sweep_refetched
     app.state.playlists = playlists

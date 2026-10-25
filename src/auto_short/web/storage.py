@@ -349,12 +349,19 @@ class StorageCache:
         self._lock = threading.Lock()
         self._cached: tuple[float, frozenset, dict] | None = None
         self._source_backup: dict | None = None
+        self._redownload: dict | None = None
 
     def update_source_backup(self, states: dict) -> None:
         """Background HEAD results only; reporting storage never contacts the store."""
         done = sum(bool(state["backed_up"]) for state in states.values())
         with self._lock:
             self._source_backup = {"backed_up": done, "total": len(states), "pending": len(states) - done}
+            self._cached = None
+
+    def update_redownload(self, snapshot: dict) -> None:
+        """SRC2 background snapshot only; requests never query YouTube or the store."""
+        with self._lock:
+            self._redownload = dict(snapshot)
             self._cached = None
 
     def invalidate(self) -> None:
@@ -396,5 +403,9 @@ class StorageCache:
                 total = len({video_id(row["id"]) for row in rows if row["source_kind"] == "youtube"})
                 report["source_backup"] = dict(self._source_backup) if self._source_backup is not None else {
                     "backed_up": 0, "total": total, "pending": total}
+            if self._config.store.redownload:
+                report["redownload"] = dict(self._redownload) if self._redownload is not None else {
+                    "status": "paused", "reason": "chờ kiểm kê", "done": 0, "total": 0,
+                    "groups": {group: {"done": 0, "total": 0} for group in ("archived", "unprocessed")}}
             self._cached = (self._mono(), key, report)
         return report

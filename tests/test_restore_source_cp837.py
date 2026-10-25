@@ -92,6 +92,9 @@ def test_src1_restore_store_before_youtube_exact_ingest(cfg, monkeypatch, failur
     seen = []
 
     class Client:
+        def head(self, video_id, kind):
+            return {"sha256": hashlib.sha256(DATA).hexdigest(), "size": len(DATA)}
+
         def fetch(self, video_id, kind, dest, sha):
             seen.append("store")
             assert video_id == EID and kind == "source" and sha == hashlib.sha256(DATA).hexdigest()
@@ -461,3 +464,139 @@ def test_http_auth_and_restore(cfg):
         view = client.get(f"/api/episodes/{EID}").json()
         assert view["archived"] is None and view["restore_job"]["status"] == "done"
         assert client.post(url).status_code == 409
+
+
+def replacement_references(cfg, monkeypatch, *, duration=60, fps=30, lag=0.02):
+    """Real manifest segments and file checks; fake only ffmpeg/probe/audio correlation."""
+    from auto_short.ingest import probe
+    from auto_short.theme_render import audio
+    seen, commands = [], []
+    for eid in (EID, KT):
+        out = Path(cfg.render.output_dir) / eid
+        manifest = out / "render_manifest.json"
+        if not manifest.exists():
+            continue
+        doc = json.loads(manifest.read_text())
+        for short in doc["shorts"]:
+            short["sha256"] = sha256_file(out / short["file"])
+            short["segments"] = [[10, 12.5], [14, 16]]
+        manifest.write_text(json.dumps(doc))
+    monkeypatch.setattr(probe, "probe", lambda path: {"duration": duration, "fps": fps})
+
+    def compare(new, reference, tmp, runner):
+        seen.append((reference.parent.parent.name, reference.stem))
+        return {"lag": lag, "corr": 1, "duration_diff": 0}
+
+    def runner(cmd):
+        commands.append(cmd)
+        Path(cmd[-1]).write_bytes(b"audio")
+        return SimpleNamespace(returncode=0, stderr="")
+
+    monkeypatch.setattr(audio, "compare", compare)
+    return seen, commands, runner
+
+
+@pytest.mark.parametrize("via", ["youtube", "cache", "store"])
+def test_src3_different_bytes_verify_all_parts_and_record_provenance(cfg, monkeypatch, via):
+    from dataclasses import replace
+    from auto_short.config import StoreConfig
+    from auto_short.store.client import StoreClient
+    folders = [make_episode(cfg), make_episode(cfg, KT)]
+    seen, commands, runner = replacement_references(cfg, monkeypatch)
+    data = b"new source encoding"
+    manifests = [(p / "manifest.json").read_bytes() for p in folders]
+    if via == "cache":
+        seed_cache(cfg, data)
+    if via == "store":
+        cfg = replace(cfg, store=StoreConfig(enabled=True))
+
+        class Client:
+            def head(self, vid, kind):
+                assert (vid, kind) == (EID, "source")
+                return {"sha256": hashlib.sha256(data).hexdigest(), "size": len(data)}
+
+            def fetch(self, vid, kind, dest, sha):
+                assert sha == hashlib.sha256(data).hexdigest()  # HEAD sha, never ingest sha
+                dest.write_bytes(data)
+                return dest
+
+        monkeypatch.setattr(StoreClient, "from_config", lambda c: Client())
+    result = restore_source(EID, cfg, downloader=downloader(data) if via == "youtube" else no_download,
+                            now=STAMP, runner=runner)
+    assert result.episodes == [EID, KT] and result.downloaded == (via != "cache")
+    assert seen == [(eid, clip) for eid in (EID, KT) for clip in ("k01", "k02")]
+    assert all("atrim=start=10:end=12.5" in cmd[cmd.index("-filter_complex") + 1]
+               and "atrim=start=14:end=16" in cmd[cmd.index("-filter_complex") + 1] for cmd in commands)
+    for folder, manifest in zip(folders, manifests):
+        assert (folder / "source.webm").read_bytes() == data
+        assert (folder / "manifest.json").read_bytes() == manifest
+        assert json.loads((folder / "restored.json").read_text()) == {
+            "restored_at": STAMP, "differs_from_ingest": True,
+            "sha256": hashlib.sha256(data).hexdigest(), "size": len(data)}
+        assert not (folder / "archive.json").exists()
+
+
+@pytest.mark.parametrize("problem, message", [
+    ("lag", "một khung hình"), ("duration", "thời lượng"), ("empty", "không có Short"),
+    ("audio", "không khớp lời"), ("missing", "Short bị thiếu"), ("fps", "fps hợp lệ"),
+    ("last_part", "một khung hình"),
+])
+def test_src3_replacement_failure_changes_no_files(cfg, monkeypatch, problem, message):
+    from auto_short.theme_render import audio
+    from auto_short.render.stage import RenderError
+    make_episode(cfg)
+    make_episode(cfg, KT)
+    seen, commands, runner = replacement_references(cfg, monkeypatch,
+        duration=90 if problem == "duration" else 60, fps=0 if problem == "fps" else 30,
+        lag=0.04 if problem == "lag" else 0.02)
+    if problem == "empty":
+        for eid in (EID, KT):
+            path = Path(cfg.render.output_dir) / eid / "render_manifest.json"
+            doc = json.loads(path.read_text())
+            doc["shorts"] = []
+            path.write_text(json.dumps(doc))
+    if problem == "missing":
+        (Path(cfg.render.output_dir) / KT / "shorts/k02.mp4").unlink()
+    if problem in ("audio", "last_part"):
+        def compare(new, reference, tmp, runner):
+            if problem == "audio":
+                raise RenderError("không khớp lời")
+            return {"lag": .04 if reference.parent.parent.name == KT and reference.stem == "k02" else 0}
+        monkeypatch.setattr(audio, "compare", compare)
+    before = snapshot(Path(cfg.workspace.dir)), snapshot(Path(cfg.render.output_dir))
+    with pytest.raises(ReviewError, match=message):
+        restore_source(EID, cfg, downloader=downloader(b"other bytes"), runner=runner)
+    assert (snapshot(Path(cfg.workspace.dir)), snapshot(Path(cfg.render.output_dir))) == before
+    assert not list(Path(cfg.workspace.dir).rglob(".restore-source-*"))
+
+
+def test_src3_exact_bytes_skip_audio_gate(cfg, monkeypatch):
+    from auto_short.ingest import probe
+    make_episode(cfg)
+    monkeypatch.setattr(probe, "probe", lambda path: pytest.fail("exact ingest needs no equivalence check"))
+    restore_source(EID, cfg, downloader=downloader(), now=STAMP)
+    assert json.loads((Path(cfg.workspace.dir) / EID / "restored.json").read_text()) == {"restored_at": STAMP}
+
+
+def test_src3_real_ffmpeg_extracts_manifest_segments(cfg, tmp_path, monkeypatch):
+    import wave
+    from auto_short.theme_render import audio
+    folder = make_episode(cfg)
+    source = make_source(tmp_path / "replacement.mp4", size="320x240")
+    (folder / "metadata.json").write_text(json.dumps({"duration": 8}))
+    out = Path(cfg.render.output_dir) / EID
+    doc = json.loads((out / "render_manifest.json").read_text())
+    for short in doc["shorts"]:
+        short.update(sha256=sha256_file(out / short["file"]), segments=[[0.2, 1], [2, 3]])
+    (out / "render_manifest.json").write_text(json.dumps(doc))
+    seen = []
+
+    def compare(new, reference, tmp, runner):
+        with wave.open(str(new), "rb") as stream:
+            assert abs(stream.getnframes() / stream.getframerate() - 1.8) < .01
+        seen.append(reference.name)
+        return {"lag": 0}
+
+    monkeypatch.setattr(audio, "compare", compare)
+    restore_source(EID, cfg, downloader=downloader(source.read_bytes()))
+    assert seen == ["k01.mp4", "k02.mp4"]

@@ -168,3 +168,12 @@ def test_post_config():
 def test_post_config_invalid(data):
     with pytest.raises(ConfigError):
         config_mod.from_dict(data)
+
+
+def test_source_redownload_config():
+    assert not config_mod.Config().store.redownload
+    assert config_mod.from_dict({"store": {"enabled": True, "redownload": True}}).store.redownload
+    with pytest.raises(ConfigError, match=r"redownload.*enabled"):
+        config_mod.from_dict({"store": {"redownload": True}})
+    with pytest.raises(ConfigError, match="redownload"):
+        config_mod.from_dict({"store": {"enabled": True, "redownload": "true"}})

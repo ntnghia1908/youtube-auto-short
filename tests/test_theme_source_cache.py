@@ -303,3 +303,47 @@ def test_workspace_skip_requires_ingest_sha(cfg, fake_probe, monkeypatch):
     assert sc.workspace_source(cfg, 'lecture') is None
     monkeypatch.setattr(sc.shutil, 'which', lambda _: '/bin/node')
     assert sc.run(cfg, downloader=download, sleep=no_call, log=lambda _: None)['downloaded'] == 1
+
+
+def test_shared_download_validates_private_file_without_publishing(cfg, fake_probe, tmp_path):
+    ingest(cfg, 'lecture')
+    dest = tmp_path / 'private'
+    dest.mkdir()
+    path, meta = sc.download_verified(cfg, 'lecture', dest, download, clock=lambda: 0)
+    assert path.read_bytes() == b'downloaded source' and meta['differs_from_ingest']
+    assert not sc.cache_dir(cfg).exists() and not (dest / 'meta.json').exists()
+
+
+def test_fetch_http403_remains_normal_error(cfg, fake_probe):
+    ingest(cfg, 'lecture')
+    def blocked(uri, dest, config):
+        raise DownloadError('HTTP Error 403: Forbidden')
+    with pytest.raises(RenderError, match='403'):
+        sc.fetch_to_cache(cfg, 'lecture', blocked)
+    assert_no_temporary(cfg)
+
+
+@pytest.mark.parametrize('damage', [None, 'uri', 'uri_type', 'sha', 'duration', 'differs', 'bytes'])
+def test_playlist_reference_validates_cache_after_workspace_removal(cfg, fake_probe, damage):
+    import shutil
+
+    vid = 'aaaaaaaaaaa'
+    folder, source = ingest(cfg, vid)
+    source['uri'] = f'https://youtu.be/{vid}?si=old'
+    atomic_write_json(folder / 'manifest.json', dict(source=source))
+    path = sc.fetch_to_cache(cfg, vid, download)
+    shutil.rmtree(folder)
+    meta_path = path.with_name('meta.json')
+    meta = json.loads(meta_path.read_text())
+    if damage == 'bytes':
+        path.write_bytes(b'bad')
+    elif damage:
+        key, value = {'uri': ('uri', 'https://youtu.be/bbbbbbbbbbb'), 'uri_type': ('uri', {}),
+                      'sha': ('sha256', '0' * 64), 'duration': ('duration', 400),
+                      'differs': ('differs_from_ingest', False)}[damage]
+        meta[key] = value
+        atomic_write_json(meta_path, meta)
+    assert sc.cached_source(cfg, vid) is None  # Default TC3 policy still requires ingest provenance.
+    result = sc.cached_source(cfg, vid, reference=dict(duration=300))
+    assert result == (path if damage is None else None)
+    assert not folder.exists()

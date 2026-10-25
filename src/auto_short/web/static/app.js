@@ -929,8 +929,7 @@ const AutoShort = (() => {
     an.hidden = !archived;
     if (archived) {
       an.textContent = `${d.archived.auto ? "Đã tự dọn video nguồn" : "Đã dọn video nguồn"}${d.archived.freed ? ` (giải phóng ${fmtBytes(d.archived.freed)})` : ""}` +
-        `${d.archived.at ? `, ${fmtTime(d.archived.at)}` : ""}: chỉ xem / tải / đánh dấu đã đăng / xóa ${noun()}. ` +
-        `Bấm “Khôi phục nguồn” để sửa tiêu đề, khôi phục ${noun()} hay render lại.`;
+        `${d.archived.at ? `, ${fmtTime(d.archived.at)}` : ""}: sửa tiêu đề, cắt lại hoặc thêm / khôi phục ${noun()} sẽ tự lấy lại nguồn từ 3090 trước YouTube.`;
     }
     const restoreJob = d.restore_job;
     const restoring = jobActive(restoreJob);
@@ -938,12 +937,12 @@ const AutoShort = (() => {
     const restoreBtn = $("#restore-source");
     restoreBtn.hidden = !archived;
     restoreBtn.disabled = restoring || jobActive(job) || verticalBusy(d.hd_video);
-    restoreBtn.textContent = restoring ? "Đang khôi phục nguồn…" : "Khôi phục nguồn";
+    restoreBtn.textContent = restoring ? "Đang lấy lại nguồn từ 3090…" : "Khôi phục nguồn";
     const restoreStatus = $("#restore-source-status");
     restoreStatus.className = "small" + (restoreJob && restoreJob.status === "failed" ? " error" : "");
     restoreStatus.textContent = restoring
       ? (restoreJob.yt_wait ? "Đợi YouTube hết chặn tải để khôi phục nguồn." :
-        restoreJob.status === "queued" || restoreJob.waiting ? "Đang chờ khôi phục nguồn." : "Đang khôi phục video nguồn…")
+        restoreJob.stage === "render" || restoreJob.stage === "titling" ? "Đã lấy lại nguồn, đang sửa và dựng lại…" : "Đang lấy lại nguồn từ 3090…")
       : restoreJob && restoreJob.status === "failed" ? `Khôi phục nguồn lỗi: ${restoreJob.error}`
       : restoreJob && restoreJob.status === "interrupted" ? "Khôi phục nguồn bị ngắt; bấm lại để thử tiếp."
       : restoreJob && restoreJob.status === "done" && !archived ? "Đã khôi phục nguồn; có thể sửa và render lại." : "";
@@ -1031,9 +1030,9 @@ const AutoShort = (() => {
     zipAll.onclick = () => zipAfterClick(refreshEpisode);
     if (d.zip_all_url) { zipAll.href = d.zip_all_url; zipAll.setAttribute("download", d.zip_all_name || ""); }
     $("#header-lines").textContent = d.header ? "Header: " + d.header.join(" / ") : "";
-    // CP9 C7: "Thêm Short" once the episode has a render and titles (not on an archived episode)
+    // SRC3: archived episodes restore their source automatically when edited.
     const addBtn = $("#add-short");
-    addBtn.hidden = !d.shorts.length || !!d.titles_error || archived;
+    addBtn.hidden = !d.shorts.length || !!d.titles_error;
     addBtn.textContent = d.kind === "khaithi" ? "+ Thêm video khai thị" : "+ Thêm Short";
     const notes = [];
     if (d.shorts.length && d.render_status !== "done") {
@@ -1118,9 +1117,9 @@ const AutoShort = (() => {
         s.download_url ? downloadLink(s) : null,
         video ? loopButton(s.clip_id, video) : null,
         lastData && lastData.favorites && s.status === "rendered" ? heartButton(s) : null,
-        s.editable && !(archived && s.deleted) ? deleteButton(s) : null),
-      s.editable && !s.deleted && !archived ? titleEditor(s) : el("div", { class: "title-edit", hidden: true }),
-      s.editable && !s.deleted && !archived && uiFlags.advanced ? cutEditor(s) : null);
+        s.editable ? deleteButton(s) : null),
+      s.editable && !s.deleted ? titleEditor(s) : el("div", { class: "title-edit", hidden: true }),
+      s.editable && !s.deleted && uiFlags.advanced ? cutEditor(s) : null);
     card.append(body);
     return card;
   }
@@ -1329,8 +1328,7 @@ const AutoShort = (() => {
     btn.addEventListener("click", async () => {
       const title = (s.title && s.title.text) || s.clip_id;
       if (!restore && !confirm(`Xóa ${noun()} ${s.clip_id} "${title}"?\n\nFile video bị xóa ngay để tiết kiệm bộ nhớ; ` +
-        (archived ? "tập đã dọn video nguồn nên KHÔNG khôi phục được." :
-          "có thể khôi phục sau (dựng lại khoảng 16–40 giây, giữ tiêu đề).") +
+        "có thể khôi phục sau (tự lấy lại nguồn nếu đã dọn, giữ tiêu đề)." +
         (s.favorite ? `\n\n${noun() === "Short" ? "Short" : "Khai thị"} này đang được yêu thích: xóa sẽ bỏ luôn tim (không giữ lại bản nào).` : ""))) return;
       btn.disabled = true;
       try {
@@ -1413,10 +1411,10 @@ const AutoShort = (() => {
       save.disabled = true;
       if (reset) reset.disabled = true;
       try {
-        await api(`/api/episodes/${encodeURIComponent(episodeId)}/shorts/${encodeURIComponent(s.clip_id)}/title`, {
+        const result = await api(`/api/episodes/${encodeURIComponent(episodeId)}/shorts/${encodeURIComponent(s.clip_id)}/title`, {
           method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
         });
-        msg.textContent = "Đã lưu, đang render lại…";
+        msg.textContent = result.queued === "restore" ? "Đang lấy lại nguồn từ 3090…" : "Đã lưu, đang render lại…";
         msg.className = "preview-msg small";
         refreshEpisode();
       } catch (e) {
@@ -1583,11 +1581,11 @@ const AutoShort = (() => {
       st.save.disabled = true;
       if (st.reset) st.reset.disabled = true;
       try {
-        await api(`/api/episodes/${encodeURIComponent(episodeId)}/shorts/${encodeURIComponent(s.clip_id)}/cut`, {
+        const result = await api(`/api/episodes/${encodeURIComponent(episodeId)}/shorts/${encodeURIComponent(s.clip_id)}/cut`, {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify(reset ? { reset: true } : body()),
         });
-        st.info.replaceChildren(el("div", { text: "Đã lưu, đang render lại…" }));
+        st.info.replaceChildren(el("div", { text: result.queued === "restore" ? "Đang lấy lại nguồn từ 3090…" : "Đã lưu, đang render lại…" }));
         refreshEpisode();
       } catch (e) {
         st.info.replaceChildren(el("div", { class: "error", text: e.message }));
@@ -2594,7 +2592,7 @@ const AutoShort = (() => {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
       });
       closeAdd();
-      setJobStatus(`Đã thêm ${r.clip_id}: AI đang đặt tiêu đề, rồi dựng ${noun()}…`, "busy");
+      setJobStatus(r.queued === "restore" ? "Đang lấy lại nguồn từ 3090…" : `Đã thêm ${r.clip_id}: AI đang đặt tiêu đề, rồi dựng ${noun()}…`, "busy");
       refreshEpisode();
     } catch (e) {
       err.textContent = e.message;
@@ -2720,6 +2718,24 @@ const AutoShort = (() => {
       if (d.source_backup) {
         const b = d.source_backup;
         backup.textContent = `đã sao lưu lên 3090: ${b.backed_up} / ${b.total} video gốc · còn chờ ${b.pending}`;
+      }
+    }
+    const redownload = $("#source-redownload");
+    if (redownload) {
+      const r = d.redownload;
+      redownload.hidden = !r;
+      if (r) {
+        let detail = "";
+        if (r.status === "downloading") detail = `, đang tải ${r.video_id}`;
+        else if (r.status === "blocked" && r.retry_at) {
+          const until = new Date(r.retry_at * 1000).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
+          detail = `, đang chờ YouTube đến ${until}`;
+        } else if (r.status === "blocked") detail = ", đang chờ YouTube";
+        else if (r.status === "paused") detail = `, tạm dừng: ${r.reason || "chờ lượt tiếp"}`;
+        else if (r.status === "waiting") detail = ", chờ lượt tiếp";
+        const archived = r.groups?.archived || { done: 0, total: 0 };
+        const unprocessed = r.groups?.unprocessed || { done: 0, total: 0 };
+        redownload.textContent = `Tải lại nguồn: đã dọn: ${archived.done} / ${archived.total}; chưa xử lý: ${unprocessed.done} / ${unprocessed.total}${detail}`;
       }
     }
     $("#storage-meta").textContent = `Các tập: ${fmtBytes(t.episodes)} (video nguồn ${fmtBytes(t.source)}, Short ${fmtBytes(t.shorts)}, khác ${fmtBytes(t.other)}` +

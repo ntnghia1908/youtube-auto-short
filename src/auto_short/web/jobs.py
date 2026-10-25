@@ -48,6 +48,7 @@ from ..post import stage as post_stage
 from ..render import RenderError, run_render
 from ..render.stage import StoreWait
 from ..render import full as full_mod
+from ..store import index_cache
 from ..workspace import atomic_write_json, utc_now
 from . import prepared
 from .priority import Priority
@@ -468,6 +469,12 @@ class JobRunner:
 
     # --- lifecycle -----------------------------------------------------------------------------
 
+    def _store_index_refreshed(self) -> None:
+        """SRC4 A1: reconsider store-backed prepare jobs without changing YouTube's retry deadline."""
+        with self._lock:
+            if not self._stopping:
+                self._lock.notify_all()
+
     def start(self) -> None:
         if self._threads:
             return
@@ -475,6 +482,7 @@ class JobRunner:
             log.setLevel(logging.INFO)
         log.addHandler(self._handler)
         self._stopping = False
+        index_cache.add_listener(self._store_index_refreshed)
         if self._cpu_meter is not None:
             threading.Thread(target=self._sample_cpu, name="auto-short-cpu", daemon=True).start()
         for slot in self._slot_lane:
@@ -515,6 +523,7 @@ class JobRunner:
         deadline = time.monotonic() + timeout
         _become_subreaper()
         self._stopping = True
+        index_cache.remove_listener(self._store_index_refreshed)
         with self._lock:
             self._lock.notify_all()
             running = [(slot, job) for slot, job in self._current.items() if job is not None]

@@ -17,13 +17,14 @@ from ...post import (
     source as post_source, stage as post_stage, store as post_store,
 )
 from ...review import (
-    ArchivedError, ReviewError, TitlePreview, is_archived, list_titles, preview_title,
+    ReviewError, TitlePreview, is_archived, list_titles, preview_title,
     reject_archived_clip, reject_clip, reset_title, restore_clip, set_alternative, set_title,
     shorts as review_shorts,
 )
 from ...review.names import hashtags as review_hashtags
+from ...review.archive import restore_parts
 from .. import episodes as ep
-from ..context import WebContext
+from ..context import WebContext, KIND_RESTORE_SOURCE
 from ..jobs import KIND_ADD, KIND_PIPELINE, KIND_POST, KIND_RENDER, add_short_target, post_compose_target, render_target
 from .models import PublishedIn
 
@@ -97,8 +98,119 @@ def _preview_dict(p: TitlePreview | None) -> dict | None:
             "font_size": p.font_size, "panel_height": p.panel_height, "chars": len(p.title)}
 
 
+def validate_restore_edit(config, edit: dict) -> None:
+    """Read-only validation before reserving a restore; mutations revalidate after restoration."""
+    eid, clip, action, payload = (edit[k] for k in ("episode_id", "clip_id", "action", "payload"))
+    if action in ("title", "restore"):
+        titles = list_titles(eid, config)
+        entry = next((c for c in titles["clips"] if c["clip_id"] == clip), None)
+        if entry is None:
+            raise ReviewError("không có Short này")
+        if action == "title":
+            body = TitleIn(**payload)
+            if (body.set is not None) + (body.alternative is not None) + bool(body.reset) != 1:
+                raise ReviewError("cần đúng một trong: set, alternative, reset")
+            if body.set is not None:
+                preview_title(eid, config, clip, body.set)
+            elif body.alternative is not None:
+                alt = next((a for a in entry["alternatives"] if a["n"] == body.alternative), None)
+                if alt is None:
+                    raise ReviewError("không có phương án tiêu đề này")
+                preview_title(eid, config, clip, alt["title"])
+        return
+    if action == "cut":
+        body = CutIn(**payload)
+        has_range = body.start_segment is not None and body.end_segment is not None
+        if body.reset == has_range or (not has_range and (body.start_segment or body.end_segment)):
+            raise ReviewError("cần start_segment + end_segment, hoặc reset: true")
+        if body.reset:
+            context = review_shorts._context(eid, config)
+            review_shorts._clip_key(context, clip)
+            start, end = context.original(clip)
+            result = review_shorts.C.evaluate(context.rng, review_shorts.C.ms(start), review_shorts.C.ms(end))
+            error = result.error
+        else:
+            error = review_shorts.preview_cut(eid, config, clip_id=clip,
+                **body.model_dump(exclude={"reset"}))["error"]
+    elif action == "add":
+        body = AddIn(**payload)
+        if (body.candidate_id is None) == (body.start_segment is None or body.end_segment is None):
+            raise ReviewError("cần candidate_id hoặc start_segment + end_segment")
+        if body.candidate_id is not None:
+            proposal = next((p for p in review_shorts.list_proposals(eid, config)["proposals"]
+                             if p["candidate_id"] == body.candidate_id), None)
+            if proposal is None:
+                raise ReviewError("không có đề xuất AI này")
+            error = proposal["error"]
+        else:
+            error = review_shorts.preview_cut(eid, config, clip_id=None,
+                **body.model_dump(exclude={"candidate_id"}))["error"]
+    else:
+        raise ReviewError("thao tác sau khôi phục không hợp lệ")
+    if error:
+        raise ReviewError(f"đoạn không hợp lệ: {error}")
+
+
+def apply_restore_edit(ctx: WebContext, edit: dict):
+    """Use the same review functions and job targets as the normal editing routes."""
+    eid, clip, action, payload = (edit[k] for k in ("episode_id", "clip_id", "action", "payload"))
+    if action == "title":
+        body = TitleIn(**payload)
+        if body.set is not None:
+            set_title(eid, ctx.config, clip, body.set)
+        elif body.alternative is not None:
+            set_alternative(eid, ctx.config, clip, body.alternative)
+        else:
+            reset_title(eid, ctx.config, clip)
+    elif action == "restore":
+        restore_clip(eid, ctx.config, clip)
+    elif action == "cut":
+        body = CutIn(**payload)
+        if body.reset:
+            review_shorts.reset_cut(eid, ctx.config, clip)
+        else:
+            review_shorts.set_cut(eid, ctx.config, clip, **body.model_dump(exclude={"reset"}))
+    elif action == "add":
+        added = review_shorts.add_short(eid, ctx.config, **AddIn(**payload).model_dump())
+        return added.clip_id, add_short_target(ctx.config, added.clip_id, render=ctx.render,
+                                               preflight=ctx.preflight, titler=ctx.titler)
+    else:
+        raise ReviewError("thao tác sau khôi phục không hợp lệ")
+    return clip, render_target(ctx.config, render=ctx.render)
+
+
 def build(ctx: WebContext) -> APIRouter:
     router = APIRouter()
+
+    def _defer_edit(eid, action, clip=None, body=None):
+        """Caller holds submit_lock: share one restore reservation across both episode parts."""
+        current = ctx.restore_job(eid)
+        restoring = current is not None and current.active
+        if not restoring and not is_archived(Path(ctx.config.workspace.dir) / eid):
+            return None
+        owner = ep.hd_owner(eid)
+        busy = next((j for j in ctx.runner.jobs() if j.active and ep.hd_owner(j.episode_id) == owner
+                     and j is not current), None)
+        if busy is not None or (restoring and not current.target.accepting_edits):
+            return JSONResponse({"detail": "video đang có job chạy/đợi; thử lại sau khi xong",
+                                 "job": ctx.job_view(busy or current)}, status_code=409)
+        edit = {"episode_id": eid, "action": action, "clip_id": clip,
+                "payload": body.model_dump() if body is not None else {}}
+        try:
+            validate_restore_edit(ctx.config, edit)
+            if not restoring:
+                restore_parts(eid, ctx.config)
+        except (ReviewError, OSError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=422)
+        if restoring:
+            # Persist the appended request using the runner's existing queue serialization lock.
+            with ctx.runner._lock:
+                current.target.edits.append(edit)
+                ctx.runner._save_locked()
+            job = current
+        else:
+            job, _ = ctx.runner.submit(owner, KIND_RESTORE_SOURCE, ctx.restore_target(eid, edits=[edit]))
+        return JSONResponse({"queued": "restore", "job": ctx.job_view(job)}, status_code=202)
 
     @router.post("/api/episodes/{episode_id}/shorts/{clip_id}/title/preview")
     def api_title_preview(episode_id: str, clip_id: str, body: PreviewIn):
@@ -117,6 +229,8 @@ def build(ctx: WebContext) -> APIRouter:
         if actions != 1:
             return JSONResponse({"detail": "cần đúng một trong: set, alternative, reset"}, status_code=422)
         with ctx.submit_lock:
+            if (deferred := _defer_edit(episode_id, "title", clip_id, body)) is not None:
+                return deferred
             current = ctx.runner.latest(episode_id)
             if current is not None and current.active:
                 return JSONResponse({"detail": "episode đang có job chạy/đợi; sửa title sau khi job xong",
@@ -128,8 +242,6 @@ def build(ctx: WebContext) -> APIRouter:
                     preview = set_alternative(episode_id, ctx.config, clip_id, body.alternative)
                 else:
                     preview = reset_title(episode_id, ctx.config, clip_id)
-            except ArchivedError as exc:  # CP8.6 S3
-                return JSONResponse({"detail": str(exc)}, status_code=409)
             except ReviewError as exc:
                 return JSONResponse({"detail": str(exc)}, status_code=422)
             job, _ = ctx.runner.submit(episode_id, KIND_RENDER, render_target(ctx.config, render=ctx.render),
@@ -144,6 +256,8 @@ def build(ctx: WebContext) -> APIRouter:
         if (bad := ctx.check_clip(episode_id, clip_id, error_response=JSONResponse)) is not None:
             return bad
         with ctx.submit_lock:
+            if action is restore_clip and (deferred := _defer_edit(episode_id, "restore", clip_id)) is not None:
+                return deferred
             current = ctx.runner.latest(episode_id)
             if current is not None and current.active:
                 return JSONResponse({"detail": "episode đang có job chạy/đợi; thử lại sau khi job xong",
@@ -157,8 +271,6 @@ def build(ctx: WebContext) -> APIRouter:
                     log.info("web: %s %s [%s] (archived, no render)", what, clip_id, episode_id)
                     return JSONResponse({"changed": changed, "job": None})
                 changed = action(episode_id, ctx.config, clip_id)
-            except ArchivedError as exc:
-                return JSONResponse({"detail": str(exc)}, status_code=409)
             except ReviewError as exc:
                 return JSONResponse({"detail": str(exc)}, status_code=422)
             job, _ = ctx.runner.submit(episode_id, KIND_RENDER, render_target(ctx.config, render=ctx.render),
@@ -202,6 +314,8 @@ def build(ctx: WebContext) -> APIRouter:
         if body.reset == has_range or (not has_range and (body.start_segment or body.end_segment)):
             return JSONResponse({"detail": "cần start_segment + end_segment, hoặc reset: true"}, status_code=422)
         with ctx.submit_lock:
+            if (deferred := _defer_edit(episode_id, "cut", clip_id, body)) is not None:
+                return deferred
             if (busy := ctx.busy(episode_id, error_response=JSONResponse)) is not None:
                 return busy
             try:
@@ -211,8 +325,6 @@ def build(ctx: WebContext) -> APIRouter:
                     preview = review_shorts.set_cut(episode_id, ctx.config, clip_id, start_segment=body.start_segment,
                                                     end_segment=body.end_segment, start_nudge=body.start_nudge,
                                                     end_nudge=body.end_nudge)
-            except ArchivedError as exc:
-                return JSONResponse({"detail": str(exc)}, status_code=409)
             except ReviewError as exc:
                 return JSONResponse({"detail": str(exc)}, status_code=422)
             job, _ = ctx.runner.submit(episode_id, KIND_RENDER, render_target(ctx.config, render=ctx.render),
@@ -227,24 +339,25 @@ def build(ctx: WebContext) -> APIRouter:
         503 Ollama preflight (W4); 422 invalid range or proposal (nothing written)."""
         if (bad := ctx.episode_or_404(episode_id, error_response=JSONResponse)) is not None:
             return bad
-        if (busy := ctx.busy(episode_id, error_response=JSONResponse)) is not None:
-            return busy
-        if is_archived(Path(ctx.config.workspace.dir) / episode_id):
-            return JSONResponse({"detail": str(ArchivedError(episode_id))}, status_code=409)
+        with ctx.submit_lock:
+            if (deferred := _defer_edit(episode_id, "add", body=body)) is not None:
+                return deferred
+            if (busy := ctx.busy(episode_id, error_response=JSONResponse)) is not None:
+                return busy
         if ctx.preflight is not None:
             try:
                 ctx.preflight(ctx.config)
             except PreflightError as exc:
                 return JSONResponse({"detail": f"ollama preflight: {exc}"}, status_code=503)
         with ctx.submit_lock:
+            if (deferred := _defer_edit(episode_id, "add", body=body)) is not None:
+                return deferred
             if (busy := ctx.busy(episode_id, error_response=JSONResponse)) is not None:
                 return busy
             try:
                 added = review_shorts.add_short(episode_id, ctx.config, candidate_id=body.candidate_id,
                                                 start_segment=body.start_segment, end_segment=body.end_segment,
                                                 start_nudge=body.start_nudge, end_nudge=body.end_nudge)
-            except ArchivedError as exc:
-                return JSONResponse({"detail": str(exc)}, status_code=409)
             except ReviewError as exc:
                 return JSONResponse({"detail": str(exc)}, status_code=422)
             job, _ = ctx.runner.submit(episode_id, KIND_ADD,

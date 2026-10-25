@@ -2,7 +2,7 @@
 
 | Metadata | Value |
 |---|---|
-| Status | ACCEPTED — HUMAN LEAD 2026-10-25 "Duyệt tất cả theo đề xuất" (G1–G8) |
+| Status | ACCEPTED — HUMAN LEAD 2026-10-25 "Duyệt tất cả theo đề xuất" (G1–G8); G8a HUMAN LEAD 2026-10-25 "Tải luôn video chưa xử lý" |
 | Authority | HUMAN LEAD 2026-10-25: "vấn đề giữ nguồn khá quan trọng với ghép video. Đặc biệt là cơ chế tự dọn nguồn hiện tại cần cơ chế backup"; chọn "Tất cả video" và "Đẩy dần, E: đủ chỗ" |
 | Change class | S2 (sửa `HD2-external-store-3090.md` G1 `kind`, G7; sửa W9 S5 / FIX-keep-khaithi-source: tự dọn chỉ sau khi có bản sao; luồng dữ liệu VM → 3090 mới) |
 | Integration | Push / PR / merge vẫn cần HUMAN LEAD duyệt riêng |
@@ -24,6 +24,7 @@
 - **G6 Hiển thị**: tab Bộ nhớ thêm "đã sao lưu lên 3090: N / M video gốc" và hàng đợi sao lưu còn lại.
 - **G7 Dependency / security**: không thêm dependency; dùng lại token / kênh RemoteForward 18090 của HD2; giới hạn `MAX_BODY` 20 GiB vẫn đủ (gốc lớn nhất hiện ≈ 0,7 GB).
 - **G8 Tải lại toàn bộ bản đã xóa (HUMAN LEAD 2026-10-25: "Sau khi có chỗ lưu video nguồn. Tải hết toàn bộ video nguồn về backup để khi xử lý không còn phụ thuộc youtube chặn")**: mọi tập `archived` chưa có bản ở kho 3090 / `_theme_sources` được web tải lại chậm từ YouTube (một video mỗi lượt, nghỉ ngẫu nhiên 10–20 phút, backoff khi bị chặn, chỉ khi làn prepare rảnh và YouTube không đang backoff), kiểm thời lượng như `fetch_to_cache`, **đẩy thẳng lên 3090** (G2), rồi xóa bản tạm trên VM — trừ video ♥ thì giữ thêm trong `_theme_sources` cho ghép chủ đề. Thứ tự: ♥ → còn lại theo bộ kinh. Bản tải lại có thể khác byte bản ingest: kho ghi sha thật, VM ghi `differs_from_ingest` (như TC3.1); "Khôi phục nguồn" từ bản đó xử lý như khôi phục từ YouTube hiện nay. Kiểm kê 2026-10-25: 130 tập đã xóa, 14 đã có trong cache → **116 cần tải lại, 63,4 GB**, ≈ 1,5 ngày nếu không bị chặn; tổng kho sau cùng ≈ 132 GB (G4 + G4a + G8). Bắt đầu sau khi G2–G4 chạy (có chỗ lưu).
+- **G8a Tải luôn video chưa xử lý (HUMAN LEAD 2026-10-25: "Tải luôn video chưa xử lý")**: video trong `work/_playlists/*.json` chưa có workspace (kiểm kê 2026-10-25: **488 video, ≈ 480 giờ** — Vô Lượng Thọ 344, Cảm Ứng Thiên 98, Thập Thiện 46, Địa Tạng 0; ước ≈ 270 GB theo tỉ lệ 0,55 GB / video của G8) được tải theo cùng vòng G8, **xếp sau** mọi tập `archived`; kiểm thời lượng với `duration` của playlist entry (không có manifest / ingest sha); đẩy lên 3090 (G2, tên theo playlist entry), xóa bản tạm trên VM. Tổng kho sau cùng ≈ 400 GB (E: còn trống > 1 TB, HUMAN LEAD 2026-10-25), ≈ 5–7 ngày tải nếu không bị chặn. Ingest / prepare lấy bản từ 3090 trước YouTube là việc tiếp theo (contract riêng, SRC4); tới lúc đó bản trên kho là bản dự phòng.
 
 ## 3. Ngoài scope
 
