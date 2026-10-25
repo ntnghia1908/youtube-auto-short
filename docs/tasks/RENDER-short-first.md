@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: CHANGE
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -72,11 +72,11 @@ Không chạm database / security model / public API; manual test là điểm da
 
 ## Result
 
-- Main changes:
-- Tests:
-- Diff + / − (app, test):
-- Helper mới (đã tìm, lý do không tái dùng):
-- Review:
-- Important findings / decisions:
-- Known limitations:
+- Main changes: `_render_pick_locked` thêm quy tắc giữ chỗ: job được chọn là `vertical`, `render_workers > 1`, làn `ai` còn job chờ / chạy và đã có ≥ `render_workers − 1` bản dọc chạy → không start (slot chờ; `_after` của làn ai đã `notify_all` nên slot thức khi ai xong).
+- Tests: `tests/test_render_short_first.py` (mới): AC1 `test_non_vertical_precedes_marked_vertical`; AC2 `test_vertical_reserves_last_slot_while_ai_busy`, `test_reservation_counts_vertical_jobs_only`, `test_ai_completion_notifies_reserved_render_slot`; AC3 `test_vertical_uses_all_slots_when_ai_idle`; AC4 `test_p2_and_fifo_within_short_group`; AC5 test hiện có `test_web_render_slots_cp836.py`, `test_render_parallel.py`, `test_web_vertical_cp832.py`, `test_web_queue_cp822.py`. ORCHESTRATOR chạy ngoài sandbox: targeted 83 passed; full suite 2721 passed, 1 skipped, 19 error `test_publish_thumbs` (lỗi có sẵn trên main, FIX-publish-thumbs-shapes sửa), 1 fail chập chờn đã biết `test_lower_thread_priority…` (chạy lại riêng PASS).
+- Diff + / − (app, test): app +5 / −0; test +108 / −0.
+- Helper mới (đã tìm, lý do không tái dùng): không có trong app; `_job` cục bộ trong test (không có factory `Job` dùng chung).
+- Review: ORCHESTRATOR đọc diff + test, ACCEPTED vòng 1. IMPLEMENTER Codex (`gpt-6.1-sol`, effort high), 1 vòng, ≈ 80 k token; sandbox Codex timeout ở test TestClient (đã biết) → ORCHESTRATOR chạy.
+- Important findings / decisions: scope 1–2 (không phải `vertical` trước) **đã có sẵn** từ `_rank` (CP8.32: `vertical` xếp sau mọi job khác); Short tập 21 chờ 6 phút vì cả 2 slot đã bị bản dọc chiếm *trước khi* Short tới — giữ chỗ là phần thực sự mới; AC1 / AC4 thành test khóa hành vi.
+- Known limitations: slot giữ chỗ vẫn chịu CPU gate (`render_max_cpu`) khi là slot phụ — nếu bản dọc đẩy CPU vượt ngưỡng, Short vẫn chờ CPU (ngoài scope). Làn ai "down" (GPU tắt) mà còn job chờ thì slot giữ chỗ để trống tới khi ai trống.
 - PR:
