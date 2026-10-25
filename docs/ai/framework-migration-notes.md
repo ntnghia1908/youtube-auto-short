@@ -18,4 +18,4 @@ Dưới `governance.taskAuthorization=boundary`, kit từ chối mọi task có 
 
 ## Concurrency
 
-`maxParallelImplementers=3` chỉ là trần cấu hình. Số writer thực tế là 1 cho tới khi có pilot worktree-isolation được duyệt riêng.
+Song song tối đa `maxParallelImplementers` (3) theo điều kiện ở `docs/ai/workflow.md` §5 "Bounded parallel IMPLEMENTER". Pilot 2026-10-24: 3 IMPLEMENTER song song, worktree riêng, đã chạy êm, không xung đột.
