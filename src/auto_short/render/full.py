@@ -107,7 +107,12 @@ def current(config: Config, episode_id: str) -> bool:
     meta = read_meta(config, episode_id)
     if path is None or meta is None:
         return False
-    src = enhance_state.effective_source(config, owner_of(config, episode_id))
+    owner = owner_of(config, episode_id)
+    src = enhance_state.effective_source(config, owner)
+    if src is None and config.store.enabled and enhance_state.is_released(Path(config.workspace.dir) / owner):
+        from ..store.borrow import released_hd_sha  # HD2a: a released HD lives on the store; its sha256 was recorded
+        sha = released_hd_sha(config, owner, Path(config.workspace.dir) / owner)
+        return sha is not None and meta.get("hd_sha256") == sha
     return src is not None and meta.get("hd_sha256") == src.sha256
 
 
@@ -329,6 +334,10 @@ def _run_vertical(episode_id: str, config: Config, *, run, force: bool, note: st
     except WorkspaceError as exc:
         raise RenderError(str(exc)) from exc
     if enhance_state.is_released(ws.dir):
+        if config.store.enabled:  # HD2a G4: lend the HD from the 3090 store for this job, delete it afterwards
+            from ..store.borrow import borrow_hd  # lazy: store.borrow imports render.stage
+            with borrow_hd(config, owner, ws.dir):
+                return _run_vertical(owner, config, run=run, force=force, note=note)
         raise RenderError(f"{owner!r}: {enhance_state.RELEASED_MESSAGE}; không dựng bản dọc từ bản gốc")
     hd = enhance_state.effective_source(config, owner)
     if hd is None or hd.path is None:

@@ -212,16 +212,18 @@ def build(ctx: WebContext) -> APIRouter:
         src = ep.hd_source(ctx.config, episode_id)
         owner = ep.hd_owner(episode_id)
         backup = review_backup.view(ctx.config, owner)  # HD1 G3
-        if src is None:
+        on_store = src is None and backup["released"] and ctx.config.store.enabled  # HD2a: the HD is on the 3090
+        if src is None and not on_store:
             if backup["released"]:  # HD moved to an external machine: no HD / vertical link, only the fact
                 return {"url": None, "name": None, "size": None, "source": "released", "vertical": None, **backup}
             return None
-        hd = src.path
+        hd = src.path if src is not None else None
         ready = render_full.ready_file(ctx.config, owner) if render_full.current(ctx.config, owner) else None
         job = ctx.runner.latest_vertical(owner)
         return {"url": f"/api/episodes/{episode_id}/source-hd" if hd is not None else None,
                 "name": ep.hd_download_name(ctx.config, episode_id) if hd is not None else None,
-                "size": _size_or_none(hd), "source": src.kind,
+                "size": _size_or_none(hd), "source": src.kind if src is not None else "released",
+                **({"store": True} if on_store else {}),
                 "vertical": {"ready": ready is not None, "url": f"/api/episodes/{episode_id}/vertical",
                              "name": ep.video_download_name(ctx.config, episode_id, "Doc"),
                              "size": ready.stat().st_size if ready is not None else None,
@@ -445,6 +447,9 @@ def build(ctx: WebContext) -> APIRouter:
         if not ep.valid_episode_id(episode_id):
             return None, JSONResponse({"detail": "không có episode này"}, status_code=404)
         src = ep.hd_source(ctx.config, episode_id)
+        if src is None and archived_ok and ctx.config.store.enabled \
+                and review_backup.view(ctx.config, ep.hd_owner(episode_id))["released"]:
+            return None, None  # HD2a: released, the vertical job borrows the HD from the 3090 store
         if src is None or (src.path is None and not archived_ok):
             return None, JSONResponse({"detail": "chưa có bản HD của video này"}, status_code=404)
         return src.path, None

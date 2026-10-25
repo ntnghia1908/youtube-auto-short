@@ -336,6 +336,17 @@ class PackagingConfig:
 
 
 @dataclass(frozen=True)
+class StoreConfig:
+    """HD2a: the external store on the 3090 (tools/store/, reached through the SSH RemoteForward). Off by default:
+    a released video then behaves as in HD1 (refused). The token comes from env ``AUTO_SHORT_STORE_TOKEN`` only."""
+
+    enabled: bool = False
+    url: str = "http://127.0.0.1:18090"
+    timeout_seconds: float = 30.0
+    retry_seconds: int = 300  # a job waiting for the store ("đợi 3090") is tried again this often
+
+
+@dataclass(frozen=True)
 class Config:
     workspace: WorkspaceConfig = field(default_factory=WorkspaceConfig)
     ingest: IngestConfig = field(default_factory=IngestConfig)
@@ -351,6 +362,7 @@ class Config:
     enhance: EnhanceConfig = field(default_factory=EnhanceConfig)
     compilation: CompilationConfig = field(default_factory=CompilationConfig)
     packaging: PackagingConfig = field(default_factory=PackagingConfig)
+    store: StoreConfig = field(default_factory=StoreConfig)
 
 
 def _section(data: dict, name: str) -> dict:
@@ -675,6 +687,17 @@ def _storage(data: dict) -> StorageConfig:
     )
 
 
+def _store(data: dict) -> StoreConfig:
+    st = _section(data, "store")
+    d, w = StoreConfig(), "store"
+    return StoreConfig(
+        enabled=_bool(st, "enabled", d.enabled, w),
+        url=_str(st, "url", d.url, w),
+        timeout_seconds=_number(st, "timeout_seconds", d.timeout_seconds, w, lo=1, hi=3600),
+        retry_seconds=_int(st, "retry_seconds", d.retry_seconds, w, lo=5, hi=86400),
+    )
+
+
 def _face(section: dict, default: str) -> str:
     value = section.get("face", default)
     if value not in ("none", "gfpgan_v1.4"):
@@ -803,6 +826,7 @@ def from_dict(data: dict) -> Config:
         storage=_storage(data),
         enhance=_enhance(data),
         compilation=_compilation(data),
+        store=_store(data),
         packaging=PackagingConfig(asset_dir=Path(_str(_section(data, "packaging"), "asset_dir",
             str(PackagingConfig().asset_dir), "packaging")).expanduser()),
     )
