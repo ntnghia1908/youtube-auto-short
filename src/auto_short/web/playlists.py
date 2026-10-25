@@ -535,7 +535,7 @@ def resume_kinds(st: dict) -> list[str]:
 def hd_progress(config: Config, video_id: str) -> dict | None:
     """CP13.2 H1: the HD (enhance) progress of a video for its entry, from ``enhance.json``; None when the video has
     none or does not want HD. ``state``: ``queued`` | ``running`` | ``assembling`` | ``done`` | ``failed``."""
-    doc = enh_state.read(Path(config.workspace.dir) / video_id)
+    doc = enh_state.read(Path(config.workspace.dir) / enh_state.owner_for(config, video_id))  # FIX-hd-owner-kt
     if doc is None or not doc.get("wanted"):
         return None
     lease = doc.get("lease") or {}
