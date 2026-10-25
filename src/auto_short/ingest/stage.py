@@ -11,6 +11,9 @@ from pathlib import Path
 
 from .. import hashing, khaithi
 from ..config import Config
+from ..store import index_cache
+from ..store.client import StoreClient, StoreError, StoreMismatch
+from ..titling.playlist import PLAYLISTS_DIR
 from ..workspace import (
     StageError,
     Workspace,
@@ -22,9 +25,10 @@ from ..workspace import (
     run_stage,
     validate_episode_id,
 )
+from ..youtube_url import canonical_url
 from . import probe as probe_mod
 from .source import LOCAL, YOUTUBE, SourceError, SourceSpec, classify, local_episode_id, youtube_video_id
-from .youtube import Downloader, YoutubeBlocked, youtube_info, ytdlp_download
+from .youtube import Download, Downloader, YoutubeBlocked, youtube_info, ytdlp_download
 
 log = logging.getLogger("auto_short")
 
@@ -208,10 +212,33 @@ def run_ingest(
     return IngestResult(ws.episode_id, ws.dir, ran)
 
 
+def _playlist_source_title(config: Config, video_id: str) -> str | None:
+    """Read the first nonblank title for this video from local playlist docs; never fetch metadata."""
+    try:
+        paths = sorted((Path(config.workspace.dir) / PLAYLISTS_DIR).glob("*.json"))
+    except OSError:
+        return None
+    for path in paths:
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(doc, dict) or not isinstance(doc.get("entries"), list):
+            continue
+        for entry in doc["entries"]:
+            if not isinstance(entry, dict) or entry.get("video_id") != video_id:
+                continue
+            title = entry.get("title")
+            if isinstance(title, str) and title.strip():
+                return title.strip()
+    return None
+
+
 def needs_download(target: str, config: Config, episode_id: str | None = None) -> bool:
     """FIX-youtube-botcheck-wait Y2: would :func:`run_ingest` of ``target`` go to YouTube? False for a local source,
-    when ingest is up to date (it would skip) or when a khai thị episode can reuse its base source. Cheap checks only
-    (no hashing); any doubt answers True. Reads only."""
+    when ingest is up to date, a khai thị episode can reuse its base source, or the store has a source.
+    Store reuse also needs a local playlist title. No hashing or synchronous network IO: a cold / expired
+    store snapshot refreshes in the background. Any doubt answers True. Reads only."""
     try:
         spec = classify(target)
         if spec.kind != YOUTUBE:
@@ -234,7 +261,8 @@ def needs_download(target: str, config: Config, episode_id: str | None = None) -
             rel = (bm.get("source") or {}).get("path")
             if entry.get("status") == "done" and isinstance(rel, str) and (base.dir / rel).is_file():
                 return False
-        return True
+        return not (config.store.enabled and _playlist_source_title(config, spec.youtube_id)
+                    and index_cache.has_source(config, spec.youtube_id, blocking=False))
     except Exception:
         return True
 
@@ -341,9 +369,39 @@ def _ingest_youtube(ws: Workspace, manifest: dict, spec: SourceSpec, config: Con
     shutil.rmtree(tmp, ignore_errors=True)
     tmp.mkdir(parents=True)
     try:
-        log.info("ingest: downloading %s", spec.uri)
-        result = downloader(spec.uri, tmp, config.ingest)
-        media = probe_mod.probe(result.path)
+        result = None
+        via_store = False
+        if config.store.enabled:
+            try:
+                title = _playlist_source_title(config, spec.youtube_id)
+                if title is None:
+                    raise StoreMismatch("source has no title in local playlist docs")
+                entry = index_cache.source_entry(config, spec.youtube_id)
+                if entry is None:
+                    raise StoreMismatch("source absent from store index")
+                suffix = Path(entry["file"]).suffix
+                if not suffix:
+                    raise StoreMismatch("store source has no file extension")
+                client = StoreClient.from_config(config.store)
+                info = client.head(spec.youtube_id, "source")
+                path = tmp / f"source{suffix}"
+                client.fetch(spec.youtube_id, "source", path, info["sha256"])
+                if path.stat().st_size != info["size"]:
+                    raise StoreMismatch("store source size differs from HEAD")
+                media = probe_mod.probe(path)
+                result = Download(path, {"id": spec.youtube_id, "title": title,
+                                         "webpage_url": canonical_url(spec.youtube_id),
+                                         "duration": media["duration"]})
+                via_store = True
+                log.info("ingest: fetched %s from store", spec.youtube_id)
+            except (StoreError, OSError, probe_mod.ProbeError, KeyError, TypeError, ValueError) as exc:
+                log.info("ingest: store unavailable for %s (%s); trying YouTube", spec.youtube_id, exc)
+                shutil.rmtree(tmp, ignore_errors=True)
+                tmp.mkdir(parents=True)
+        if result is None:
+            log.info("ingest: downloading %s", spec.uri)
+            result = downloader(spec.uri, tmp, config.ingest)
+            media = probe_mod.probe(result.path)
         # Replace any previous source.* only after the new download probed fine.
         for old in ws.dir.glob("source.*"):
             old.unlink()
@@ -351,6 +409,8 @@ def _ingest_youtube(ws: Workspace, manifest: dict, spec: SourceSpec, config: Con
         result.path.replace(final)
         fp = hashing.fingerprint(final)
         source = _source_entry(ws, spec, fp)
+        if via_store:
+            source.update(uri=canonical_url(spec.youtube_id), via="store")
         yt = youtube_info(result.info)
         atomic_write_json(ws.dir / METADATA_NAME, _metadata(ws, source, media, yt))
         manifest["source"] = source

@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: IN_PROGRESS
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -12,7 +12,7 @@
 - Authorization mode: task
 - Authorization source: `docs/decisions/SRC3-SRC4-store-first-sources.md` G5–G6 (ACCEPTED 2026-10-25, G5–G6)
 - Parallel group: SRC3 ∥ SRC4 (Owned paths rời nhau)
-- Owned paths: `src/auto_short/ingest/stage.py` (`_ingest_youtube`, `needs_download`); `src/auto_short/store/borrow.py` hoặc `src/auto_short/store/index_cache.py` (mới, index kho nhớ tạm); `src/auto_short/web/jobs.py` (chỉ chỗ gọi `needs_download` nếu cần truyền cache); `tests/test_ingest_youtube.py`, `tests/test_youtube_wait.py`, `tests/test_src4_ingest_store.py` (mới); file này
+- Owned paths: `src/auto_short/ingest/stage.py` (`_ingest_youtube`, `needs_download`); `src/auto_short/store/borrow.py` hoặc `src/auto_short/store/index_cache.py` (mới, index kho nhớ tạm); `src/auto_short/web/jobs.py` (chỗ gọi `needs_download` nếu cần truyền cache; amendment A1 — ORCHESTRATOR 2026-10-25: thêm đúng phần đăng ký / gỡ listener và đánh thức scheduler khi index kho refresh xong, không đổi luật backoff / probe); `tests/test_ingest_youtube.py`, `tests/test_youtube_wait.py`, `tests/test_src4_ingest_store.py` (mới); file này
 - Dependencies: SRC1 (#154), SRC2 (#155) — làm sau khi merge
 - Base commit / branch: `docs/src3-src4` (xếp chồng SRC2 #155 → SRC1 #154; rebase lên main sau merge) / `feature/src4-ingest-from-store`
 - Human Lead approval: accepted — HUMAN LEAD 2026-10-25 "Duyệt cả hai"
@@ -69,4 +69,34 @@ Xử lý video mới (SRC2 đã đẩy 488 video chưa xử lý lên 3090) khôn
 
 ## Result
 
-- Main changes:
+- Amendment A1 — ORCHESTRATOR 2026-10-25: mở Owned paths của `web/jobs.py` cho listener / wakeup scheduler sau refresh index; đã thực hiện, không đổi backoff / probe.
+- Files: `ingest/stage.py`, `store/index_cache.py` (mới), `web/jobs.py`, `tests/test_src4_ingest_store.py` (mới), contract này.
+- Ingest: reuse khai thị → kho → YouTube; HEAD + fetch kiểm SHA / size, probe như nhánh YouTube, giữ đuôi file, canonical uri + `via = "store"`. Lỗi / thiếu title playlist → dọn tạm rồi fallback. Giữ nguyên `_used_config` / cache key và IngestBlocked.
+- F1: `needs_download` dùng snapshot không chặn (cũ hoặc rỗng), refresh nền một worker; không gọi mạng đồng bộ dưới scheduler lock. Cache có TTL 300 s cho hit / miss / lỗi, khóa chỉ bảo vệ state; ingest chờ snapshot mới ngoài scheduler lock.
+- F2: helper `_playlist_source_title` đọc `<workspace>/<titling.playlist.PLAYLISTS_DIR>/*.json`; metadata kho có title thật, channel None; không có title hợp lệ → G6 trả True và ingest đi YouTube. Không import web từ ingest.
+- Helper cache: `source_entry`, `has_source`, `invalidate`, `_refresh`; A1 thêm `add_listener` / `remove_listener` (đăng ký idempotent, gỡ được) và callback `JobRunner._store_index_refreshed`. Refresh cập nhật snapshot rồi nhả khóa cache trước khi gọi listener; lỗi listener bị nuốt và log debug. Runner đăng ký trong start, gỡ trong stop; callback chỉ lấy scheduler lock rồi notify_all.
+- Đã đọc / tìm helper bằng `rg` ở `store/client.py`, `store/borrow.py`, `titling/playlist.py`, `web/monitor.py::_load_playlist_index`, lifecycle `web/jobs.py`. Tái dùng StoreClient.head/fetch, hashing.fingerprint, probe, _source_entry, youtube_info, canonical_url và PLAYLISTS_DIR. Chưa có cache / listener tương đương; borrow_hd có lifecycle / failure policy khác. Test tái dùng FakeDownloader, Clock, Net, wait_for.
+
+| AC / review | Test chính trong tests/test_src4_ingest_store.py | Kết quả hiện tại |
+|---|---|---|
+| 1 / F2 | test_store_ingest_and_skip_preserve_cache_key; test_store_extension_and_khaithi_reuse_before_store | PASS: SHA / via / title playlist / đuôi / reuse / cache key |
+| 2 / F2 | test_store_fallback_cleans_temporary_files; test_fallback_retains_ingest_blocked; test_missing_playlist_title_falls_back_to_youtube | PASS: 8 nhánh lỗi kho + 7 dạng title thiếu / lỗi; dọn tạm, giữ IngestBlocked |
+| 3 / F1 | test_needs_download_refresh_never_blocks_scheduler; test_prepare_from_store_runs_while_youtube_blocked; test_index_ttl_shared_hits_misses_and_invalidation | PASS: cold / stale trả ngay, TTL; job kho chạy khi YouTube còn block, không đổi assertion / fake clock / backoff |
+| A1 | test_refresh_listeners_run_after_publish_outside_cache_lock; test_runner_start_registers_once_and_stop_removes_listener | PASS: thread khác lấy được khóa cache trong callback; snapshot đã cập nhật kể cả kho lỗi, listener lỗi không ngắt refresh, start idempotent / stop gỡ / restart đăng ký lại |
+| 4 | Full suite / API đầy đủ / manual 8080 | Chưa chạy lại; ORCHESTRATOR phụ trách ngoài sandbox |
+
+AC3 còn test lỗi cache / concurrent isolation riêng để phủ các nhánh đồng thời. MemoryStore chạy kiểm SHA thật của StoreClient.fetch với transport bytes trong bộ nhớ; fixture cấm socket connect.
+
+Lệnh duy nhất chạy verification lượt A1 (bọc `timeout 240`):
+
+```text
+env PYTHONPATH=/home/ntnghia/projects/youtube-auto-short/.claude/worktrees/src4-ingest-from-store/src /home/ntnghia/miniconda3/envs/auto-short/bin/python -m pytest -q tests/test_src4_ingest_store.py tests/test_ingest_youtube.py tests/test_youtube_wait.py -k 'not test_api_youtube_status_and_banner'
+```
+
+**59 passed, 1 deselected in 2.89s**, exit **0**. Failure cold-cache scheduler trước A1 đã được giải quyết; test prepare giữ nguyên assertion có ý nghĩa. Không chạy full suite / test API đã loại / framework checker / manual 8080 trong lượt A1 theo yêu cầu chỉ chạy lệnh trên. Kết quả ngoài sandbox trước A1 do ORCHESTRATOR cung cấp: 56 passed, 1 failed; không dùng làm bằng chứng cho bản hiện tại.
+
+Delta riêng A1 so với snapshot trước lượt sửa (`/tmp/src4-review-before/a1-*`): ứng dụng **+33 / -0** (index_cache +24, jobs +9), test **+56 / -0**. Tổng so với HEAD: ứng dụng **+178 / -7**, test **+364 / -0**, không tính contract (đo bằng git diff --numstat và git diff --no-index --numstat cho file mới / snapshot).
+
+Implementation A1 sẵn sàng ORCHESTRATOR review; không còn blocker đã biết trong lệnh test được giao. Contract giữ **IN_PROGRESS** tới khi ORCHESTRATOR hoàn tất review và required verification còn lại. Không commit / push / PR, gọi mạng thật hay agent khác.
+
+ORCHESTRATOR (2026-10-25, ngoài sandbox): review 3 vòng (F1 không gọi mạng dưới lock scheduler; F2 tiêu đề tập từ playlist docs, thiếu → YouTube; A1 đánh thức scheduler). Targeted `test_src4_ingest_store.py test_ingest_youtube.py test_youtube_wait.py` 57 passed (trước A1, 1 fail đã sửa ở A1); full suite `-n auto` **2886 passed, 1 skipped**; `framework-check`, `git diff --check` PASS. Codex tokens: 77k + 114k + vòng A1. Còn: chạy thật 8080 (chờ HUMAN LEAD cho restart). Theo dõi sau: TC3.2 `StoreSources` dùng lại `index_cache` khi cả hai merge.
