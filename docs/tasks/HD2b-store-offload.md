@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: IN_PROGRESS
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -12,9 +12,9 @@
 - Authorization mode: task
 - Authorization source: `docs/decisions/HD2-external-store-3090.md` ACCEPTED (HUMAN LEAD 2026-10-25), G5 + G6 + G7; HUMAN LEAD 2026-10-26 "viết contract HD2b cho mục 3" (giải phóng ~50 GB bản dọc Vô Lượng Thọ / Cảm Ứng Thiên không có luồng sao lưu)
 - Parallel group: —
-- Owned paths: `src/auto_short/store/offload.py` (mới), `src/auto_short/store/client.py` (chỉ thêm đọc luồng có Range nếu thiếu), `src/auto_short/config.py` (`[store] offload`), `src/auto_short/review/backup.py` (tái dùng `confirm` / `release`, không đổi luật), `src/auto_short/web/app.py` (vòng đẩy), `src/auto_short/web/routes/episodes.py` + `src/auto_short/web/routes/playlists.py` (link tải tập đã giải phóng), `src/auto_short/web/storage.py` (G7), `src/auto_short/web/static/app.js`, `tests/test_store_offload.py` (mới), `tests/test_store_download.py` (mới), `config.toml` (bật cờ — ORCHESTRATOR, khi chạy thật), contract này
+- Owned paths: `src/auto_short/store/offload.py` (mới), `src/auto_short/store/client.py` (chỉ thêm đọc luồng có Range nếu thiếu), `src/auto_short/render/full.py` (bản dọc trên kho vẫn "hiện hành" — làm rõ 2026-10-26), `src/auto_short/config.py` (`[store] offload`), `src/auto_short/review/backup.py` (tái dùng `confirm` / `release`, không đổi luật), `src/auto_short/web/app.py` (vòng đẩy), `src/auto_short/web/routes/episodes.py` + `src/auto_short/web/routes/playlists.py` (link tải tập đã giải phóng), `src/auto_short/web/storage.py` (G7), `src/auto_short/web/static/app.js`, `tests/test_store_offload.py` (mới), `tests/test_store_download.py` (mới), `config.toml` (bật cờ — ORCHESTRATOR, khi chạy thật), contract này
 - Dependencies: HD2a, SRC1 (mẫu vòng sao lưu `_source_backup_loop`), FIX-theme-store-index (snapshot `/index` dùng chung) — merge trước nếu đụng cùng file
-- Base commit / branch: `872a0d6` (`main`) / `feature/hd2b-store-offload`
+- Base commit / branch: `01ab1a3` (`main`, sau #163–#166) / `feature/hd2b-store-offload`
 - Human Lead approval: APPROVED (2026-10-26 "đồng ý cả 2": contract + D1 + D2)
 - Implementation authorized: YES
 
@@ -61,6 +61,11 @@ Bản dọc trên VM được đẩy lên kho 3090, kho xác nhận đúng sha25
 ## Phải giữ nguyên
 
 - Luật HD1 G1 / G2 / G3, `backup.ps1` vẫn chạy được song song (tập đã xác nhận / giải phóng bởi offload được script coi là "đã giải phóng trên VM", CSV giữ dòng — #161); Short / khai thị / bài đăng không đổi trạng thái; mọi test HD1 / HD2a / SRC1–SRC4 hiện có.
+
+## Làm rõ kỹ thuật (ORCHESTRATOR 2026-10-26, trong D1 / D2)
+
+- `review.backup.release` hiện đòi `enhance.json` `done` + có `source_hd.mp4`; HD1 G2 viết "cả hai file (cái nào đang có)" và D2 duyệt giải phóng tập chỉ có bản dọc → `release` nhận thêm trường hợp không có HD: chỉ xóa bản dọc đã xác nhận đúng sha, ghi `backup.json` `released.vertical`; **không** đặt `enhance.json` `released` (cờ đó vẫn nghĩa "HD ở máy ngoài"). Điều kiện cho tập có HD giữ nguyên.
+- `render_full.current` trả False khi `full/vertical.mp4` đã xóa → vòng bản dọc tự động / "Tạo bản dọc cả bộ" sẽ dựng lại. Bản dọc đã giải phóng (meta còn, `backup.json` `released.vertical` khớp kích thước meta, `hd_sha256` khớp nguồn hiệu lực / HD đã giải phóng) được coi là hiện hành, nằm trên kho. Thêm `render/full.py` vào Owned paths.
 
 ## Code bị thay / xóa
 
