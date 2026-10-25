@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: DRAFT
+- Status: APPROVED
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -10,13 +10,13 @@
 - Orchestrator: claude-code
 - Implementer: codex — `codex exec` (gpt-6.1-sol, effort `high`), một writer; quota 2026-10-25: 5 giờ 6 %, tuần 1 %. Test web (TestClient) và full suite do ORCHESTRATOR chạy ngoài sandbox.
 - Authorization mode: task
-- Authorization source: `docs/decisions/SRC1-source-backup-3090.md` (PROPOSED; cần ACCEPTED trước implementation)
+- Authorization source: `docs/decisions/SRC1-source-backup-3090.md` (ACCEPTED 2026-10-25)
 - Parallel group: —
 - Owned paths: `tools/store/store.py`; `src/auto_short/store/client.py`; `src/auto_short/store/backup.py` (mới); `src/auto_short/store/borrow.py` (chỉ hàm mượn `source`); `src/auto_short/config.py` (chỉ `StoreConfig.backup_source`); `src/auto_short/review/archive.py` (`archive_source`, `restore_source`); `src/auto_short/web/app.py` (chỉ `auto_archive_pass` + vòng nền sao lưu); `src/auto_short/web/storage.py` + `src/auto_short/web/static/` phần tab Bộ nhớ (dòng "đã sao lưu"); `src/auto_short/theme_render/__init__.py` (chỉ `_source`); `tests/test_store_server.py`, `tests/test_store_client.py`, `tests/test_store_backup.py` (mới), `tests/test_restore_source_cp837.py`, `tests/test_storage_cp86.py`, `tests/test_theme_render.py`, `tests/test_config.py`; file này
 - Dependencies: HD2a (kho + kênh, đã merge); không dependency mới
 - Base commit / branch: `3394246` (origin/main) / `feature/src1-source-backup`
-- Human Lead approval: pending
-- Implementation authorized: NO
+- Human Lead approval: accepted — HUMAN LEAD 2026-10-25 "Duyệt tất cả theo đề xuất"
+- Implementation authorized: YES
 
 Lifecycle: `task` mode = `DRAFT → APPROVED → IN_PROGRESS → READY`. DONE suy ra từ Git sau khi merge.
 

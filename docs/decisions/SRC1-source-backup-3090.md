@@ -2,7 +2,7 @@
 
 | Metadata | Value |
 |---|---|
-| Status | PROPOSED — G1, G4, G8 đã chọn trong chat 2026-10-25; chờ HUMAN LEAD duyệt toàn văn |
+| Status | ACCEPTED — HUMAN LEAD 2026-10-25 "Duyệt tất cả theo đề xuất" (G1–G8) |
 | Authority | HUMAN LEAD 2026-10-25: "vấn đề giữ nguồn khá quan trọng với ghép video. Đặc biệt là cơ chế tự dọn nguồn hiện tại cần cơ chế backup"; chọn "Tất cả video" và "Đẩy dần, E: đủ chỗ" |
 | Change class | S2 (sửa `HD2-external-store-3090.md` G1 `kind`, G7; sửa W9 S5 / FIX-keep-khaithi-source: tự dọn chỉ sau khi có bản sao; luồng dữ liệu VM → 3090 mới) |
 | Integration | Push / PR / merge vẫn cần HUMAN LEAD duyệt riêng |

@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: DRAFT
+- Status: APPROVED
 - Type: CHANGE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -15,8 +15,8 @@
 - Owned paths: `src/auto_short/web/theme_plan.py`; `src/auto_short/web/static/theme_plan.js`; `pyproject.toml` (chỉ dòng `yt-dlp`, G3); `tests/test_web_theme_plan.py`; file này
 - Dependencies: SRC1 (G5 thứ tự lấy nguồn có kho 3090); SRC2 (đường tải dùng chung trong `sources.py`, 403 = chặn) — làm sau SRC2
 - Base commit / branch: sau SRC2 / `feature/tc3.2-theme-source`
-- Human Lead approval: pending (G2, G3 ORCHESTRATOR đề xuất khi HUMAN LEAD "không ưu tiên"; tải nền nằm ở SRC2)
-- Implementation authorized: NO
+- Human Lead approval: accepted — HUMAN LEAD 2026-10-25 "Duyệt tất cả theo đề xuất"
+- Implementation authorized: YES
 
 Lifecycle: `task` mode = `DRAFT → APPROVED → IN_PROGRESS → READY`.
 
@@ -38,7 +38,7 @@ Thẻ chủ đề cho biết còn thiếu mấy video gốc; khi lúc ghép vẫ
 ## Authority / key decisions
 
 - **G2 (đề xuất)**: job `theme_render` thêm bước tải nguồn ở làn `prepare` trước bước `render` (thứ tự SRC1 G5); YouTube chặn (bot-check / 429 / 403) → `YoutubeWait` (cơ chế FIX-youtube-botcheck-wait: về đầu hàng prepare, lùi dần, không giữ slot render); bản đã tải giữ trong cache.
-- **G3 (đề xuất, dependency)**: nâng `yt-dlp` lên bản ổn định mới nhất đã phát hành ≥ 2 tuần; chạy test ingest / youtube; thử tải 1 video; tệ hơn → về `2026.8.19`. Có thể làm trước SRC2 để SRC2 tải bằng bản mới (HUMAN LEAD chọn).
+- **G3 (đề xuất, dependency)**: nâng `yt-dlp` lên bản ổn định mới nhất đã phát hành ≥ 2 tuần; chạy test ingest / youtube; thử tải 1 video; tệ hơn → về `2026.8.19`. HUMAN LEAD 2026-10-25: làm trước SRC2 (bước riêng) để SRC2 tải bằng bản mới.
 - Thẻ chủ đề: dòng "Video gốc: 6 / 7 sẵn sàng (3090: 2) · 1 cần tải YouTube" kiểm bằng `stat` + `meta.json` / index kho (không hash file lớn mỗi lần xem); hash đầy đủ vẫn ở lúc render.
 
 ## Phải giữ nguyên
