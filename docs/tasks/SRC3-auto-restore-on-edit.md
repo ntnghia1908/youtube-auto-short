@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: DRAFT
+- Status: APPROVED
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -10,13 +10,13 @@
 - Orchestrator: claude-code
 - Implementer: codex — `codex exec` (gpt-6.1-sol, effort `high`), một writer; test web / full suite do ORCHESTRATOR chạy ngoài sandbox
 - Authorization mode: task
-- Authorization source: `docs/decisions/SRC3-SRC4-store-first-sources.md` G1–G3 (PROPOSED)
+- Authorization source: `docs/decisions/SRC3-SRC4-store-first-sources.md` G1–G3 (ACCEPTED 2026-10-25, G1–G3; G2 = a)
 - Parallel group: SRC3 ∥ SRC4 (Owned paths rời nhau)
 - Owned paths: `src/auto_short/review/archive.py` (`restore_source`, kiểm bản khác byte); `src/auto_short/web/routes/episode_edit.py` (5 route sửa); `src/auto_short/web/app.py` (chỉ target khôi phục + nối thao tác sau khôi phục); `src/auto_short/web/static/` phần trang tập (trạng thái "đang lấy lại nguồn"); `tests/test_restore_source_cp837.py`, `tests/test_src3_auto_restore.py` (mới); file này
 - Dependencies: SRC1 (#154), SRC2 (#155) — làm sau khi merge
-- Base commit / branch: sau SRC2 / `feature/src3-auto-restore`
-- Human Lead approval: —
-- Implementation authorized: NO
+- Base commit / branch: `docs/src3-src4` (xếp chồng SRC2 #155 → SRC1 #154; rebase lên main sau merge) / `feature/src3-auto-restore`
+- Human Lead approval: accepted — HUMAN LEAD 2026-10-25 "Duyệt cả hai"
+- Implementation authorized: YES
 
 Lifecycle: `task` mode = `DRAFT → APPROVED → IN_PROGRESS → READY`.
 
@@ -28,13 +28,13 @@ Sửa tiêu đề / cắt lại / thêm / khôi phục Short trên tập đã d�
 
 ## Scope
 
-- In scope: G1, G2 (theo lựa chọn HUMAN LEAD).
+- In scope: G1, G2 a.
 - Out of scope: G4 (chỉ đổi `config.toml`); sửa transcript / analysis; ingest (SRC4); ghép chủ đề (TC3.2).
 
 ## Authority / key decisions
 
 - G1: 5 route trong `episode_edit.py` đang trả 409 `ArchivedError` → xếp job khôi phục (làn prepare, `YoutubeWait` khi chặn) rồi xếp thao tác; trả 202 + trạng thái. Hai lần sửa liên tiếp trên cùng tập dùng chung một job khôi phục.
-- G2 a (nếu được chọn): bản khác sha nhận khi thời lượng khớp và mọi Short đã render khớp `theme_render.audio.compare` với |lag| ≤ 1 khung; `restored.json` ghi `differs_from_ingest`, sha mới; `manifest.source` giữ nguyên.
+- G2 a (HUMAN LEAD chọn): bản khác sha nhận khi thời lượng khớp và mọi Short đã render khớp `theme_render.audio.compare` với |lag| ≤ 1 khung; `restored.json` ghi `differs_from_ingest`, sha mới; `manifest.source` giữ nguyên.
 
 ## Implementation approach
 

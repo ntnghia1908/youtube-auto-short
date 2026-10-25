@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: DRAFT
+- Status: APPROVED
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -10,13 +10,13 @@
 - Orchestrator: claude-code
 - Implementer: codex — `codex exec` (gpt-6.1-sol, effort `high`), một writer; test web / full suite do ORCHESTRATOR chạy ngoài sandbox
 - Authorization mode: task
-- Authorization source: `docs/decisions/SRC3-SRC4-store-first-sources.md` G5–G6 (PROPOSED)
+- Authorization source: `docs/decisions/SRC3-SRC4-store-first-sources.md` G5–G6 (ACCEPTED 2026-10-25, G5–G6)
 - Parallel group: SRC3 ∥ SRC4 (Owned paths rời nhau)
 - Owned paths: `src/auto_short/ingest/stage.py` (`_ingest_youtube`, `needs_download`); `src/auto_short/store/borrow.py` hoặc `src/auto_short/store/index_cache.py` (mới, index kho nhớ tạm); `src/auto_short/web/jobs.py` (chỉ chỗ gọi `needs_download` nếu cần truyền cache); `tests/test_ingest_youtube.py`, `tests/test_youtube_wait.py`, `tests/test_src4_ingest_store.py` (mới); file này
 - Dependencies: SRC1 (#154), SRC2 (#155) — làm sau khi merge
-- Base commit / branch: sau SRC2 / `feature/src4-ingest-from-store`
-- Human Lead approval: —
-- Implementation authorized: NO
+- Base commit / branch: `docs/src3-src4` (xếp chồng SRC2 #155 → SRC1 #154; rebase lên main sau merge) / `feature/src4-ingest-from-store`
+- Human Lead approval: accepted — HUMAN LEAD 2026-10-25 "Duyệt cả hai"
+- Implementation authorized: YES
 
 Lifecycle: `task` mode = `DRAFT → APPROVED → IN_PROGRESS → READY`.
 

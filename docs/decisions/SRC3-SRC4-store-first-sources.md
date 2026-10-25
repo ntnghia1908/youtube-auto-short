@@ -2,7 +2,7 @@
 
 | Metadata | Value |
 |---|---|
-| Status | PROPOSED — chờ HUMAN LEAD chọn G1–G6 |
+| Status | ACCEPTED — HUMAN LEAD 2026-10-25: G2 "Nhận nếu kiểm khớp" (a), SRC3 + SRC4 "Duyệt cả hai" (G1, G3, G5, G6 theo đề xuất), G4 "Giữ 5 ngày" (b) |
 | Authority | HUMAN LEAD 2026-10-25: "đồng ý, sau khi SRC1 merge mình sẽ viết decision và contract SRC3"; SRC1 G8 "Tải hết toàn bộ video nguồn về backup để khi xử lý không còn phụ thuộc youtube chặn"; "Làm luôn các việc nào làm đc" |
 | Change class | S2 (đổi CP8.6 S3: tập `archived` không còn từ chối sửa; đổi CP8.37: chấp nhận bản khác byte có kiểm; đổi luồng ingest: nguồn từ kho 3090) |
 | Integration | Push / PR / merge vẫn cần HUMAN LEAD duyệt riêng |
