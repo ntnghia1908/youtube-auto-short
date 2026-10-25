@@ -120,3 +120,5 @@ Lệnh duy nhất chạy sau review fix: `timeout 240 env PYTHONPATH=/home/ntngh
 ```
 
 ORCHESTRATOR (2026-10-25, ngoài sandbox, sau review fix): targeted Required verification (`test_web_theme_plan.py test_theme_render.py test_ingest_youtube.py test_youtube_wait.py test_youtube_id_dash.py`) 195 passed trước fix; full suite `-n auto` **2896 passed, 1 skipped**; `node --check`, `framework-check`, `git diff --check` PASS. Codex: 2 vòng, 130k + 258k tokens (tổng tích lũy session). Theo dõi sau: gộp `StoreSources` với `store/index_cache.py` (SRC4) khi cả hai đã merge. Còn: chạy thật 8080 (chờ HUMAN LEAD cho restart).
+
+Chạy thật 8080 (2026-10-25, commit gộp `8309ab8` = TC3.2 `ff61518` + SRC3 + SRC4): GET `theme-plan` VLT "Chuyển hóa tâm niệm" → `sources {total 7, ready 7, store 0, youtube 0}`; Thái Thượng "Đạo hiếu" → 6 / 6 → **AC2 PASS** (thẻ hiện đủ, GET không hash). "Ghép lại" chưa chạy: MP4 35,5 phút của plan VLT đã có từ 09:46 (trước TC3.2) và cả 7 nguồn đã ở máy, nên ghép lại không thử được nhánh tải / chờ YouTube (AC1 chỉ có test tự động).
