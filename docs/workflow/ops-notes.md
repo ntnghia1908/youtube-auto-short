@@ -20,6 +20,14 @@ Ghi chú vận hành ít dùng, tách từ `current-state.md` (CHG-current-state
 - Kinh / khai thị: `work/_sutras/` (8 bộ, không trong git — bản quyền).
 - Video ghép: `output/_compilations/<playlist_id>/`.
 
+## Kho 3090 (HD1 / HD2, từ 2026-10-25)
+
+- Task `AutoShortStore`: cài `%LOCALAPPDATA%\AutoShortStore`, root `E:\AutoShortStore`, Kinh Địa Tạng `E:\KinhDiaTang_HD`.
+- VM tới kho qua `RemoteForward 127.0.0.1:18090` trong ssh block `gpu-worker-v4` (task `EnhanceWorker-Tunnel`). Đổi ssh config phải kill `ssh.exe` cũ; `Stop-ScheduledTask` không đủ.
+- `config.toml` `[store] enabled = true`, url `http://127.0.0.1:18090`; backup `~/.local/share/auto-short/config.toml.bak-2026-10-25-pre-store`. Token `~/.local/share/auto-short/store.env` (mode 600, script restart tự source).
+- Đo ≈ 43 MB/s VM←3090.
+- Script backup `~/.local/share/auto-short/backup-hd1/backup.ps1` (generator `scripts/backup/make_backup.py`): luôn truyền `-Dest E:\KinhDiaTang_HD`.
+
 ## Hạ tầng
 
 - VM 32 nhân, 125 GB RAM; IP DHCP, hiện `10.8.102.102` (đổi 2026-10-08; trước đó `.100`, `.101`) — nên xin IP cố định. ssh config máy 3090 / 3050 phải theo IP hiện hành.
