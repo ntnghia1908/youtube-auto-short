@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: IN_PROGRESS
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -12,9 +12,9 @@
 - Authorization mode: task
 - Authorization source: `docs/decisions/SRC1-source-backup-3090.md` G4a + G8 (HUMAN LEAD 2026-10-25: "Tải hết toàn bộ video nguồn về backup để khi xử lý không còn phụ thuộc youtube chặn"); decision ACCEPTED 2026-10-25
 - Parallel group: —
-- Owned paths: `src/auto_short/store/redownload.py` (mới); `src/auto_short/theme_render/sources.py` (chỉ tách hàm kiểm / tải dùng chung, coi 403 là "chặn" trong đường tải lại); `src/auto_short/web/app.py` (chỉ wiring vòng tải lại nền); `src/auto_short/web/storage.py` + `src/auto_short/web/static/` phần tab Bộ nhớ (dòng tiến độ tải lại); `tests/test_store_redownload.py` (mới), `tests/test_theme_source_cache.py`; file này
+- Owned paths: `src/auto_short/store/redownload.py` (mới); `src/auto_short/theme_render/sources.py` (chỉ tách hàm kiểm / tải dùng chung, coi 403 là "chặn" trong đường tải lại); `src/auto_short/web/app.py` (chỉ wiring vòng tải lại nền); `src/auto_short/web/storage.py` + `src/auto_short/web/static/` phần tab Bộ nhớ (dòng tiến độ tải lại); `tests/test_store_redownload.py` (mới), `tests/test_theme_source_cache.py`; file này; amendment A1 (ORCHESTRATOR, 2026-10-25, cờ `[store] redownload` đã nêu ở mục Authority cần nơi khai báo): `src/auto_short/config.py` (chỉ `StoreConfig.redownload`), `tests/test_config.py`
 - Dependencies: SRC1 (kind `source`, `push_source`, `backup_state`) — làm sau SRC1 merge
-- Base commit / branch: sau SRC1 / `feature/src2-source-redownload`
+- Base commit / branch: `5b8da78` (`feature/src1-source-backup`, PR #154 READY chưa merge; PR SRC2 xếp chồng, rebase lên main sau khi #154 merge) / `feature/src2-source-redownload`
 - Human Lead approval: accepted — HUMAN LEAD 2026-10-25 "Duyệt tất cả theo đề xuất"
 - Implementation authorized: YES
 
