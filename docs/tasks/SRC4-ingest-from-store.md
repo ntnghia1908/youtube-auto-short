@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -100,3 +100,9 @@ Delta riêng A1 so với snapshot trước lượt sửa (`/tmp/src4-review-befo
 Implementation A1 sẵn sàng ORCHESTRATOR review; không còn blocker đã biết trong lệnh test được giao. Contract giữ **IN_PROGRESS** tới khi ORCHESTRATOR hoàn tất review và required verification còn lại. Không commit / push / PR, gọi mạng thật hay agent khác.
 
 ORCHESTRATOR (2026-10-25, ngoài sandbox): review 3 vòng (F1 không gọi mạng dưới lock scheduler; F2 tiêu đề tập từ playlist docs, thiếu → YouTube; A1 đánh thức scheduler). Targeted `test_src4_ingest_store.py test_ingest_youtube.py test_youtube_wait.py` 57 passed (trước A1, 1 fail đã sửa ở A1); full suite `-n auto` **2886 passed, 1 skipped**; `framework-check`, `git diff --check` PASS. Codex tokens: 77k + 114k + vòng A1. Còn: chạy thật 8080 (chờ HUMAN LEAD cho restart). Theo dõi sau: TC3.2 `StoreSources` dùng lại `index_cache` khi cả hai merge.
+
+Chạy thật (2026-10-25 17:14, code `66ccddb` = SRC4 `f7849ae` + SRC3 + TC3.2, kho 3090 thật):
+- Không có video playlist nào vừa chưa xử lý, vừa có `source` trên kho, vừa không có bản cục bộ: ứng viên duy nhất `1VAkCR8kK5I` (Địa Tạng 5) có phần `.kt` còn giữ `source.mp4`, nên qua 8080 ingest sẽ dùng lại bản `.kt` (đúng thứ tự khai thị → kho → YouTube) chứ không đi kho.
+- Thay vào đó gọi `run_ingest("https://youtu.be/1VAkCR8kK5I")` với config thật của web (`[store]` bật, token thật) nhưng `workspace.dir` là thư mục tạm (chép `_playlists`), downloader YouTube thay bằng hàm dừng lỗi nếu bị gọi: log `ingest: fetched 1VAkCR8kK5I from store` sau 6 s (219 MB); `manifest.source.via = "store"`, uri `https://youtu.be/1VAkCR8kK5I`, sha `86001eb5…` / 219 246 244 B = sha ingest gốc của `.kt`; downloader YouTube không được gọi → **AC1 PASS** (thật, ngoài web). Workspace tạm đã xóa; dữ liệu web không đổi.
+- AC3 (`needs_download` False khi YouTube chặn): chỉ có test tự động — YouTube không chặn lúc chạy.
+- READY; manual checklist do HUMAN LEAD.
