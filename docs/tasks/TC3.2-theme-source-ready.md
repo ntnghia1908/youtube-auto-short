@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: CHANGE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -122,3 +122,5 @@ Lệnh duy nhất chạy sau review fix: `timeout 240 env PYTHONPATH=/home/ntngh
 ORCHESTRATOR (2026-10-25, ngoài sandbox, sau review fix): targeted Required verification (`test_web_theme_plan.py test_theme_render.py test_ingest_youtube.py test_youtube_wait.py test_youtube_id_dash.py`) 195 passed trước fix; full suite `-n auto` **2896 passed, 1 skipped**; `node --check`, `framework-check`, `git diff --check` PASS. Codex: 2 vòng, 130k + 258k tokens (tổng tích lũy session). Theo dõi sau: gộp `StoreSources` với `store/index_cache.py` (SRC4) khi cả hai đã merge. Còn: chạy thật 8080 (chờ HUMAN LEAD cho restart).
 
 Chạy thật 8080 (2026-10-25, commit gộp `8309ab8` = TC3.2 `ff61518` + SRC3 + SRC4): GET `theme-plan` VLT "Chuyển hóa tâm niệm" → `sources {total 7, ready 7, store 0, youtube 0}`; Thái Thượng "Đạo hiếu" → 6 / 6 → **AC2 PASS** (thẻ hiện đủ, GET không hash). "Ghép lại" chưa chạy: MP4 35,5 phút của plan VLT đã có từ 09:46 (trước TC3.2) và cả 7 nguồn đã ở máy, nên ghép lại không thử được nhánh tải / chờ YouTube (AC1 chỉ có test tự động).
+
+Chạy thật 8080 lần 2 (2026-10-25 17:15, `66ccddb`): POST "Ghép lại" plan Thái Thượng "Đạo hiếu" `2d2e6611f3bb` → 202, job `theme_render` vào làn **prepare** (stage `theme_sources`, 6 / 6 nguồn sẵn), xong sau 25 s, dùng lại MP4 r1 (encode_key không đổi, `created_at` 2026-10-24) → luồng prepare → render chạy đúng. Nhánh tải / chờ YouTube (AC1) không có ca thật: mọi nguồn của các plan đã ở máy; chỉ có test tự động. READY; manual checklist do HUMAN LEAD.
