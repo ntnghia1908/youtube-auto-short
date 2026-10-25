@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: DRAFT
+- Status: APPROVED
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -15,8 +15,8 @@
 - Owned paths: `src/auto_short/store/offload.py` (mới), `src/auto_short/store/client.py` (chỉ thêm đọc luồng có Range nếu thiếu), `src/auto_short/config.py` (`[store] offload`), `src/auto_short/review/backup.py` (tái dùng `confirm` / `release`, không đổi luật), `src/auto_short/web/app.py` (vòng đẩy), `src/auto_short/web/routes/episodes.py` + `src/auto_short/web/routes/playlists.py` (link tải tập đã giải phóng), `src/auto_short/web/storage.py` (G7), `src/auto_short/web/static/app.js`, `tests/test_store_offload.py` (mới), `tests/test_store_download.py` (mới), `config.toml` (bật cờ — ORCHESTRATOR, khi chạy thật), contract này
 - Dependencies: HD2a, SRC1 (mẫu vòng sao lưu `_source_backup_loop`), FIX-theme-store-index (snapshot `/index` dùng chung) — merge trước nếu đụng cùng file
 - Base commit / branch: `872a0d6` (`main`) / `feature/hd2b-store-offload`
-- Human Lead approval: PENDING — cần duyệt contract + D1, D2
-- Implementation authorized: NO
+- Human Lead approval: APPROVED (2026-10-26 "đồng ý cả 2": contract + D1 + D2)
+- Implementation authorized: YES
 
 Lifecycle: `DRAFT → APPROVED → IN_PROGRESS → READY`. DONE suy ra từ Git sau khi merge.
 
@@ -31,7 +31,7 @@ Bản dọc trên VM được đẩy lên kho 3090, kho xác nhận đúng sha25
 - HD1 G2: giải phóng khi **mọi file đang có** (HD, dọc) đã xác nhận đúng sha hiện tại; tập không có HD chỉ cần bản dọc. Luật này giữ nguyên.
 - Kho (HD2a G1) đã nhận `kind` `hd` / `vertical` / `source` qua `PUT` có sha256, `HEAD` trả sha + kích thước; SRC1 đã có vòng đẩy nguồn một file mỗi lượt (`app.py` `_source_backup_loop`, `store/backup.py` `push_source`) — làm theo cùng mẫu.
 
-## Quyết định cần HUMAN LEAD (gate)
+## Quyết định HUMAN LEAD (gate) — D1, D2 ĐỒNG Ý 2026-10-26
 
 - **D1 — Đẩy bù bản dọc đã có**: HD2 G6 viết cho "bản dọc mới dựng". Đề xuất: vòng đẩy xử lý **mọi** `full/vertical.mp4` hiện hành chưa xác nhận (kể cả 60 file VLT / CƯT cũ), không chỉ file dựng sau khi bật. Không đồng ý → chỉ file mới, 50 GB hiện tại vẫn nằm trên VM.
 - **D2 — Tự giải phóng tập không có HD**: đề xuất tự gọi HD1 G2 ngay sau khi kho xác nhận (không hỏi), kể cả tập chỉ có bản dọc (VLT / CƯT); tập có HD chưa xác nhận thì chỉ xác nhận bản dọc, không giải phóng (luật G2 cũ). Không đồng ý → chỉ xác nhận, giải phóng vẫn bấm tay / `backup.ps1 -Release`.
@@ -91,7 +91,7 @@ Bản dọc trên VM được đẩy lên kho 3090, kho xác nhận đúng sha25
 
 - Outgoing / incoming ORCHESTRATOR: —
 - Nguồn duyệt chuyển giao: —
-- Phase / blocker / next action: chờ HUMAN LEAD duyệt contract + D1, D2; sau đó giao Codex.
+- Phase / blocker / next action: APPROVED; session mới: tạo branch `feature/hd2b-store-offload` từ main (sau khi #165, #166 merge), giao Codex.
 - HEAD + working tree lúc bàn giao: —
 
 ## Result
