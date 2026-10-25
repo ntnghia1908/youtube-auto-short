@@ -526,8 +526,10 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             return []
         waiting = []
         for job in runner.jobs():
-            if job.status != INTERRUPTED or job.kind not in (KIND_RENDER, KIND_VERTICAL) \
+            if job.status != INTERRUPTED or job.kind not in (KIND_RENDER, KIND_VERTICAL, KIND_RESTORE_SOURCE) \
                     or not (job.error or "").startswith(WAIT_PREFIX):
+                continue
+            if job.kind == KIND_RESTORE_SOURCE and getattr(job.target, "restored", False) is not True:
                 continue
             newest = runner.latest_vertical(job.episode_id) if job.kind == KIND_VERTICAL else runner.latest(job.episode_id)
             if newest is job:
@@ -545,6 +547,8 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             except StoreError:
                 break  # the store is still down: nothing else will answer either
             with submit_lock:
+                if job.kind == KIND_RESTORE_SOURCE and runner.latest(job.episode_id) is not job:
+                    continue  # a newer edit may have arrived while HEAD was in flight
                 runner.submit(job.episode_id, job.kind, job.target)
             log.info("web: kho 3090 đã sẵn sàng, chạy lại %s [%s]", job.kind, job.episode_id)
             done.append(job.episode_id)

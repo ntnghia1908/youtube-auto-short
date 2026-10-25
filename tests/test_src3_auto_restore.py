@@ -391,3 +391,118 @@ def test_normal_title_edit_keeps_render_route(cfg):
     job, = app.state.runner.jobs()
     job.target(job)
     assert calls == [("render", EID)]
+
+
+@pytest.mark.parametrize("restart", [False, True])
+def test_restored_edits_waiting_for_hd_retry_render_without_reapplying(cfg, monkeypatch, restart):
+    import hashlib
+    from auto_short.render.stage import StoreWait
+    from auto_short.store.borrow import WAIT_PREFIX
+    from auto_short.store.client import StoreClient, StoreMismatch
+    from auto_short.web.routes import episode_edit
+
+    ws, data = episode(cfg)
+    cfg = replace(cfg, store=StoreConfig(enabled=True))
+    hd_sha = "a" * 64
+    (ws.dir / "backup.json").write_text(json.dumps({"released": {"hd": {"sha256": hd_sha}}}))
+    heads, fetched, applied, rendered = [], [], [], []
+    available = [None]
+    real_apply = episode_edit.apply_restore_edit
+
+    def apply(ctx, edit):
+        applied.append(edit["payload"])
+        return real_apply(ctx, edit)
+
+    class Client:
+        def head(self, vid, kind):
+            assert vid == EID
+            heads.append(kind)
+            if kind == "hd":
+                if available[0] is None:
+                    raise StoreMismatch("HD unavailable")
+                return {"sha256": available[0], "size": 100}
+            assert kind == "source"
+            return {"sha256": hashlib.sha256(data).hexdigest(), "size": len(data)}
+
+        def fetch(self, vid, kind, dest, sha):
+            assert kind == "source" and sha == hashlib.sha256(data).hexdigest()
+            fetched.append(kind)
+            dest.write_bytes(data)
+            return dest
+
+        def index(self):
+            return [{"video_id": EID, "kind": "source"}]
+
+    def render(eid, config):
+        rendered.append(eid)
+        if available[0] != hd_sha:
+            raise StoreWait(f"{WAIT_PREFIX}: HD unavailable")
+        return SimpleNamespace(ran=True, rendered=2, clips=2, encoded=1, reused=1)
+
+    monkeypatch.setattr(StoreClient, "from_config", lambda c: Client())
+    monkeypatch.setattr(episode_edit, "apply_restore_edit", apply)
+    options = dict(restore_downloader=lambda *a: pytest.fail("must not redownload"), render=render)
+    app = app_for(cfg, **options)
+    assert request(app, "title").status_code == 202
+    if restart:
+        original, = app.state.runner.jobs()
+        original.target.prepare(original)
+        original.target.edit(original)
+        assert original.target.spec()["restored"] is True
+        assert all(edit["applied"] for edit in original.target.spec()["edits"])
+        with app.state.runner._lock:
+            app.state.runner._save_locked()
+        app = app_for(cfg, **options)
+        assert app.state.runner.restore() == 1
+        rebuilt, = app.state.runner.jobs()
+        assert rebuilt.target is not original.target
+        assert rebuilt.target.spec() == original.target.spec()
+    run(app)
+    runner = app.state.runner
+    interrupted = runner.latest(EID)
+    assert interrupted.status == "interrupted" and interrupted.error.startswith(WAIT_PREFIX)
+    assert interrupted.target.restored is True and all(edit["applied"] for edit in interrupted.target.edits)
+    assert len(applied) == 1 and fetched == ["source"] and rendered == [EID]
+    review = (ws.dir / "review.json").read_bytes()
+    assert app.state.store_retry_pass(Client()) == []  # still missing
+    available[0] = "b" * 64
+    assert app.state.store_retry_pass(Client()) == []  # available but wrong release sha
+    available[0] = hd_sha
+    assert app.state.store_retry_pass(Client()) == [EID]
+    retry = runner.latest(EID)
+    assert retry is not interrupted and retry.target is interrupted.target
+    assert [step.lane for step in retry.target.lane_steps()] == ["prepare", "ai", "render"]
+    if cfg.web.queue_mode == "lanes":
+        assert [step.lane for step in retry.steps] == ["prepare", "ai", "render"]
+    assert app.state.store_retry_pass(Client()) == []  # latest job is already queued
+    run(app)
+    assert retry.status == "done", retry.error
+    assert len(applied) == 1 and fetched == ["source"] and rendered == [EID, EID]
+    assert heads.count("source") == 1
+    assert (ws.dir / "review.json").read_bytes() == review
+    assert list_titles(EID, cfg)["clips"][0]["title"] == TITLE
+
+
+@pytest.mark.parametrize("reason", ["not_restored", "newer_job"])
+def test_restore_hd_retry_ignores_unrestored_or_superseded_job(cfg, reason):
+    from auto_short.store.borrow import WAIT_PREFIX
+    episode(cfg)
+    cfg = replace(cfg, store=StoreConfig(enabled=True))
+    app = app_for(cfg)
+    request(app, "title")
+    runner = app.state.runner
+    interrupted = runner.latest(EID)
+    # An interrupted restore before source installation must never enter the HD render retry path.
+    interrupted.status, interrupted.error = "interrupted", f"{WAIT_PREFIX}: HD unavailable"
+    interrupted.target.restored = reason != "not_restored"
+    if reason == "newer_job":
+        newer, _ = runner.submit(EID, "render", lambda job: None)
+        assert runner.latest(EID) is newer
+    before = runner.jobs()
+
+    class Client:
+        def head(self, *args):
+            pytest.fail("ineligible restore must not query the HD store")
+
+    assert app.state.store_retry_pass(Client()) == []
+    assert runner.jobs() == before

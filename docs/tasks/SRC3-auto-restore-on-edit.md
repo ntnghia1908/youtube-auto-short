@@ -12,9 +12,9 @@
 - Authorization mode: task
 - Authorization source: `docs/decisions/SRC3-SRC4-store-first-sources.md` G1–G3 (ACCEPTED 2026-10-25, G1–G3; G2 = a)
 - Parallel group: SRC3 ∥ SRC4 (Owned paths rời nhau)
-- Owned paths: `src/auto_short/review/archive.py` (`restore_source`, kiểm bản khác byte); `src/auto_short/web/routes/episode_edit.py` (5 route sửa); `src/auto_short/web/app.py` (chỉ target khôi phục + nối thao tác sau khôi phục); `src/auto_short/web/static/` phần trang tập (trạng thái "đang lấy lại nguồn"); `tests/test_restore_source_cp837.py`, `tests/test_src3_auto_restore.py` (mới); A1: `tests/test_storage_cp86.py`, `tests/test_web_cp9.py` (chỉ cập nhật test luật archived theo G1, giữ assertion khác); file này
+- Owned paths: `src/auto_short/review/archive.py` (`restore_source`, kiểm bản khác byte); `src/auto_short/web/routes/episode_edit.py` (5 route sửa); `src/auto_short/web/app.py` (target khôi phục + nối thao tác sau khôi phục; F2: `store_retry_pass` theo finding ORCHESTRATOR từ chạy thật 8080); `src/auto_short/web/static/` phần trang tập (trạng thái "đang lấy lại nguồn"); `tests/test_restore_source_cp837.py`, `tests/test_src3_auto_restore.py` (mới); A1: `tests/test_storage_cp86.py`, `tests/test_web_cp9.py` (chỉ cập nhật test luật archived theo G1, giữ assertion khác); file này
 - Dependencies: SRC1 (#154), SRC2 (#155); F1 dùng `store.index_cache` của SRC4 (`f7849ae`)
-- Base commit / branch: `f7849ae` (`feature/src4-ingest-from-store`, SRC4); HEAD lúc bắt đầu F1: `d73419d` (WIP SRC3 do ORCHESTRATOR commit, đã rebase trên SRC4) / `feature/src3-auto-restore`
+- Base commit / branch: `f7849ae` (`feature/src4-ingest-from-store`, SRC4); HEAD lúc bắt đầu F1: `d73419d` (WIP SRC3 do ORCHESTRATOR commit, đã rebase trên SRC4); HEAD lúc bắt đầu F2: `e546953` (SRC3 đã tích hợp F1) / `feature/src3-auto-restore`
 - Human Lead approval: accepted — HUMAN LEAD 2026-10-25 "Duyệt cả hai"
 - Implementation authorized: YES
 
@@ -71,7 +71,7 @@ Sửa tiêu đề / cắt lại / thêm / khôi phục Short trên tập đã d�
 
 ## Result
 
-- Delivery sau F1 (ORCHESTRATOR review vòng 3): đã sửa blocking finding; giữ Status `IN_PROGRESS` chờ review / full suite, chưa xác nhận AC4. IMPLEMENTER không commit / push / PR. Làm trên HEAD `d73419d`, xếp trên SRC4 `f7849ae`.
+- Delivery sau F2: đã sửa blocking finding từ chạy thật 8080; giữ Status `IN_PROGRESS` chờ ORCHESTRATOR review / chạy lại thực tế. Làm trên HEAD sạch `e546953`, xếp trên SRC4 `f7849ae`. IMPLEMENTER không commit / push / PR; full suite F2 chưa chạy.
 - Main changes:
   - `review/archive.py`: workspace → cache → HEAD/fetch kho 3090 → YouTube; fetch theo sha HEAD. Bản khác ingest kiểm thời lượng metadata + mọi Short của cả hai part bằng segments render manifest, sha Short và `audio.compare`, lệch tối đa một khung nguồn; provenance mới trong `restored.json`, giữ nguyên `manifest.source` và rollback.
   - `web/routes/episode_edit.py`: các nhánh archived chuyển sang 202 `{queued: "restore", job}`; validate payload read-only trước khi xếp; dùng chung job theo owner cho cả `.kt`; áp dụng tuần tự qua cùng hàm review và target hiện có.
@@ -136,3 +136,24 @@ timeout 240 env PYTHONPATH=/home/ntnghia/projects/youtube-auto-short/.claude/wor
 
 
 ORCHESTRATOR (2026-10-25, ngoài sandbox): review 3 vòng (A1 đổi assertion luật cũ CP8.6 S3 trong `test_storage_cp86.py`, `test_web_cp9.py` — nộp lại URL vẫn 409; F1 `needs_download` không gọi mạng dưới lock scheduler, dùng `index_cache` của SRC4 → branch xếp trên SRC4 #157). HTTP + targeted (`test_storage_cp86 test_web_cp9 test_restore_source_cp837 test_src3_auto_restore test_web_app`) 141 passed (trước F1); full suite `-n auto` **2942 passed, 1 skipped** (sau F1); `node --check app.js`, `framework-check`, `git diff --check` PASS. Còn: chạy thật 8080 (chờ HUMAN LEAD cho restart).
+
+### F2 — Retry render sau khi khôi phục nguồn, đợi HD đã release
+
+- Nguồn finding: ORCHESTRATOR chạy thật trên 8080, commit gộp `8309ab8` (SRC3 `e546953` + TC3.2). POST title cùng chữ trên tập archived `z1x_BvSYV_Q` trả 202; lấy đúng sha ingest từ kho trong 20 s, edit đã applied; render thiếu `/files/z1x_BvSYV_Q/hd` → StoreWait / INTERRUPTED với `WAIT_PREFIX`. Đây chưa phải manual PASS: filter retry cũ không nhận kind restore_source.
+- Authorization F2: ORCHESTRATOR yêu cầu sửa `web/app.py::store_retry_pass` và tests/Result trong ownership hiện có; không mở rộng sang JobRunner/store.
+- Fix: nhận thêm `KIND_RESTORE_SOURCE` khi `target.restored is True`, error đúng `WAIT_PREFIX`, status INTERRUPTED và là `runner.latest(episode_id)`. Giữ kiểm HEAD HD phải đúng sha recorded at release. Kiểm latest lần nữa dưới submit_lock sau HEAD để bỏ job bị thao tác mới thay thế. Submit lại cùng target: prepare bỏ qua vì restored, edit bỏ qua applied, render chạy lại; lane_steps có edits vẫn PREPARE / AI / RENDER.
+- Tests trong `test_src3_auto_restore.py`: `test_restored_edits_waiting_for_hd_retry_render_without_reapplying` bao phủ lanes/serial, có/không restart từ queue spec `restored: True` + edits applied. Dựng lại qua persistence thực, render chờ HD rồi retry pass nhận lại target; kho thiếu / sai sha không submit, đúng sha mới submit; chỉ fetch nguồn và apply edit một lần, render hai lượt (wait/success), review không đổi khi retry. `test_restore_hd_retry_ignores_unrestored_or_superseded_job` kiểm chưa restored / có job mới hơn không submit và không gọi HEAD.
+- Lệnh duy nhất chạy verification F2 trong sandbox (giới hạn bằng timeout):
+
+```sh
+timeout 240 env PYTHONPATH=/home/ntnghia/projects/youtube-auto-short/.claude/worktrees/src3-auto-restore/src /home/ntnghia/miniconda3/envs/auto-short/bin/python -m pytest -q tests/test_src3_auto_restore.py tests/test_restore_source_cp837.py -k 'not http'
+# 96 passed, 1 deselected in 17.30s; exit 0
+```
+
+- Không chạy TestClient/full suite/node/framework check hoặc gọi mạng thật trong vòng F2; store HEAD/fetch và render trong test đều giả. Full suite **2942 passed, 1 skipped** là bằng chứng ORCHESTRATOR sau F1 ở trên, không phải kết quả sau F2. Chờ ORCHESTRATOR kiểm lại HTTP/full suite/thực tế khi HD có trên kho.
+
+Chạy thật 8080 (2026-10-25, commit gộp `8309ab8` = SRC3 `e546953` + TC3.2 `ff61518`; chưa có F2):
+- `z1x_BvSYV_Q` (Địa Tạng 27, dọn 2026-10-18): POST title (cùng chữ) → 202, job `restore_source` khôi phục trong 20 s; render gặp "đợi 3090: kho không có file /files/z1x_BvSYV_Q/hd" (HD đã giải phóng) → `interrupted` → finding F2 (đã sửa: `store_retry_pass` nhận job `restore_source` đã restored). Tiêu đề không đổi chữ nên không ảnh hưởng nội dung.
+- `0SpL5Dohu-g` (Thập Thiện 17, dọn 2026-10-18): POST thêm Short đoạn có nhạc → 422, không xếp job (đúng). Đoạn s00632–s00641 → 202, job 2: khôi phục cả tập chính + `.kt` (209 s), AI đặt tiêu đề m01 "Hành thiện hay ác, quả báo sẽ đến như thế nào?", render 18/18 (1 encoded, 17 reused — nguồn khôi phục khớp render_key) → **AC1 PASS**.
+- Cả hai lần nguồn lấy từ **YouTube** (log yt-dlp), đúng sha ingest: kho 3090 chưa có `source` của 2 tập này (`/api/storage` redownload 1 / 531 sau restart, archived 1 / 43). Nhánh "3090 trước YouTube" (AC2) và G2 a (AC3) chưa chạy thật — chỉ có test tự động; chạy lại khi SRC2 đã đẩy nguồn tập đã dọn lên kho.
+- Sau F2: full suite `-n auto` **2950 passed, 1 skipped**.
