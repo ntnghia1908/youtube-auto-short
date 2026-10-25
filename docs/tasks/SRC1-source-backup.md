@@ -28,8 +28,8 @@ Không video gốc nào bị xóa khỏi VM khi chưa có bản đúng sha256 tr
 
 ## Scope
 
-- In scope: decision SRC1 G2–G7 + G4a (phần đẩy; tải lại 4 video mất hẳn từ YouTube thuộc TC3.2 / lệnh có sẵn).
-- Out of scope: 130 bản gốc không ♥ đã xóa; xóa trên 3090; HD2b G5 / G6; đổi định dạng file.
+- In scope: decision SRC1 G2–G7 + G4a (phần đẩy; tải lại bản đã xóa thuộc SRC2).
+- Out of scope: tải lại bản đã xóa (SRC2); xóa trên 3090; HD2b G5 / G6; đổi định dạng file.
 
 ## Authority / key decisions
 
