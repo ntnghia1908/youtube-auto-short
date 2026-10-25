@@ -792,7 +792,7 @@ const AutoShort = (() => {
     box.hidden = !h;
     if (!h) return;
     const land = $("#hd-landscape");
-    if (h.released && !h.store) { // HD1 G3: the HD / vertical files were moved to an external machine
+    if (h.released && !h.url && !(h.vertical || {}).url) {
       land.hidden = true;
       $("#hd-vertical-dl").hidden = true;
       $("#hd-vertical-make").hidden = true;
@@ -814,7 +814,7 @@ const AutoShort = (() => {
     const active = !!job && (job.status === "queued" || job.status === "running");
     const dl = $("#hd-vertical-dl");
     dl.hidden = !v.ready;
-    if (v.ready) { dl.href = v.url; dl.setAttribute("download", v.name || ""); dl.textContent = `Tải bản dọc${v.size ? " (" + fmtGb(v.size) + ")" : ""}`; }
+    if (v.ready) { dl.href = v.url; dl.setAttribute("download", v.name || ""); dl.textContent = `Tải bản dọc${v.size ? " (" + fmtGb(v.size) + ")" : ""}${v.store ? " · trên 3090" : ""}`; }
     const make = $("#hd-vertical-make");
     make.hidden = !!v.ready;
     make.disabled = active;
@@ -2712,6 +2712,15 @@ const AutoShort = (() => {
         el("div", { class: "disk-nums small", text: `Đã dùng ${fmtBytes(k.used)} / ${fmtBytes(k.total)} (${pct} %) · còn trống ${fmtBytes(k.free)}` }));
     }));
     const t = d.totals;
+    let offload = $("#vertical-offload");
+    if (!offload) {
+      offload = el("p", { id: "vertical-offload", class: "muted small" });
+      $("#storage-meta").after(offload);
+    }
+    const o = d.offload;
+    offload.hidden = !o;
+    if (o) offload.textContent = `Bản dọc lên 3090: đã đẩy ${o.pushed} · còn ${o.pending} · lỗi ${o.failed}` +
+      ` · sẽ giải phóng ${fmtBytes(o.bytes_pending)}${o.last_error ? " · " + o.last_error : ""}`;
     const backup = $("#source-backup");
     if (backup) {
       backup.hidden = !d.source_backup;
@@ -2740,6 +2749,7 @@ const AutoShort = (() => {
     }
     $("#storage-meta").textContent = `Các tập: ${fmtBytes(t.episodes)} (video nguồn ${fmtBytes(t.source)}, Short ${fmtBytes(t.shorts)}, khác ${fmtBytes(t.other)}` +
       (t.hd || t.enhance_tmp ? `; trong đó bản HD ${fmtBytes(t.hd || 0)}, đoạn enhance tạm ${fmtBytes(t.enhance_tmp || 0)}` : "") + `). ` +
+      `File tạm mượn từ 3090: ${fmtBytes(t.store_tmp || 0)}. ` +
       `Tính lúc ${fmtTime(d.computed_at)} (làm mới tối đa 30 giây một lần).`;
 
     const recs = $("#recs");
@@ -3338,9 +3348,10 @@ const AutoShort = (() => {
         b.addEventListener("click", () => processEntry(e, b));
         actions.append(b);
       }
-      if (e.hd_released) { // HD1 G3: no download link, only the fact
+      if (e.hd_released && !e.hd_url) {
         actions.append(el("span", { class: "muted", title: hdReleasedText(e.hd_released_at), text: "HD đã chuyển ra máy ngoài" }));
       }
+      if (e.hd_store || (e.vertical || {}).store) actions.append(el("span", { class: "muted small", text: "trên 3090" }));
       if (e.hd_url) { // CP8.27 H2: the landscape HD video of this episode
         actions.append(el("a", { class: "btn icon-btn", href: e.hd_url, download: e.hd_name || "", title: "Tải video HD (bản ngang)",
           "aria-label": "Tải video HD (bản ngang)" }, icon("download")));

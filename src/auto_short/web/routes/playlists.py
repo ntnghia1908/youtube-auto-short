@@ -102,6 +102,8 @@ def build(ctx: WebContext) -> APIRouter:
             return "skip", "tập không khả dụng"
         if e.get("state") not in (playlists_mod.RENDERED, playlists_mod.COMPLETE):
             return "skip", "chưa xong Short"
+        if render_full.current(ctx.config, vid):
+            return "skip", "đã có bản dọc"
         src = ep.hd_source(ctx.config, vid)
         on_store = False
         if src is None and review_backup.view(ctx.config, vid)["released"]:
@@ -110,8 +112,6 @@ def build(ctx: WebContext) -> APIRouter:
             on_store = True  # HD2a: the vertical job borrows the HD from the 3090 store
         if src is None and not on_store:
             return "skip", f"không có bản HD / video gốc < {ctx.config.enhance.min_height}p"
-        if render_full.current(ctx.config, vid):
-            return "skip", "đã có bản dọc"
         job = ctx.runner.latest_vertical(vid)
         if job is not None and job.active:
             return "skip", "đang chờ / đang tạo bản dọc"
@@ -129,12 +129,14 @@ def build(ctx: WebContext) -> APIRouter:
             reason = "sẽ tạo khi có HD"
         src = ep.hd_source(ctx.config, vid)
         ready = render_full.ready_file(ctx.config, vid) if render_full.current(ctx.config, vid) else None
+        stored = render_full.on_store(ctx.config, vid)
+        available = ready is not None or stored is not None
         vjob = ctx.runner.latest_vertical(vid)
         e["vertical"] = {"status": status, "reason": reason, "active": vjob is not None and vjob.active,
                          "auto_waiting": waiting, "fetch": src is not None and src.kind == enh_state.SRC_ARCHIVED,
-                         "ready": ready is not None,
-                         "url": f"/api/episodes/{vid}/vertical" if ready is not None else None,
-                         "name": ep.video_download_name(ctx.config, vid, "Doc") if ready is not None else None}
+                         "ready": available, "store": stored is not None,
+                         "url": f"/api/episodes/{vid}/vertical" if available else None,
+                         "name": ep.video_download_name(ctx.config, vid, "Doc") if available else None}
 
     def _posts_ranges(playlist_id: str, entries: list[dict]) -> list[dict]:
         """CP8.31 A1: fixed ranges of ``RANGE_SIZE`` episode numbers (1-10, 11-20, ...) that hold at least one post,
@@ -174,6 +176,10 @@ def build(ctx: WebContext) -> APIRouter:
             if e.get("video_id"):  # HD1 G3: the HD / vertical files were moved to an external machine
                 bk = review_backup.view(ctx.config, e["video_id"])
                 e["hd_released"], e["hd_released_at"] = bk["released"], bk["released_at"]
+                if bk["released"] and ctx.config.store.enabled:
+                    e["hd_url"] = f"/api/episodes/{e['video_id']}/source-hd"
+                    e["hd_name"] = ep.hd_download_name(ctx.config, e["video_id"])
+                    e["hd_store"] = True
             _vertical_fields(e)  # CP8.32 V3
             _download_fields(e)  # CP8.31 D3
         view["priority_count"] = sum(1 for e in view["entries"] if e["priority"])

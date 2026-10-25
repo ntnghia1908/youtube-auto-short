@@ -128,6 +128,35 @@ class StoreClient:
         except (OSError, http.client.HTTPException) as exc:
             raise StoreUnavailable(f"không gửi được file lên kho: {type(exc).__name__}") from None
 
+    def open_stream(self, video_id: str, kind: str, range_header: str | None = None):
+        """HD2b G5: (status, public headers, closable chunk iterator); never buffer the full file."""
+        resp = self._open(self._path(video_id, kind), headers={"Range": range_header} if range_header else {})
+        if resp.status not in (200, 206):
+            resp.close()
+            raise StoreUnavailable("kho trả trạng thái tải không hợp lệ")
+        headers = {name: resp.headers[name] for name in ("Content-Length", "Content-Range", "Accept-Ranges")
+                   if resp.headers.get(name) is not None}
+
+        class Chunks:
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                try:
+                    chunk = resp.read(_CHUNK)
+                    if chunk:
+                        return chunk
+                except (OSError, http.client.HTTPException):
+                    self.close()
+                    raise StoreUnavailable("đứt kết nối khi tải từ 3090") from None
+                self.close()
+                raise StopIteration
+
+            def close(self):
+                resp.close()
+
+        return resp.status, headers, Chunks()
+
     def fetch(self, video_id: str, kind: str, dest: Path, sha256: str) -> Path:
         """Download to ``dest`` (through ``dest + ".part"``, resumed with ``Range`` when a part exists), verify that the
         bytes hash to ``sha256`` (and that the store announces it), then rename atomically. Wrong sha256 deletes the

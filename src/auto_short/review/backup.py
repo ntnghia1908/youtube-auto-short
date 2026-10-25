@@ -94,6 +94,9 @@ def vertical_sha(config: Config, owner: str, doc: dict) -> tuple[str, int, int] 
             and isinstance(cache.get("sha256"), str):
         return cache["sha256"], st.st_size, st.st_mtime_ns
     sha = sha256_file(path)
+    after = path.stat()
+    if (after.st_size, after.st_mtime_ns) != (st.st_size, st.st_mtime_ns):
+        raise BackupError("bản dọc đã đổi trong lúc tính sha256; thử lại sau", 409)
     doc["vertical_sha"] = {"sha256": sha, "size": st.st_size, "mtime_ns": st.st_mtime_ns}
     return sha, st.st_size, st.st_mtime_ns
 
@@ -101,6 +104,13 @@ def vertical_sha(config: Config, owner: str, doc: dict) -> tuple[str, int, int] 
 def _current_hd(d: Path) -> tuple[str, int] | None:
     fp = enh.hd_fingerprint(d)
     return (fp.sha256, fp.size) if fp is not None else None
+
+
+def lease_active(ws_dir: Path, *, clock=time.time) -> bool:
+    """HD1 G2 / HD2b: a live enhance lease protects even a vertical-only owner."""
+    doc = enh.read(ws_dir) or {}
+    exp = enh.parse_iso((doc.get("lease") or {}).get("expires_at"))
+    return exp is not None and exp > clock()
 
 
 def confirm(config: Config, episode_id: str, kind: str, sha256: str, *, now: str | None = None) -> dict:
@@ -114,7 +124,7 @@ def confirm(config: Config, episode_id: str, kind: str, sha256: str, *, now: str
     owner, d = _owner_dir(config, episode_id)
     with _LOCK:
         doc = read_backup(d)
-        if doc.get("released"):
+        if (doc.get("released") or {}).get("hd") and kind == "hd":
             raise BackupError(f"{enh.RELEASED_MESSAGE}: không còn file trên VM để xác nhận")
         if kind == "hd":
             cur = _current_hd(d)
@@ -149,6 +159,18 @@ def view(config: Config, episode_id: str) -> dict:
                           for k, v in (doc.get("confirmed") or {}).items() if isinstance(v, dict)}}
 
 
+def released_vertical(config: Config, owner: str) -> dict | None:
+    """HD2b G6: identity of the released vertical, only while its local file is absent."""
+    if render_full.vertical_path(config, owner).exists():
+        return None
+    d = Path(config.workspace.dir) / enh.owner_for(config, owner)
+    entry = (read_backup(d).get("released") or {}).get("vertical")
+    if isinstance(entry, dict) and _SHA.fullmatch(str(entry.get("sha256", ""))) \
+            and isinstance(entry.get("size"), int) and entry["size"] > 0:
+        return {"sha256": entry["sha256"], "size": entry["size"]}
+    return None
+
+
 def release(config: Config, episode_id: str, *, allow_no_vertical: bool = False, now: str | None = None,
             clock=time.time) -> ReleaseResult:
     """G2 / G3: delete ``source_hd.mp4`` (and its khai thị hard link) + ``full/vertical.mp4`` when each file present
@@ -158,30 +180,27 @@ def release(config: Config, episode_id: str, *, allow_no_vertical: bool = False,
     with _LOCK:
         edoc = enh.read(d)
         hd_file = enh.hd_path(d)
-        if edoc is not None and edoc.get("released") and not hd_file.is_file() \
+        doc = read_backup(d)
+        if (doc.get("released") or (edoc or {}).get("released")) and not hd_file.is_file() \
                 and not render_full.vertical_path(config, owner).is_file():
             return ReleaseResult(owner, False, 0, [])
-        if edoc is None or edoc.get("state") != enh.DONE:
-            raise BackupError("tập chưa có bản HD hoàn tất (enhance chưa xong); không có gì để giải phóng")
-        lease = edoc.get("lease")
-        exp = enh.parse_iso((lease or {}).get("expires_at")) if lease else None
-        if exp is not None and exp > clock():
+        if lease_active(d, clock=clock):
             raise BackupError("tập đang có lease enhance; giải phóng sau khi xong", 409)
         cur_hd = _current_hd(d)
-        if cur_hd is None:
-            raise BackupError("không có file HD khớp enhance.json (sha256) để giải phóng")
-        doc = read_backup(d)
+        if cur_hd is not None and edoc.get("state") != enh.DONE:
+            raise BackupError("tập chưa có bản HD hoàn tất (enhance chưa xong); không giải phóng")
         conf = doc.get("confirmed") or {}
         problems = []
-        c = conf.get("hd") or {}
-        if not c:
-            problems.append("chưa xác nhận bản HD")
-        elif c.get("sha256") != cur_hd[0] or c.get("size") != cur_hd[1]:
-            problems.append("sha bản HD không khớp file hiện tại")
+        if cur_hd is not None:
+            c = conf.get("hd") or {}
+            if not c:
+                problems.append("chưa xác nhận bản HD")
+            elif c.get("sha256") != cur_hd[0] or c.get("size") != cur_hd[1]:
+                problems.append("sha bản HD không khớp file hiện tại")
         vpath = render_full.vertical_path(config, owner)
         vgot = vertical_sha(config, owner, doc)
         if vgot is None:
-            if not allow_no_vertical:
+            if cur_hd is None or not allow_no_vertical:
                 problems.append("chưa có bản dọc (tạo bản dọc trước để giữ chất lượng HD, hoặc gửi allow_no_vertical)")
         else:
             c = conf.get("vertical") or {}
@@ -192,20 +211,25 @@ def release(config: Config, episode_id: str, *, allow_no_vertical: bool = False,
         if problems:
             raise BackupError("; ".join(problems))
         stamp = now or utc_now()
-        removed_doc = {"hd": {"sha256": cur_hd[0], "size": cur_hd[1]}}
+        # HD2b D2: vertical-only release keeps any earlier released HD identity.
+        removed_doc = dict(doc.get("released") or {})
+        if cur_hd is not None:
+            removed_doc["hd"] = {"sha256": cur_hd[0], "size": cur_hd[1]}
         if vgot is not None:
             removed_doc["vertical"] = {"sha256": vgot[0], "size": vgot[1]}
-        doc.update(episode_id=owner, released={"released_at": stamp, **removed_doc})
+        doc.update(episode_id=owner, released={**removed_doc, "released_at": stamp})
         atomic_write_json(backup_path(d), doc)
-        edoc.update(released=True, released_at=stamp)
-        enh.write(d, edoc)
-        targets = [hd_file]
-        if not owner.endswith(SUFFIX):  # a ``.kt``-only video has no further khai thị mirror / hard link
-            enh.mirror(config, owner)
-            targets.append(enh.hd_path(d.parent / (owner + SUFFIX)))
+        targets = []
+        if cur_hd is not None:
+            edoc.update(released=True, released_at=stamp)
+            enh.write(d, edoc)
+            targets.append(hd_file)
+            if not owner.endswith(SUFFIX):
+                enh.mirror(config, owner)
+                targets.append(enh.hd_path(d.parent / (owner + SUFFIX)))
         if vgot is not None:
             targets.append(vpath)
-        freed = cur_hd[1] + (vgot[1] if vgot is not None else 0)
+        freed = (cur_hd[1] if cur_hd is not None else 0) + (vgot[1] if vgot is not None else 0)
         removed = []
         for p in targets:
             if p.is_file() or p.is_symlink():
