@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: BUG
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -67,10 +67,10 @@ Không chạm database / security model; route nội bộ đổi cách tìm thư
 
 ## Result
 
-- Main changes:
-- Tests:
-- Diff + / − (app, test):
-- Helper mới (đã tìm, lý do không tái dùng):
-- Review:
-- Known limitations:
+- Main changes: `enhance_state.owner_for(config, id)` (`<id>` nếu còn `work/<id>/`, ngược lại `<id>.kt`); `effective_source`, `render_full.owner_of(config, …)` (đường dẫn dọc), `backup` confirm / view / release (owner `.kt` không có hard link / mirror thêm), `video_download_name`, 404 của `/backup` / `/release`, `playlists.hd_progress`, generator `make_backup.py` (bảng sha).
+- Tests: `tests/test_hd_owner_kt.py` 6 test (AC1–AC3); targeted 85 passed; full suite 2511 passed, 1 failed (test chập chờn `test_lower_thread_priority…`, như HD1a). Kiểm chỉ-đọc dữ liệu thật: 9 tập 1–9 Kinh Địa Tạng `hd_source` = `hd` trong `work/<id>.kt/`, tập thường không đổi; generator: 102 HD (trước 93) + 41 Doc.
+- Diff + / − (app, test): app +34 / −21, test +135.
+- Helper mới (đã tìm, lý do không tái dùng): `owner_for` (chưa có hàm tra theo ổ đĩa; `owner_id` giữ thuần chuỗi).
+- Review: ORCHESTRATOR bổ sung `hd_progress` + generator (cùng mục đích, owned paths cập nhật).
+- Known limitations: `ep.hd_owner` (khóa job) vẫn là id gốc — đúng ý đồ, thư mục do `render_full` / `backup` tự giải.
 - PR: #144 (cùng branch HD1a)
