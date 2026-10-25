@@ -314,7 +314,8 @@ def test_generator_builds_scripts_with_parameters(tmp_path):
     text = raw.decode("utf-8-sig")
     assert "@@" not in text
     assert f'"{VID}|HD" = "{HD_SHA}"' in text and f'"{VID}|Doc" = "{V_SHA}"' in text
-    assert "'PLtest123'" in text and "'Kinh Thử Nghiệm'" in text and "D:\\ThuNghiem_HD" in text
+    assert "'PLtest123'" in text and "'Kinh Thử Nghiệm'" in text and "E:\\ThuNghiem_HD" in text
+    assert "[string]$Dest = 'E:\\ThuNghiem_HD'" in text
     assert json.loads((dest / "vertical-sha.cache.json").read_text(encoding="utf-8"))[VID]["sha256"] == V_SHA
     rename = (dest / "rename.ps1").read_bytes().decode("utf-8-sig")
     assert "@@" not in rename and "'Kinh Thử Nghiệm'" in rename
@@ -331,6 +332,34 @@ def test_generator_rejects_bad_playlist_and_quotes_series():
 
 def _template() -> str:
     return (ROOT / "scripts" / "backup" / "backup.template.ps1").read_text(encoding="utf-8")
+
+
+def test_template_merges_existing_index_and_keeps_fixed_columns():
+    t = _template()
+    merge = t[t.index("$newKeys = @{}"):t.index('Remove-Item (Join-Path $Dest ".api.json")')]
+    assert 'foreach ($r in $rows) { $newKeys["$($r.tap)|$($r.loai)"] = $true }' in merge
+    assert "if (Test-Path -LiteralPath $Index)" in merge
+    assert "try {" in merge and "} catch {" in merge
+    assert "Import-Csv -LiteralPath $Index -Encoding UTF8 -ErrorAction Stop" in merge
+    assert '$key = "$($old.tap)|$($old.loai)"' in merge
+    assert "-not $newKeys.ContainsKey($key)" in merge
+    assert "Test-Path -LiteralPath (Join-Path $Dest $old.file)" in merge
+    assert "$keptRows += $old" in merge
+    fallback = merge.split("} catch {", 1)[1]
+    assert 'Log "Cảnh báo:' in fallback and "$keptRows = @()" in fallback
+    assert 'Log "Giữ lại $($keptRows.Count) dòng CSV cũ."' in merge
+    assert "($rows + $keptRows) | Sort-Object tap, loai | Select-Object tap, loai, file, video_id, tieu_de |" in merge
+    assert "Export-Csv -NoTypeInformation -Encoding UTF8 -Path $Index" in merge
+    assert "$rows | Export-Csv" not in t
+
+
+def test_template_defaults_and_instructions_use_e_drive():
+    t = _template()
+    assert "[string]$Dest = 'E:\\@@DESTNAME@@'" in t
+    assert r"-Dest E:\@@DESTNAME@@" in t
+    assert "D:\\@@DESTNAME@@" not in t
+    generator = (ROOT / "scripts" / "backup" / "make_backup.py").read_text(encoding="utf-8")
+    assert r"backup drive (E:\\<name>)" in generator
 
 
 def test_template_keeps_old_behaviour_and_has_release_step():
