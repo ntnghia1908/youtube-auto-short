@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: BUG
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -70,8 +70,10 @@ Lỗi mạng tạm thời của yt-dlp khi tải (timeout đọc, kết nối b�
 
 Không chạm database, security model, public API.
 
-- [ ] Lần sau gặp timeout: banner "YouTube tạm chặn" hiện, job không fail.
+- [x] Lần sau gặp timeout: banner "YouTube tạm chặn" hiện, job không fail (2026-10-26, xem Result).
 
 ## Result
 
-- (điền khi READY)
+- READY, merge PR #169 (2026-10-26). Codex: 1 vòng, effort medium, ~38k tokens. Code +10 / −4, test +49 / −15; helper mới: không.
+- AC1 `test_block_requeues_head_lane_waits_then_all_done_in_order[timeout]`; AC2 `test_detector_temporary_network_errors`, `test_ytdlp_download_raises_blocked_vs_plain`; AC3 ORCHESTRATOR full suite `-n auto` 3115 PASS, 1 skipped; framework-check, `git diff --check` PASS.
+- Chạy thật 8080 `20501e1` 2026-10-26: xếp lại 26 tập (47 job) fail ingest đêm 25 → 26/10 (43 × read timeout, 3 × Broken pipe, 1 × SSL handshake timeout). Gặp timeout ngay: log "prepare lane waits 15 min (block #1)", job về đầu làn, không fail; `GET /api/episodes` → `youtube.blocked = true`, `next_check` +15 phút (nguồn banner), queue `pending 47`.
