@@ -1,9 +1,11 @@
 """SHO1a: verify every rendered Short, durably record its location, then release VM bytes."""
 from __future__ import annotations
 
+import os
 import re
+import tempfile
 import time
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
 from ..config import Config
@@ -13,8 +15,96 @@ from ..web.storage import episode_sizes, short_offload_plan
 from ..workspace import atomic_write_json, read_json_dict, utc_now
 from . import index_cache
 from .backup import _destination, _matches
-from .client import StoreClient, StoreMismatch
+from .client import StoreClient, StoreError, StoreMismatch, StoreUnavailable
 from .offload import _check_stop, _sha256_file
+
+
+def fetch_released(config: Config, short: ep.StoredShort, dest: Path, *, client=None) -> Path:
+    """Use the shared verified/resumable fetch and restore the original ARC1 timestamp."""
+    if not config.store.enabled:
+        raise StoreUnavailable("Short của tập đang ở kho 3090; bật [store] để sửa")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    client = client or StoreClient.from_config(config.store)
+    client.fetch(short.episode_id, "short", dest, short.sha256, clip=short.clip)
+    os.utime(dest, ns=(short.mtime_ns, short.mtime_ns))
+    return dest
+
+
+def restore_released(config: Config, episode_id: str, *, client=None) -> None:
+    """Restore just this part before render; local files win and successful downloads survive retries."""
+    from ..render.stage import RenderError, StoreWait
+    from .borrow import WAIT_PREFIX
+
+    record = Path(config.render.output_dir) / episode_id / "store.json"
+    released = (read_json_dict(record) or {}).get("released")
+    if not released:
+        return
+    if not config.store.enabled:
+        raise RenderError("Short của tập đang ở kho 3090; bật [store] để sửa")
+    locations = {cid: p for cid, p, _ in ep.short_locations(config, episode_id) or []}
+    try:
+        if not isinstance(released, dict):
+            raise StoreMismatch("hồ sơ Short đã giải phóng không hợp lệ")
+        for cid in released:
+            location = locations.get(cid)
+            if isinstance(location, Path):
+                continue
+            if not isinstance(location, ep.StoredShort):
+                raise StoreMismatch(f"không biết sha256 của Short đã giải phóng ({episode_id}/{cid})")
+            fetch_released(config, location, record.parent / "shorts" / location.clip, client=client)
+    except StoreError as exc:
+        raise StoreWait(f"{WAIT_PREFIX}: {exc}") from exc
+    record.unlink()
+
+
+@contextmanager
+def borrow_short(config: Config, location: Path | ep.StoredShort, folder: Path, *, client=None):
+    """A private copy per compilation; borrow tracking protects active copies from the temp sweeper."""
+    from .borrow import _BORROWED, _LOCK
+
+    if isinstance(location, Path):
+        yield location
+        return
+    folder.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".store-shorts-", dir=folder) as tmp:
+        dest = Path(tmp) / location.clip
+        part = dest.with_name(dest.name + ".part")
+        with _LOCK:
+            _BORROWED[dest] += 1
+            _BORROWED[part] += 1
+        try:
+            try:
+                fetch_released(config, location, dest, client=client)
+            except StoreError as exc:
+                raise StoreUnavailable(f"Short {location.episode_id}/{location.clip} đang ở kho 3090, "
+                                       "3090 không trả lời — bấm Ghép lại sau") from exc
+            yield dest
+        finally:
+            with _LOCK:
+                del _BORROWED[dest]
+                del _BORROWED[part]
+
+
+def offload_snapshot(config: Config, *, busy=None, now: float | None = None,
+                     failed=(), last_error=None) -> dict:
+    """G7: stat/release metadata only, including grace waiters; never query the store."""
+    now = time.time() if now is None else now
+    rows = episode_sizes(config)
+    local, released = set(), {}
+    for row in rows:
+        for _cid, location, _name in ep.short_locations(config, row["id"]) or []:
+            if isinstance(location, Path):
+                local.add(row["id"])
+            elif isinstance(location, ep.StoredShort):
+                released[row["id"]] = released.get(row["id"], 0) + location.size
+    grace = config.storage.auto_archive_grace_minutes * 60
+    ready = short_offload_plan(rows, now, grace, local)
+    all_done = short_offload_plan(rows, now, 0, local)
+    eligible = {r["video_id"] for r in ready if busy is None or not busy(r["video_id"])}
+    errors = eligible.intersection(failed)
+    return dict(enabled=config.store.offload_shorts, episodes=len(released), bytes=sum(released.values()),
+                eligible=len(eligible - errors), waiting_days=len(all_done) - len(ready), failed=len(errors),
+                last_error=last_error if errors else None)
 
 
 def candidates(config: Config, *, busy=None, now: float | None = None, stop=None) -> list[dict]:

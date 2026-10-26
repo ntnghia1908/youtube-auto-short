@@ -1783,7 +1783,15 @@ class AddShortTarget:
         job.stage = "render"
 
     def render(self, job: Job) -> None:
-        render_target(self.config, render=self.render_fn)(job)
+        target = render_target(self.config, render=self.render_fn)
+        try:
+            target(job)  # render_target translates StoreWait into StoreWaitJob
+        except StoreWaitJob:
+            # The title is already durable in review.json. Persist only the remaining render,
+            # using the existing store_wait format, so restart/retry never calls the AI again.
+            job.kind, job.target = KIND_RENDER, target
+            job.steps, job.step = [Step(job.steps[job.step].lane, target)], 0
+            raise
         if self.title_error:
             raise JobFailed(f"{self.title_error} — Short {self.clip_id} đã thêm nhưng chưa có tiêu đề: gõ tiêu đề tay")
         job.summary = f"{self.clip_id}: {self.title!r}; {job.summary}"

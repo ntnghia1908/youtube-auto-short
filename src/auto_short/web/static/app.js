@@ -2721,6 +2721,16 @@ const AutoShort = (() => {
     offload.hidden = !o;
     if (o) offload.textContent = `Bản dọc lên 3090: đã đẩy ${o.pushed} · còn ${o.pending} · lỗi ${o.failed}` +
       ` · sẽ giải phóng ${fmtBytes(o.bytes_pending)}${o.last_error ? " · " + o.last_error : ""}`;
+    let shortsOffload = $("#shorts-offload");
+    if (!shortsOffload) {
+      shortsOffload = el("p", { id: "shorts-offload", class: "muted small" });
+      offload.after(shortsOffload);
+    }
+    const so = d.shorts_offload;
+    shortsOffload.hidden = !so || (!so.enabled && !so.episodes);
+    if (so) shortsOffload.textContent = `Short trên 3090: ${so.episodes} tập, ${fmtBytes(so.bytes)}` +
+      ` · đủ điều kiện ${so.eligible} · chờ ngày ${so.waiting_days} · lỗi ${so.failed}` +
+      (so.last_error ? " · " + so.last_error : "");
     const backup = $("#source-backup");
     if (backup) {
       backup.hidden = !d.source_backup;

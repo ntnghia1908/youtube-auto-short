@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: IN_PROGRESS
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -86,4 +86,42 @@ Chạm public API kho (quy tắc bản mới kind `short`) và luồng dữ li�
 
 ## Result
 
-- (chưa có)
+- IMPLEMENTER 2026-10-26: **chưa READY**; giữ `IN_PROGRESS`. B1–B5 đã viết trong Owned paths, nhưng AC5 còn bị chặn bởi giới hạn `store/client.py` của contract. Chưa commit / push / PR, không gọi agent khác, không gọi YouTube / Ollama / 3090 thật, không thêm dependency. Base thực thi theo HUMAN LEAD: `72154a0f302001c28e7e79a63cd3b87ff0505c70`, branch `feature/sho1b-short-store-edit`.
+- **Boundary finding / cần HUMAN LEAD quyết**: `StoreClient.put()` hiện HEAD trước rồi từ chối mọi file khác sha/size ở dòng 131, trước khi PUT tới server mới. Vì Owned paths chỉ cho sửa client phục vụ `fetch`, IMPLEMENTER chưa sửa `put()`. Test thực sự dựng lại rồi đẩy lần hai fail ở đúng chốt này (title và cut); không dùng fake PUT để bỏ qua lỗi. Đã hỏi duyệt sửa tối thiểu: cùng sha+size → return; khác byte mà kind `short` → tiếp tục PUT; kind khác giữ lỗi. Bản đề xuất review được: `/tmp/sho1b-client-short-put.patch`. Chờ trả lời; thời gian chờ không được coi là approval.
+- Main changes: server cấp revision nhỏ nhất chưa tồn tại, giữ media/checksum cũ, thay một dòng hiện hành qua CSV tạm + `os.replace`; restore đúng phần trước HD, tải thiếu qua fetch có kiểm sha rồi đặt mtime_ns, giữ phần đã tải khi chờ; thêm Short gặp chờ chuyển phần việc còn lại thành KIND_RENDER để dùng nguyên persistence/rebuild có sẵn; retry HEAD mọi clip trước submit, giữ nhánh HD. Ghép liệt kê vị trí chung, duration metadata khi vắng, mượn bản riêng và dọn bằng context; giữ yêu thích tải bản có kiểm sha và rollback khi xóa tập thất bại. Snapshot Bộ nhớ chỉ đọc metadata/stat trên VM; temp ghép được kiểm kê và bảo vệ trong lúc đang mượn.
+- Helper mới (đã tìm bằng `rg -n 'def (fetch|short_locations|short_files|borrow_hd|render_target|restore_released|fetch_released|borrow_short|offload_snapshot|update_shorts_offload)' src/auto_short/store src/auto_short/web src/auto_short/render`):
+  - `fetch_released`: bọc `StoreClient.fetch(..., clip=)` hiện có + khôi phục mtime_ns; fetch cũ không đặt timestamp ARC1. Dùng chung cho restore / mượn / giữ yêu thích.
+  - `restore_released`: vòng đời lấy lại phần Short + xóa record khi đủ; `borrow_hd` xóa bản mượn sau job, không phù hợp với việc lấy lại vĩnh viễn để sửa. Dùng lại `short_locations` / `StoredShort`, không viết parser record khác.
+  - `borrow_short`: context bản riêng dưới thư mục bộ kinh, dùng lại `_BORROWED` / `_LOCK` và verified fetch. `borrow_hd` cố định tên/đích HD nên không dùng trực tiếp cho nhiều clip; bản riêng không cần khóa `_FETCH` hay chia sẻ file giữa job.
+  - `offload_snapshot`: dùng lại `episode_sizes` / `short_offload_plan` và metadata vị trí, bổ sung byte đã giải phóng + chờ grace; snapshot bản dọc không chứa thông tin này.
+  - `StorageCache.update_shorts_offload`: cùng mẫu `update_offload`, khối trạng thái riêng của Short; giữ snapshot bản dọc hiện hành.
+  - Fixture mới `memory_store` trong test mới: ghép real `StoreClient` với `test_store_server.request` (HTTP parser thực qua memory); cần kiểm toàn tuyến PUT/HEAD/GET/fetch và SHA thực, không mở socket.
+- Chỉ đổi **một assertion cũ** ở `test_short_put_index_range_and_conflict`: 409 → 422 cho request cố tình khai SHA sai với body. Sau sửa đổi G1, SHA khác được nhận để kiểm body nên phải trả 422; thêm test revision thực, vẫn giữ test alias 409 và các kind cũ 409. Không sửa test để che lỗi AC5.
+
+| AC | Test / bằng chứng | Kết quả |
+|---|---|---|
+| 1 | `test_short_revisions_keep_history_and_current_index`; `test_short_put_index_range_and_conflict`; `test_put_stream_hash_atomic_publish` (các test kind cũ trong server) | PASS server: bản mới, HEAD/GET hiện hành, checksum và byte cũ, retry cùng sha, khởi tạo lại kho |
+| 2 | `test_restore_released_exact_metadata_and_partial_retry`; `test_restore_store_disabled_and_local_file_wins`; `test_released_edits_reuse_unchanged_short_and_reoffload` (assert trước re-offload) | PASS restore cả `<id>` / `<id>.kt`, sha/mtime, chỉ encode Short đổi; riêng bước re-offload của title/cut chưa PASS |
+| 3 | `test_restore_released_exact_metadata_and_partial_retry`; `test_short_wait_persists_and_retries_render_without_ai`; regression `tests/test_store_wait_persist.py` | PASS: down/missing/SHA/corrupt, giữ record/manifest, tiếp tục phần thiếu, restart cả serial/lanes |
+| 4 | `test_released_edits_reuse_unchanged_short_and_reoffload` (title/cut/reject/restore/add); `test_short_wait_persists_and_retries_render_without_ai` | PASS phần render và reuse; thêm Short retry/restart không gọi AI lần hai |
+| 5 | `test_released_edits_reuse_unchanged_short_and_reoffload[title/cut]` | FAIL: client.py:131 chặn PUT SHA mới; chờ duyệt scope nêu trên |
+| 6 | `test_compilation_released_clips_borrow_and_cleanup`; `test_keep_released_favorites_or_abort_delete`; `test_real_compilation_mixes_released_and_local_short` | PASS: liệt kê, duration không probe file vắng, video thật đúng thứ tự/thời lượng, lỗi fetch/assemble không sót temp, hủy xóa + rollback sau tải dở |
+| 7 | `test_short_storage_snapshot_and_orphan_temp_sweep`; kiểm cú pháp JS | PASS API gọi trực tiếp không socket: eligible/chờ ngày/lỗi/byte/tập, không gọi kho; UI chưa test trình duyệt |
+| 8 | test default-off SHO1a, regression HD/store-wait/storage/compilation + render/CP9/client | Targeted PASS; full suite chưa chạy trong sandbox |
+
+Lệnh / kết quả (mọi pytest dùng đúng prefix `env PYTHONPATH=/home/ntnghia/projects/youtube-auto-short/.claude/worktrees/fix-ytdlp-timeout/src /home/ntnghia/miniconda3/envs/auto-short/bin/python -m pytest`; các lượt cuối bọc `timeout 240s`):
+
+1. `-q tests/test_store_server.py tests/test_store_shorts.py tests/test_store_shorts_edit.py -k 'not (released_edits and (title or cut))' -x --tb=short`: **166 passed, 2 deselected**, 19.97 s (hai case title/cut bị chặn AC5 đã chạy riêng ở (2)).
+2. `-q tests/test_store_shorts_edit.py -k released_edits --tb=short`: **2 failed, 3 passed, 27 deselected** (32.57 s). Title/cut đều qua encode/reuse rồi fail tại client PUT khi re-offload. Lượt đầu dùng nguồn giả 5 fps gây lượng tử hóa duration cut; đã đổi fixture mới về 25 fps, không đổi renderer, lỗi còn lại đúng client PUT.
+3. `-vv tests/test_storage_cp86.py tests/test_storage_suggest.py tests/test_store_offload.py tests/test_compilation.py tests/test_store_wait_persist.py -k 'not storage_api_and_page and not old_render_recommended_with_injected_clock and not disk_status_and_submit_block and not archive_route_and_archived_episode_rules and not archive_refused_while_job_active and not storage_api_merged_video and not auto_archive_after_grace and not auto_archive_skips_video_with_khaithi and not auto_archive_unticking_in_grace and not auto_archive_disabled_and_job_waits and not auto_archive_never_touches_local_source and not lifespan_stops_hash_worker and not loop_uses_thread_and_short_success_delay' -x --tb=short`: **108 passed, 15 deselected**, 20.64 s (log `/tmp/sho1b-regression.log`).
+4. `-q tests/test_render_reuse.py tests/test_render_cp9.py tests/test_store_client.py -k 'not cli_title_render and not force_config_and_plan_version_encode_all and (not client or short_client_socket_free_roundtrip or short_client_requires_valid_clip)' -x --tb=short`: **24 passed, 30 deselected**, 101.05 s.
+5. `-q tests/test_render_reuse.py -m slow -x --tb=short`: **2 passed, 11 deselected**, 31.19 s.
+6. `git diff --check`, `node --check src/auto_short/web/static/app.js`, `node scripts/framework-check.mjs`: PASS; framework và diff-check đã chạy lại sau khi cập nhật Result.
+
+Không chạy được / không tuyên bố PASS:
+
+- Full `… -m pytest -q -n auto`, bộ web TestClient và kho HTTP có socket, checklist kho tạm chạy thật theo contract: giao ORCHESTRATOR ngoài sandbox theo contract và chỉ dẫn HUMAN LEAD, sandbox không có loopback. Không thử gọi 3090 thật.
+- Lượt regression đầu dùng bộ lọc như (3) nhưng còn `test_loop_uses_thread_and_short_success_delay` bị treo trong lifespan; đã hủy bằng Ctrl-C, exit 130, **không coi lượt đó PASS**; lượt (3) loại test này và hoàn tất. ORCHESTRATOR cần chạy riêng test lifespan này ngoài sandbox.
+- AC5 chưa đạt; sau khi được duyệt sửa client cần áp dụng bản tối thiểu, chạy lại toàn bộ ba file test kho/Short không loại title/cut, rồi chuyển handoff cho ORCHESTRATOR.
+
+Dòng thay đổi ứng dụng / test (tính cả file test mới chưa tracked; không tính docs): **app +239 / −25; test +420 / −1**. Contract vẫn IN_PROGRESS; chưa có READY toàn task theo workflow §7.

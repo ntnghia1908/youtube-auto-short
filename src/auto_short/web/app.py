@@ -500,21 +500,23 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
 
     shorts_stop = threading.Event()
     shorts_failed: set[str] = set()
+    shorts_errors: dict[str, str] = {}
+    shorts_last_error = None
 
     def shorts_offload_pass(client=None) -> list[str]:
         """SHO1a: one video per pass, with failures retried after other eligible videos get a turn."""
         from ..store import shorts
         from ..store.client import StoreError
         from ..store.offload import OffloadStopped
-
-        if not config.store.enabled or not config.store.offload_shorts or shorts_stop.is_set():
-            return []
+        nonlocal shorts_last_error
 
         def busy(owner):
             return backup_busy(ctx, owner) is not None
 
         owner = None
         try:
+            if not config.store.enabled or not config.store.offload_shorts or shorts_stop.is_set():
+                return []
             rows = shorts.candidates(config, busy=busy, now=clock(), stop=shorts_stop)
             row = next((r for r in rows if r["video_id"] not in shorts_failed), None)
             if row is None:
@@ -526,6 +528,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             if not result["released"]:
                 return []
             shorts_failed.discard(owner)
+            shorts_errors.pop(owner, None)
             storage.invalidate()
             playlists.invalidate(owner)
             log.info("web: đã giải phóng Short %s lên 3090", owner)
@@ -535,8 +538,13 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         except (StoreError, ReviewError, OSError) as exc:
             if owner is not None:
                 shorts_failed.add(owner)
+                shorts_errors[owner] = str(exc)
+                shorts_last_error = str(exc)
             log.warning("web: đẩy Short %s: %s", owner, exc)
             return []
+        finally:
+            storage.update_shorts_offload(shorts.offload_snapshot(
+                config, busy=busy, now=clock(), failed=shorts_errors, last_error=shorts_last_error))
 
     async def _shorts_offload_loop() -> None:
         while config.store.enabled and config.store.offload_shorts and not shorts_stop.is_set():
@@ -656,6 +664,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         of the episodes re-queued."""
         from ..store.borrow import WAIT_PREFIX, released_hd_sha
         from ..store.client import StoreClient, StoreError
+        from ..store.backup import _matches
         if not config.store.enabled:
             return []
         waiting = []
@@ -673,15 +682,24 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         client = client or StoreClient.from_config(config.store)
         done = []
         for job in waiting:
-            owner = enh_state.owner_for(config, job.episode_id)
-            want = released_hd_sha(config, owner, Path(config.workspace.dir) / owner)
+            released = (read_json_dict(Path(config.render.output_dir) / job.episode_id / "store.json") or {}).get("released")
             try:
-                if want is None or client.head(enh_state.owner_id(job.episode_id), "hd")["sha256"] != want:
-                    continue
+                if job.kind == KIND_RENDER and isinstance(released, dict) and released:
+                    locations = {cid: p for cid, p, _ in ep.short_locations(config, job.episode_id) or []}
+                    if any(not ep.valid_clip_id(cid) or locations.get(cid) is None or not isinstance(r, dict)
+                           or not _matches(client.head(job.episode_id, "short", clip=cid + ".mp4"),
+                                           r.get("sha256"), r.get("size")) for cid, r in released.items()):
+                        continue
+                else:
+                    owner = enh_state.owner_for(config, job.episode_id)
+                    want = released_hd_sha(config, owner, Path(config.workspace.dir) / owner)
+                    if want is None or client.head(enh_state.owner_id(job.episode_id), "hd")["sha256"] != want:
+                        continue
             except StoreError:
                 break  # the store is still down: nothing else will answer either
             with submit_lock:
-                if job.kind == KIND_RESTORE_SOURCE and runner.latest(job.episode_id) is not job:
+                newest = runner.latest_vertical(job.episode_id) if job.kind == KIND_VERTICAL else runner.latest(job.episode_id)
+                if newest is not job:
                     continue  # a newer edit may have arrived while HEAD was in flight
                 runner.submit(job.episode_id, job.kind, job.target)
             log.info("web: kho 3090 đã sẵn sàng, chạy lại %s [%s]", job.kind, job.episode_id)

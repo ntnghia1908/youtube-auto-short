@@ -531,6 +531,8 @@ def run_render(episode_id: str, config: Config, *, force: bool = False, run: Run
         # CP8.6 S3: the source video was cleaned up; the last render stays as it is (manifest untouched).
         raise RenderError(f"episode {ws.episode_id!r} is archived (source video cleaned up); its Shorts are kept "
                           "as they are — delete the episode and run it again to change them")
+    from ..store.shorts import restore_released  # lazy: shorts uses render/web metadata helpers
+    restore_released(config, ws.episode_id)
     if not _hd_borrowed and (enhance_state.is_released(ws.dir)
                              or enhance_state.is_released(Path(ws.root) / enhance_state.owner_id(ws.episode_id))):
         # HD1 G3: the HD source was moved to an external machine; never fall back to the original silently, and the
