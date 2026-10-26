@@ -36,6 +36,14 @@ class StoreMismatch(StoreError):
     """The store has no such file, or its bytes / sha256 differ from the expected one."""
 
 
+class StoreRangeError(StoreMismatch):
+    """HD2b G5: an unsatisfiable Range, distinct from a missing file for web downloads."""
+
+    def __init__(self, content_range: str | None = None):
+        super().__init__("kho trả Range không hợp lệ")
+        self.content_range = content_range
+
+
 class StoreClient:
     def __init__(self, url: str, token: str | None, timeout: float = 30.0):
         self.url, self.token, self.timeout = url.rstrip("/"), token, timeout
@@ -53,11 +61,12 @@ class StoreClient:
         try:
             return urllib.request.urlopen(req, timeout=self.timeout)
         except urllib.error.HTTPError as exc:
+            content_range = exc.headers.get("Content-Range") if exc.headers else None
             exc.close()
             if exc.code == 404:
                 raise StoreMismatch(f"kho không có file {path}") from None
             if exc.code == 416:
-                raise StoreMismatch("kho trả Range không hợp lệ") from None
+                raise StoreRangeError(content_range) from None
             if method == "PUT" and exc.code in (400, 409, 413, 422):
                 raise StoreMismatch(f"kho từ chối file (HTTP {exc.code})") from None
             raise StoreUnavailable(f"kho trả HTTP {exc.code}") from None
@@ -127,6 +136,35 @@ class StoreClient:
                         raise StoreUnavailable(f"kho trả HTTP {resp.status} khi gửi file")
         except (OSError, http.client.HTTPException) as exc:
             raise StoreUnavailable(f"không gửi được file lên kho: {type(exc).__name__}") from None
+
+    def open_stream(self, video_id: str, kind: str, range_header: str | None = None):
+        """HD2b G5: (status, public headers, closable chunk iterator); never buffer the full file."""
+        resp = self._open(self._path(video_id, kind), headers={"Range": range_header} if range_header else {})
+        if resp.status not in (200, 206):
+            resp.close()
+            raise StoreUnavailable("kho trả trạng thái tải không hợp lệ")
+        headers = {name: resp.headers[name] for name in ("Content-Length", "Content-Range", "Accept-Ranges")
+                   if resp.headers.get(name) is not None}
+
+        class Chunks:
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                try:
+                    chunk = resp.read(_CHUNK)
+                    if chunk:
+                        return chunk
+                except (OSError, http.client.HTTPException):
+                    self.close()
+                    raise StoreUnavailable("đứt kết nối khi tải từ 3090") from None
+                self.close()
+                raise StopIteration
+
+            def close(self):
+                resp.close()
+
+        return resp.status, headers, Chunks()
 
     def fetch(self, video_id: str, kind: str, dest: Path, sha256: str) -> Path:
         """Download to ``dest`` (through ``dest + ".part"``, resumed with ``Range`` when a part exists), verify that the

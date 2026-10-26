@@ -102,6 +102,21 @@ from .playlists import LIST_TIMEOUT, PlaylistStore, ytdlp_list
 log = logging.getLogger("auto_short")
 
 
+def backup_busy(ctx: WebContext, owner: str):
+    """HD1 / HD2b: shared guard for every job of a video and its enhance lease; caller holds submit_lock."""
+    from ..review.backup import lease_active
+    base = ep.hd_owner(owner)
+    job = ctx.restore_job(base)
+    if job is None or not job.active:
+        job = next((j for j in ctx.runner.jobs() if j.active and ep.hd_owner(j.episode_id) == base), None)
+    if job is not None:
+        return JSONResponse({"detail": "video đang có job chạy/đợi; thử lại sau khi xong", "job": ctx.job_view(job)},
+                            status_code=409)
+    if lease_active(Path(ctx.config.workspace.dir) / enh_state.owner_for(ctx.config, owner)):
+        return JSONResponse({"detail": "tập đang có lease enhance; thử lại sau khi xong"}, status_code=409)
+    return None
+
+
 class RestoreSourceTarget:
     """SRC3: restore privately, then apply validated edits in order and render on the existing lanes."""
 
@@ -413,6 +428,67 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                 log.exception("web: sao lưu nguồn: lỗi")
             await asyncio.sleep(config.store.retry_seconds)
 
+    offload_failed: set[str] = set()
+    offload_pushed: set[str] = set()
+    offload_error = None
+
+    def offload_pass(client=None) -> list[str]:
+        """HD2b: one vertical per pass; skip busy owners and give other videos a turn after a failure."""
+        from ..store import offload
+        from ..store.client import StoreError
+
+        nonlocal offload_error
+        if not config.store.enabled or not config.store.offload:
+            return []
+
+        def busy(owner):
+            return backup_busy(ctx, owner) is not None
+
+        def publish(rows):
+            storage.update_offload(dict(pushed=len(offload_pushed), pending=len(rows), failed=len(offload_failed),
+                                        bytes_pending=sum(r["size"] for r in rows), last_error=offload_error))
+
+        errors = {}
+        rows = offload.candidates(config, busy=busy, errors=errors)
+        offload_failed.update(errors)
+        if errors:
+            offload_error = next(iter(errors.values()))
+        publish(rows)
+        eligible = [row for row in rows if row["owner"] not in offload_failed]
+        if not eligible:
+            offload_failed.clear()
+            return []
+        row = eligible[0]
+        owner = row["owner"]
+        try:
+            result = offload.push_vertical(config, owner, client=client, busy=busy, lock=submit_lock)
+            if not result["pushed"]:
+                return []
+            offload_pushed.add(owner)
+            offload_failed.discard(owner)
+            if not offload_failed:
+                offload_error = None
+            storage.invalidate()
+            playlists.invalidate(owner)
+            publish([r for r in rows if r["owner"] != owner])
+            log.info("web: đẩy bản dọc %s: %s", owner, result["status"])
+            return [owner]
+        except (StoreError, ReviewError, OSError) as exc:
+            offload_failed.add(owner)
+            offload_error = str(exc)
+            publish(rows)
+            log.warning("web: đẩy bản dọc %s: %s", owner, exc)
+            return []
+
+    async def _offload_loop() -> None:
+        while config.store.enabled and config.store.offload:
+            done = []
+            try:
+                done = await asyncio.to_thread(offload_pass)
+            except Exception:
+                log.exception("web: đẩy bản dọc: lỗi")
+            await asyncio.sleep(5 if done else config.store.retry_seconds)
+
     redownload_failed: set[str] = set()
     redownload_total: dict[str, str] = {}
     redownload_done: set[str] = set()
@@ -704,6 +780,14 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
 
     app_sweep = _sweep_refetched
 
+    def _sweep_store_temps() -> int:
+        from .storage import sweep_store_temps
+        with submit_lock:
+            active = {ep.hd_owner(j.episode_id) for j in runner.jobs() if j.active}
+            freed = sweep_store_temps(config, active, now=clock())
+            storage.invalidate()
+            return freed
+
     compilations = comp_web.Compilations(config, playlists, runner, lambda doc: ctx.playlist_docx_series(doc))
     theme_plans = theme_plan_web.ThemePlans(config, playlists, runner, preflight=preflight)
     packages = packaging_web.Packages(theme_plans)
@@ -716,6 +800,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     async def lifespan(_app: FastAPI):
         runner.restore()  # CP8.22 Q2: before the lanes start and before the auto clean-up sweeps
         await asyncio.to_thread(app_sweep)  # CP8.32 K2: re-downloaded originals left by jobs that no longer exist
+        await asyncio.to_thread(_sweep_store_temps)
         runner.start()
         for eid in svc.resume_assembly():  # CP13.1b: segments all there but never assembled (restart)
             _enhance_complete(eid)
@@ -724,6 +809,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         sweeper = asyncio.create_task(_auto_archive_loop())
         store_retry = asyncio.create_task(_store_retry_loop())
         source_backup = asyncio.create_task(_source_backup_loop())
+        vertical_offload = asyncio.create_task(_offload_loop())
         source_redownload = asyncio.create_task(_redownload_loop())
         try:
             yield
@@ -731,6 +817,8 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             sweeper.cancel()
             store_retry.cancel()
             source_backup.cancel()
+            vertical_offload.cancel()
+            await asyncio.gather(vertical_offload, return_exceptions=True)
             source_redownload.cancel()
             await asyncio.gather(source_redownload, return_exceptions=True)
             await asyncio.to_thread(sampler.stop)
@@ -744,6 +832,8 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     app.state.storage = storage
     app.state.auto_archive_pass = auto_archive_pass
     app.state.source_backup_pass = source_backup_pass
+    app.state.offload_pass = offload_pass
+    app.state.sweep_store_temps = _sweep_store_temps
     app.state.redownload_pass = redownload_pass
     app.state.store_retry_pass = store_retry_pass
     app.state.sweep_refetched = _sweep_refetched

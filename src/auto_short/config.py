@@ -346,6 +346,7 @@ class StoreConfig:
     retry_seconds: int = 300  # a job waiting for the store ("đợi 3090") is tried again this often
     backup_source: bool = False
     redownload: bool = False
+    offload: bool = False
 
 
 @dataclass(frozen=True)
@@ -699,10 +700,14 @@ def _store(data: dict) -> StoreConfig:
     redownload = _bool(st, "redownload", d.redownload, w)
     if redownload and not enabled:
         raise ConfigError("store.redownload = true cần store.enabled = true")
+    offload = _bool(st, "offload", d.offload, w)
+    if offload and not enabled:
+        raise ConfigError("store.offload = true cần store.enabled = true")
     return StoreConfig(
         enabled=enabled,
         backup_source=backup_source,
         redownload=redownload,
+        offload=offload,
         url=_str(st, "url", d.url, w),
         timeout_seconds=_number(st, "timeout_seconds", d.timeout_seconds, w, lo=1, hi=3600),
         retry_seconds=_int(st, "retry_seconds", d.retry_seconds, w, lo=5, hi=86400),

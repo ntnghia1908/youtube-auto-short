@@ -105,8 +105,13 @@ def current(config: Config, episode_id: str) -> bool:
     archived episode is judged by the manifest sha256 of its original (the file itself is not there)."""
     path = ready_file(config, episode_id)
     meta = read_meta(config, episode_id)
-    if path is None or meta is None:
+    if meta is None:
         return False
+    if path is None:
+        from ..review.backup import released_vertical  # lazy: backup imports render.full
+        released = released_vertical(config, episode_id) if config.store.enabled else None
+        if released is None or released["size"] != meta.get("size"):
+            return False
     owner = owner_of(config, episode_id)
     src = enhance_state.effective_source(config, owner)
     if src is None and config.store.enabled and enhance_state.is_released(Path(config.workspace.dir) / owner):
@@ -114,6 +119,12 @@ def current(config: Config, episode_id: str) -> bool:
         sha = released_hd_sha(config, owner, Path(config.workspace.dir) / owner)
         return sha is not None and meta.get("hd_sha256") == sha
     return src is not None and meta.get("hd_sha256") == src.sha256
+
+
+def on_store(config: Config, episode_id: str) -> dict | None:
+    """HD2b G5: a current vertical available from the store rather than a local ready_file."""
+    from ..review.backup import released_vertical
+    return released_vertical(config, episode_id) if config.store.enabled and current(config, episode_id) else None
 
 
 class FetchResult(NamedTuple):
@@ -311,6 +322,8 @@ def run_vertical(episode_id: str, config: Config, *, run=None, force: bool = Fal
     it in the prepare lane; this is the fallback) downloads the original here; whatever was downloaded again is
     removed afterwards (K2) and ``archive.json`` / the manifest are never changed."""
     owner = owner_of(config, episode_id)
+    if not force and (stored := on_store(config, owner)) is not None:
+        return FullResult(owner, vertical_path(config, owner), False, 0.0, stored["size"])
     note = None
     src0 = enhance_state.effective_source(config, owner)
     if src0 is not None and src0.kind == enhance_state.SRC_ARCHIVED:

@@ -21,7 +21,7 @@ from auto_short.render.stage import RenderError, StoreWait  # noqa: E402
 from auto_short.store.borrow import borrow_hd  # noqa: E402
 from auto_short.store.client import StoreClient, StoreMismatch, StoreUnavailable  # noqa: E402
 
-from test_hd_backup import HD, HD_SHA, KT, VID, confirm_both, logged, make_ep, wsdir  # noqa: E402
+from test_hd_backup import HD, HD_SHA, KT, VID, V_SHA, confirm_both, logged, make_ep, wsdir  # noqa: E402
 
 SPEC = importlib.util.spec_from_file_location("hd2_store", Path(__file__).parents[1] / "tools/store/store.py")
 store = importlib.util.module_from_spec(SPEC)
@@ -294,18 +294,26 @@ def test_put_rejects_invalid_series_before_sending_body(tmp_path, monkeypatch):
 
 # --- AC2: released episode + store on -> the job uses the fetched file ---------------------------------------------
 
-def release(cfg, eid=VID):
+def release(cfg, eid=VID, *, vertical=True):
     for name in ("candidates.json", "metadata.json"):
         (wsdir(cfg, eid) / name).write_text("{}", encoding="utf-8")
+    if not vertical:  # HD2b: no current vertical on the store when the test needs a new encode / HD borrow
+        path = full.vertical_path(cfg, eid)
+        path.unlink(missing_ok=True)
+        (path.parent / full.META_NAME).unlink(missing_ok=True)
     c = logged(cfg)
-    confirm_both(c, eid)
-    assert c.post(f"/api/episodes/{eid}/release", json={}).status_code == 200
+    if vertical:
+        confirm_both(c, eid)
+    else:
+        assert c.post(f"/api/episodes/{eid}/backup", json={"kind": "hd", "sha256": HD_SHA}).status_code == 200
+    assert c.post(f"/api/episodes/{eid}/release",
+                  json={} if vertical else {"allow_no_vertical": True}).status_code == 200
     return c
 
 
 def test_vertical_uses_store_file_and_deletes_it(tcfg, fake, monkeypatch, tmp_path):
     make_ep(tcfg)
-    release(tcfg)
+    release(tcfg, vertical=False)
     fake.add(VID, HD)
     cfg = with_store(tcfg, fake.url)
     monkeypatch.setenv("AUTO_SHORT_STORE_TOKEN", TOKEN)
@@ -330,7 +338,7 @@ def test_vertical_uses_store_file_and_deletes_it(tcfg, fake, monkeypatch, tmp_pa
 
 def test_kt_owner_vertical_uses_store(tcfg, fake, monkeypatch):
     make_ep(tcfg, kt=True)
-    release(tcfg, KT)
+    release(tcfg, KT, vertical=False)
     import shutil
     (wsdir(tcfg, KT) / "titles.json").write_text('{"header": {}}', encoding="utf-8")
     shutil.rmtree(wsdir(tcfg))  # only the khai thị workspace is left (FIX-hd-owner-kt)
@@ -348,6 +356,33 @@ def test_kt_owner_vertical_uses_store(tcfg, fake, monkeypatch):
     with pytest.raises(RenderError, match="sentinel"):
         full.run_vertical(KT, cfg)
     assert seen["file"] == HD and not (wsdir(tcfg, KT) / "source_hd.mp4").exists()
+
+
+def test_released_vertical_reused_without_encode_or_job(tcfg, monkeypatch):
+    from auto_short.review import backup
+    from test_store_download import request as call_route
+    from web_helpers import make_app
+
+    make_ep(tcfg)
+    meta = full.read_meta(tcfg, VID)
+    backup.confirm(tcfg, VID, "hd", HD_SHA)
+    backup.confirm(tcfg, VID, "vertical", V_SHA)
+    backup.release(tcfg, VID)
+    cfg = with_store(tcfg, "http://unused")
+    assert backup.released_vertical(cfg, VID) == {"sha256": V_SHA, "size": meta["size"]}
+    assert full.current(cfg, VID) and full.ready_file(cfg, VID) is None
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("a current released vertical must not borrow HD or encode again")
+
+    monkeypatch.setattr(full, "_run_vertical", unexpected)
+    monkeypatch.setattr(StoreClient, "from_config", unexpected)
+    result = full.run_vertical(VID, cfg)
+    assert not result.ran and result.size == meta["size"]
+    app = make_app(cfg, post_preflight=None)
+    response = call_route(app, "POST", f"/api/episodes/{VID}/vertical", transport="direct")
+    assert response.status_code == 200 and response.json()["job"] is None
+    assert not app.state.runner.jobs()
 
 
 def test_run_render_uses_store_file_same_inputs(tcfg, fake, monkeypatch):
@@ -397,7 +432,7 @@ def test_concurrent_borrowers_share_one_file(tcfg, fake, monkeypatch):
 
 def test_store_down_missing_or_other_sha_waits(tcfg, fake, monkeypatch):
     make_ep(tcfg)
-    release(tcfg)
+    release(tcfg, vertical=False)
     cfg = with_store(tcfg, fake.url)
     monkeypatch.setenv("AUTO_SHORT_STORE_TOKEN", TOKEN)
     with pytest.raises(StoreWait, match="^đợi 3090"):  # the store has no file for the video
@@ -418,7 +453,7 @@ def test_store_down_missing_or_other_sha_waits(tcfg, fake, monkeypatch):
 
 def test_vertical_job_waits_then_reruns_when_store_back(tcfg, fake, monkeypatch, request):
     make_ep(tcfg)
-    release(tcfg)
+    release(tcfg, vertical=False)
     cfg = with_store(tcfg, fake.url)
     monkeypatch.setenv("AUTO_SHORT_STORE_TOKEN", TOKEN)
     port = fake.stop()

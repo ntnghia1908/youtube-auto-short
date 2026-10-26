@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import mimetypes
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import APIRouter
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import APIRouter, Request
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, StrictBool
 
 from ... import khaithi
@@ -25,6 +26,7 @@ from ...review import (
 from ...review import backup as review_backup
 from ...review.archive import restore_parts
 from ...review.names import hashtags as review_hashtags
+from ...store.client import StoreClient, StoreMismatch, StoreRangeError, StoreUnavailable
 from .. import episodes as ep
 from ..context import WebContext, KIND_RESTORE_SOURCE, KINDS
 from ..jobs import KIND_ADD, KIND_COMPILATION, KIND_RENDER, KIND_VERTICAL, render_target
@@ -66,6 +68,25 @@ class ReleaseIn(BaseModel):
 def _clean(value: str | None) -> str | None:
     value = (value or "").strip()
     return value or None
+
+
+class _StoreResponse(StreamingResponse):
+    """Close the upstream socket even on disconnect, including before the first chunk was read."""
+
+    def __init__(self, stream, *, status_code, headers):
+        self.stream = stream
+
+        async def chunks():
+            while (chunk := await asyncio.to_thread(next, stream, None)) is not None:
+                yield chunk
+
+        super().__init__(chunks(), status_code=status_code, headers=headers, media_type="video/mp4")
+
+    async def __call__(self, scope, receive, send):
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self.stream.close()
 
 
 def build(ctx: WebContext) -> APIRouter:
@@ -220,13 +241,16 @@ def build(ctx: WebContext) -> APIRouter:
         hd = src.path if src is not None else None
         ready = render_full.ready_file(ctx.config, owner) if render_full.current(ctx.config, owner) else None
         job = ctx.runner.latest_vertical(owner)
-        return {"url": f"/api/episodes/{episode_id}/source-hd" if hd is not None else None,
-                "name": ep.hd_download_name(ctx.config, episode_id) if hd is not None else None,
+        stored = render_full.on_store(ctx.config, owner)
+        return {"url": f"/api/episodes/{episode_id}/source-hd" if hd is not None or on_store else None,
+                "name": ep.hd_download_name(ctx.config, episode_id) if hd is not None or on_store else None,
                 "size": _size_or_none(hd), "source": src.kind if src is not None else "released",
                 **({"store": True} if on_store else {}),
-                "vertical": {"ready": ready is not None, "url": f"/api/episodes/{episode_id}/vertical",
+                "vertical": {"ready": ready is not None or stored is not None,
+                             "store": stored is not None,
+                             "url": f"/api/episodes/{episode_id}/vertical",
                              "name": ep.video_download_name(ctx.config, episode_id, "Doc"),
-                             "size": ready.stat().st_size if ready is not None else None,
+                             "size": ready.stat().st_size if ready is not None else (stored or {}).get("size"),
                              "job": ctx.job_view(job, logs=False)}, **backup}
 
     @router.post("/api/episodes/{episode_id}/priority")
@@ -455,9 +479,13 @@ def build(ctx: WebContext) -> APIRouter:
         return src.path, None
 
     @router.get("/api/episodes/{episode_id}/source-hd")
-    def api_episode_source_hd(episode_id: str, dl: str | None = None):
+    def api_episode_source_hd(episode_id: str, request: Request, dl: str | None = None):
         """H1: the landscape HD video (``source_hd.mp4``, no banner); Range supported (FileResponse). A download never
         ticks "Đã đăng" / "Đã xem" (H3)."""
+        if ep.valid_episode_id(episode_id) and ctx.config.store.enabled \
+                and review_backup.view(ctx.config, episode_id)["released"]:
+            return ctx.tracked(dl, _store_download(episode_id, "hd", request,
+                                                  ep.hd_download_name(ctx.config, episode_id)))
         hd, bad = _hd_or_404(episode_id)
         if bad is not None:
             return ctx.tracked(dl, bad)
@@ -466,8 +494,11 @@ def build(ctx: WebContext) -> APIRouter:
             "Cache-Control": "private, no-cache"}))
 
     @router.get("/api/episodes/{episode_id}/vertical")
-    def api_episode_vertical(episode_id: str, dl: str | None = None):
+    def api_episode_vertical(episode_id: str, request: Request, dl: str | None = None):
         """H4: the vertical full-episode file, once made from the current HD source."""
+        if ep.valid_episode_id(episode_id) and render_full.on_store(ctx.config, episode_id) is not None:
+            return ctx.tracked(dl, _store_download(episode_id, "vertical", request,
+                                                  ep.video_download_name(ctx.config, episode_id, "Doc")))
         _hd, bad = _hd_or_404(episode_id, archived_ok=True)
         if bad is not None:
             return ctx.tracked(dl, bad)
@@ -479,6 +510,22 @@ def build(ctx: WebContext) -> APIRouter:
             "Content-Disposition": content_disposition(ep.video_download_name(ctx.config, episode_id, "Doc")),
             "Cache-Control": "private, no-cache"}))
 
+    def _store_download(episode_id: str, kind: str, request: Request, name: str):
+        try:
+            client = StoreClient.from_config(ctx.config.store)
+            status, upstream, stream = client.open_stream(ep.hd_owner(episode_id), kind, request.headers.get("range"))
+        except StoreUnavailable:
+            return JSONResponse({"detail": "3090 đang tắt"}, status_code=503)
+        except StoreRangeError as exc:
+            headers = {"Content-Range": exc.content_range} if exc.content_range is not None else {}
+            return JSONResponse({"detail": "Range không hợp lệ"}, status_code=416, headers=headers)
+        except StoreMismatch:
+            return JSONResponse({"detail": "kho không có file này"}, status_code=404)
+        headers = {k: v for k, v in upstream.items()
+                   if k.lower() in ("content-length", "content-range", "accept-ranges")}
+        headers.update({"Content-Disposition": content_disposition(name), "Cache-Control": "private, no-cache"})
+        return _StoreResponse(stream, status_code=status, headers=headers)
+
     @router.post("/api/episodes/{episode_id}/vertical")
     def api_episode_vertical_make(episode_id: str):
         """H4 "Tạo bản dọc": queue a render-lane job (reuses the file when nothing changed); 404 without an HD source
@@ -488,6 +535,8 @@ def build(ctx: WebContext) -> APIRouter:
             return bad
         owner = ep.hd_owner(episode_id)
         with ctx.submit_lock:
+            if render_full.on_store(ctx.config, owner) is not None:
+                return {"job": None, "hd_video": _hd_video_view(episode_id)}
             restoring = ctx.restore_job(owner)
             if restoring is not None and restoring.active:
                 return JSONResponse({"detail": "đang khôi phục nguồn; tạo bản dọc sau khi xong",
@@ -542,14 +591,8 @@ def build(ctx: WebContext) -> APIRouter:
         return {"archived": episode_id, "changed": result.changed, "freed": result.freed, "removed": result.removed}
 
     def _backup_busy(owner: str):
-        """409 body when a job / restore of the video (or its khai thị part) is queued or running, else None."""
-        busy = ctx.restore_job(owner)
-        if busy is None or not busy.active:
-            busy = next((j for j in ctx.runner.jobs() if j.active and ep.hd_owner(j.episode_id) == owner), None)
-        if busy is None:
-            return None
-        return JSONResponse({"detail": "video đang có job chạy/đợi; thử lại sau khi xong", "job": ctx.job_view(busy)},
-                            status_code=409)
+        from ..app import backup_busy
+        return backup_busy(ctx, owner)
 
     @router.post("/api/episodes/{episode_id}/backup")
     def api_backup_confirm(episode_id: str, body: BackupIn):

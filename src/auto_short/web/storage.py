@@ -9,6 +9,7 @@ auto clean-up of a finished video's source (:func:`auto_archive_plan`, run by th
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import threading
 import time
@@ -340,6 +341,65 @@ def _models_dir(config: Config) -> Path:
     return Path(config.transcript.whisper.models_dir).absolute()
 
 
+def store_temp_files(config: Config) -> dict[Path, bool]:
+    """HD2b G7: known store paths -> safe to sweep. HD borrows have no durable ownership marker."""
+    from ..store.borrow import _BORROWED, _LOCK
+    with _LOCK:
+        paths = {Path(p): False for p, count in _BORROWED.items() if count > 0}
+    root = Path(config.workspace.dir)
+    if not root.is_dir():
+        return paths
+    for d in root.iterdir():
+        if d.is_symlink() or not d.is_dir() or not ep.valid_episode_id(d.name):
+            continue
+        # fetch() uses this exact .part; never sweep a completed source_hd.mp4 without a borrow marker.
+        paths[d / "source_hd.mp4.part"] = True
+        # SRC3 restore_source(): only store-N.mp4 belongs unambiguously to the store.
+        for tmp in d.glob(".restore-source-*"):
+            if tmp.is_symlink() or not tmp.is_dir():
+                continue
+            for path in tmp.iterdir():
+                if re.fullmatch(r"store-\d+\.mp4(?:\.part)?", path.name):
+                    paths[path] = True
+    return {p: sweep for p, sweep in paths.items() if not p.is_symlink() and p.is_file()}
+
+
+def store_temp_bytes(config: Config) -> int:
+    seen, total = set(), 0
+    for path in store_temp_files(config):
+        try:
+            st = path.stat()
+        except OSError:
+            continue
+        key = (st.st_dev, st.st_ino)
+        if key not in seen:
+            total += st.st_size
+            seen.add(key)
+    return total
+
+
+def sweep_store_temps(config: Config, active: set[str], *, now: float | None = None,
+                      max_age: float = 6 * 3600) -> int:
+    """Only remove recognizable old store temporaries; a real HD or vertical is never a sweep target."""
+    now = time.time() if now is None else now
+    root = Path(config.workspace.dir)
+    freed = 0
+    for path, safe in store_temp_files(config).items():
+        if not safe:
+            continue
+        owner = path.relative_to(root).parts[0]
+        if video_id(owner) in {video_id(eid) for eid in active}:
+            continue
+        try:
+            st = path.stat()
+            if now - st.st_mtime >= max_age:
+                path.unlink()
+                freed += st.st_size
+        except OSError:
+            continue
+    return freed
+
+
 class StorageCache:
     """``report()`` recomputed at most every ``CACHE_SECONDS`` (``invalidate()`` after a delete / clean-up)."""
 
@@ -350,6 +410,12 @@ class StorageCache:
         self._cached: tuple[float, frozenset, dict] | None = None
         self._source_backup: dict | None = None
         self._redownload: dict | None = None
+        self._offload = dict(pushed=0, pending=0, failed=0, bytes_pending=0, last_error=None)
+
+    def update_offload(self, snapshot: dict) -> None:
+        with self._lock:
+            self._offload = dict(snapshot)
+            self._cached = None
 
     def update_source_backup(self, states: dict) -> None:
         """Background HEAD results only; reporting storage never contacts the store."""
@@ -398,7 +464,9 @@ class StorageCache:
             "recommendations": recommend(rows, now),
             "old_days": OLD_DAYS,
         }
+        report["totals"]["store_tmp"] = store_temp_bytes(self._config)
         with self._lock:
+            report["offload"] = dict(self._offload)
             if self._config.store.backup_source:
                 total = len({video_id(row["id"]) for row in rows if row["source_kind"] == "youtube"})
                 report["source_backup"] = dict(self._source_backup) if self._source_backup is not None else {
