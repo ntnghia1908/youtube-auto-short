@@ -1,5 +1,6 @@
-"""FIX-youtube-botcheck-wait AC1-AC6: YouTube blocks the download (bot check / 429) -> the prepare lane keeps the job at
-its head and backs off 15 -> 30 -> 60 -> 120 min (fake clocks, no real sleeps); other download errors still fail;
+"""FIX-youtube-botcheck-wait AC1-AC6 / FIX-ytdlp-timeout-wait AC1-AC2:
+bot check / 429 / temporary network failure -> the prepare lane keeps the job at its head and backs off
+15 -> 30 -> 60 -> 120 min (fake clocks, no real sleeps); other download errors still fail;
 the block survives a restart; ``youtube`` in the API; jobs that need no download still run."""
 
 from __future__ import annotations
@@ -118,32 +119,56 @@ def test_detector_blocked(text):
     assert is_blocked_message(text)
 
 
+@pytest.mark.parametrize("marker", [
+    "The read operation timed out", "Read timed out", "Connection reset by peer", "Connection aborted",
+    "Remote end closed connection", "IncompleteRead", "Incomplete read",
+])
+@pytest.mark.parametrize("ansi", [False, True])
+def test_detector_temporary_network_errors(marker, ansi):
+    message = marker.upper()
+    if ansi:
+        message = f"{message[:5]}\x1b[0;31m{message[5:]}\x1b[0m"
+    assert is_blocked_message(f"ERROR: [download] Got error: {message}")
+
+
 @pytest.mark.parametrize("text", ["ERROR: [youtube] x: Video unavailable", "Private video. Sign in if you've been granted",
                                   "HTTP Error 404: Not Found"])
 def test_detector_other_errors(text):
     assert not is_blocked_message(text)
 
 
-def test_ytdlp_download_raises_blocked_vs_plain(tmp_path, monkeypatch):
+@pytest.fixture
+def fake_ytdlp_error(monkeypatch):
+    """Reuse the fake YoutubeDL for classification and ingest-to-queue checks."""
     yt_dlp = pytest.importorskip("yt_dlp")
-    from auto_short.config import IngestConfig
-    from auto_short.ingest import youtube
 
-    def fake(msg):
+    def install(msg):
         class Y:
             def __init__(self, opts): pass
             def __enter__(self): return self
             def __exit__(self, *a): return False
             def sanitize_info(self, info): return info
             def extract_info(self, url, download=True): raise yt_dlp.utils.DownloadError(msg)
-        return Y
-    monkeypatch.setattr(yt_dlp, "YoutubeDL", fake("ERROR: [youtube] x: Sign in to confirm you’re not a bot."))
-    with pytest.raises(youtube.YoutubeBlocked):
-        youtube.ytdlp_download("https://youtu.be/x", tmp_path, IngestConfig())
-    monkeypatch.setattr(yt_dlp, "YoutubeDL", fake("ERROR: [youtube] x: Video unavailable"))
+        monkeypatch.setattr(yt_dlp, "YoutubeDL", Y)
+    return install
+
+
+@pytest.mark.parametrize("message, blocked", [
+    ("ERROR: [youtube] x: Sign in to confirm you’re not a bot.", True),
+    ("\x1b[0;31mERROR:\x1b[0m [download] Got error: The read operation timed out", True),
+    ("ERROR: [youtube] x: Video unavailable", False),
+    ("ERROR: [youtube] x: Private video. Sign in if you've been granted access", False),
+    ("ERROR: [youtube] x: This video has been removed", False),
+    ("ERROR: [youtube] x: Requested format is not available", False),
+])
+def test_ytdlp_download_raises_blocked_vs_plain(tmp_path, fake_ytdlp_error, message, blocked):
+    from auto_short.config import IngestConfig
+    from auto_short.ingest import youtube
+
+    fake_ytdlp_error(message)
     with pytest.raises(youtube.DownloadError) as ei:
         youtube.ytdlp_download("https://youtu.be/x", tmp_path, IngestConfig())
-    assert not isinstance(ei.value, youtube.YoutubeBlocked)
+    assert isinstance(ei.value, youtube.YoutubeBlocked) is blocked
 
 
 def test_run_ingest_raises_ingest_blocked(tcfg, tmp_path):
@@ -164,8 +189,17 @@ def test_run_ingest_raises_ingest_blocked(tcfg, tmp_path):
 
 # --- AC1 / AC3 -----------------------------------------------------------------------------------------------
 
-def test_block_requeues_head_lane_waits_then_all_done_in_order(mk, tcfg):
-    clock, net = Clock(), Net(blocked_error())
+@pytest.mark.parametrize("message", [
+    "ERROR: [youtube] x: Sign in to confirm you’re not a bot.",
+    "\x1b[0;31mERROR:\x1b[0m [download] Got error: The read operation timed out",
+])
+def test_block_requeues_head_lane_waits_then_all_done_in_order(mk, tcfg, fake_ytdlp_error, message):
+    from auto_short.ingest import run_ingest
+
+    fake_ytdlp_error(message)
+    with pytest.raises(IngestBlocked) as ei:
+        run_ingest(f"https://youtu.be/{A}", tcfg)
+    clock, net = Clock(), Net(ei.value)
     runner = mk(clock)
     jobs = [submit(runner, tcfg, e, net) for e in (A, B, C)]
     wait_for(blocked_n(runner, 1))
@@ -175,7 +209,7 @@ def test_block_requeues_head_lane_waits_then_all_done_in_order(mk, tcfg):
     assert jobs[0].yt_wait and jobs[1].yt_wait and jobs[0].to_dict()["yt_wait"] is True
     assert runner.queue_position(jobs[0]) == 1
     st = runner.youtube_status()
-    assert st["blocked"] and st["since"] and st["next_check"] and "not a bot" in st["error"]
+    assert st["blocked"] and st["since"] and st["next_check"] and message in st["error"]
     advance(runner, clock, 14 * MIN)  # not due yet
     time.sleep(0.1)
     assert net.ingests() == [A]

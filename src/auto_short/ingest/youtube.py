@@ -19,16 +19,22 @@ class DownloadError(Exception):
 
 
 class YoutubeBlocked(DownloadError):
-    """FIX-youtube-botcheck-wait Y1: YouTube refuses the download for now (bot check "Sign in to confirm you're not a
-    bot", HTTP 429 / Too Many Requests): temporary, so the web queue waits and retries instead of failing."""
+    """Y1: bot check, rate limit or temporary network failure during download.
+
+    The web queue waits and retries instead of failing.
+    """
 
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
-_BLOCK_MARKERS = ("confirm you're not a bot", "confirm you are not a bot", "http error 429", "too many requests")
+_BLOCK_MARKERS = (
+    "confirm you're not a bot", "confirm you are not a bot", "http error 429", "too many requests",
+    "the read operation timed out", "read timed out", "connection reset by peer", "connection aborted",
+    "remote end closed connection", "incompleteread", "incomplete read",
+)
 
 
 def is_blocked_message(text: str) -> bool:
-    """Y1: does a yt-dlp error text say that YouTube blocked this client (bot check / rate limit)?"""
+    """Y1: does a yt-dlp error indicate a bot check, rate limit or temporary network failure?"""
     plain = _ANSI.sub("", str(text)).replace("\u2019", "'").replace("\u2018", "'").lower()
     return any(m in plain for m in _BLOCK_MARKERS)
 
