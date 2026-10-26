@@ -521,3 +521,55 @@ def test_store_off_keeps_hd1_refusal(tcfg):
     assert c.app.state.store_retry_pass() == []
     h = c.get(f"/api/episodes/{VID}").json()["hd_video"]
     assert h["released"] is True and "store" not in h and h["vertical"] is None
+
+
+@pytest.mark.parametrize("video_id", [VID, VID + ".kt"])
+@pytest.mark.parametrize("clip", ["k01.mp4", "m01.mp4"])
+def test_short_client_socket_free_roundtrip(tmp_path, monkeypatch, video_id, clip):
+    """Run the real HTTP parser through the shared memory transport; exercise all four client methods."""
+    import io
+    import urllib.error
+    from urllib.parse import urlsplit
+    from test_store_server import request, store as memory_store
+
+    server = FakeStore(tmp_path)  # construct only; never start a socket
+    server.store = memory_store.Store(server.store.config)
+    calls = []
+
+    def urlopen(req, timeout):
+        target = urlsplit(req.full_url)
+        body = req.data.read() if req.data else b""
+        headers = {k.title(): v for k, v in req.header_items() if k.lower() != "authorization"}
+        calls.append((req.method, target.path, headers))
+        code, fields, data = request(server.store, req.method,
+                                     target.path + ("?" + target.query if target.query else ""),
+                                     headers=headers, body=body, auth=TOKEN)
+        if code >= 400:
+            raise urllib.error.HTTPError(req.full_url, code, "store", fields, io.BytesIO(data))
+        response = io.BytesIO(data)
+        response.status, response.headers = code, fields
+        return response
+
+    monkeypatch.setattr("urllib.request.urlopen", urlopen)
+    client = StoreClient("http://memory", TOKEN)
+    src = tmp_path / "short.mp4"
+    src.write_bytes(BIG)
+    sha = hashlib.sha256(BIG).hexdigest()
+    client.put(video_id, "short", "PL1", f"[Short] {clip}", src, sha, clip=clip)
+    assert client.head(video_id, "short", clip=clip) == {"size": len(BIG), "sha256": sha}
+    status, headers, stream = client.open_stream(video_id, "short", "bytes=2-5", clip=clip)
+    assert status == 206 and headers["Content-Range"] == f"bytes 2-5/{len(BIG)}"
+    assert b"".join(stream) == BIG[2:6]
+    dest = tmp_path / "fetched.mp4"
+    dest.with_suffix(".mp4.part").write_bytes(BIG[:123])
+    assert client.fetch(video_id, "short", dest, sha, clip=clip) == dest
+    assert dest.read_bytes() == BIG
+    assert calls[-1][2]["Range"] == "bytes=123-"
+    assert all(p == f"/files/{video_id}/short/{clip}" for _, p, _ in calls)
+
+
+@pytest.mark.parametrize("kind,clip", [("short", None), ("short", "../k01.mp4"), ("short", "_k1.mp4"),
+                                      ("hd", "k01.mp4")])
+def test_short_client_requires_valid_clip(kind, clip):
+    with pytest.raises(StoreMismatch):
+        StoreClient._path(VID, kind, clip)

@@ -335,6 +335,24 @@ def auto_archive_plan(rows: list[dict], now: float, grace_seconds: float) -> lis
     return plan
 
 
+def short_offload_plan(rows: list[dict], now: float, grace_seconds: float,
+                       local_episodes: set[str]) -> list[dict]:
+    """G2 (pure): all parts complete for the grace period, including videos with khai thị.
+
+    local_episodes contains episodes with at least one rendered Short still on the VM. Source cleanup
+    has different rules, so this deliberately does not reuse auto_archive_plan's source/khai thị filters.
+    """
+    plan = []
+    for vid, parts in _videos(rows).items():
+        if any(r["state"] == PROCESSING for r in parts) or not all(r.get("complete") for r in parts):
+            continue
+        since = max((r.get("complete_since") if r.get("complete_since") is not None else now for r in parts),
+                    default=now)
+        if any(r["id"] in local_episodes for r in parts) and now - since >= grace_seconds:
+            plan.append({"video_id": vid, "episodes": [r["id"] for r in parts], "since": since})
+    return plan
+
+
 def _models_dir(config: Config) -> Path:
     """The folder the transcript stage uses (``faster-whisper`` ``download_root``): a relative ``models_dir``
     is relative to the server's working directory, exactly like the stage; shown absolute."""

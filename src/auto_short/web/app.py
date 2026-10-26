@@ -498,6 +498,55 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                 log.exception("web: đẩy bản dọc: lỗi")
             await asyncio.sleep(5 if done else config.store.retry_seconds)
 
+    shorts_stop = threading.Event()
+    shorts_failed: set[str] = set()
+
+    def shorts_offload_pass(client=None) -> list[str]:
+        """SHO1a: one video per pass, with failures retried after other eligible videos get a turn."""
+        from ..store import shorts
+        from ..store.client import StoreError
+        from ..store.offload import OffloadStopped
+
+        if not config.store.enabled or not config.store.offload_shorts or shorts_stop.is_set():
+            return []
+
+        def busy(owner):
+            return backup_busy(ctx, owner) is not None
+
+        owner = None
+        try:
+            rows = shorts.candidates(config, busy=busy, now=clock(), stop=shorts_stop)
+            row = next((r for r in rows if r["video_id"] not in shorts_failed), None)
+            if row is None:
+                shorts_failed.clear()
+                return []
+            owner = row["video_id"]
+            result = shorts.push_video(config, owner, client=client, busy=busy, lock=submit_lock,
+                                       stop=shorts_stop, clock=clock)
+            if not result["released"]:
+                return []
+            shorts_failed.discard(owner)
+            storage.invalidate()
+            playlists.invalidate(owner)
+            log.info("web: đã giải phóng Short %s lên 3090", owner)
+            return [owner]
+        except OffloadStopped:
+            return []
+        except (StoreError, ReviewError, OSError) as exc:
+            if owner is not None:
+                shorts_failed.add(owner)
+            log.warning("web: đẩy Short %s: %s", owner, exc)
+            return []
+
+    async def _shorts_offload_loop() -> None:
+        while config.store.enabled and config.store.offload_shorts and not shorts_stop.is_set():
+            done = []
+            try:
+                done = await asyncio.to_thread(shorts_offload_pass)
+            except Exception:
+                log.exception("web: đẩy Short: lỗi")
+            await asyncio.sleep(5 if done else config.store.retry_seconds)
+
     redownload_failed: set[str] = set()
     redownload_total: dict[str, str] = {}
     redownload_done: set[str] = set()
@@ -820,11 +869,16 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         source_backup = asyncio.create_task(_source_backup_loop())
         offload_stop.clear()
         vertical_offload = asyncio.create_task(_offload_loop())
+        shorts_stop.clear()
+        shorts_offload = asyncio.create_task(_shorts_offload_loop())
         source_redownload = asyncio.create_task(_redownload_loop())
         try:
             yield
         finally:
             offload_stop.set()
+            shorts_stop.set()
+            shorts_offload.cancel()
+            await asyncio.gather(shorts_offload, return_exceptions=True)
             sweeper.cancel()
             store_retry.cancel()
             source_backup.cancel()
@@ -844,6 +898,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     app.state.auto_archive_pass = auto_archive_pass
     app.state.source_backup_pass = source_backup_pass
     app.state.offload_pass = offload_pass
+    app.state.shorts_offload_pass = shorts_offload_pass
     app.state.sweep_store_temps = _sweep_store_temps
     app.state.redownload_pass = redownload_pass
     app.state.store_retry_pass = store_retry_pass

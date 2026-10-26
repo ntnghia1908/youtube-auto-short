@@ -17,6 +17,8 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 VIDEO_ID = re.compile(r"[A-Za-z0-9_-]{11}(?:\.kt)?")
 SERIES_ID = re.compile(r"[A-Za-z0-9_-]{1,128}")
+# Clip id rule: src/auto_short/web/episodes.py _CLIP_ID_RE, plus the .mp4 suffix.
+CLIP = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,31}\.mp4")
 SHA256 = re.compile(r"[a-fA-F0-9]{64}")
 COLUMNS = ("tap", "loai", "file", "video_id", "tieu_de")
 KINDS = {"HD": "hd", "Doc": "vertical", "Goc": "source"}
@@ -63,8 +65,10 @@ def validate_name(name: str) -> str:
     return name
 
 
-def validate_identity(video_id: str, kind: str) -> None:
-    if not VIDEO_ID.fullmatch(video_id) or kind not in KINDS.values():
+def validate_identity(video_id: str, kind: str, clip: str | None = None) -> None:
+    if (not VIDEO_ID.fullmatch(video_id) or kind not in (*KINDS.values(), "short")
+            or (kind == "short" and (not isinstance(clip, str) or not CLIP.fullmatch(clip)))
+            or (kind != "short" and clip is not None)):
         raise StoreError(400, "Invalid video_id/kind")
 
 
@@ -143,7 +147,7 @@ class Store:
 
     def _rows(self, folder: Path) -> list[dict]:
         # The current backup template writes danh-sach.csv; index.csv takes precedence.
-        paths = [inside(folder, name) for name in ("danh-sach.csv", "index.csv", "SHA256SUMS.txt")]
+        paths = [inside(folder, name) for name in ("danh-sach.csv", "index.csv", "SHA256SUMS.txt", "index-short.csv")]
         signature = tuple((p.stat().st_mtime_ns, p.stat().st_size) if p.exists() else None for p in paths)
         cached = self._cache.get(folder)
         if cached and cached[0] == signature:
@@ -173,6 +177,21 @@ class Store:
                         continue
                     if name in sums:
                         rows[ident, kind] = dict(video_id=ident, kind=kind, file=name, sha256=sums[name])
+        if paths[3].exists():
+            with paths[3].open(encoding="utf-8-sig", newline="") as stream:
+                reader = csv.DictReader(stream, strict=True)
+                if not {"video_id", "clip", "file"}.issubset(reader.fieldnames or []):
+                    raise StoreError(400, "Invalid Short CSV columns")
+                for row in reader:
+                    ident, clip, name = row["video_id"], row["clip"], row["file"]
+                    try:
+                        validate_identity(ident, "short", clip)
+                        validate_name(name)
+                    except (StoreError, TypeError):
+                        continue
+                    if name in sums:
+                        rows[ident, "short", clip] = dict(video_id=ident, kind="short", clip=clip,
+                                                         file=name, sha256=sums[name])
         result = list(rows.values())
         self._cache[folder] = (signature, result)
         return result
@@ -184,35 +203,56 @@ class Store:
                 for row in self._rows(folder):
                     path = inside(folder, row["file"])
                     if path.is_file():
-                        key = (row["video_id"], row["kind"])
+                        key = (row["video_id"], row["kind"], row.get("clip", ""))
                         if key in entries:
                             raise StoreError(409, "Duplicate video_id/kind across series")
                         entries[key] = dict(row, series=series, size=path.stat().st_size)
             return [entries[key] for key in sorted(entries)]
 
-    def lookup(self, video_id: str, kind: str) -> tuple[dict, Path]:
-        validate_identity(video_id, kind)
-        for row in self.index():
-            if (row["video_id"], row["kind"]) == (video_id, kind):
-                return row, inside(self.folders()[row["series"]], row["file"])
+    def lookup(self, video_id: str, kind: str, clip: str | None = None) -> tuple[dict, Path]:
+        validate_identity(video_id, kind, clip)
+        if kind != "short":
+            for row in self.index():
+                if (row["video_id"], row["kind"]) == (video_id, kind):
+                    return row, inside(self.folders()[row["series"]], row["file"])
+            raise StoreError(404, "Unknown file")
+        # Read cached catalogues, stat only the requested identity (thousands of Shorts per series).
+        found = []
+        with self._lock:
+            for series, folder in self.folders().items():
+                for row in self._rows(folder):
+                    if (row["video_id"], row["kind"], row.get("clip")) == (video_id, kind, clip):
+                        path = inside(folder, row["file"])
+                        if path.is_file():
+                            found.append((dict(row, series=series, size=path.stat().st_size), path))
+        if len(found) > 1:
+            raise StoreError(409, "Duplicate identity across series")
+        if found:
+            return found[0]
         raise StoreError(404, "Unknown file")
 
-    def _metadata(self, folder: Path) -> tuple[Path, Path, list[str]]:
-        index = inside(folder, "index.csv")
+    def _metadata(self, folder: Path, kind: str = "hd") -> tuple[Path, Path, list[str]]:
+        index = inside(folder, "index-short.csv" if kind == "short" else "index.csv")
         sums = inside(folder, "SHA256SUMS.txt")
-        fields = list(COLUMNS)
+        columns = ("video_id", "clip", "file") if kind == "short" else COLUMNS
+        fields = list(columns)
         if index.exists() and index.stat().st_size:
             with index.open(encoding="utf-8-sig", newline="") as stream:
                 fields = next(csv.reader(stream))
-            if not set(COLUMNS).issubset(fields):
+            if not set(columns).issubset(fields):
                 raise StoreError(400, "Invalid CSV columns for append")
         return index, sums, fields
 
-    def _publish(self, folder: Path, video_id: str, kind: str, name: str, sha: str) -> None:
+    def _publish(self, folder: Path, video_id: str, kind: str, name: str, sha: str,
+                 clip: str | None = None) -> None:
         """Preserve the backup Export-Csv column order, including existing optional columns."""
-        index, sums, fields = self._metadata(folder)
+        index, sums, fields = self._metadata(folder, kind)
         row = dict.fromkeys(fields, "")
-        row.update(video_id=video_id, loai=next(label for label, value in KINDS.items() if value == kind), file=name)
+        row.update(video_id=video_id, file=name)
+        if kind == "short":
+            row["clip"] = clip
+        else:
+            row["loai"] = next(label for label, value in KINDS.items() if value == kind)
         # A backup file might lack its final newline. Keep the appended record separate.
         for path in (sums, index):
             if path.exists() and path.stat().st_size:
@@ -231,9 +271,9 @@ class Store:
         self._cache.pop(folder, None)
 
     def put(self, video_id: str, kind: str, series: str, name: str,
-            sha: str, stream, length: int) -> int:
+            sha: str, stream, length: int, clip: str | None = None) -> int:
         """Stream exactly Content-Length bytes. Return 201 (created) or 200 (same file)."""
-        validate_identity(video_id, kind)
+        validate_identity(video_id, kind, clip)
         validate_name(name)
         if not SERIES_ID.fullmatch(series) or not SHA256.fullmatch(sha):
             raise StoreError(400, "Invalid series/sha256")
@@ -248,7 +288,7 @@ class Store:
             with self._lock:
                 entries = self.index()
                 for row in entries:
-                    same_key = (row["video_id"], row["kind"]) == (video_id, kind)
+                    same_key = (row["video_id"], row["kind"], row.get("clip")) == (video_id, kind, clip)
                     same_path = inside(self.folders()[row["series"]], row["file"]) == dest
                     if same_key and (not same_path or row["sha256"] != sha):
                         raise StoreError(409, "Identity already has a different file")
@@ -256,15 +296,15 @@ class Store:
                         raise StoreError(409, "File belongs to another identity")
                 # Validate metadata before creating a file.
                 self._rows(folder)
-                self._metadata(folder)
+                self._metadata(folder, kind)
             if dest.exists():
                 with dest.open("rb") as existing:
                     actual = hashlib.file_digest(existing, "sha256").hexdigest()
                 if actual != sha:
                     raise StoreError(409, "Existing file has a different sha256")
-                if not any((r["video_id"], r["kind"]) == (video_id, kind) for r in entries):
+                if not any((r["video_id"], r["kind"], r.get("clip")) == (video_id, kind, clip) for r in entries):
                     with self._lock:
-                        self._publish(folder, video_id, kind, name, sha)
+                        self._publish(folder, video_id, kind, name, sha, clip)
                 return 200
             owned_part = False
             try:
@@ -295,7 +335,7 @@ class Store:
                     if dest.exists():
                         raise StoreError(409, "Destination appeared during upload")
                     os.replace(part, dest)
-                    self._publish(folder, video_id, kind, name, sha)
+                    self._publish(folder, video_id, kind, name, sha, clip)
                 return 201
             finally:
                 # Only clean up a part created by this request.
@@ -337,10 +377,11 @@ class StoreHandler(BaseHTTPRequestHandler):
                 self._reply(200, json.dumps(store.index(), ensure_ascii=False).encode())
                 return
             parts = path.split("/")
-            if len(parts) != 4 or parts[:2] != ["", "files"]:
+            if len(parts) not in (4, 5) or parts[:2] != ["", "files"]:
                 raise StoreError(404, "Unknown endpoint")
-            video_id, kind = parts[2:]
-            validate_identity(video_id, kind)
+            video_id, kind = parts[2:4]
+            clip = parts[4] if len(parts) == 5 else None
+            validate_identity(video_id, kind, clip)
             if self.command == "PUT":
                 lengths = self.headers.get_all("Content-Length", [])
                 if self.headers.get("Transfer-Encoding"):
@@ -356,12 +397,12 @@ class StoreHandler(BaseHTTPRequestHandler):
                 if len(shas) != 1:
                     raise StoreError(400, "X-Sha256 required exactly once")
                 status = store.put(video_id, kind, query["series"][0], query["name"][0],
-                                   shas[0], self.rfile, int(lengths[0]))
+                                   shas[0], self.rfile, int(lengths[0]), clip)
                 self._reply(status)
                 return
             if self.command not in ("GET", "HEAD"):
                 raise StoreError(404, "Unknown endpoint")
-            row, path = store.lookup(video_id, kind)
+            row, path = store.lookup(video_id, kind, clip)
             with path.open("rb") as stream:
                 size = os.fstat(stream.fileno()).st_size
                 start, end = 0, size - 1

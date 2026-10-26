@@ -18,9 +18,9 @@ from urllib.parse import urlencode
 from ..config import StoreConfig
 
 TOKEN_ENV = "AUTO_SHORT_STORE_TOKEN"
-KINDS = ("hd", "vertical", "source")
+KINDS = ("hd", "vertical", "source", "short")
 _SHA = re.compile(r"[0-9a-f]{64}")
-_ID = re.compile(r"[A-Za-z0-9_-]{11}")
+_ID = re.compile(r"[A-Za-z0-9_-]{11}(?:\.kt)?")
 _CHUNK = 1024 * 1024
 
 
@@ -74,10 +74,12 @@ class StoreClient:
             raise StoreUnavailable(f"không kết nối được kho: {type(exc).__name__}") from None
 
     @staticmethod
-    def _path(video_id: str, kind: str) -> str:
-        if kind not in KINDS or not _ID.fullmatch(video_id):
+    def _path(video_id: str, kind: str, clip: str | None = None) -> str:
+        if (kind not in KINDS or not _ID.fullmatch(video_id)
+                or (kind == "short" and (not isinstance(clip, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,31}\.mp4", clip)))
+                or (kind != "short" and clip is not None)):
             raise StoreMismatch(f"video_id/kind không hợp lệ: {video_id!r}/{kind!r}")
-        return f"/files/{video_id}/{kind}"
+        return f"/files/{video_id}/{kind}" + (f"/{clip}" if clip is not None else "")
 
     def available(self) -> bool:
         """Does the store answer (with our token)?"""
@@ -97,9 +99,9 @@ class StoreClient:
             raise StoreUnavailable("kho trả index không đúng dạng")
         return data
 
-    def head(self, video_id: str, kind: str) -> dict:
+    def head(self, video_id: str, kind: str, *, clip: str | None = None) -> dict:
         """``{"size": int, "sha256": str}`` of the stored file (StoreMismatch when the store has none)."""
-        with self._open(self._path(video_id, kind), method="HEAD") as resp:
+        with self._open(self._path(video_id, kind, clip), method="HEAD") as resp:
             sha = (resp.headers.get("X-Sha256") or "").lower()
             try:
                 size = int(resp.headers.get("Content-Length") or "")
@@ -109,9 +111,10 @@ class StoreClient:
             raise StoreUnavailable("kho không trả X-Sha256 hợp lệ")
         return {"size": size, "sha256": sha}
 
-    def put(self, video_id: str, kind: str, series: str, name: str, path: Path, sha256: str) -> None:
+    def put(self, video_id: str, kind: str, series: str, name: str, path: Path, sha256: str,
+            *, clip: str | None = None) -> None:
         """Stream the file without buffering it in RAM. A failed upload is retried in full by the caller."""
-        route = self._path(video_id, kind)
+        route = self._path(video_id, kind, clip)
         want = (sha256 or "").lower()
         if not _SHA.fullmatch(want):
             raise StoreMismatch("sha256 gửi lên không hợp lệ")
@@ -120,7 +123,7 @@ class StoreClient:
         try:
             size = Path(path).stat().st_size
             try:
-                existing = self.head(video_id, kind)
+                existing = self.head(video_id, kind, **({"clip": clip} if clip is not None else {}))
             except StoreMismatch:
                 existing = None
             if existing is not None:
@@ -137,9 +140,10 @@ class StoreClient:
         except (OSError, http.client.HTTPException) as exc:
             raise StoreUnavailable(f"không gửi được file lên kho: {type(exc).__name__}") from None
 
-    def open_stream(self, video_id: str, kind: str, range_header: str | None = None):
+    def open_stream(self, video_id: str, kind: str, range_header: str | None = None,
+                    *, clip: str | None = None):
         """HD2b G5: (status, public headers, closable chunk iterator); never buffer the full file."""
-        resp = self._open(self._path(video_id, kind), headers={"Range": range_header} if range_header else {})
+        resp = self._open(self._path(video_id, kind, clip), headers={"Range": range_header} if range_header else {})
         if resp.status not in (200, 206):
             resp.close()
             raise StoreUnavailable("kho trả trạng thái tải không hợp lệ")
@@ -166,7 +170,7 @@ class StoreClient:
 
         return resp.status, headers, Chunks()
 
-    def fetch(self, video_id: str, kind: str, dest: Path, sha256: str) -> Path:
+    def fetch(self, video_id: str, kind: str, dest: Path, sha256: str, *, clip: str | None = None) -> Path:
         """Download to ``dest`` (through ``dest + ".part"``, resumed with ``Range`` when a part exists), verify that the
         bytes hash to ``sha256`` (and that the store announces it), then rename atomically. Wrong sha256 deletes the
         part and raises :class:`StoreMismatch`; network errors keep the part and raise :class:`StoreUnavailable`."""
@@ -175,7 +179,7 @@ class StoreClient:
             raise StoreMismatch("sha256 mong đợi không hợp lệ")
         dest = Path(dest)
         part = dest.with_name(dest.name + ".part")
-        info = self.head(video_id, kind)
+        info = self.head(video_id, kind, **({"clip": clip} if clip is not None else {}))
         if info["sha256"] != want:
             raise StoreMismatch("kho có file khác (sha256 không khớp bản đã giải phóng)")
         size = info["size"]
@@ -185,7 +189,7 @@ class StoreClient:
             have = 0
         if have < size or size == 0:
             headers = {"Range": f"bytes={have}-"} if have else {}
-            with self._open(self._path(video_id, kind), headers=headers) as resp:
+            with self._open(self._path(video_id, kind, clip), headers=headers) as resp:
                 if have and resp.status != 206:  # the server ignored Range: start again
                     have = 0
                 try:
