@@ -58,11 +58,18 @@ def _zip_stream(files: list[tuple[str, Path, str]]):
 def build(ctx: WebContext) -> APIRouter:
     router = APIRouter()
 
-    @router.get("/files/{episode_id}/{name}")
-    def files(episode_id: str, name: str, download: str | None = None, dl: str | None = None):
-        return ctx.tracked(dl, _files_response(episode_id, name, download))
+    @router.get("/api/archive/zips")
+    def archive_zips():
+        return ep.archive_zips(ctx.config)
 
-    def _files_response(episode_id: str, name: str, download: str | None) -> Response:
+    @router.get("/files/{episode_id}/{name}")
+    def files(episode_id: str, name: str, download: str | None = None, dl: str | None = None,
+              archive: str | None = None):
+        archive_mode = name == "all.zip" and archive == "1"
+        response = _files_response(episode_id, name, download, archive_mode)
+        return response if archive_mode else ctx.tracked(dl, response)
+
+    def _files_response(episode_id: str, name: str, download: str | None, archive: bool) -> Response:
         if not ep.valid_episode_id(episode_id):
             return JSONResponse({"detail": "không có file này"}, status_code=404)
         if name == "shorts.zip":
@@ -80,9 +87,10 @@ def build(ctx: WebContext) -> APIRouter:
             if both is None:
                 return JSONResponse({"detail": "cần có cả Short và khai thị đã dựng"}, status_code=404)
             items, zip_file_name = both
-            vid = ep.hd_owner(episode_id)  # the Short episode; its khai thị is ``<vid>.kt``
-            ctx.mark_downloaded(vid, [cid for cid, _, n in items if n.startswith("Shorts/")])
-            ctx.mark_downloaded(vid + khaithi.SUFFIX, [cid for cid, _, n in items if n.startswith("KhaiThị/")])
+            if not archive:  # ARC1: archival downloads neither publish nor track the zip.
+                vid = ep.hd_owner(episode_id)  # the Short episode; its khai thị is ``<vid>.kt``
+                ctx.mark_downloaded(vid, [cid for cid, _, n in items if n.startswith("Shorts/")])
+                ctx.mark_downloaded(vid + khaithi.SUFFIX, [cid for cid, _, n in items if n.startswith("KhaiThị/")])
             return StreamingResponse(
                 _zip_stream(items), media_type="application/zip",
                 headers={"Content-Disposition": content_disposition(zip_file_name), "Cache-Control": "no-store"})
