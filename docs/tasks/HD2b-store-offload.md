@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -66,6 +66,7 @@ Bản dọc trên VM được đẩy lên kho 3090, kho xác nhận đúng sha25
 
 - `review.backup.release` hiện đòi `enhance.json` `done` + có `source_hd.mp4`; HD1 G2 viết "cả hai file (cái nào đang có)" và D2 duyệt giải phóng tập chỉ có bản dọc → `release` nhận thêm trường hợp không có HD: chỉ xóa bản dọc đã xác nhận đúng sha, ghi `backup.json` `released.vertical`; **không** đặt `enhance.json` `released` (cờ đó vẫn nghĩa "HD ở máy ngoài"). Điều kiện cho tập có HD giữ nguyên.
 - `render_full.current` trả False khi `full/vertical.mp4` đã xóa → vòng bản dọc tự động / "Tạo bản dọc cả bộ" sẽ dựng lại. Bản dọc đã giải phóng (meta còn, `backup.json` `released.vertical` khớp kích thước meta, `hd_sha256` khớp nguồn hiệu lực / HD đã giải phóng) được coi là hiện hành, nằm trên kho. Thêm `render/full.py` vào Owned paths.
+- Hệ quả (ORCHESTRATOR 2026-10-26, review vòng 1): 3 test HD2a trong `tests/test_store_client.py` dựng tập giải phóng cả HD + dọc rồi đòi dựng lại bản dọc — premise này trái mục trên (bản dọc đã giải phóng là hiện hành, không encode lại). Thêm `tests/test_store_client.py` vào Owned paths, **chỉ sửa setup** (tập giải phóng HD không có bản dọc hiện hành), giữ mọi assert về mượn HD / đợi 3090; thêm test bản dọc đã giải phóng không bị dựng lại.
 
 ## Code bị thay / xóa
 
@@ -101,4 +102,10 @@ Bản dọc trên VM được đẩy lên kho 3090, kho xác nhận đúng sha25
 
 ## Result
 
-- (điền khi READY)
+- IMPLEMENTER: Codex (gpt-6.1-sol, effort high), 1 vòng chính + 2 vòng sửa cùng session, ~380k tokens tích lũy. Code `src/` +454 / −51 (10 file), tests +690 / −8 (`test_store_offload.py`, `test_store_download.py` mới; `test_store_client.py` chỉ sửa setup).
+- Vòng sửa 1: offload không nhường cả làn render, chỉ bỏ qua tập có job / lease (`backup_busy` dùng chung); tính sha256 ngoài `backup._LOCK`; Range không hợp lệ → 416 (không còn 404).
+- Vòng sửa 2: 4 test HD2a dựng tập giải phóng HD không có bản dọc hiện hành (mục "Làm rõ kỹ thuật"); thêm test bản dọc đã giải phóng không bị dựng lại / xếp job.
+- Helper mới: `store/offload.py` (`candidates`, `push_vertical`, `_vertical_snapshot`), `review.backup.released_vertical` / `lease_active`, `render.full.on_store`, `StoreClient.open_stream`, `StoreRangeError`, `web.app.backup_busy`, `storage.store_temp_files` / `store_temp_bytes` / `sweep_store_temps`.
+- AC → test: AC1 `test_push_confirm_release_rules`; AC2 test lỗi kho / sha lệch / file đọc lỗi; AC3 `test_busy_guards` (làn render bận với tập khác vẫn đẩy); AC4 `test_store_download.py` (byte, Range, 416, 503, 404); AC5 `test_store_temp_report_and_safe_startup_sweep`; AC6 test cờ tắt; AC7 full suite.
+- Verification (ORCHESTRATOR, ngoài sandbox, PYTHONPATH worktree): 5 file targeted 111 PASS; full suite `-n auto` lần 1: 3094 PASS / 1 FAIL `test_ollama_wait_runner.py::test_posts_compose_202_while_down` (ngoài diff; chạy riêng file 3/3 PASS); lần 2: **3095 PASS**, 1 skipped, 0 FAIL; framework-check PASS; `git diff --check` PASS.
+- Chưa chạy: chạy thật trên 8080 với kho 3090 (chờ HUMAN LEAD duyệt READY, rồi bật `offload`).

@@ -14,6 +14,27 @@ from .backup import _destination, _matches
 from .client import StoreClient, StoreMismatch
 
 
+def _vertical_snapshot(config: Config, owner: str) -> tuple[tuple[str, int, int], dict] | None:
+    """Hash outside the backup lock, then merge only an unchanged file's cache into the latest document."""
+    d = Path(config.workspace.dir) / owner
+    with backup._LOCK:
+        doc = backup.read_backup(d)
+    got = backup.vertical_sha(config, owner, doc)
+    if got is None:
+        return None
+    sha, size, mtime_ns = got
+    with backup._LOCK:
+        st = full.vertical_path(config, owner).stat()
+        if (st.st_size, st.st_mtime_ns) != (size, mtime_ns):
+            raise backup.BackupError("bản dọc đã đổi trong lúc tính sha256; thử lại sau", 409)
+        doc = backup.read_backup(d)
+        cache = dict(sha256=sha, size=size, mtime_ns=mtime_ns)
+        if doc.get("vertical_sha") != cache:
+            doc["vertical_sha"] = cache
+            atomic_write_json(backup.backup_path(d), doc)
+    return got, doc
+
+
 def candidates(config: Config, *, busy=None, errors: dict | None = None) -> list[dict]:
     """D1: include old files too. Cache each digest in backup.json; caller runs this in a thread."""
     owners = {enh.owner_for(config, ws.episode_id) for ws, _ in iter_manifests(Path(config.workspace.dir))}
@@ -26,17 +47,12 @@ def candidates(config: Config, *, busy=None, errors: dict | None = None) -> list
         if path is None or not full.current(config, owner):
             continue
         try:
-            with backup._LOCK:
-                doc = backup.read_backup(d)
-                before = doc.get("vertical_sha")
-                got = backup.vertical_sha(config, owner, doc)
-                if got is None:
-                    continue
-                if doc.get("vertical_sha") != before:
-                    atomic_write_json(backup.backup_path(d), doc)
-                sha, size, mtime_ns = got
-                if _matches((doc.get("confirmed") or {}).get("vertical") or {}, sha, size):
-                    continue
+            snapshot = _vertical_snapshot(config, owner)
+            if snapshot is None:
+                continue
+            (sha, size, mtime_ns), doc = snapshot
+            if _matches((doc.get("confirmed") or {}).get("vertical") or {}, sha, size):
+                continue
         except (OSError, backup.BackupError) as exc:
             if errors is not None:
                 errors[owner] = str(exc)
@@ -57,13 +73,12 @@ def push_vertical(config: Config, owner: str, *, client=None, busy=None, lock=No
     path = full.ready_file(config, owner)
     if path is None or not full.current(config, owner):
         raise StoreMismatch("bản dọc không còn hiện hành")
-    with backup._LOCK:
-        doc = backup.read_backup(d)
-        got = backup.vertical_sha(config, owner, doc)
-        if got is None:
-            raise StoreMismatch("không còn bản dọc trên VM")
-        atomic_write_json(backup.backup_path(d), doc)
-    sha, size, mtime_ns = got
+    snapshot = _vertical_snapshot(config, owner)
+    if snapshot is None:
+        raise StoreMismatch("không còn bản dọc trên VM")
+    (sha, size, mtime_ns), _ = snapshot
+    if backup.lease_active(d) or (busy is not None and busy(owner)):
+        return {"owner": owner, "pushed": False, "released": False, "busy": True}
     series, source_name = _destination(config, enh.owner_id(owner))
     name = "[HD Mobile] " + source_name.removeprefix("[Goc] ")
     client = client or StoreClient.from_config(config.store)

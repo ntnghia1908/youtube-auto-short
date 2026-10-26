@@ -26,7 +26,7 @@ from ...review import (
 from ...review import backup as review_backup
 from ...review.archive import restore_parts
 from ...review.names import hashtags as review_hashtags
-from ...store.client import StoreClient, StoreMismatch, StoreUnavailable
+from ...store.client import StoreClient, StoreMismatch, StoreRangeError, StoreUnavailable
 from .. import episodes as ep
 from ..context import WebContext, KIND_RESTORE_SOURCE, KINDS
 from ..jobs import KIND_ADD, KIND_COMPILATION, KIND_RENDER, KIND_VERTICAL, render_target
@@ -516,6 +516,9 @@ def build(ctx: WebContext) -> APIRouter:
             status, upstream, stream = client.open_stream(ep.hd_owner(episode_id), kind, request.headers.get("range"))
         except StoreUnavailable:
             return JSONResponse({"detail": "3090 đang tắt"}, status_code=503)
+        except StoreRangeError as exc:
+            headers = {"Content-Range": exc.content_range} if exc.content_range is not None else {}
+            return JSONResponse({"detail": "Range không hợp lệ"}, status_code=416, headers=headers)
         except StoreMismatch:
             return JSONResponse({"detail": "kho không có file này"}, status_code=404)
         headers = {k: v for k, v in upstream.items()

@@ -36,6 +36,14 @@ class StoreMismatch(StoreError):
     """The store has no such file, or its bytes / sha256 differ from the expected one."""
 
 
+class StoreRangeError(StoreMismatch):
+    """HD2b G5: an unsatisfiable Range, distinct from a missing file for web downloads."""
+
+    def __init__(self, content_range: str | None = None):
+        super().__init__("kho trả Range không hợp lệ")
+        self.content_range = content_range
+
+
 class StoreClient:
     def __init__(self, url: str, token: str | None, timeout: float = 30.0):
         self.url, self.token, self.timeout = url.rstrip("/"), token, timeout
@@ -53,11 +61,12 @@ class StoreClient:
         try:
             return urllib.request.urlopen(req, timeout=self.timeout)
         except urllib.error.HTTPError as exc:
+            content_range = exc.headers.get("Content-Range") if exc.headers else None
             exc.close()
             if exc.code == 404:
                 raise StoreMismatch(f"kho không có file {path}") from None
             if exc.code == 416:
-                raise StoreMismatch("kho trả Range không hợp lệ") from None
+                raise StoreRangeError(content_range) from None
             if method == "PUT" and exc.code in (400, 409, 413, 422):
                 raise StoreMismatch(f"kho từ chối file (HTTP {exc.code})") from None
             raise StoreUnavailable(f"kho trả HTTP {exc.code}") from None

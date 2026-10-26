@@ -433,7 +433,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     offload_error = None
 
     def offload_pass(client=None) -> list[str]:
-        """HD2b: one vertical per pass, yielding to render and skipping failures until others got a turn."""
+        """HD2b: one vertical per pass; skip busy owners and give other videos a turn after a failure."""
         from ..store import offload
         from ..store.client import StoreError
 
@@ -444,15 +444,10 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         def busy(owner):
             return backup_busy(ctx, owner) is not None
 
-        def render_busy():
-            return any(lane in ("render", "serial") for lane in runner.running())
-
         def publish(rows):
             storage.update_offload(dict(pushed=len(offload_pushed), pending=len(rows), failed=len(offload_failed),
                                         bytes_pending=sum(r["size"] for r in rows), last_error=offload_error))
 
-        if render_busy():
-            return []
         errors = {}
         rows = offload.candidates(config, busy=busy, errors=errors)
         offload_failed.update(errors)
@@ -466,8 +461,6 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         row = eligible[0]
         owner = row["owner"]
         try:
-            if render_busy():
-                return []
             result = offload.push_vertical(config, owner, client=client, busy=busy, lock=submit_lock)
             if not result["pushed"]:
                 return []

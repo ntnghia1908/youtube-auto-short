@@ -188,7 +188,7 @@ def test_unreadable_candidate_does_not_block_inventory(ocfg, monkeypatch):
     assert path.is_file() and not backup.read_backup(d)["confirmed"]
 
 
-@pytest.mark.parametrize("kind", ["owner", "kt", "vertical", "lease", "render", "serial", "during_put"])
+@pytest.mark.parametrize("kind", ["owner", "kt", "vertical", "lease", "during_put"])
 def test_busy_guards(ocfg, monkeypatch, kind):
     from auto_short.web.app import create_app
     from auto_short.web.jobs import KIND_PIPELINE, KIND_VERTICAL
@@ -198,9 +198,7 @@ def test_busy_guards(ocfg, monkeypatch, kind):
     def submit():
         app.state.runner.submit(VID + (".kt" if kind == "kt" else ""),
                                 KIND_VERTICAL if kind == "vertical" else KIND_PIPELINE, lambda j: None)
-    if kind in ("render", "serial"):
-        monkeypatch.setattr(app.state.runner, "running", lambda: {kind: object()})
-    elif kind == "lease":
+    if kind == "lease":
         doc = enh.read(d)
         doc["lease"] = {"expires_at": enh.now_iso(time.time() + 3600)}
         enh.write(d, doc)
@@ -212,6 +210,79 @@ def test_busy_guards(ocfg, monkeypatch, kind):
     assert app.state.offload_pass(client) == []
     assert not backup.read_backup(d)["confirmed"] and path.is_file()
     assert len(client.uploads) == (1 if kind == "during_put" else 0)
+
+
+@pytest.mark.parametrize("lane", ["render", "serial"])
+@pytest.mark.parametrize("status", ["queued", "running"])
+def test_busy_other_owner_does_not_pause_offload(ocfg, monkeypatch, lane, status):
+    from auto_short.web.app import create_app
+    from auto_short.web.jobs import KIND_PIPELINE
+    d, path = seed(ocfg)
+    other_dir, other_path = seed(ocfg, OTHER, data=VERTICAL * 2)
+    app = create_app(ocfg, "pw", preflight=None, post_preflight=None)
+    job, _ = app.state.runner.submit(OTHER, KIND_PIPELINE, lambda j: None)
+    job.status = status
+    monkeypatch.setattr(app.state.runner, "running", lambda: {lane: job})
+    client = MemoryStore()
+    assert app.state.offload_pass(client) == [VID]
+    assert [upload[0] for upload in client.uploads] == [VID]
+    assert not path.exists() and backup.read_backup(d)["confirmed"]["vertical"]
+    assert other_path.is_file() and not backup.read_backup(other_dir)["confirmed"]
+
+
+@pytest.mark.parametrize("operation", ["candidates", "push"])
+def test_hash_allows_concurrent_confirmation_and_merges_latest_doc(ocfg, monkeypatch, operation):
+    import threading
+    d, path = seed(ocfg)
+    seed(ocfg, OTHER)
+    real_hash = backup.sha256_file
+    failures = []
+    def confirm_other():
+        try:
+            backup.confirm(ocfg, OTHER, "vertical", digest(VERTICAL))
+            with backup._LOCK:
+                doc = backup.read_backup(d)
+                doc["concurrent_note"] = "giữ nguyên"
+                atomic_write_json(backup.backup_path(d), doc)
+        except Exception as exc:
+            failures.append(exc)
+    def slow_hash(p):
+        if p == path:
+            thread = threading.Thread(target=confirm_other, daemon=True)
+            thread.start()
+            thread.join(timeout=2)
+            assert not thread.is_alive(), "offload held backup._LOCK while hashing"
+            assert not failures
+        return real_hash(p)
+    monkeypatch.setattr(backup, "sha256_file", slow_hash)
+    if operation == "candidates":
+        assert [r["owner"] for r in offload.candidates(ocfg)] == [VID]
+    else:
+        assert offload.push_vertical(ocfg, VID, client=MemoryStore())["pushed"]
+    doc = backup.read_backup(d)
+    assert doc["concurrent_note"] == "giữ nguyên" and doc["vertical_sha"]["sha256"] == digest(VERTICAL)
+
+
+@pytest.mark.parametrize("operation", ["candidates", "push"])
+def test_changed_stat_before_cache_merge_is_refused(ocfg, monkeypatch, operation):
+    d, path = seed(ocfg)
+    real_sha = backup.vertical_sha
+    def sha(*args):
+        got = real_sha(*args)
+        st = path.stat()
+        os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 1000000))
+        return got
+    monkeypatch.setattr(backup, "vertical_sha", sha)
+    client = MemoryStore()
+    if operation == "candidates":
+        errors = {}
+        assert offload.candidates(ocfg, errors=errors) == [] and VID in errors
+    else:
+        with pytest.raises(backup.BackupError, match="đã đổi"):
+            offload.push_vertical(ocfg, VID, client=client)
+    doc = backup.read_backup(d)
+    assert not doc["confirmed"] and doc["vertical_sha"] is None and path.is_file()
+    assert not client.uploads
 
 
 def test_offload_disabled_and_config(ocfg, monkeypatch):

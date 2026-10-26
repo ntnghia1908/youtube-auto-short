@@ -132,6 +132,30 @@ def test_store_down_or_missing(cfg, monkeypatch, error, status, route, transport
         assert response.json() == {"detail": "3090 đang tắt"}
 
 
+@pytest.mark.parametrize("route", ["source-hd", "vertical"])
+@pytest.mark.parametrize("content_range", [None, "bytes */140"])
+def test_unsatisfiable_range_keeps_416_and_content_range(cfg, monkeypatch, route, content_range, transport):
+    import urllib.error
+    cfg, app, _ = setup_download(cfg, monkeypatch)
+    client = StoreClient("http://unused", "private-token")
+    monkeypatch.setattr(StoreClient, "from_config", lambda cfg: client)
+    upstream = io.BytesIO(b"private upstream body")
+    def unavailable_range(req, timeout):
+        assert req.get_header("Range") == "bytes=999999-"
+        headers = {"Authorization": "private-token"}
+        if content_range is not None:
+            headers["Content-Range"] = content_range
+        raise urllib.error.HTTPError(req.full_url, 416, "failure", headers, upstream)
+    monkeypatch.setattr("urllib.request.urlopen", unavailable_range)
+    response = request(app, "GET", f"/api/episodes/{VID}/{route}", transport=transport,
+                       headers={"Range": "bytes=999999-"})
+    assert response.status_code == 416
+    assert response.headers.get("Content-Range") == content_range
+    assert response.json() == {"detail": "Range không hợp lệ"}
+    assert "authorization" not in response.headers and b"private" not in response.content
+    assert upstream.closed
+
+
 def test_store_disabled_keeps_hd1_links_and_refusal(cfg, monkeypatch, transport):
     cfg, app, store = setup_download(cfg, monkeypatch, enabled=False)
     h = request(app, "GET", f"/api/episodes/{VID}", transport=transport).json()["hd_video"]
