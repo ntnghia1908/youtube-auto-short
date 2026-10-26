@@ -20,7 +20,7 @@ Cập nhật 2026-10-26.
 - Codex IMPLEMENTER: ưu tiên Codex (HUMAN LEAD 2026-10-25, tiết kiệm quota Claude); `.claude/rules/execution.md`, quota `scripts/codex-usage.py`.
 - 3050 thôi làm enhance 2026-10-24; worker #100 đã chép lên 3090 + 3050, không lỗi CUDA (`__version__` vẫn "3"). CP8.38: HUMAN LEAD bỏ qua manual test (API PASS 12/12); manual test cũ: HUMAN LEAD cho PASS.
 - A100 Slurm ngừng 2026-10-25 (`scancel`, config / token / tunnel đã gỡ); AI về 3090 (`11437`). Ưu tiên fairshare + dùng lại: ops-notes.
-- Bài đăng sửa 2026-10-24 (#139): 149 bài về bản gốc, backup `~/.local/share/auto-short/backup-posts-2026-10-24T140515Z/`. 6 bài đã đăng sai chờ HUMAN LEAD sửa: VLT T9 S9; CƯT T5 S8, T6 S9, T7 S1, T9 S7, T11 S3. ~106 bài chữ AI cảnh báo khi sao chép.
+- Bài đăng sửa 2026-10-24 (#139): 149 bài về bản gốc, backup `~/.local/share/auto-short/backup-posts-2026-10-24T140515Z/`. 6 bài đã đăng sai: HUMAN LEAD đã sửa (2026-10-26). ~106 bài chữ AI cảnh báo khi sao chép.
 - Test chập chờn đã biết: `tests/test_prepare_parallel_cp829.py::test_lower_thread_priority_is_per_thread_and_inherited_by_children` — fail ngẫu nhiên khi chạy full suite; chạy lại riêng thì PASS.
 - CL1 đã gỡ (#107); quy ước host C0 / C1 vẫn hiệu lực.
 
@@ -32,7 +32,8 @@ Cập nhật 2026-10-26.
    PUB2: chờ `~/.local/share/auto-short/youtube-client.json`: auth → `thumbs` chạy thử → `--apply` 1 video.
 3. HD2b (#167), `FIX-ytdlp-timeout-wait` (#169), `ARC1-short-zip-archive` (#170), `FIX-offload-incremental` (#171) đã merge + chạy thật (Result trong contract). Còn mở: HUMAN LEAD chạy `scripts/archive/luu-tru-short.ps1` trên 3090 (cú pháp PowerShell chưa kiểm); thử restart lúc offload đang băm khi có bản dọc mới.
 4. SRC1–SRC4, TC3.2 đã merge (#154, #159, #160). Chưa có ca thật, chỉ test tự động: SRC3 G2 a (bản kho khác byte), nhánh chờ khi YouTube chặn của TC3.2 / SRC4. FIX job "đợi 3090" khi restart (#165) và gộp snapshot kho (#166) đã merge.
-5. Còn mở: HTTPS cho 8080; FIX `setup-enhance-worker.ps1` (S1); CP14 Whisper GPU tạm gác.
+5. SHO1 (Short + khai thị đã đăng hết lên kho 3090, web vẫn xem / sửa): ACCEPTED 2026-10-26; SHO1a đang làm (Codex), SHO1b sau đó; cờ `offload_shorts` chỉ bật sau SHO1b.
+6. Còn mở: HTTPS cho 8080; FIX `setup-enhance-worker.ps1` (S1); CP14 Whisper GPU tạm gác.
 
 Đây là PROPOSED, không authorize implementation tiếp theo.
 
