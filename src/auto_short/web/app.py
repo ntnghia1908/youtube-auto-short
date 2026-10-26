@@ -428,6 +428,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                 log.exception("web: sao lưu nguồn: lỗi")
             await asyncio.sleep(config.store.retry_seconds)
 
+    offload_stop = threading.Event()
     offload_failed: set[str] = set()
     offload_pushed: set[str] = set()
     offload_error = None
@@ -438,7 +439,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         from ..store.client import StoreError
 
         nonlocal offload_error
-        if not config.store.enabled or not config.store.offload:
+        if not config.store.enabled or not config.store.offload or offload_stop.is_set():
             return []
 
         def busy(owner):
@@ -449,19 +450,25 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                                         bytes_pending=sum(r["size"] for r in rows), last_error=offload_error))
 
         errors = {}
-        rows = offload.candidates(config, busy=busy, errors=errors)
+        try:
+            rows = offload.candidates(config, busy=busy, errors=errors, stop=offload_stop)
+            row = offload.next_candidate(config, [r for r in rows if r["owner"] not in offload_failed],
+                                         errors=errors, stop=offload_stop)
+            # Selection may discover a matching confirmation whose digest was not cached yet.
+            rows = offload.candidates(config, busy=busy, errors=errors, stop=offload_stop)
+        except offload.OffloadStopped:
+            return []
         offload_failed.update(errors)
         if errors:
             offload_error = next(iter(errors.values()))
         publish(rows)
-        eligible = [row for row in rows if row["owner"] not in offload_failed]
-        if not eligible:
+        if row is None:
             offload_failed.clear()
             return []
-        row = eligible[0]
         owner = row["owner"]
         try:
-            result = offload.push_vertical(config, owner, client=client, busy=busy, lock=submit_lock)
+            result = offload.push_vertical(config, owner, client=client, busy=busy, lock=submit_lock,
+                                           stop=offload_stop)
             if not result["pushed"]:
                 return []
             offload_pushed.add(owner)
@@ -473,6 +480,8 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             publish([r for r in rows if r["owner"] != owner])
             log.info("web: đẩy bản dọc %s: %s", owner, result["status"])
             return [owner]
+        except offload.OffloadStopped:
+            return []
         except (StoreError, ReviewError, OSError) as exc:
             offload_failed.add(owner)
             offload_error = str(exc)
@@ -481,7 +490,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             return []
 
     async def _offload_loop() -> None:
-        while config.store.enabled and config.store.offload:
+        while config.store.enabled and config.store.offload and not offload_stop.is_set():
             done = []
             try:
                 done = await asyncio.to_thread(offload_pass)
@@ -809,11 +818,13 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         sweeper = asyncio.create_task(_auto_archive_loop())
         store_retry = asyncio.create_task(_store_retry_loop())
         source_backup = asyncio.create_task(_source_backup_loop())
+        offload_stop.clear()
         vertical_offload = asyncio.create_task(_offload_loop())
         source_redownload = asyncio.create_task(_redownload_loop())
         try:
             yield
         finally:
+            offload_stop.set()
             sweeper.cancel()
             store_retry.cancel()
             source_backup.cancel()

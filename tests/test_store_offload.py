@@ -3,6 +3,7 @@ import asyncio
 import hashlib
 import os
 import time
+import threading
 from dataclasses import replace
 from pathlib import Path
 
@@ -114,15 +115,15 @@ def test_old_candidates_order_digest_cache_and_confirmation(ocfg, monkeypatch):
     seed(ocfg, OTHER, hd=True, data=VERTICAL * 10)
     atomic_write_json(Path(ocfg.workspace.dir) / "_playlists" / "PLtest.json",
                       {"series": "Bộ thử", "entries": [{"video_id": VID}]})
-    hashes, real = [], backup.sha256_file
-    monkeypatch.setattr(backup, "sha256_file", lambda p: (hashes.append(p), real(p))[1])
+    hashes, real = [], offload._sha256_file
+    monkeypatch.setattr(offload, "_sha256_file", lambda p, stop: (hashes.append(p), real(p, stop))[1])
     assert [r["owner"] for r in offload.candidates(ocfg)] == [VID, OTHER]
-    assert len(hashes) == 2
-    offload.candidates(ocfg)
-    assert len(hashes) == 2
+    assert hashes == []
+    assert offload.next_candidate(ocfg, offload.candidates(ocfg), errors={})["owner"] == VID
+    assert len(hashes) == 1
     client = MemoryStore()
     offload.push_vertical(ocfg, VID, client=client)
-    assert len(hashes) == 2  # PUT / confirm / release all reuse vertical_sha
+    assert len(hashes) == 1  # PUT / confirm / release all reuse vertical_sha
     assert client.uploads[0][2:] == ("PLtest", "[HD Mobile] Bộ thử - Tập 3.mp4")
     backup.confirm(ocfg, OTHER, "vertical", digest(VERTICAL * 10))
     assert offload.candidates(ocfg) == []
@@ -177,12 +178,12 @@ def test_unreadable_candidate_does_not_block_inventory(ocfg, monkeypatch):
     from auto_short.web.app import create_app
     d, path = seed(ocfg)
     seed(ocfg, OTHER)
-    real = backup.sha256_file
-    def sha(path):
+    real = offload._sha256_file
+    def sha(path, stop):
         if VID in path.parts:
             raise OSError("không đọc được file")
-        return real(path)
-    monkeypatch.setattr(backup, "sha256_file", sha)
+        return real(path, stop)
+    monkeypatch.setattr(offload, "_sha256_file", sha)
     app = create_app(ocfg, "pw", preflight=None, post_preflight=None)
     assert app.state.offload_pass(MemoryStore()) == [OTHER]
     assert path.is_file() and not backup.read_backup(d)["confirmed"]
@@ -235,7 +236,7 @@ def test_hash_allows_concurrent_confirmation_and_merges_latest_doc(ocfg, monkeyp
     import threading
     d, path = seed(ocfg)
     seed(ocfg, OTHER)
-    real_hash = backup.sha256_file
+    real_hash = offload._sha256_file
     failures = []
     def confirm_other():
         try:
@@ -246,17 +247,17 @@ def test_hash_allows_concurrent_confirmation_and_merges_latest_doc(ocfg, monkeyp
                 atomic_write_json(backup.backup_path(d), doc)
         except Exception as exc:
             failures.append(exc)
-    def slow_hash(p):
+    def slow_hash(p, stop):
         if p == path:
             thread = threading.Thread(target=confirm_other, daemon=True)
             thread.start()
             thread.join(timeout=2)
             assert not thread.is_alive(), "offload held backup._LOCK while hashing"
             assert not failures
-        return real_hash(p)
-    monkeypatch.setattr(backup, "sha256_file", slow_hash)
+        return real_hash(p, stop)
+    monkeypatch.setattr(offload, "_sha256_file", slow_hash)
     if operation == "candidates":
-        assert [r["owner"] for r in offload.candidates(ocfg)] == [VID]
+        assert offload.next_candidate(ocfg, offload.candidates(ocfg), errors={})["owner"] == VID
     else:
         assert offload.push_vertical(ocfg, VID, client=MemoryStore())["pushed"]
     doc = backup.read_backup(d)
@@ -266,17 +267,18 @@ def test_hash_allows_concurrent_confirmation_and_merges_latest_doc(ocfg, monkeyp
 @pytest.mark.parametrize("operation", ["candidates", "push"])
 def test_changed_stat_before_cache_merge_is_refused(ocfg, monkeypatch, operation):
     d, path = seed(ocfg)
-    real_sha = backup.vertical_sha
+    real_sha = offload._sha256_file
     def sha(*args):
         got = real_sha(*args)
         st = path.stat()
         os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 1000000))
         return got
-    monkeypatch.setattr(backup, "vertical_sha", sha)
+    monkeypatch.setattr(offload, "_sha256_file", sha)
     client = MemoryStore()
     if operation == "candidates":
         errors = {}
-        assert offload.candidates(ocfg, errors=errors) == [] and VID in errors
+        assert offload.next_candidate(ocfg, offload.candidates(ocfg), errors=errors) is None
+        assert VID in errors
     else:
         with pytest.raises(backup.BackupError, match="đã đổi"):
             offload.push_vertical(ocfg, VID, client=client)
@@ -405,3 +407,136 @@ def test_loop_uses_thread_and_short_success_delay(ocfg, monkeypatch):
     main = threading.get_ident()
     asyncio.run(run())
     assert len(calls) == 1 and calls[0] != main
+
+
+def test_incremental_pass_hashes_only_first_pending_and_snapshot_uses_stat(ocfg, monkeypatch):
+    from auto_short.web.app import create_app
+    third = "thirdVID123"
+    seed(ocfg, VID, data=VERTICAL)
+    seed(ocfg, OTHER, data=VERTICAL * 2)
+    seed(ocfg, third, hd=True, data=VERTICAL * 3)
+    app = create_app(ocfg, "pw", preflight=None, post_preflight=None)
+    hashes, snapshots = [], []
+    real = offload._sha256_file
+
+    def sha(path, stop):
+        hashes.append(path)
+        return real(path, stop)
+
+    monkeypatch.setattr(offload, "_sha256_file", sha)
+    rows = offload.candidates(ocfg)
+    assert [r["owner"] for r in rows] == [OTHER, VID, third]
+    assert not hashes
+    client = MemoryStore()
+    client.after_put = lambda: snapshots.append(app.state.storage.report()["offload"])
+    assert app.state.offload_pass(client) == [OTHER]
+    assert [p.parents[1].name for p in hashes] == [OTHER]
+    assert snapshots[0]["pending"] == 3
+    assert snapshots[0]["bytes_pending"] == len(VERTICAL) * 6
+    assert app.state.offload_pass(client) == [VID]
+    assert [p.parents[1].name for p in hashes] == [OTHER, VID]
+    assert app.state.storage.report()["offload"]["pending"] == 1
+
+
+@pytest.mark.parametrize("stage", ["hash", "put", "head"])
+def test_stop_never_confirms_or_releases(ocfg, monkeypatch, stage):
+    d, path = seed(ocfg)
+    stop = threading.Event()
+    client = MemoryStore()
+    reads = []
+    if stage == "hash":
+        real_open = Path.open
+
+        class StoppingFile:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                self.fh.close()
+
+            def read(self, size):
+                reads.append(size)
+                stop.set()
+                return self.fh.read(size)
+
+        def open_file(p, *args, **kwargs):
+            fh = real_open(p, *args, **kwargs)
+            if p == path and args == ("rb",):
+                wrapper = StoppingFile()
+                wrapper.fh = fh
+                return wrapper
+            return fh
+
+        monkeypatch.setattr(Path, "open", open_file)
+    elif stage == "put":
+        client.after_put = stop.set
+    else:
+        real_head = client.head
+
+        def head(*args):
+            result = real_head(*args)
+            stop.set()
+            return result
+
+        client.head = head
+    started = time.monotonic()
+    with pytest.raises(offload.OffloadStopped):
+        offload.push_vertical(ocfg, VID, client=client, stop=stop)
+    assert time.monotonic() - started < 3
+    doc = backup.read_backup(d)
+    assert not doc["confirmed"] and path.is_file()
+    if stage == "hash":
+        assert reads == [1024 * 1024]
+        assert doc["vertical_sha"] is None and not client.uploads
+
+
+def test_lifespan_stops_hash_worker(ocfg, monkeypatch):
+    from fastapi.testclient import TestClient
+    from auto_short.web.app import create_app
+    d, path = seed(ocfg)
+    ocfg = replace(ocfg, storage=replace(ocfg.storage, auto_archive=False))
+    app = create_app(ocfg, "pw", preflight=None, post_preflight=None)
+    entered, finished = threading.Event(), threading.Event()
+
+    def slow_hash(path, stop):
+        entered.set()
+        try:
+            assert stop.wait(3), "lifespan did not request hash cancellation"
+            offload._check_stop(stop)
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(offload, "_sha256_file", slow_hash)
+    monkeypatch.setattr(StoreClient, "from_config", lambda cfg: pytest.fail("stopped hash reached PUT"))
+    for obj in (app.state.runner, app.state.monitor_sampler):
+        for name in ("start", "stop"):
+            monkeypatch.setattr(obj, name, lambda: None)
+    with TestClient(app):
+        assert entered.wait(3)
+        started = time.monotonic()
+    assert time.monotonic() - started < 3
+    assert finished.wait(1)
+    assert path.is_file()
+    doc = backup.read_backup(d)
+    assert not doc["confirmed"] and doc["vertical_sha"] is None
+
+
+def test_selection_skips_confirmation_with_stale_cache(ocfg, monkeypatch):
+    d, path = seed(ocfg, data=VERTICAL * 3)
+    seed(ocfg, OTHER, data=VERTICAL * 2)
+    backup.confirm(ocfg, VID, "vertical", digest(VERTICAL * 3))
+    doc = backup.read_backup(d)
+    doc["vertical_sha"] = None
+    atomic_write_json(backup.backup_path(d), doc)
+    hashes, real = [], offload._sha256_file
+
+    def sha(p, stop):
+        hashes.append(p)
+        return real(p, stop)
+
+    monkeypatch.setattr(offload, "_sha256_file", sha)
+    rows = offload.candidates(ocfg)
+    assert not hashes and len(rows) == 2
+    assert offload.next_candidate(ocfg, rows, errors={})["owner"] == OTHER
+    assert hashes == [path, full.vertical_path(ocfg, OTHER)]
+    assert [r["owner"] for r in offload.candidates(ocfg)] == [OTHER]
