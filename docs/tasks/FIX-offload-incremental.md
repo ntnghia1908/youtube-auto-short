@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: BUG
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -74,4 +74,8 @@ Không chạm database, security model, public API.
 
 ## Result
 
-- (điền khi READY)
+- READY, merge PR #171 (2026-10-26). Codex: 1 vòng + 2 vòng sửa, effort medium. Code +98 / −27, test +153 / −18; helper mới `OffloadStopped`, `_check_stop`, `_sha256_file`, `next_candidate`.
+- Vòng sửa: `wait_for` ném TimeoutError bỏ bước dọn lifespan → trả về `cancel()` + `gather` như main, chỉ đặt cờ `offload_stop` trước.
+- AC1–2 `test_incremental_pass_hashes_only_first_pending_and_snapshot_uses_stat`; AC3 `test_stop_never_confirms_or_releases`; AC4 `test_lifespan_stops_hash_worker`; AC5 ORCHESTRATOR full suite `-n auto` 3101 PASS, 1 skipped; framework-check, `git diff --check` PASS.
+- Restart 8080 sang `20501e1` 2026-10-26: server cũ (`8cd3d13`) tắt bằng Ctrl-C, script báo "restarted". Lúc đó offload `pending 0` (cả 72 bản dọc đã đẩy) nên chưa thử được restart giữa lúc băm — checklist trên còn mở tới bản dọc mới kế tiếp.
+- Known limitation: một PUT đang gửi không ngắt giữa chừng (ngoài scope).

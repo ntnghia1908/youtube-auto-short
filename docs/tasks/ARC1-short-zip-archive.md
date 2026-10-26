@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: FEATURE
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -78,4 +78,7 @@ Không chạm database, security model; thêm 1 API đọc sau đăng nhập.
 
 ## Result
 
-- (điền khi READY)
+- READY, merge PR #170 (2026-10-26). Codex: 1 vòng, effort high, ~98k tokens. Code + script +211 / −7, test +154 (`tests/test_archive_zips.py`); helper mới `ep.archive_zips`.
+- AC1 `test_archive_zip_same_bytes_without_publish_or_tracking`; AC2 listing + fingerprint + `test_web_auth_and_archive_download`; AC4 ORCHESTRATOR full suite `-n auto` 3104 PASS, 1 skipped; framework-check, `git diff --check` PASS.
+- Chạy thật 8080 `20501e1` 2026-10-26: `GET /api/archive/zips` 152 tập, 88,2 GB. Tải `1FBPrzuCYi0` (Cảm Ứng Thiên T42) `all.zip?archive=1`: 8 entry = `files`, tổng giải nén 191.618.247 B = `bytes`; mọi `*.json` của hai workspace (gồm `publish.json` "Đã đăng") không đổi.
+- AC3 (cú pháp PowerShell) chưa kiểm: VM không có `pwsh`; chờ HUMAN LEAD chạy `scripts/archive/luu-tru-short.ps1` trên 3090 (checklist trên).
