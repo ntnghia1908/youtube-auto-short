@@ -6,6 +6,7 @@ The web never writes stage artifacts; the only files it serves are the Shorts li
 
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 
@@ -13,7 +14,7 @@ from .. import khaithi
 from ..config import Config
 from ..enhance import state as enh_state
 from ..pipeline import PIPELINE_STAGES
-from ..review.names import copy_prefix, copy_text, video_name
+from ..review.names import MAX_SERIES_BYTES, clean_part, copy_prefix, copy_text, truncate_utf8, video_name
 from ..review import (ReviewError, download_name, episode_complete, episode_label, list_titles, publish_status,
                       read_archive, zip_name)
 from ..review.publish import PUBLISH_NAME, read_publish
@@ -465,6 +466,36 @@ def _zip_all_fields(config: Config, episode_id: str, rendered: int) -> dict:
     if found is None:
         return {"zip_all_url": None, "zip_all_name": None}
     return {"zip_all_url": f"/files/{episode_id}/all.zip", "zip_all_name": found[1]}
+
+
+def archive_zips(config: Config) -> list[dict]:
+    """ARC1: one all.zip per video, fingerprinting ZIP entry names and stat metadata only."""
+    rows = []
+    for ws, _manifest in iter_manifests(Path(config.workspace.dir)):
+        vid = ws.episode_id
+        if hd_owner(vid) != vid:
+            continue
+        both = all_zip(config, vid)
+        if both is None:
+            continue
+        items, name = both
+        digest, size = hashlib.sha256(), 0
+        try:
+            for _cid, path, entry in items:
+                stat = path.stat()
+                size += stat.st_size
+                digest.update(f"{entry}|{stat.st_size}|{stat.st_mtime_ns}\n".encode("utf-8"))
+        except FileNotFoundError:  # A concurrent delete: this episode is no longer ready.
+            continue
+        kf = kind_fields(config, vid)
+        number = label(config, vid, kf)
+        episode = int(number) if number.isascii() and number.isdecimal() else None
+        rows.append({"video_id": vid,
+                     "series": truncate_utf8(clean_part(zip_series(config, vid, kf)), MAX_SERIES_BYTES),
+                     "episode": episode, "name": name, "files": len(items), "bytes": size,
+                     "fingerprint": digest.hexdigest(), "url": f"/files/{vid}/all.zip?archive=1"})
+    return sorted(rows, key=lambda row: (row["series"], row["episode"] is None,
+                                         row["episode"] or 0, row["video_id"]))
 
 
 TODO, ALL_PUBLISHED = "todo", "done"  # list filter groups (CP8.5 X4, bổ sung HUMAN LEAD 2026-09-27)
