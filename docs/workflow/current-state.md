@@ -32,7 +32,7 @@ Cập nhật 2026-10-26.
    PUB2: chờ `~/.local/share/auto-short/youtube-client.json`: auth → `thumbs` chạy thử → `--apply` 1 video.
 3. HD2b (#167), `FIX-ytdlp-timeout-wait` (#169), `ARC1-short-zip-archive` (#170), `FIX-offload-incremental` (#171) đã merge + chạy thật (Result trong contract). Còn mở: HUMAN LEAD chạy `scripts/archive/luu-tru-short.ps1` trên 3090 (cú pháp PowerShell chưa kiểm); thử restart lúc offload đang băm khi có bản dọc mới.
 4. SRC1–SRC4, TC3.2 đã merge (#154, #159, #160). Chưa có ca thật, chỉ test tự động: SRC3 G2 a (bản kho khác byte), nhánh chờ khi YouTube chặn của TC3.2 / SRC4. FIX job "đợi 3090" khi restart (#165) và gộp snapshot kho (#166) đã merge.
-5. SHO1 (Short + khai thị đã đăng hết lên kho 3090, web vẫn xem / sửa): SHO1a merge (#174); SHO1b (`docs/tasks/SHO1b-short-store-edit.md`, sửa / ghép / Bộ nhớ + G1 sửa đổi: Short sửa → bản `(rN)` trên kho) đang làm (Codex); cờ `offload_shorts` chỉ bật sau SHO1b + chép `store.py` lên 3090.
+5. SHO1 (Short + khai thị đã đăng hết lên kho 3090, web vẫn xem / sửa): SHO1a merge (#174); SHO1b (`docs/tasks/SHO1b-short-store-edit.md`, sửa / ghép / Bộ nhớ + G1 sửa đổi: Short sửa → bản `(rN)` trên kho) READY, PR mở (chạy thật bản sao PASS); sau merge: HUMAN LEAD chép `store.py` lên 3090 rồi mới bật cờ `offload_shorts` trên 8080.
 6. Còn mở: HTTPS cho 8080; FIX `setup-enhance-worker.ps1` (S1); CP14 Whisper GPU tạm gác.
 
 Đây là PROPOSED, không authorize implementation tiếp theo.
