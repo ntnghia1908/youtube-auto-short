@@ -10,11 +10,11 @@ Ngân sách token: `docs/ai/workflow.md` §10.
 
 ## Current focus
 
-Cập nhật 2026-10-25.
+Cập nhật 2026-10-26.
 
-- Web 8080 (tmux `youtube:web`, worktree `~/projects/youtube-auto-short-web`): chạy `origin/main` `2c29133` (detached; restart 2026-10-25 sau #159 SRC2+SRC4+SRC3, #160 TC3.2, #161 FIX backup CSV); `[store]` bật (kho 3090 qua tunnel 18090, chi tiết ops-notes). Script restart từ chối khi làn bận; mật khẩu `~/.local/share/auto-short/web.env`.
+- Web 8080 (tmux `youtube:web`, worktree `~/projects/youtube-auto-short-web`): chạy `origin/main` `8cd3d13` (detached; restart 2026-10-26 sau #167 HD2b); `[store]` bật (kho 3090 qua tunnel 18090, chi tiết ops-notes), `offload = true` (bản dọc tự lên kho + giải phóng). Script restart từ chối khi làn bận; mật khẩu `~/.local/share/auto-short/web.env`.
 - Kinh Địa Tạng 41 tập đã giải phóng bản HD (HD1, bản ở kho 3090 `E:\KinhDiaTang_HD`); HUMAN LEAD chạy định kỳ trên 3090 `backup.ps1 -Release` (#161: mặc định `-Dest` ổ E:, `danh-sach.csv` giữ dòng tập đã giải phóng). Chạy thật 2026-10-26 (#161 PASS): giữ 22 dòng CSV cũ, kho vẫn 52 bản dọc + 102 HD, E: còn 1.642 GB. Tập chưa giải phóng: 12 tập (21–26, 29–34) đã có Short + HD nhưng chưa xếp job dọc; 38 tập (35 trở đi trừ đã giải phóng, và 100) mới có HD, chưa xử lý Short.
-- 2026-10-26 xếp "Xử lý" (Short + khai thị 4–7 phút, không bản dọc) tới tập 50: Vô Lượng Thọ 31–50, Cảm Ứng Thiên 31–50, Thập Thiện Nghiệp 34–39 + 41–50 (56 tập, 112 job prepare, xen kẽ theo số tập).
+- 2026-10-26 xếp "Xử lý" (Short + khai thị 4–7 phút, không bản dọc) tới tập 50: Vô Lượng Thọ 31–50, Cảm Ứng Thiên 31–50, Thập Thiện Nghiệp 34–39 + 41–50 (56 tập, 112 job prepare, xen kẽ theo số tập). 26 tập fail ingest vì YouTube timeout (đêm 25 → 26), xếp lại 2026-10-26.
 - Dự án ở `~/projects/` từ 2026-10-19; backup JSON: ops-notes. `config.toml` `[storage]`: `auto_archive = true`, `auto_archive_grace_minutes = 7200`.
 - Kho nguồn ghép chủ đề `work/_theme_sources/` (13 video, tải dần bằng `python -m auto_short.theme_render.sources`).
 - Codex IMPLEMENTER: ưu tiên Codex (HUMAN LEAD 2026-10-25, tiết kiệm quota Claude); `.claude/rules/execution.md`, quota `scripts/codex-usage.py`.
@@ -30,7 +30,7 @@ Cập nhật 2026-10-25.
 2. Đóng gói (`docs/decisions/PKG-video-packaging-authorization.md` ACCEPTED): PKG1, PKG2, VIS1, PKG2.1, PKG2.2, PKG3, PKG3.1, PUB2, FIX-theme-index-summary, AUD1 đã merge; HD1, HD2a cũng vậy. PKG3.1: HUMAN LEAD đã bấm "Ghép lại" video ghép Thái Thượng stale (2026-10-26).
    AUD1: HUMAN LEAD chọn −18 / −22 / −26 LU; nhạc YouTube Audio Library do HUMAN LEAD tải từ Studio (G3). Kho: 1 bản CC0 "The Budding of Consciousness"; không nạp "nhạc hòa tấu Niệm Phật" (chưa rõ license), "月下獨酌" (thương mại). PUB1 / PKG1.1: bỏ.
    PUB2: chờ `~/.local/share/auto-short/youtube-client.json`: auth → `thumbs` chạy thử → `--apply` 1 video.
-3. HD2b (decision HD2 G5–G7 ACCEPTED: tải qua web từ kho, đẩy bản dọc mới lên kho + tự giải phóng, theme_render mượn từ kho, dọn file mượn sót; generator backup thêm tùy chọn ổ): viết contract khi HUMAN LEAD muốn.
+3. HD2b merge #167, chạy thật PASS 2026-10-26 (Result trong contract). APPROVED 2026-10-26, giao song song: `FIX-ytdlp-timeout-wait`, `FIX-offload-incremental`, `ARC1-short-zip-archive` (ZIP Short + khai thị về 3090, không đánh dấu "Đã đăng").
 4. SRC1–SRC4, TC3.2 đã merge (#154, #159, #160). Chưa có ca thật, chỉ test tự động: SRC3 G2 a (bản kho khác byte), nhánh chờ khi YouTube chặn của TC3.2 / SRC4. FIX đề xuất (chờ HUMAN LEAD): job "đợi 3090" (interrupted) mất khi restart web; gộp `StoreSources` của TC3.2 với `store/index_cache` của SRC4.
 5. Còn mở: HTTPS cho 8080; FIX `setup-enhance-worker.ps1` (S1); CP14 Whisper GPU tạm gác.
 
