@@ -411,7 +411,8 @@ def test_short_put_index_range_and_conflict(archive, video_id):
         code, fields, body = request(service, "GET", route, {"Range": "bytes=2-5"})
         assert code == 206 and body == DATA[2:6] and fields["Content-Range"] == "bytes 2-5/10"
         assert request(service, "GET", route)[2] == DATA
-        assert request(service, "PUT", route + query, {**headers, "X-Sha256": "0" * 64}, DATA)[0] == 409
+        # SHO1b accepts a different Short sha, then rejects this corrupt upload during verification.
+        assert request(service, "PUT", route + query, {**headers, "X-Sha256": "0" * 64}, DATA)[0] == 422
         different_name = "?" + urlencode(dict(series=PLAYLIST, name="different.mp4"))
         assert request(service, "PUT", route + different_name, headers, DATA)[0] == 409
     assert (folder / "index.csv").read_bytes() == original_index
@@ -444,3 +445,40 @@ def test_short_rejects_unsafe_clip_identity(archive, clip):
         service.put(VIDEO, "short", PLAYLIST, "[Short] m01.mp4", SHA, io.BytesIO(DATA), len(DATA), clip=clip)
     assert exc.value.status == 400
     assert service.index() == []
+
+
+@pytest.mark.parametrize("video_id", [VIDEO, VIDEO + ".kt"])
+def test_short_revisions_keep_history_and_current_index(archive, video_id):
+    service, folder, config = archive
+    seed(folder)
+    original_index = (folder / "index.csv").read_bytes()
+    name = "[Short] Tập 1 - k01.mp4"
+    route = f"/files/{video_id}/short/k01.mp4"
+    query = "?" + urlencode(dict(series=PLAYLIST, name=name))
+    copies = []
+    for n, data in enumerate((DATA, b"second", b"third"), 1):
+        sha = hashlib.sha256(data).hexdigest()
+        headers = {"Content-Length": str(len(data)), "X-Sha256": sha}
+        assert request(service, "PUT", route + query, headers, data)[0] == 201
+        version = name if n == 1 else name[:-4] + f" (r{n}).mp4"
+        copies.append((sha, version, data))
+        assert request(service, "PUT", route + query, headers, data)[0] == 200
+        service = store.Store(store.load_config(config))  # current row survives restart
+        code, fields, _ = request(service, "HEAD", route)
+        assert code == 200 and fields["X-Sha256"] == sha and int(fields["Content-Length"]) == len(data)
+        assert request(service, "GET", route)[2] == data
+        assert [r for r in service.index() if r["kind"] == "short"][0]["file"] == version
+        with (folder / "index-short.csv").open(encoding="utf-8") as stream:
+            assert list(csv.DictReader(stream)) == [dict(video_id=video_id, clip="k01.mp4", file=version)]
+        sums = (folder / "SHA256SUMS.txt").read_text(encoding="utf-8-sig")
+        for old_sha, old_name, old_data in copies:
+            assert (folder / old_name).read_bytes() == old_data
+            assert f"{old_sha}  {old_name}" in sums
+    assert len(list(folder.glob("[[]Short]*.mp4"))) == 3
+    assert (folder / "index.csv").read_bytes() == original_index
+    assert not list(folder.glob("*.part"))
+    # Failed upload cannot switch the current pointer or consume the next revision.
+    assert request(service, "PUT", route + query,
+                   {"Content-Length": "3", "X-Sha256": "0" * 64}, b"bad")[0] == 422
+    assert not (folder / (name[:-4] + " (r4).mp4")).exists()
+    assert request(service, "GET", route)[2] == b"third"

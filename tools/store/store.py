@@ -262,6 +262,32 @@ class Store:
                         stream.write(b"\r\n")
         with sums.open("a", encoding="utf-8", newline="") as stream:
             stream.write(f"{sha}  {name}\r\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        if kind == "short":
+            # One current row per clip; old media and checksum lines remain archival copies.
+            rows = []
+            if index.exists() and index.stat().st_size:
+                with index.open(encoding="utf-8-sig", newline="") as stream:
+                    rows = [r for r in csv.DictReader(stream)
+                            if (r["video_id"], r["clip"]) != (video_id, clip)]
+            rows.append(row)
+            temp = index.with_name(index.name + ".part")
+            owned_temp = False
+            try:
+                with temp.open("x", encoding="utf-8", newline="") as stream:
+                    owned_temp = True
+                    writer = csv.DictWriter(stream, fieldnames=fields)
+                    writer.writeheader()
+                    writer.writerows(rows)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(temp, index)
+            finally:
+                if owned_temp:
+                    temp.unlink(missing_ok=True)
+            self._cache.pop(folder, None)
+            return
         needs_header = not index.exists() or not index.stat().st_size
         with index.open("a", encoding="utf-8", newline="") as stream:
             writer = csv.DictWriter(stream, fieldnames=fields)
@@ -287,9 +313,16 @@ class Store:
             part = inside(folder, name + ".part")
             with self._lock:
                 entries = self.index()
+                current = None
                 for row in entries:
                     same_key = (row["video_id"], row["kind"], row.get("clip")) == (video_id, kind, clip)
                     same_path = inside(self.folders()[row["series"]], row["file"]) == dest
+                    if same_key and kind == "short":
+                        base = re.sub(r" \(r[0-9]+\)(?=\.mp4$)", "", row["file"])
+                        if row["series"] != series or name not in (base, row["file"]):
+                            raise StoreError(409, "Identity already has a different file")
+                        current = row
+                        continue
                     if same_key and (not same_path or row["sha256"] != sha):
                         raise StoreError(409, "Identity already has a different file")
                     if same_path and not same_key:
@@ -297,6 +330,21 @@ class Store:
                 # Validate metadata before creating a file.
                 self._rows(folder)
                 self._metadata(folder, kind)
+                if current is not None:
+                    if current["sha256"] == sha:
+                        name = current["file"]
+                        dest = inside(folder, name)
+                        part = inside(folder, name + ".part")
+                    else:
+                        base = re.sub(r" \(r[0-9]+\)(?=\.mp4$)", "", current["file"])
+                        revision = 2
+                        while True:
+                            name = f"{base[:-4]} (r{revision}).mp4"
+                            dest = inside(folder, name)
+                            part = inside(folder, name + ".part")
+                            if not dest.exists() and not part.exists():
+                                break
+                            revision += 1
             if dest.exists():
                 with dest.open("rb") as existing:
                     actual = hashlib.file_digest(existing, "sha256").hexdigest()

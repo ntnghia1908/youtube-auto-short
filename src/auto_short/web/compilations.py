@@ -12,6 +12,7 @@ import os
 import shutil
 import threading
 from collections.abc import Callable
+from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,6 +21,8 @@ from .. import khaithi
 from ..compilation import CompilationError, Item, store
 from ..config import Config
 from ..review.names import short_code
+from ..store.shorts import borrow_short, fetch_released
+from ..store.client import StoreError
 from . import episodes as ep
 from .jobs import KIND_COMPILATION, CompilationTarget, JobFailed, JobRunner, compilation_key
 from .playlists import PlaylistStore
@@ -49,7 +52,7 @@ class Clip:
     total: int  # clips in the render manifest (width of ``NN``)
     title: str | None
     manifest_duration: float | None
-    path: Path
+    path: Path | ep.StoredShort
     kept: bool = False  # G11: the file is the kept copy of a deleted episode's favourite
     kind: str = "khaithi"  # "short" | "khaithi" (decided by the episode id: ``<id>`` / ``<id>.kt``)
 
@@ -108,7 +111,7 @@ class Compilations:
                 render = ep.render_manifest(self.config, eid)
                 if kf["kind"] != kind or render is None:
                     continue
-                files = {cid: path for cid, path, _ in ep.short_files(self.config, eid) or []}
+                files = {cid: path for cid, path, _ in ep.short_locations(self.config, eid) or [] if path is not None}
                 label, shorts = ep.label(self.config, eid, kf), render.get("shorts") or []
                 for n, s in enumerate(shorts, 1):
                     cid = s.get("clip_id") if isinstance(s, dict) else None
@@ -146,6 +149,10 @@ class Compilations:
         return hit
 
     def duration(self, clip: Clip) -> float:
+        if isinstance(clip.path, ep.StoredShort):
+            if clip.manifest_duration is None or clip.manifest_duration <= 0:
+                raise CompilationError(f"{clip.code}: không biết thời lượng Short trên kho")
+            return clip.manifest_duration
         info = self._info(clip.path)
         if not info.complete:
             raise CompilationError(f"{clip.code}: file thiếu video / audio")
@@ -399,12 +406,15 @@ class Compilations:
             clips = [by_item[i] for i in spec.items]
             enc = comp.Encode(crf=self.config.render.crf, preset=self.config.render.preset,
                               audio_bitrate=self.config.render.audio_bitrate, threads=self.config.render.threads)
-            done = comp.assemble([c.path for c in clips], store.video_path(folder, cid), enc,
-                                 runner=self._probe_runner)
+            with ExitStack() as stack:
+                paths = {c.item: stack.enter_context(borrow_short(self.config, c.path, folder))
+                         for c in dict((c.item, c) for c in clips).values()}
+                done = comp.assemble([paths[c.item] for c in clips], store.video_path(folder, cid), enc,
+                                     runner=self._probe_runner)
             chapters = [] if spec.mode == "loop" else comp.meta.chapters([c.title or c.code for c in clips], done.parts)
             self._update(playlist_id, cid, status=store.DONE, error=None, duration=round(done.duration, 3),
                          chapters=chapters, size=done.size, reencoded=done.reencoded, finished_at=store.now())
-        except (CompilationError, OSError) as exc:
+        except (CompilationError, StoreError, OSError) as exc:
             self._update(playlist_id, cid, status=store.FAILED, error=str(exc))
             store.video_path(folder, cid).unlink(missing_ok=True)
             raise JobFailed(str(exc)) from exc
@@ -439,6 +449,7 @@ class Compilations:
         ``favorites.json``. Raises :class:`CompilationError` (nothing changed) on any failure. Returns ``undo()``
         (used when the deletion itself fails)."""
         moved: list[tuple[Path, Path]] = []  # (original, kept)
+        fetched: list[Path] = []  # store copies have no VM original to restore on undo
         written: list[tuple[Path, list[Item]]] = []  # (folder, previous favourites)
 
         def undo() -> None:
@@ -455,6 +466,9 @@ class Compilations:
                         dst.unlink(missing_ok=True)
                 except OSError:
                     log.exception("compilation: không hoàn tác được %s", dst)
+            for dst in fetched:
+                dst.unlink(missing_ok=True)
+                dst.with_name(dst.name + ".part").unlink(missing_ok=True)
 
         try:
             hits = [(pid, folder, self.favorites(pid)) for pid, folder in self._bound_playlists()]
@@ -466,7 +480,7 @@ class Compilations:
             kf = ep.kind_fields(self.config, episode_id)
             label, shorts = ep.label(self.config, episode_id, kf), render.get("shorts") or []
             meta = {s["clip_id"]: (n, s) for n, s in enumerate(shorts, 1) if isinstance(s, dict) and "clip_id" in s}
-            files = {cid: path for cid, path, _ in ep.short_files(self.config, episode_id) or []}
+            files = {cid: path for cid, path, _ in ep.short_locations(self.config, episode_id) or [] if path is not None}
             first: dict[str, Path] = {}  # clip -> the kept file of the first bộ kinh (later ones copy it)
             for pid, folder, favs in hits:
                 new: list[Item] = []
@@ -478,11 +492,16 @@ class Compilations:
                     dst = folder / store.KEPT_DIR / episode_id / f"{fav.clip}.mp4"
                     dst.parent.mkdir(parents=True, exist_ok=True)
                     if fav.clip in first:
-                        shutil.copy2(first[fav.clip], dst)
                         moved.append((first[fav.clip], dst))  # undo: just remove this copy
+                        shutil.copy2(first[fav.clip], dst)
                     else:
-                        _move(files[fav.clip], dst)
-                        moved.append((files[fav.clip], dst))
+                        location = files[fav.clip]
+                        if isinstance(location, ep.StoredShort):
+                            fetched.append(dst)  # also remove an interrupted .part on failure
+                            fetch_released(self.config, location, dst)
+                        else:
+                            _move(location, dst)
+                            moved.append((location, dst))
                         first[fav.clip] = dst
                     try:
                         duration = self._info(dst).duration

@@ -283,6 +283,44 @@ def test_put_heads_existing_identity_without_sending_body(tmp_path, monkeypatch,
     assert calls == ["HEAD"]
 
 
+@pytest.mark.parametrize("kind", ["short", "hd", "vertical", "source"])
+@pytest.mark.parametrize("difference", [None, "sha", "size"])
+def test_put_existing_identity_short_revises_others_refuse(tmp_path, monkeypatch, kind, difference):
+    import io
+    from urllib.parse import urlsplit
+
+    path = tmp_path / "k01.mp4"
+    path.write_bytes(BIG)
+    sha = hashlib.sha256(BIG).hexdigest()
+    calls = []
+    route = f"/files/{VID}/{kind}" + ("/k01.mp4" if kind == "short" else "")
+
+    def opened(req, **kwargs):
+        calls.append(req.method)
+        assert urlsplit(req.full_url).path == route
+        response = io.BytesIO()
+        response.status = 200 if req.method == "HEAD" else 201
+        response.headers = {"X-Sha256": "0" * 64 if difference == "sha" else sha,
+                            "Content-Length": str(len(BIG) + (difference == "size"))}
+        if req.method == "PUT":
+            assert kind == "short" and difference
+            assert req.data.read() == BIG and req.get_header("X-sha256") == sha
+            assert int(req.get_header("Content-length")) == len(BIG)
+        else:
+            assert req.method == "HEAD" and req.data is None
+        return response
+
+    monkeypatch.setattr("urllib.request.urlopen", opened)
+    client = StoreClient("http://unused", TOKEN)
+    kw = {"clip": "k01.mp4"} if kind == "short" else {}
+    if difference and kind != "short":
+        with pytest.raises(StoreMismatch):
+            client.put(VID, kind, "PL1", path.name, path, sha, **kw)
+    else:
+        client.put(VID, kind, "PL1", path.name, path, sha, **kw)
+    assert calls == (["HEAD", "PUT"] if kind == "short" and difference else ["HEAD"])
+
+
 def test_put_rejects_invalid_series_before_sending_body(tmp_path, monkeypatch):
     path = tmp_path / "source.mp4"
     path.write_bytes(BIG)

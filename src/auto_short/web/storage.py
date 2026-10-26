@@ -365,9 +365,7 @@ def store_temp_files(config: Config) -> dict[Path, bool]:
     with _LOCK:
         paths = {Path(p): False for p, count in _BORROWED.items() if count > 0}
     root = Path(config.workspace.dir)
-    if not root.is_dir():
-        return paths
-    for d in root.iterdir():
+    for d in root.iterdir() if root.is_dir() else []:
         if d.is_symlink() or not d.is_dir() or not ep.valid_episode_id(d.name):
             continue
         # fetch() uses this exact .part; never sweep a completed source_hd.mp4 without a borrow marker.
@@ -379,6 +377,17 @@ def store_temp_files(config: Config) -> dict[Path, bool]:
             for path in tmp.iterdir():
                 if re.fullmatch(r"store-\d+\.mp4(?:\.part)?", path.name):
                     paths[path] = True
+    compilations = Path(config.render.output_dir) / "_compilations"
+    for folder in compilations.iterdir() if compilations.is_dir() else []:
+        if folder.is_symlink() or not folder.is_dir():
+            continue
+        for tmp in folder.glob(".store-shorts-*"):
+            if tmp.is_symlink() or not tmp.is_dir():
+                continue
+            for path in tmp.iterdir():
+                if ep.valid_clip_id(path.name.removesuffix(".part").removesuffix(".mp4")) \
+                        and path.name.endswith((".mp4", ".mp4.part")):
+                    paths.setdefault(path, True)
     return {p: sweep for p, sweep in paths.items() if not p.is_symlink() and p.is_file()}
 
 
@@ -405,8 +414,8 @@ def sweep_store_temps(config: Config, active: set[str], *, now: float | None = N
     for path, safe in store_temp_files(config).items():
         if not safe:
             continue
-        owner = path.relative_to(root).parts[0]
-        if video_id(owner) in {video_id(eid) for eid in active}:
+        owner = path.relative_to(root).parts[0] if path.is_relative_to(root) else None
+        if owner is not None and video_id(owner) in {video_id(eid) for eid in active}:
             continue
         try:
             st = path.stat()
@@ -429,6 +438,12 @@ class StorageCache:
         self._source_backup: dict | None = None
         self._redownload: dict | None = None
         self._offload = dict(pushed=0, pending=0, failed=0, bytes_pending=0, last_error=None)
+        self._shorts_offload: dict | None = None
+
+    def update_shorts_offload(self, snapshot: dict) -> None:
+        with self._lock:
+            self._shorts_offload = dict(snapshot)
+            self._cached = None
 
     def update_offload(self, snapshot: dict) -> None:
         with self._lock:
@@ -483,6 +498,10 @@ class StorageCache:
             "old_days": OLD_DAYS,
         }
         report["totals"]["store_tmp"] = store_temp_bytes(self._config)
+        from ..store.shorts import offload_snapshot
+        with self._lock:
+            snapshot = self._shorts_offload
+        report["shorts_offload"] = dict(snapshot) if snapshot is not None else offload_snapshot(self._config, now=now)
         with self._lock:
             report["offload"] = dict(self._offload)
             if self._config.store.backup_source:
