@@ -30,6 +30,7 @@ _BLOCK_MARKERS = (
     "confirm you're not a bot", "confirm you are not a bot", "http error 429", "too many requests",
     "the read operation timed out", "read timed out", "connection reset by peer", "connection aborted",
     "remote end closed connection", "incompleteread", "incomplete read",
+    "broken pipe", "handshake operation timed out",
 )
 
 

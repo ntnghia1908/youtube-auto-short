@@ -114,6 +114,8 @@ def blocked_n(runner, n):
     "yt-dlp download failed: ERROR: [youtube] X4zNKG7XGoI: Sign in to confirm you’re not a bot. Use --cookies",
     "\x1b[0;31mERROR:\x1b[0m [youtube] x: Sign in to confirm you're not a bot",
     "ERROR: unable to download: HTTP Error 429: Too Many Requests",
+    "yt-dlp download failed: ERROR:  [download] Got error: [Errno 32] Broken pipe",
+    "yt-dlp download failed: ERROR:  [download] Got error: _ssl.c:993: The handshake operation timed out",
     "too many requests"])
 def test_detector_blocked(text):
     assert is_blocked_message(text)
@@ -122,6 +124,7 @@ def test_detector_blocked(text):
 @pytest.mark.parametrize("marker", [
     "The read operation timed out", "Read timed out", "Connection reset by peer", "Connection aborted",
     "Remote end closed connection", "IncompleteRead", "Incomplete read",
+    "Broken pipe", "Handshake operation timed out",
 ])
 @pytest.mark.parametrize("ansi", [False, True])
 def test_detector_temporary_network_errors(marker, ansi):
@@ -156,6 +159,8 @@ def fake_ytdlp_error(monkeypatch):
 @pytest.mark.parametrize("message, blocked", [
     ("ERROR: [youtube] x: Sign in to confirm you’re not a bot.", True),
     ("\x1b[0;31mERROR:\x1b[0m [download] Got error: The read operation timed out", True),
+    ("yt-dlp download failed: ERROR:  [download] Got error: [Errno 32] Broken pipe", True),
+    ("yt-dlp download failed: ERROR:  [download] Got error: _ssl.c:993: The handshake operation timed out", True),
     ("ERROR: [youtube] x: Video unavailable", False),
     ("ERROR: [youtube] x: Private video. Sign in if you've been granted access", False),
     ("ERROR: [youtube] x: This video has been removed", False),
