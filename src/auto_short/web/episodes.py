@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 from .. import khaithi
@@ -321,10 +322,23 @@ def list_episodes(config: Config) -> list[dict]:
     return items
 
 
-def short_files(config: Config, episode_id: str) -> list[tuple[str, Path, str]] | None:
-    """``(clip_id, path, download name)`` of every rendered Short that exists, in manifest order; None when the
-    episode has no finished render. Paths are taken from the render manifest and must stay inside
-    ``<output>/<id>/shorts/``."""
+@dataclass(frozen=True)
+class StoredShort:
+    """A released Short's durable identity and original file metadata; no network access."""
+
+    episode_id: str
+    clip: str
+    sha256: str
+    size: int
+    mtime_ns: int
+
+
+def short_locations(config: Config, episode_id: str) -> list[tuple[str, Path | StoredShort | None, str]] | None:
+    """Rendered Shorts in manifest order: local Path, verified release record, or None (missing).
+
+    A release is valid only for the current manifest sha and a canonical clip filename. Local files win,
+    including after a crash between committing store.json and unlinking. Reads never contact the store.
+    """
     ws = Workspace(Path(config.workspace.dir), episode_id)
     try:
         manifest = ws.load_manifest()
@@ -338,6 +352,8 @@ def short_files(config: Config, episode_id: str) -> list[tuple[str, Path, str]] 
     out_dir = _output_dir(config, episode_id)
     shorts_dir = (out_dir / "shorts").resolve()
     names = _names(config, episode_id, doc)
+    released = (read_json_dict(out_dir / "store.json") or {}).get("released") or {}
+    released = released if isinstance(released, dict) else {}
     files = []
     for short in doc["shorts"]:
         clip_id, rel = short.get("clip_id"), short.get("file")
@@ -345,10 +361,25 @@ def short_files(config: Config, episode_id: str) -> list[tuple[str, Path, str]] 
                 or not isinstance(rel, str):
             continue
         path = (out_dir / rel).resolve()
-        if path.parent != shorts_dir or path.suffix != ".mp4" or not path.is_file():
+        if path.parent != shorts_dir or path.suffix != ".mp4":
             continue
-        files.append((clip_id, path, names[clip_id]))
+        location = path if path.is_file() else None
+        record = released.get(clip_id)
+        if (location is None and isinstance(record, dict) and path.name == clip_id + ".mp4"
+                and isinstance(record.get("sha256"), str)
+                and re.fullmatch(r"[0-9a-f]{64}", record["sha256"])
+                and record["sha256"] == short.get("sha256")
+                and type(record.get("size")) is int and record["size"] >= 0
+                and type(record.get("mtime_ns")) is int and record["mtime_ns"] >= 0):
+            location = StoredShort(episode_id, path.name, record["sha256"], record["size"], record["mtime_ns"])
+        files.append((clip_id, location, names[clip_id]))
     return files
+
+
+def short_files(config: Config, episode_id: str) -> list[tuple[str, Path, str]] | None:
+    """Only actual VM files, for consumers such as compilation that require a local Path."""
+    locations = short_locations(config, episode_id)
+    return None if locations is None else [(cid, p, name) for cid, p, name in locations if isinstance(p, Path)]
 
 
 def short_file(config: Config, episode_id: str, clip_id: str) -> tuple[Path, str] | None:
@@ -439,7 +470,7 @@ def video_download_name(config: Config, episode_id: str, suffix: str) -> str:
                       series=series(config, owner))
 
 
-def all_zip(config: Config, episode_id: str) -> tuple[list[tuple[str, Path, str]], str] | None:
+def all_zip(config: Config, episode_id: str) -> tuple[list[tuple[str, Path | StoredShort, str]], str] | None:
     """CP8.17 D5: entries + zip name of "Tải cả hai" for a Short episode ``<vid>`` or its khai thị ``<vid>.kt``
     (same result): ``Shorts/<name>`` entries of ``<vid>`` then ``KhaiThị/<name>`` of ``<vid>.kt``, manifest order.
     None when either episode has no rendered Short file."""
@@ -451,7 +482,8 @@ def all_zip(config: Config, episode_id: str) -> tuple[list[tuple[str, Path, str]
         return None
     if not valid_episode_id(kt_id):
         return None
-    shorts, kts = short_files(config, vid), short_files(config, kt_id)
+    shorts = [(cid, p, n) for cid, p, n in short_locations(config, vid) or [] if p is not None]
+    kts = [(cid, p, n) for cid, p, n in short_locations(config, kt_id) or [] if p is not None]
     if not shorts or not kts:
         return None
     files = [(cid, path, f"Shorts/{name}") for cid, path, name in shorts] + \
@@ -482,9 +514,13 @@ def archive_zips(config: Config) -> list[dict]:
         digest, size = hashlib.sha256(), 0
         try:
             for _cid, path, entry in items:
-                stat = path.stat()
-                size += stat.st_size
-                digest.update(f"{entry}|{stat.st_size}|{stat.st_mtime_ns}\n".encode("utf-8"))
+                if isinstance(path, StoredShort):
+                    entry_size, mtime = path.size, path.mtime_ns
+                else:
+                    stat = path.stat()
+                    entry_size, mtime = stat.st_size, stat.st_mtime_ns
+                size += entry_size
+                digest.update(f"{entry}|{entry_size}|{mtime}\n".encode("utf-8"))
         except FileNotFoundError:  # A concurrent delete: this episode is no longer ready.
             continue
         kf = kind_fields(config, vid)

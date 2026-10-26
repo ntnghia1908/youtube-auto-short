@@ -391,3 +391,56 @@ def test_self_test_config_validation_and_loopback_binding(archive, capsys, monke
     assert store.main(["--config", str(config), "--self-test"]) == 1
     (config.parent / "token.txt").write_text("")
     assert store.main(["--config", str(config), "--self-test"]) == 1
+
+
+@pytest.mark.parametrize("video_id", [VIDEO, VIDEO + ".kt"])
+def test_short_put_index_range_and_conflict(archive, video_id):
+    service, folder, _ = archive
+    seed(folder)
+    original_index = (folder / "index.csv").read_bytes()
+    headers = {"Content-Length": str(len(DATA)), "X-Sha256": SHA}
+    clips = ("k01.mp4", "k100.mp4", "m01.mp4")
+    for clip in clips:
+        name = f"[Short] Tập 1 - {video_id} - {clip}"
+        route = f"/files/{video_id}/short/{clip}"
+        query = "?" + urlencode(dict(series=PLAYLIST, name=name))
+        assert request(service, "PUT", route + query, headers, DATA)[0] == 201
+        assert request(service, "PUT", route + query, headers, DATA)[0] == 200
+        code, fields, body = request(service, "HEAD", route)
+        assert (code, fields["X-Sha256"], fields["Content-Length"], body) == (200, SHA, "10", b"")
+        code, fields, body = request(service, "GET", route, {"Range": "bytes=2-5"})
+        assert code == 206 and body == DATA[2:6] and fields["Content-Range"] == "bytes 2-5/10"
+        assert request(service, "GET", route)[2] == DATA
+        assert request(service, "PUT", route + query, {**headers, "X-Sha256": "0" * 64}, DATA)[0] == 409
+        different_name = "?" + urlencode(dict(series=PLAYLIST, name="different.mp4"))
+        assert request(service, "PUT", route + different_name, headers, DATA)[0] == 409
+    assert (folder / "index.csv").read_bytes() == original_index
+    with (folder / "index-short.csv").open(encoding="utf-8") as stream:
+        rows = list(csv.DictReader(stream))
+    assert [r["clip"] for r in rows] == list(clips)
+    index = json.loads(request(service)[2])
+    assert len(index) == 4 and index[0]["kind"] == "hd"
+    assert [(r["video_id"], r["clip"], r["sha256"]) for r in index[1:]] == [
+        (video_id, clip, SHA) for clip in clips]
+    assert len((folder / "SHA256SUMS.txt").read_text(encoding="utf-8-sig").splitlines()) == 4
+    # HEAD lookup does not stat every other Short in the index.
+    service.index = lambda: pytest.fail("lookup must use the cached catalogue")
+    assert request(service, "HEAD", f"/files/{video_id}/short/k01.mp4")[0] == 200
+
+
+@pytest.mark.parametrize("suffix", ["short", "short/_k1.mp4", "short/" + "k" * 33 + ".mp4", "short/k01.txt",
+                                    "short/k01%5Cmp4", "short/..mp4", "hd/k01.mp4"])
+def test_short_rejects_invalid_clip_paths(archive, suffix):
+    service, _, _ = archive
+    assert request(service, "GET", f"/files/{VIDEO}/{suffix}")[0] == 400
+
+
+@pytest.mark.parametrize("clip", ["..mp4", "m..01.mp4", "../m01.mp4", "m/01.mp4", "m\\01.mp4",
+                                   "m:01.mp4", 'm"01.mp4', "m<01.mp4", "m>01.mp4", "m|01.mp4",
+                                   "m?01.mp4", "m*01.mp4"])
+def test_short_rejects_unsafe_clip_identity(archive, clip):
+    service, _, _ = archive
+    with pytest.raises(store.StoreError) as exc:
+        service.put(VIDEO, "short", PLAYLIST, "[Short] m01.mp4", SHA, io.BytesIO(DATA), len(DATA), clip=clip)
+    assert exc.value.status == 400
+    assert service.index() == []
