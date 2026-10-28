@@ -465,6 +465,36 @@ def test_not_rendered(episode):
     assert 'not rendered' in audit_playlist(cfg, 'PLtest')[0]['reason']
 
 
+def offload(out, clip='k01', sha=None):
+    """SHO1: keep a verified release record, drop the local bytes; returns the original bytes."""
+    video = out / 'shorts' / f'{clip}.mp4'
+    data, st = video.read_bytes(), video.stat()
+    atomic_write_json(out / 'store.json', dict(released={clip: dict(
+        sha256=sha or hashing.sha256_file(video), size=st.st_size, mtime_ns=st.st_mtime_ns)}, at='now'))
+    video.unlink()
+    return data
+
+
+def test_offloaded_short_keeps_fingerprint_and_render_sha(episode):
+    cfg, _, _, out = episode
+    before = build_index(cfg, 'PLtest', client=Fake(), write=False)['records'][0]
+    offload(out)
+    after = build_index(cfg, 'PLtest', client=Fake(), write=False)['records'][0]
+    assert after['status'] == 'indexed', after
+    assert after['input_fingerprint'] == before['input_fingerprint']
+    assert after['inputs']['render_sha256'] == before['inputs']['render_sha256']
+
+
+@pytest.mark.parametrize('case', ['record_sha', 'no_record'])
+def test_offloaded_short_without_valid_record_stays_ineligible(episode, case):
+    cfg, _, _, out = episode
+    offload(out, sha='1' * 64 if case == 'record_sha' else None)
+    if case == 'no_record':
+        (out / 'store.json').unlink()
+    reason = audit_playlist(cfg, 'PLtest')[0]['reason']
+    assert 'No such file' in reason, reason
+
+
 def test_kept_only_is_explicitly_ineligible(episode):
     cfg, ws, folder, _ = episode
     kept = folder / 'kept' / 'deleted.kt' / 'k01.mp4'
