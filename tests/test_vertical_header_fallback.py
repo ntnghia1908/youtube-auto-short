@@ -88,7 +88,10 @@ def test_ac1_vertical_without_titles(tcfg, prepared_episode, media_runner, sourc
     assert full.current(tcfg, VID)
     assert not (d / "titles.json").exists() and not (d / "titling_log.json").exists()
     assert (d / "manifest.json").read_bytes() == before
-    assert "Tập9_Doc.mp4" in episodes.video_download_name(tcfg, VID, "Doc")  # AC4, both sources
+    assert expected["fields"]["series"]  # AC4, both sources: series prefix + episode number like a titled episode
+    assert episodes.video_download_name(tcfg, VID, "Doc") == episodes.video_name(
+        expected["fields"]["episode"], VID, "Doc", series=expected["fields"]["series"])
+    assert "Tập9_Doc.mp4" in episodes.video_download_name(tcfg, VID, "Doc")
 
 
 def test_ac2_titling_keeps_header_hash_and_vertical_key(tcfg, media_runner):

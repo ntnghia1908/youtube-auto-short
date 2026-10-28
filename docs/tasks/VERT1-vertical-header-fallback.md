@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: FEATURE
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -112,5 +112,6 @@ Không chạm database, security model hay public API contract → điểm danh.
   - `pytest -q tests/test_vertical_header_fallback.py tests/test_web_vertical_cp832.py tests/test_web_auto_vertical_cp835.py tests/test_titling_logic.py tests/test_titling_stage.py tests/test_titling_added_cp9.py tests/test_web_titles.py` → **167 passed**.
   - Full suite lần 1: 1 fail `test_web_hd_cp827.py::test_run_vertical_without_hd_or_header` — test khẳng định hành vi cũ (thiếu `titles.json` → lỗi) mà contract thay; đổi tên thành `test_run_vertical_without_hd_then_without_titles`, phần cuối khẳng định dựng được + không ghi `titles.json`. Lần 2: **3273 passed, 1 skipped**. `framework-check` PASS, `git diff --check` PASS.
   - Codex: 1 vòng, 84.930 tokens, không vòng sửa.
-  - Chạy thật: chờ 20 job bản dọc VLT 31–50 xong rồi pin 8080 lên nhánh.
-- PR: (điền khi mở)
+  - Chạy thật 2026-10-28 (8080 = `4503633`): VLT 1–50 bản dọc đủ trên kho trước khi restart; "Chuẩn bị + HD" xếp 324 tập 51–374; "Tạo bản dọc cả bộ" xếp 5 tập `prepared` (0 lỗi). Tập 51 (không Short, không `titles.json`): `vertical.json` header `["[HD] Kinh Vô Lượng", "Thọ (tập 51)"]`, speaker `["HT. Tịnh Không"]` — cùng dạng tập 50 (có Short); `titles.json` không được tạo. Tập 53, 54 lên kho 3090 (offload). **PASS.**
+  - Finding chạy thật: tên tải về `Tập51_Doc.mp4` thiếu tiền tố bộ kinh (`series()` chỉ đọc `titles.json`). ORCHESTRATOR sửa `video_download_name` lấy cả series từ header khi thiếu `titles.json`; test AC1 khẳng định tên đầy đủ (sai với code cũ). Lại full suite: **3273 passed, 1 skipped**. Bản sửa này chưa lên 8080 (hàng đợi 324 job prepare; restart cần `--force`) — lên khi restart sau merge.
+- PR: #177
