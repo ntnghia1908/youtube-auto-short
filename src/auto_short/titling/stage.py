@@ -69,6 +69,19 @@ class TitlingResult:
     clips: int | None = None
 
 
+def resolve_workspace_header(config: Config, workspace_dir: str | Path, *, metadata: dict | None = None,
+                             cli: dict[str, str | None] | None = None) -> dict:
+    """Resolve the deterministic header without selection, AI calls or artifact writes."""
+    if metadata is None:
+        metadata = read_stage_json(Path(workspace_dir) / METADATA_NAME, "ingest", TitlingError)
+    if not isinstance(metadata, dict):
+        raise TitlingError("metadata.json phải là object")
+    youtube = metadata.get("youtube")
+    video_id = youtube.get("id") if isinstance(youtube, dict) else None  # a .kt episode: its base video
+    return resolve_header(config.titling.header, metadata.get("title"), cli,
+                          playlist=lambda: playlist_header(config.workspace.dir, video_id))
+
+
 def used_config(config: Config, header_lines: list[str]) -> dict:
     cfg = config.titling
     used = {f"titling.{k}": getattr(cfg, k) for k in HASH_KEYS}
@@ -239,11 +252,8 @@ def run_titling(episode_id: str, config: Config, *, force: bool = False, speaker
 
     try:
         metadata = read_stage_json(meta_path, "ingest", TitlingError)
-        youtube = metadata.get("youtube")
-        video_id = youtube.get("id") if isinstance(youtube, dict) else None  # a .kt episode: its base video
-        header = resolve_header(cfg.header, metadata.get("title"),
-                                {"speaker": speaker, "series": series, "episode": episode},
-                                playlist=lambda: playlist_header(config.workspace.dir, video_id))
+        header = resolve_workspace_header(config, ws.dir, metadata=metadata,
+                                          cli={"speaker": speaker, "series": series, "episode": episode})
     except TitlingError as exc:
         raise fail(str(exc)) from exc
 

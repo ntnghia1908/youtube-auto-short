@@ -461,13 +461,22 @@ def hd_download_name(config: Config, episode_id: str) -> str:
 
 def video_download_name(config: Config, episode_id: str, suffix: str) -> str:
     """CP8.27: ``[<series>_]Tập<N>_HD.mp4`` (landscape) / ``…_Doc.mp4`` (vertical); no episode number ->
-    ``<video id>_<suffix>.mp4``. Series / episode come from the video's own titles.json (CP8.17 D4)."""
+    ``<video id>_<suffix>.mp4``. Series / episode come from titles.json, else (VERT1) the deterministic header."""
     owner = hd_owner(episode_id)
-    doc = read_json_dict(Path(config.workspace.dir) / enh_state.owner_for(config, episode_id) / "titles.json") or {}
+    workspace_dir = Path(config.workspace.dir) / enh_state.owner_for(config, episode_id)
+    titles_path = workspace_dir / "titles.json"
+    doc = read_json_dict(titles_path) or {}
     fields = (doc.get("header") or {}).get("fields") or {}
+    name_series = series(config, owner)
+    if not titles_path.is_file():
+        from ..titling.stage import TitlingError, resolve_workspace_header
+        try:
+            fields = resolve_workspace_header(config, workspace_dir)["fields"]
+            name_series = fields.get("series") if isinstance(fields.get("series"), str) else None
+        except TitlingError:
+            pass  # keep the video-id fallback when the header cannot be resolved
     episode = fields.get("episode") if isinstance(fields, dict) else None
-    return video_name(episode if isinstance(episode, str) else None, owner, suffix,
-                      series=series(config, owner))
+    return video_name(episode if isinstance(episode, str) else None, owner, suffix, series=name_series)
 
 
 def all_zip(config: Config, episode_id: str) -> tuple[list[tuple[str, Path | StoredShort, str]], str] | None:
