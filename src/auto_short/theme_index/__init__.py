@@ -166,6 +166,16 @@ def _evidence(transcript: dict, ranges: list[list[float]]) -> tuple[list[dict], 
     return out, missing
 
 
+def stored_short(config: Config, episode_id: str, clip: str, sha256: str):
+    """The verified SHO1 release record (``StoredShort``) of one clip whose sha256 matches, else None. Reads only."""
+    from ..web import episodes as ep  # late import: avoids a cycle through web.episodes
+
+    for cid, location, _name in ep.short_locations(config, episode_id) or []:
+        if cid == clip and isinstance(location, ep.StoredShort) and location.sha256 == sha256:
+            return location
+    return None
+
+
 def _prepare(config: Config, playlist: dict, raw: object, playlist_digest: str) -> dict:
     item = item_from_json(raw)
     validate_episode_id(item.episode_id)
@@ -211,7 +221,9 @@ def _prepare(config: Config, playlist: dict, raw: object, playlist_digest: str) 
     if short.get("segments") != ranges:
         raise IndexError("stale render: final ranges")
     video = _inside(folder, short["file"])
-    video_sha = _file(video, short["sha256"])
+    stored = None if video.is_file() else stored_short(config, item.episode_id, item.clip, short["sha256"])
+    # SHO1: a Short released to the 3090 store keeps its sha in the verified record (no network).
+    video_sha = stored.sha256 if stored else _file(video, short["sha256"])
     if item.kept:
         kept = store.kept_path(store.directory(config.render.output_dir, playlist["playlist_id"]), item)
         if kept is None or _file(kept) != video_sha:

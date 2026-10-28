@@ -24,6 +24,7 @@ from ..render.full import SourceBlocked
 from ..render.stage import RenderError, _last_line, _run, episode_render_config, probe_media
 from ..review.names import clean_part, truncate_utf8
 from ..selection.client import ChatError
+from ..store.client import StoreError
 from ..workspace import atomic_write_json, utc_now
 from . import audio
 
@@ -54,7 +55,7 @@ def _read(path: Path) -> dict:
         raise RenderError(f"không đọc được {path.name}: {exc}") from exc
 
 
-def _reference(config: Config, pid: str, record: dict) -> tuple[Path, str]:
+def _reference(config: Config, pid: str, record: dict) -> tuple[Path | object, str]:
     ident = record["identity"]
     folder = Path(config.render.output_dir) / ident["episode_id"]
     doc = _read(folder / "render_manifest.json")
@@ -66,9 +67,14 @@ def _reference(config: Config, pid: str, record: dict) -> tuple[Path, str]:
     if not path.is_relative_to(folder.resolve()):
         raise RenderError("đường dẫn Short nằm ngoài output của tập")
     if not path.is_file():
-        item = item_from_json(record["inputs"]["favorite"])
-        path = store.kept_path(store.directory(config.render.output_dir, pid), item)
-    if path is None or not path.is_file() or hashing.sha256_file(path) != record["inputs"]["render_sha256"]:
+        released = theme_index.stored_short(config, ident["episode_id"], ident["clip"], record["inputs"]["render_sha256"])
+        if released is not None:
+            path = released  # SHO1: borrowed from the store at compare time; fetch verifies the sha256
+        else:
+            item = item_from_json(record["inputs"]["favorite"])
+            path = store.kept_path(store.directory(config.render.output_dir, pid), item)
+    if path is None or (isinstance(path, Path) and (
+            not path.is_file() or hashing.sha256_file(path) != record["inputs"]["render_sha256"])):
         raise RenderError("Short tham chiếu bị thiếu hoặc sha256 không khớp (kể cả bản kept)")
     number = next(i for i, s in enumerate(shorts, 1) if s is short)
     titles = _read(Path(config.workspace.dir) / ident["episode_id"] / "titles.json")
@@ -180,6 +186,8 @@ def _description(config: Config, approved: dict, chapters: list[dict], hashtags:
 def render_landscape(config: Config, playlist_id: str, plan_id: str, *, hashtags: list[str] = (), runner=_run,
                      downloader=ytdlp_download) -> LandscapeResult:
     """Make/reuse ``theme/<plan_id>-r<revision>.mp4``; reject unapproved or stale input before any writes."""
+    from ..store.shorts import borrow_short  # late import: store.shorts -> web.episodes cycles back here
+
     approved = theme_plan.approved_plan(config, playlist_id, plan_id)
     index = theme_index.build_index(config, playlist_id, client=_RefusingClient(), write=False)
     known = {f"{r['identity']['episode_id']}/{r['identity']['clip']}": r
@@ -238,7 +246,11 @@ def render_landscape(config: Config, playlist_id: str, plan_id: str, *, hashtags
                     if proc.returncode != 0 or not clip.is_file():
                         raise RenderError(f"ffmpeg lỗi: {_last_line(proc.stderr)}")
                     _verify(clip, seconds, 1 / float(fps), runner, fps=fps, frames=plan.planned_frames(segments, fps))
-                    match = audio.compare(clip, reference, tmp, runner)
+                    try:
+                        with borrow_short(config, reference, tmp) as ref_path:
+                            match = audio.compare(clip, ref_path, tmp, runner)
+                    except StoreError as exc:  # store off the air: clear failure, borrowed copy already removed
+                        raise RenderError(str(exc)) from exc
                 except SourceBlocked:
                     raise
                 except (RenderError, ValueError) as exc:
