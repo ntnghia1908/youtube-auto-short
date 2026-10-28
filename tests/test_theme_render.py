@@ -352,6 +352,65 @@ def test_reference_kept_sha_and_fallback_title(episode):
         tr.render_landscape(cfg, 'PLtest', doc['plan_id'], runner=no_call, downloader=no_call)
 
 
+def offload_shorts(out):
+    """SHO1: record every Short in store.json and delete the local bytes; returns {file name: bytes}."""
+    released, data = {}, {}
+    for clip in ('k01', 'k02'):
+        video = out / 'shorts' / f'{clip}.mp4'
+        if video.is_file():
+            st = video.stat()
+            released[clip] = dict(sha256=hashing.sha256_file(video), size=st.st_size, mtime_ns=st.st_mtime_ns)
+            data[f'{clip}.mp4'] = video.read_bytes()
+            video.unlink()
+    atomic_write_json(out / 'store.json', dict(released=released, at='now'))
+    return data
+
+
+def test_plan_stays_approved_and_reference_is_stored_after_offload(episode):
+    from auto_short.web import episodes as ep
+
+    cfg, ws, folder, out = episode
+    make_plan(cfg)
+    offload_shorts(out)
+    assert tp.list_plans(cfg, 'PLtest')[0]['check'] == {'state': 'approved', 'problems': []}
+    record = theme_index.build_index(cfg, 'PLtest', client=Fake(), write=False)['records'][0]
+    path, _ = tr._reference(cfg, 'PLtest', record)
+    assert isinstance(path, ep.StoredShort) and path.sha256 == record['inputs']['render_sha256']
+
+
+@pytest.mark.parametrize('store_up', [True, False])
+def test_render_borrows_offloaded_short_and_cleans_up(media, monkeypatch, store_up):
+    from auto_short.config import StoreConfig
+    from auto_short.store.client import StoreClient, StoreUnavailable
+
+    cfg, ws, folder, out, doc = media
+    cfg = replace(cfg, store=StoreConfig(enabled=True))
+    data = offload_shorts(out)
+    fetched, compared = [], []
+
+    class Client:
+        def fetch(self, episode_id, kind, dest, sha, clip=None):
+            if not store_up:
+                raise StoreUnavailable('down')
+            assert kind == 'short' and dest.parent.name.startswith('.store-shorts-') and dest.name == clip
+            dest.write_bytes(data[clip])
+            fetched.append(dest)
+            return dest
+
+    monkeypatch.setattr(StoreClient, 'from_config', lambda cfg: Client())
+    real = audio.compare
+    monkeypatch.setattr(audio, 'compare', lambda clip, ref, tmp, runner: compared.append(ref) or real(clip, ref, tmp, runner))
+    if store_up:
+        result = tr.render_landscape(cfg, 'PLtest', doc['plan_id'], runner=checked, downloader=no_call)
+        assert result.ran and len(fetched) == 2 and compared == fetched
+    else:
+        with pytest.raises(RenderError, match='3090'):
+            tr.render_landscape(cfg, 'PLtest', doc['plan_id'], runner=checked, downloader=no_call)
+        assert not compared and not list((folder / 'theme').glob('*.mp4'))
+    assert all(not p.exists() and not p.parent.exists() for p in fetched)
+    assert_clean(folder)
+
+
 def test_graph_uses_short_frame_grid_and_audio_cuts():
     segments = [(600, 1800), (2300, 3100)]
     graph = tr.filter_graph(segments, Fraction(25), .15)

@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: BUG
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -70,11 +70,12 @@ Không chạm database / security model / public API → điểm danh sau automa
 
 ## Result
 
-- Main changes:
-- Tests:
-- Diff + / − (app, test):
-- Helper mới (đã tìm, lý do không tái dùng):
-- Review:
-- Important findings / decisions:
-- Known limitations:
-- PR:
+- Main changes: `theme_index._prepare` — file local thiếu thì tra `stored_short` (bản ghi `store.json` hợp lệ, sha = manifest), dùng sha đó làm `render_sha256` (fingerprint không đổi); không có bản ghi / sha lệch → lỗi cũ. `theme_render._reference` trả `StoredShort`; `render_landscape` mượn bằng `store.shorts.borrow_short` ngay trước `audio.compare` (dọn sau từng clip); `StoreError` → `RenderError` ("… 3090 không trả lời — bấm Ghép lại sau"). Kept copy giữ nguyên. Implementer: Sonnet (dự phòng, Codex quá tải).
+- Tests: AC1 `test_offloaded_short_keeps_fingerprint_and_render_sha`, `test_offloaded_short_without_valid_record_stays_ineligible` (test_theme_index); AC2 `test_plan_stays_approved_and_reference_is_stored_after_offload`; AC3 `test_render_borrows_offloaded_short_and_cleans_up[True/False]` (test_theme_render). Chạy `tests/test_theme_index.py test_theme_plan.py test_theme_render.py test_store_shorts.py test_web_theme_plan.py`: 365 PASS; `framework-check`, `git diff --check` PASS. Chưa chạy: full suite (ORCHESTRATOR).
+- Diff + / − (app, test): app +29 / −6; test +89 / −0.
+- Helper mới (đã tìm, lý do không tái dùng): `theme_index.stored_short` — đã tìm `ep.short_locations`, `borrow_short`, `fetch_released` (tái dùng); chưa có hàm tra một clip theo sha nên bọc `short_locations` (import trễ tránh vòng). Test helper `offload` / `offload_shorts`.
+- Review: ORCHESTRATOR đọc diff: đúng hướng, `borrow_short` trả nguyên `Path` local nên clip local không đổi. Full suite lần 1: 6 lỗi import vòng (`theme_render` import `store.shorts` đầu file → `web.episodes` → vòng lại khi nạp từ module enhance) → ORCHESTRATOR chuyển thành import trễ trong `render_landscape`. Full suite lần 2 `-n auto`: **3326 passed, 1 skipped** (223 s); `framework-check` PASS; `git diff --check` PASS.
+- Chạy thật (ORCHESTRATOR 2026-10-28, chỉ đọc): `theme_index.audit_playlist` với code sửa trên dữ liệu VLT live: eligible **87** (trước 4), ineligible 128 toàn `not a khai thi episode`, không còn `No such file`; 52 bản ghi có trong `theme_index.json` live: `inputs` giống hệt (0 khác) → fingerprint giữ nguyên, 4 plan sẽ về `approved`. Chưa restart 8080.
+- Important findings / decisions: sha tin theo `store.json` (khớp manifest, kiểm trong `short_locations`); sha thật kiểm khi `fetch`.
+- Known limitations: kho tắt chỉ báo RenderError (không phải StoreWait / "đợi 3090" tự thử lại).
+- PR: (mở sau commit này)
