@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import math
 import os
+import re
 import shutil
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 
 from ..hashing import sha256_file
@@ -15,6 +17,8 @@ from . import PackageError, assets, thumbnail
 
 COVER_LAYOUT_VERSION = 3
 FIT_WIDTH, FIT_HEIGHT = 0.8, 0.85  # share of the box the number ink (with diacritics) may fill
+SIZES = dict(thumbnail.EPISODE_SIZES, kt_vertical=thumbnail.EPISODE_SIZES["vertical"],
+             kt_landscape=thumbnail.EPISODE_SIZES["landscape"])
 FONT_NAME = "old"  # Old Standard: lining figures; Playfair SC old-style digits read poorly (HUMAN LEAD 2026-10-28)
 
 
@@ -40,14 +44,14 @@ def read(config, pid):
         return dict(schema_version=1, shapes={})
     doc = read_json_dict(path)
     try:
-        if doc is None or doc.get("schema_version") != 1 or not isinstance(doc["shapes"], dict):
+        if doc is None or doc.get("schema_version") not in (1, 2) or not isinstance(doc["shapes"], dict):
             raise PackageError("hồ sơ cover không hợp lệ")
         for shape, entry in doc["shapes"].items():
-            if shape not in thumbnail.EPISODE_SIZES or entry["file"] != f"{shape}.png" \
+            if shape not in SIZES or not re.fullmatch(rf"{shape}(?:-[a-f0-9]{{64}})?\.png", entry["file"]) \
                     or not assets.SHA.fullmatch(entry["sha256"]) \
                     or "prompt" in entry and not isinstance(entry["prompt"], str):
                 raise PackageError("hồ sơ cover không hợp lệ")
-            _box(entry["box"], *thumbnail.EPISODE_SIZES[shape])
+            _box(entry["box"], *SIZES[shape])
     except (KeyError, TypeError, AttributeError) as exc:
         raise PackageError("hồ sơ cover không hợp lệ") from exc
     return doc
@@ -68,8 +72,8 @@ def current(config, pid):
 def install(config, pid, shape, image, box, *, prompt=None, run=None):
     """Normalize to PKG2 dimensions, transform the box, then publish complete files atomically."""
     from . import episode
-    if shape not in thumbnail.EPISODE_SIZES:
-        raise PackageError("khổ cover phải là vertical hoặc landscape")
+    if shape not in SIZES:
+        raise PackageError("khổ cover không hợp lệ")
     if prompt is not None and not isinstance(prompt, str):
         raise PackageError("prompt phải là văn bản")
     folder = directory(config, pid)
@@ -90,7 +94,7 @@ def install(config, pid, shape, image, box, *, prompt=None, run=None):
         except (RenderError, KeyError, TypeError, ValueError) as exc:
             raise PackageError("không đọc được ảnh cover: " + str(exc)) from exc
         x, y, bw, bh = _box(box, sw, sh)
-        width, height = thumbnail.EPISODE_SIZES[shape]
+        width, height = SIZES[shape]
         scale = max(width / sw, height / sh)
         scaled_w, scaled_h = math.ceil(sw * scale), math.ceil(sh * scale)
         crop_x, crop_y = (scaled_w - width) // 2, (scaled_h - height) // 2
@@ -108,6 +112,8 @@ def install(config, pid, shape, image, box, *, prompt=None, run=None):
         if prompt is not None:
             entry["prompt"] = prompt
         doc["shapes"][shape] = entry
+        if shape.startswith("kt_"):
+            doc["schema_version"] = 2
         folder.mkdir(parents=True, exist_ok=True)
         # Stage on the destination filesystem; keep the previous image for metadata-write rollback.
         with tempfile.TemporaryDirectory(prefix=".install-", dir=folder) as local:
@@ -131,12 +137,13 @@ def install(config, pid, shape, image, box, *, prompt=None, run=None):
 
 def remove(config, pid, shape):
     from . import episode
-    if shape not in thumbnail.EPISODE_SIZES:
-        raise PackageError("khổ cover phải là vertical hoặc landscape")
+    if shape not in SIZES:
+        raise PackageError("khổ cover không hợp lệ")
     folder = directory(config, pid)
-    path = episode._no_symlinks(folder / f"{shape}.png")
     doc = read(config, pid)
-    if doc["shapes"].pop(shape, None) is not None:
+    entry = doc["shapes"].pop(shape, None)
+    path = episode._no_symlinks(folder / (entry["file"] if entry else f"{shape}.png"))
+    if entry is not None:
         atomic_write_json(folder / "cover.json", doc)
         path.unlink(missing_ok=True)
     return doc
@@ -160,11 +167,44 @@ def number_line(number, box):
 
 
 def build_episode(work, fields, shape, image, filename, *, entry, run=None):
-    _box(entry["box"], *thumbnail.EPISODE_SIZES[shape])
+    _box(entry["box"], *SIZES[shape])
     line = number_line(fields["episode"], entry["box"])
+    return draw_lines(work, [line], image, filename, run=run)
+
+
+def draw_lines(work, lines, image, filename, *, run=None):
+    """Shared COV1 encoder: one number or several title lines, identical styling."""
     font = work / "cover.ttf"
     shutil.copyfile(thumbnail.EPISODE_FONTS[FONT_NAME], font)
-    graph = "[0:v]setsar=1[base];" + thumbnail._draw_text(
-        work, 0, line.text, line.size, "0xe8bf62", f"{line.x}+({line.width}-text_w)/2", line.y, "base",
-        font_file=font, options=":y_align=baseline:shadowcolor=0x241507@0.65:shadowx=2:shadowy=2")
-    return thumbnail._encode(work, graph + ";[text0]format=yuvj420p[out]", image, filename, run or _run)
+    graph = "[0:v]setsar=1[base]"
+    for index, line in enumerate(lines):
+        graph += ";" + thumbnail._draw_text(
+            work, index, line.text, line.size, "0xe8bf62", f"{line.x}+({line.width}-text_w)/2", line.y,
+            "base" if index == 0 else f"text{index - 1}", font_file=font,
+            options=":y_align=baseline:shadowcolor=0x241507@0.65:shadowx=2:shadowy=2")
+    return thumbnail._encode(work, graph + f";[text{len(lines) - 1}]format=yuvj420p[out]",
+                             image, filename, run or _run)
+
+
+def install_set(config, pid, images, *, prompt=None, run=None):
+    """Prepare through the CLI validator, publish immutable images, swap one manifest.
+
+    A crash before the manifest swap leaves only unreferenced images; readers keep the old set.
+    """
+    from . import episode
+    if set(images) != set(SIZES):
+        raise PackageError("cần đủ bốn khổ ảnh bìa")
+    folder = directory(config, pid)
+    folder.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".cover-set-", dir=folder) as tmp:
+        staging = replace(config, render=replace(config.render, output_dir=Path(tmp)))
+        entries = {}
+        for shape, (image, box) in images.items():
+            entry = install(staging, pid, shape, image, box, prompt=prompt, run=run)
+            source = directory(staging, pid) / entry["file"]
+            name = f"{shape}-{entry['sha256']}.png"
+            dest = episode._no_symlinks(folder / name)
+            os.replace(source, dest)
+            entries[shape] = dict(entry, file=name)
+        atomic_write_json(folder / "cover.json", dict(schema_version=2, shapes=entries))
+    return entries

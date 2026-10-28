@@ -252,3 +252,29 @@ def test_small_box_and_missing_glyph_fail_before_ffmpeg(tmp_path, monkeypatch):
         cover.build_episode(work, dict(episode="51"), "vertical", None, "bad.jpg",
                             entry=dict(box=[200, 1200, 600, 200]), run=lambda _: pytest.fail("ffmpeg ran"))
     assert not list(work.iterdir())
+
+
+def test_install_set_atomic_manifest_and_legacy_schema(cfg, tmp_path, monkeypatch):
+    old = cover.install(cfg, PID, "vertical", source_image(tmp_path), [200, 1200, 600, 200])
+    assert cover.read(cfg, PID)["schema_version"] == 1
+    folder = cover.directory(cfg, PID)
+    before = (folder / "cover.json").read_bytes()
+    images = {}
+    for shape, size in cover.SIZES.items():
+        images[shape] = (source_image(tmp_path, size), [200, size[1] - 400, 600, 200])
+    original = cover.atomic_write_json
+    def fail_final(path, doc):
+        if path == folder / "cover.json":
+            raise OSError("final manifest failed")
+        original(path, doc)
+    monkeypatch.setattr(cover, "atomic_write_json", fail_final)
+    with pytest.raises(OSError, match="final manifest"):
+        cover.install_set(cfg, PID, images)
+    assert (folder / "cover.json").read_bytes() == before
+    assert cover.current(cfg, PID) == {"vertical": old}
+    monkeypatch.setattr(cover, "atomic_write_json", original)
+    entries = cover.install_set(cfg, PID, images)
+    assert cover.current(cfg, PID) == entries and cover.read(cfg, PID)["schema_version"] == 2
+    assert all(entry["sha256"] in entry["file"] for entry in entries.values())
+    cover.remove(cfg, PID, "kt_vertical")
+    assert "kt_vertical" not in cover.current(cfg, PID)

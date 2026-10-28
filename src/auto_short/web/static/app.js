@@ -1120,6 +1120,14 @@ const AutoShort = (() => {
         s.editable ? deleteButton(s) : null),
       s.editable && !s.deleted ? titleEditor(s) : el("div", { class: "title-edit", hidden: true }),
       s.editable && !s.deleted && uiFlags.advanced ? cutEditor(s) : null);
+    if (lastData && lastData.kind === "khaithi") {
+      for (const [shape, label] of [["vertical", "Thumbnail dọc"], ["landscape", "Thumbnail ngang"]]) {
+        const url = `/files/episodes/${encodeURIComponent(episodeId)}/thumbs/${encodeURIComponent(s.clip_id)}-${shape}.jpg`;
+        fetch(url + "?inline=1").then((r) => {
+          if (r.ok) body.querySelector(".short-actions").append(el("a", { class: "btn small", href: url, download: "", text: label }));
+        }).catch(() => {});
+      }
+    }
     card.append(body);
     return card;
   }

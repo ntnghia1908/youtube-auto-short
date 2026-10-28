@@ -316,6 +316,7 @@ def build_playlist(config, pid, *, run=None, progress=None):
     entries = playlist(config, pid)["entries"]
     settings = read_settings(config, pid)
     summary = dict(built=0, reused=0, skipped=[])
+    from . import khaithi_thumbs
     seen = set()
     for entry in entries:
         ident = entry.get("video_id") if isinstance(entry, dict) else None
@@ -335,6 +336,20 @@ def build_playlist(config, pid, *, run=None, progress=None):
                 atomic_write_json(folder / "thumbs.json", doc)
             except (PackageError, OSError):
                 pass  # invalid paths / records must never be overwritten
+        try:
+            if isinstance(ident, str) and not ident.endswith(".kt"):
+                kt_id = ident + ".kt"
+                khaithi_thumbs.directory(config, kt_id)  # validate before entering workspace paths
+                if _no_symlinks(Path(config.workspace.dir) / kt_id / "khaithi.json").is_file():
+                    summary.setdefault("khaithi", dict(built=0, reused=0, skipped=[]))
+                    kt = khaithi_thumbs.build_episode(config, kt_id, pid=pid, run=run)
+                    for kind in ("built", "reused"):
+                        summary["khaithi"][kind] += kt[kind]
+                    if kt["skipped_reason"]:
+                        summary["khaithi"]["skipped"].append(dict(episode=kt_id, reason=kt["skipped_reason"]))
+        except (PackageError, TitlingError, TextError, RenderError, OSError, ValueError, KeyError, TypeError) as exc:
+            summary.setdefault("khaithi", dict(built=0, reused=0, skipped=[]))["skipped"].append(
+                dict(episode=ident, reason=str(exc)))
         if progress is not None:
             progress(summary)
     return summary

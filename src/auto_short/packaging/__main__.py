@@ -28,7 +28,7 @@ def main(argv=None):
         command = covers.add_parser(action)
         command.add_argument("--playlist", required=True)
         if action != "show":
-            command.add_argument("--shape", choices=thumbnail.EPISODE_SIZES, required=True)
+            command.add_argument("--shape", choices=cover.SIZES, required=True)
         if action == "install":
             command.add_argument("--image", type=Path, required=True)
             command.add_argument("--box", required=True, help="x,y,w,h in source-image pixels")

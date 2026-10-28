@@ -1,163 +1,103 @@
-/* PKG2.1: one design for the whole playlist, optional own look for the 9:16 shape; temporary previews before publication. */
+/* THUMB1: suggest four covers, choose, review variants, install, build the playlist. */
 "use strict";
 (() => {
   const { el, api } = AutoShort;
   const $ = (id) => document.getElementById(id);
   const pid = encodeURIComponent(decodeURIComponent(location.pathname.split("/").filter(Boolean)[1] || ""));
   const base = `/api/playlists/${pid}/thumbs`;
-  let pending = false, dirty = false, timer = null, view = null;
-  const cards = new Map();
-  // Two image pickers share the same code: the compact "selected image" line + a closed <details> holding the gallery.
-  const looks = {
-    main: { picked: $("thumbs-picked"), details: $("thumbs-details"), grid: $("thumbs-assets"), id: null, key: null },
-    vertical: { picked: $("thumbs-vpicked"), details: $("thumbs-vdetails"), grid: $("thumbs-vassets"), id: null, key: null },
-  };
+  const labels = { vertical: "Tập · dọc", landscape: "Tập · ngang", kt_vertical: "Khai thị · dọc", kt_landscape: "Khai thị · ngang" };
+  let view = null, pending = false, timer = null, galleryKey = "";
   $("thumbs-back").href = `/playlists/${pid}`;
-  function say(text) { $("thumbs-msg").textContent = text; }
-  function draft() {
-    return { style: $("thumbs-style").value, asset_id: looks.main.id, focus_x: Number($("thumbs-focus").value),
-      title_lines: $("thumbs-lines").value.split("\n").filter((line) => line.trim()), credit: $("thumbs-credit").value,
-      vertical: $("thumbs-vsep").checked ? { style: $("thumbs-vstyle").value, asset_id: looks.vertical.id,
-        focus_x: Number($("thumbs-vfocus").value) } : null };
-  }
-  function showPicked(look) {
-    const asset = look.id && view ? view.assets.find((a) => a.id === look.id) : null;
-    look.picked.replaceChildren(...(asset
-      ? [el("img", { src: asset.preview_url, alt: "Ảnh " + asset.number }), el("span", { text: "Ảnh " + asset.number })]
-      : [el("span", { text: look.id ? "Ảnh không còn dùng được" : "Không ảnh" })]));
-    look.grid.querySelectorAll("button").forEach((button) => {
-      const selected = (button.dataset.asset || null) === look.id;
-      button.setAttribute("aria-pressed", String(selected));
-      button.style.outline = selected ? "3px solid #b58a44" : "none";
-    });
-  }
-  function fillGallery(look) {
-    const key = JSON.stringify(view.assets);
-    if (look.key === key) return;
-    look.key = key;
-    look.grid.replaceChildren(...[{ id: "", number: "Không ảnh" }, ...view.assets].map((asset) => {
-      const button = el("button", { class: "btn", type: "button", "data-asset": asset.id,
-        "aria-label": "Ảnh " + asset.number, style: "padding:6px" });
-      if (asset.preview_url) button.append(el("img", { src: asset.preview_url, alt: "Ảnh " + asset.number,
-        loading: "lazy", width: "96", height: "90", style: "max-width:100%;object-fit:contain;display:block" }));
-      button.append(document.createTextNode(String(asset.number)));
-      button.addEventListener("click", () => { look.id = asset.id || null; look.details.open = false; edited(); });
-      return button;
-    }));
-  }
-  function lock() {
-    const busy = pending || !!(view && view.job && view.job.active);
-    $("thumbs-settings").querySelectorAll("input, textarea, select, button").forEach((c) => { c.disabled = busy && !("keep" in c.dataset); });
-    $("thumbs-zip").hidden = dirty || busy || !view || !view.episodes.some((row) => Object.keys(row.files).length);
-    $("thumbs-focus-value").textContent = Number($("thumbs-focus").value).toFixed(2);
-    $("thumbs-vfocus-value").textContent = Number($("thumbs-vfocus").value).toFixed(2);
-    $("thumbs-vgroup").hidden = !$("thumbs-vsep").checked;
-    showPicked(looks.main);
-    showPicked(looks.vertical);
-  }
-  function edited() {
-    dirty = true;
-    $("thumbs-preview-images").replaceChildren();
-    lock();
-  }
-  function picture(shape, url) {
-    return el("img", { src: url, alt: "Thumbnail " + (shape === "landscape" ? "ngang" : "dọc"),
-      loading: "lazy", width: shape === "landscape" ? "288" : "135", height: shape === "landscape" ? "162" : "240",
-      style: "max-width:100%;object-fit:contain" });
-  }
-  function drawProgress() {
-    const p = view.progress, active = !!(view.job && view.job.active);
-    $("thumbs-progress").textContent = `Đã có thumbnail ${p.with_any}/${p.total} tập — ngang ${p.landscape}, dọc ${p.vertical}`
-      + (p.skipped ? ` · ${p.skipped} tập bỏ qua` : "");
-    $("thumbs-reasons").replaceChildren(...Object.entries(p.skipped_by_reason).map(([reason, n]) => el("li", { text: `${n} tập: ${reason}` })));
-    const bar = $("thumbs-bar");
-    bar.hidden = !active;
-    bar.max = Math.max(p.total, 1);
-    bar.value = p.with_any;
+  function picture(url, label) {
+    const image = el("img", { src: url, alt: label, loading: "lazy", tabindex: "0", role: "button", "aria-label": `Phóng to ${label}` });
+    function zoom() { $("thumbs-zoom").querySelector("img").src = url; $("thumbs-zoom").showModal(); }
+    image.addEventListener("click", zoom);
+    image.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); zoom(); } });
+    return el("div", {}, el("p", { text: label }), image);
   }
   function drawEpisodes() {
-    const box = $("thumbs-grid");
-    if (!$("thumbs-episodes").open) { box.replaceChildren(); return; }  // DOM only while the list is open
-    box.replaceChildren(...view.episodes.map((row) => {
-      const key = JSON.stringify(row);
-      const cached = cards.get(row.video_id);
-      if (cached && cached.key === key) return cached.card;
-      const card = el("article", { class: "card" }, el("h3", { text: `Tập ${row.episode || row.video_id}` }));
-      if (row.skipped_reason) card.append(el("p", { class: "small muted", text: row.skipped_reason }));
-      const images = el("div", { class: "actions", style: "align-items:flex-start;margin-top:12px" });
+    if (!view || !$("thumbs-episodes").open) return;
+    const key = JSON.stringify(view.episodes);
+    if (galleryKey === key) return;
+    galleryKey = key;
+    $("thumbs-grid").replaceChildren(...view.episodes.map((row) => {
+      const card = el("article", {}, el("h3", { text: `Tập ${row.episode || "?"}` }));
       for (const [shape, file] of Object.entries(row.files)) {
-        images.append(el("a", { href: file.download_url, download: "", title: "Tải thumbnail" }, picture(shape, file.preview_url)));
+        card.append(picture(file.preview_url, labels[shape]), el("a", { class: "btn small", href: file.download_url, download: "", text: "Tải " + labels[shape] }));
       }
-      card.append(images);
-      cards.set(row.video_id, { key, card });
+      if (row.skipped_reason) card.append(el("p", { text: row.skipped_reason }));
       return card;
     }));
   }
   function draw() {
-    $("thumbs-title").textContent = `Thumbnail — ${view.series}`;
+    const s = view.suggestion, running = s && s.status === "running";
+    const job = view.job, active = job && job.active;
+    $("thumbs-title").textContent = "Thumbnail cả bộ — " + view.series;
+    $("thumbs-suggest").disabled = pending || running || active || Boolean(view.codex_unavailable);
+    $("thumbs-build").disabled = pending || active;
+    $("thumbs-cancel").hidden = !running;
+    $("thumbs-cancel").disabled = pending;
+    $("thumbs-bar").hidden = !active && !running;
+    const progress = view.progress;
+    $("thumbs-progress").textContent = `Đã có ${progress.landscape}/${progress.total} bản ngang, ${progress.vertical}/${progress.total} bản dọc; bỏ qua ${progress.skipped} tập.`;
+    $("thumbs-status").textContent = job ? (job.error || job.summary || job.status) : "";
     $("thumbs-zip").href = view.zip_url;
-    $("thumbs-status").textContent = view.job
-      ? (view.job.active ? "Đang dựng… " : "") + (view.job.summary || view.job.status) + (view.job.error ? ": " + view.job.error : "") : "Chưa chạy";
-    if (!dirty && !pending) {
-      const s = view.settings, v = s.vertical;
-      looks.main.id = s.asset_id;
-      $("thumbs-style").value = s.style;
-      $("thumbs-lines").value = s.title_lines.join("\n");
-      $("thumbs-credit").value = s.credit;
-      $("thumbs-focus").value = s.focus_x;
-      $("thumbs-vsep").checked = !!v;
-      looks.vertical.id = (v || s).asset_id;
-      $("thumbs-vstyle").value = (v || s).style;
-      $("thumbs-vfocus").value = (v || s).focus_x;
+    $("thumbs-suggest-status").textContent = view.codex_unavailable || (s ?
+      (running ? `Đang vẽ ${s.phase === "options" ? "4 mẫu" : "3 ảnh cùng phong cách"}… Có thể mất vài phút.` :
+        s.error || (s.installed ? "Đã dùng bộ ảnh này. Bấm Dựng cả bộ để cập nhật thumbnail." : "Đã vẽ xong. Hãy kiểm tra dấu tiếng Việt.")) +
+      (s.tokens ? ` (${s.tokens} tokens)` : "") : "");
+    const covers = $("thumbs-covers");
+    if (covers.dataset.key !== JSON.stringify(view.covers)) {
+      covers.dataset.key = JSON.stringify(view.covers);
+      covers.replaceChildren(...Object.keys(labels).map((shape) => view.covers[shape]
+        ? picture(view.covers[shape].preview_url + "?v=" + Date.now(), labels[shape])
+        : el("p", { text: labels[shape] + ": chưa có ảnh bìa" })));
     }
-    fillGallery(looks.main);
-    fillGallery(looks.vertical);
-    drawProgress();
+    const options = $("thumbs-options"), previews = $("thumbs-previews");
+    const key = JSON.stringify(s);
+    if (options.dataset.key !== key) {
+      options.dataset.key = key;
+      options.replaceChildren(); previews.replaceChildren();
+      if (s) {
+        for (const [name, entry] of Object.entries(s.options)) {
+          const card = picture(`${base}/suggest/${s.run_id}/images/${name.replace(".png", "-preview.jpg")}?v=${encodeURIComponent(s.updated_at)}`, "Mẫu " + name.match(/[1-4]/)[0]);
+          const button = el("button", { type: "button", class: "btn", text: name === s.selected ? "Đã chọn · Vẽ lại 3 ảnh" : "Chọn mẫu này" });
+          button.disabled = pending || running || Boolean(view.codex_unavailable);
+          button.addEventListener("click", () => select(name)); card.append(button); options.append(card);
+        }
+        for (const entry of s.previews || []) previews.append(picture(entry.preview_url + "?v=" + encodeURIComponent(s.updated_at), entry.label));
+        for (const [name, reason] of Object.entries(s.errors || {})) options.append(el("p", { class: "small", text: `${name}: ${reason}` }));
+      }
+    }
+    $("thumbs-accept").hidden = !(s && s.phase === "variants" && s.selected && !running);
+    $("thumbs-install").disabled = pending || active || !s || s.status !== "done";
+    $("thumbs-redraw").disabled = pending || Boolean(view.codex_unavailable);
     drawEpisodes();
-    lock();
   }
   async function load() {
     clearTimeout(timer);
-    try {
-      view = await api(base);
-      draw();
-      if (view.job && view.job.active) timer = setTimeout(load, 2000);
-    } catch (e) { say(e.message); }
+    try { view = await api(base); draw(); }
+    catch (e) { $("thumbs-msg").textContent = e.message; }
+    if (view && ((view.job && view.job.active) || (view.suggestion && view.suggestion.status === "running"))) timer = setTimeout(load, 1800);
   }
-  const request = (suffix, method, body) => api(base + suffix, { method, headers: { "Content-Type": "application/json" },
-    ...(body ? { body: JSON.stringify(body) } : {}) });
-  async function act(preview) {
+  async function action(path, body) {
     if (pending) return;
-    pending = true;
-    clearTimeout(timer);
-    lock();
-    try {
-      if (preview) {
-        const result = await request("/preview", "POST", draft());
-        $("thumbs-preview-images").replaceChildren(...Object.entries(result.files).map(([shape, file]) => picture(shape, file.preview_url)));
-        say("Xem trước — chưa dựng vào các tập.");
-      } else {
-        await request("/settings", "PUT", draft());
-        dirty = false;
-        await request("", "POST");
-        say("");
-      }
-    } catch (e) { say(e.message); }
-    pending = false;
-    if (preview) lock(); else await load();
+    pending = true; $("thumbs-msg").textContent = "";
+    if (view) draw();
+    try { await api(base + path, { method: "POST", headers: { "Content-Type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }); }
+    catch (e) { $("thumbs-msg").textContent = e.message; }
+    finally { pending = false; if (view) $("thumbs-options").dataset.key = ""; await load(); }
   }
-  $("thumbs-settings").addEventListener("submit", (e) => { e.preventDefault(); act(false); });
-  for (const id of ["thumbs-style", "thumbs-lines", "thumbs-credit", "thumbs-focus", "thumbs-vstyle", "thumbs-vfocus"]) $(id).addEventListener("input", edited);
-  $("thumbs-vsep").addEventListener("change", () => {
-    if ($("thumbs-vsep").checked) {  // start from the shared look, then let the user change it
-      looks.vertical.id = looks.main.id;
-      $("thumbs-vstyle").value = $("thumbs-style").value;
-      $("thumbs-vfocus").value = $("thumbs-focus").value;
-    }
-    edited();
-  });
-  $("thumbs-episodes").addEventListener("toggle", () => { if (view) drawEpisodes(); });
-  $("thumbs-preview").addEventListener("click", () => act(true));
+  function suggest() { return action("/suggest", { notes: $("thumbs-notes").value }); }
+  function select(name) { return action(`/suggest/${view.suggestion.run_id}/select`, { name }); }
+  $("thumbs-suggest").addEventListener("click", suggest);
+  $("thumbs-again").addEventListener("click", suggest);
+  $("thumbs-redraw").addEventListener("click", () => select(view.suggestion.selected));
+  $("thumbs-cancel").addEventListener("click", () => action(`/suggest/${view.suggestion.run_id}/cancel`));
+  $("thumbs-install").addEventListener("click", async () => { $("thumbs-covers").dataset.key = ""; await action(`/suggest/${view.suggestion.run_id}/install`); });
+  $("thumbs-build").addEventListener("click", () => action(""));
   $("thumbs-refresh").addEventListener("click", load);
+  $("thumbs-episodes").addEventListener("toggle", drawEpisodes);
+  $("thumbs-close").addEventListener("click", () => $("thumbs-zoom").close());
   load();
 })();
