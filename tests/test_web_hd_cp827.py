@@ -52,6 +52,11 @@ def write_hd(cfg, eid, data=HD_BYTES, *, done=True, claim_sha=None):
 
 def make_ep(cfg, *, with_kt=False, episode="1"):
     write_episode(cfg, VID, clips=("k01",))
+    from auto_short.workspace import atomic_write_json
+    silences = {"silences": []}
+    d = Path(cfg.workspace.dir) / VID
+    atomic_write_json(d / "silences.json", silences)
+    atomic_write_json(d / "candidates.json", {"params": {"max_pause": 1}, "silences_sha256": full._sha(silences)})
     set_titles(cfg, VID, episode=episode)
     if with_kt:
         write_episode(cfg, KT, clips=("k01",))
@@ -142,7 +147,8 @@ def test_vertical_job_runs_in_render_lane_and_is_reused(tcfg):
         d.mkdir(parents=True, exist_ok=True)
         (d / full.VIDEO_NAME).write_bytes(b"v" * 123)
         sha = st.read(Path(cfg.workspace.dir) / eid)["source_hd_sha256"]
-        (d / full.META_NAME).write_text(json.dumps({"hd_sha256": sha, "size": 123, "key": "k"}), encoding="utf-8")
+        (d / full.META_NAME).write_text(json.dumps({"plan_version": full.FULL_PLAN_VERSION,
+                                                   "hd_sha256": sha, "size": 123, "key": "k"}), encoding="utf-8")
         return full.FullResult(eid, d / full.VIDEO_NAME, True, 0.1, 123)
 
     c = client(tcfg, vertical=fake_vertical)

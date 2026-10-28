@@ -12,9 +12,10 @@ from ..render.text import TextError, nfc
 from ..titling.logic import TitlingError, resolve_header
 from ..titling.playlist import playlist_header, stored_series
 from ..workspace import atomic_write_json, is_episode_id, read_json_dict, utc_now
-from . import PackageError, assets, thumbnail
+from . import PackageError, assets, cover, thumbnail
 
 FILE_NAME = re.compile(r"(landscape|vertical)-([a-f0-9]{64})\.jpg")
+ASSET_REFERENCE = re.compile(r"(?:cover:)?[a-f0-9]{64}")
 
 
 def _no_symlinks(path):
@@ -47,12 +48,12 @@ def read(config, video_id):
     try:
         if doc is None or doc.get("schema_version") != 1 or doc["video_id"] != video_id \
                 or not isinstance(doc["header"], dict) or not isinstance(doc["files"], dict) \
-                or doc["asset_id"] is not None and not assets.SHA.fullmatch(doc["asset_id"]) \
+                or doc["asset_id"] is not None and not ASSET_REFERENCE.fullmatch(doc["asset_id"]) \
                 or doc["skipped_reason"] is not None and not isinstance(doc["skipped_reason"], str):
             raise PackageError("hồ sơ thumbnail không hợp lệ")
         owners = doc.get("asset_ids", {})  # PKG2.1: per-shape assets; older records only have asset_id
         if not isinstance(owners, dict) or any(k not in ("landscape", "vertical") or v is not None
-                                               and not assets.SHA.fullmatch(v) for k, v in owners.items()):
+                                               and not ASSET_REFERENCE.fullmatch(v) for k, v in owners.items()):
             raise PackageError("hồ sơ thumbnail không hợp lệ")
         for shape, entry in doc["files"].items():
             match = FILE_NAME.fullmatch(entry["file"])
@@ -113,18 +114,28 @@ def effective(settings, shape):
     return result
 
 
-def context(config, video_id, settings):
+def context(config, video_id, settings, *, pid=None, covers=None):
     """fields, formats, {shape: asset id}, {shape: image path}; assets are checked for both shapes."""
     fields = header(config, video_id)
     formats = list(thumbnail.EPISODE_SIZES)  # G8: both shapes for every valid header, independent of video files
+    covers = (cover.current(config, pid) if covers is None else covers) if pid else {}
     idents, images = {}, {}
     for shape in thumbnail.EPISODE_SIZES:
+        if shape in covers:
+            entry = covers[shape]
+            idents[shape] = "cover:" + entry["sha256"]
+            images[shape] = cover.directory(config, pid) / entry["file"]
+            continue
         ident = idents[shape] = effective(settings, shape)["asset_id"]
         images[shape] = assets.usable(config.packaging.asset_dir, ident, kind="image")[1] if ident else None
     return fields, formats, idents, images
 
 
-def cache_key(fields, settings, shape):
+def cache_key(fields, settings, shape, *, cover_entry=None):
+    if cover_entry is not None:
+        return config_hash(dict(cover_sha256=cover_entry["sha256"], box=cover_entry["box"],
+                                episode=fields["episode"], layout_version=cover.COVER_LAYOUT_VERSION,
+                                font_sha256=sha256_file(thumbnail.EPISODE_FONTS[cover.FONT_NAME]), shape=shape))
     look = effective(settings, shape)
     return config_hash(dict(header=fields, settings=look, layout_version=thumbnail.EPISODE_LAYOUT_VERSION,
                             font_sha256=thumbnail.font_hashes(look["style"]), shape=shape))
@@ -145,12 +156,14 @@ def valid_files(config, video_id, doc=None, *, pid=None, settings=None):
         if not pid:
             return {}
         settings = read_settings(config, pid) if settings is None else settings
-        fields, formats, idents, _ = context(config, video_id, settings)
+        covers = cover.current(config, pid)
+        fields, formats, idents, _ = context(config, video_id, settings, pid=pid, covers=covers)
         if doc["header"] != fields:
             return {}
         return {shape: entry for shape, entry in doc["files"].items() if shape in formats
                 and recorded_asset(doc, shape) == idents[shape]
-                and thumbnail.reusable(folder, entry, cache_key(fields, settings, shape), file_pattern=FILE_NAME)}
+                and thumbnail.reusable(folder, entry, cache_key(fields, settings, shape,
+                                                               cover_entry=covers.get(shape)), file_pattern=FILE_NAME)}
     except (PackageError, TitlingError, OSError, ValueError, KeyError, TypeError):
         return {}
 
@@ -261,14 +274,15 @@ def build_episode(config, video_id, *, pid, settings=None, run=None):
     folder = directory(config, video_id)
     previous = read(config, video_id) or _new(video_id)
     settings = read_settings(config, pid) if settings is None else settings
-    fields, formats, idents, images = context(config, video_id, settings)
+    covers = cover.current(config, pid)
+    fields, formats, idents, images = context(config, video_id, settings, pid=pid, covers=covers)
     doc = dict(_new(video_id), playlist_id=pid, header=fields, asset_id=idents["landscape"],
                asset_ids={shape: idents[shape] for shape in formats})
     folder.mkdir(parents=True, exist_ok=True)
     staged = []
     with tempfile.TemporaryDirectory(prefix=".episode-thumbs-", dir=folder) as tmpname:
         for shape in formats:
-            expected = cache_key(fields, settings, shape)
+            expected = cache_key(fields, settings, shape, cover_entry=covers.get(shape))
             old = previous["files"].get(shape)
             if thumbnail.reusable(folder, old, expected, file_pattern=FILE_NAME):
                 doc["files"][shape] = old
@@ -276,8 +290,11 @@ def build_episode(config, video_id, *, pid, settings=None, run=None):
             work = Path(tmpname) / shape
             work.mkdir()
             name = f"{shape}-{expected}.jpg"
-            output = thumbnail.build_episode(work, fields, shape, images[shape], name,
-                                             settings=effective(settings, shape), run=run)
+            if shape in covers:
+                output = cover.build_episode(work, fields, shape, images[shape], name, entry=covers[shape], run=run)
+            else:
+                output = thumbnail.build_episode(work, fields, shape, images[shape], name,
+                                                 settings=effective(settings, shape), run=run)
             doc["files"][shape] = dict(file=name, key=expected, sha256=sha256_file(output))
             staged.append((output, folder / name))
         if not staged:
@@ -326,9 +343,10 @@ def build_playlist(config, pid, *, run=None, progress=None):
 def preview(config, pid, *, settings=None, run=None):
     """Both shapes of the first eligible episode, returned as bytes; never publish into episode output."""
     settings = read_settings(config, pid) if settings is None else validate_settings(config, settings)
+    covers = cover.current(config, pid)
     for entry in playlist(config, pid)["entries"]:
         try:
-            fields, _, _, images = context(config, entry["video_id"], settings)
+            fields, _, _, images = context(config, entry["video_id"], settings, pid=pid, covers=covers)
             break
         except (PackageError, TitlingError, OSError, ValueError, KeyError, TypeError):
             continue
@@ -339,7 +357,11 @@ def preview(config, pid, *, settings=None, run=None):
         for shape in thumbnail.EPISODE_SIZES:
             work = Path(tmp) / shape
             work.mkdir()
-            path = thumbnail.build_episode(work, fields, shape, images[shape], "preview.jpg",
-                                             settings=effective(settings, shape), run=run)
+            if shape in covers:
+                path = cover.build_episode(work, fields, shape, images[shape], "preview.jpg",
+                                           entry=covers[shape], run=run)
+            else:
+                path = thumbnail.build_episode(work, fields, shape, images[shape], "preview.jpg",
+                                               settings=effective(settings, shape), run=run)
             result[shape] = path.read_bytes()
         return result

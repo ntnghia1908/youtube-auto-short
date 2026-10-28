@@ -317,7 +317,7 @@ class Store:
                 for row in entries:
                     same_key = (row["video_id"], row["kind"], row.get("clip")) == (video_id, kind, clip)
                     same_path = inside(self.folders()[row["series"]], row["file"]) == dest
-                    if same_key and kind == "short":
+                    if same_key and kind in ("short", "vertical"):
                         base = re.sub(r" \(r[0-9]+\)(?=\.mp4$)", "", row["file"])
                         if row["series"] != series or name not in (base, row["file"]):
                             raise StoreError(409, "Identity already has a different file")

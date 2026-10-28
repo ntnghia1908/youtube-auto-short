@@ -5,14 +5,15 @@ the job and removed afterwards (:func:`fetch_original`, K2: the episode stays ar
 
 1080x1920 like a Short, in the yellow rounded panel style: top panel = bộ kinh + "(tập N)", bottom panel = the speaker
 ("HT. Tịnh Không", larger font), and the video between them, centre-cropped and scaled up so only even margins of
-``[render] min_frame_margin`` stay black; no dissolve, no silence trim (every frame and every audio sample of the HD
-source). Reused (no encode) while ``vertical.json`` holds the same key (HD sha256, layout, header, render config).
+``[render] min_frame_margin`` stay black. Long silences are shortened like Shorts; a PKG2 thumbnail precedes the
+content with three silent seconds. Reused while ``vertical.json`` holds the same render key.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -28,6 +29,7 @@ from ..config import Config
 from ..enhance import state as enhance_state
 from ..ingest import probe as probe_mod
 from ..ingest.youtube import DownloadError, YoutubeBlocked, ytdlp_download
+from ..review.cuts import kept_segments_ms
 from ..workspace import (
     Workspace,
     WorkspaceError,
@@ -38,7 +40,7 @@ from ..workspace import (
 )
 from . import plan
 from .stage import (RenderError, _last_line, _run, _sha, _write_lines, font_path, probe_media, used_config,
-                    _rate)
+                    _rate, load_silences)
 from .text import Font, TextError, baselines, fit_header, nfc
 
 log = logging.getLogger("auto_short")
@@ -50,8 +52,8 @@ TOP_SCALE = 1.6  # top panel font size / [render] header font size (Amendment 2:
 SPEAKER_SCALE = 2.4  # speaker font size / [render] header font size (even larger than the top panel)
 TOP_SHARE = 0.43  # share of the panel height (video box excluded) taken by the top panel
 _SPEAKER_DOT_RE = re.compile(r"\.(?=[^\W\d_])")  # CP8.16 R5: "HT.Tịnh Không" -> "HT. Tịnh Không"
-FULL_PLAN_VERSION = 3  # bump when the filter graph / ffmpeg command below changes
-DURATION_TOLERANCE = 0.1  # s, audio length vs the source
+FULL_PLAN_VERSION = 4  # bump when the filter graph / ffmpeg command below changes
+INTRO_SECONDS = 3
 
 
 class SourceBlocked(RenderError):
@@ -105,7 +107,7 @@ def current(config: Config, episode_id: str) -> bool:
     archived episode is judged by the manifest sha256 of its original (the file itself is not there)."""
     path = ready_file(config, episode_id)
     meta = read_meta(config, episode_id)
-    if meta is None:
+    if meta is None or meta.get("plan_version") != FULL_PLAN_VERSION:
         return False
     if path is None:
         from ..review.backup import released_vertical  # lazy: backup imports render.full
@@ -251,27 +253,101 @@ def split_header(lines: list[str], speaker: str | None) -> tuple[list[str], str]
     return rest, _SPEAKER_DOT_RE.sub(". ", spk)
 
 
-def filter_graph(*, fps: Fraction, lay: FullLayout, font_file: Path, top_lines: list[plan.TextLine], top_size: int,
-                 bottom_lines: list[plan.TextLine], bottom_size: int) -> str:
-    """The Short chain without cuts / title panel: every frame (``fps=`` only normalises the rate), all audio."""
+def content_frames(duration: float, silences: list[tuple[float, float]], max_pause: float,
+                   fps: Fraction) -> list[tuple[int, int]]:
+    """Pure silence plan on the frame grid: (first frame, count), shared by video and audio."""
+    frames = plan.frame_plan(kept_segments_ms(0, duration, silences, max_pause), fps)
+    out = []
+    for first, count in frames:
+        if count <= 0:
+            continue
+        # Sub-frame gaps can round onto the previous range; select each frame only once.
+        if out and first <= out[-1][0] + out[-1][1]:
+            prev, n = out[-1]
+            out[-1] = (prev, max(prev + n, first + count) - prev)
+        else:
+            out.append((first, count))
+    if not out:
+        raise plan.PlanError("empty vertical content after silence trimming")
+    return out
+
+
+def intro_image(config: Config, episode_id: str) -> Path | None:
+    """Find the containing playlist and reuse/build its hash-verified PKG2 vertical thumbnail."""
+    from ..packaging import PackageError, episode
+    from ..titling.logic import TitlingError
+    from ..workspace import read_json_dict
+
+    video_id = enhance_state.owner_id(episode_id)
+    try:
+        pid = None
+        for path in sorted((Path(config.workspace.dir) / "_playlists").glob("*.json")):
+            doc = read_json_dict(path) or {}
+            if doc.get("playlist_id") == path.stem and any(
+                isinstance(entry, dict) and entry.get("video_id") == video_id for entry in doc.get("entries", [])
+            ):
+                pid = path.stem
+                break
+        if pid is None:
+            raise PackageError("không tìm thấy bộ kinh chứa video")
+        settings = episode.read_settings(config, pid)
+        files = episode.valid_files(config, video_id, pid=pid, settings=settings)
+        if "vertical" not in files:
+            episode.build_episode(config, video_id, pid=pid, settings=settings)
+            files = episode.valid_files(config, video_id, pid=pid, settings=settings)
+        if "vertical" not in files:
+            raise PackageError("không có thumbnail dọc hiện hành")
+        return episode.directory(config, video_id) / files["vertical"]["file"]
+    except (PackageError, TitlingError, TextError, RenderError, OSError, ValueError, KeyError, TypeError) as exc:
+        log.warning("full: %s: không dựng được ảnh intro; tiếp tục không intro: %s", video_id, exc)
+        return None
+
+
+def filter_graph(*, frames: list[tuple[int, int]], fps: Fraction, lay: FullLayout, font_file: Path,
+                 top_lines: list[plan.TextLine], top_size: int,
+                 bottom_lines: list[plan.TextLine], bottom_size: int, intro: bool = False) -> str:
+    """Single streaming select per stream, with audio blocks exactly one video frame long."""
+    f = plan.fps_text(fps)
+    selection = "+".join(f"between(n,{a},{a + n - 1})" for a, n in frames)
+    # A multiple of the fps numerator gives an integer number of samples per frame, also for NTSC.
+    # This avoids selecting partial input packets or accumulating audio rounding error at every cut.
+    rate = math.ceil(plan.SAMPLE_RATE / fps.numerator) * fps.numerator
+    samples = int(Fraction(rate) / fps)
     c, v = lay.crop, lay.video
     per_frame = (f"crop={c.w}:{c.h}:{c.x}:{c.y},scale={v.w}:{v.h}:flags={plan.SCALE_FLAGS},setsar=1,"
                  f"scale=out_color_matrix=bt709:out_range=tv,format=yuv444p")
     pad = f"pad={plan.WIDTH}:{plan.HEIGHT}:{v.x}:{v.y}:color={plan._hex(plan.BACKGROUND)}[vid]"
-    return ";".join([
-        f"[0:v]fps={plan.fps_text(fps)},{per_frame},{pad}",
+    chains = [
+        f"[0:v]fps={f}:start_time=0,select='{selection}',setpts=N/({f})/TB,{per_frame},{pad}",
         plan._panel_chain(lay.top, top_lines, font_file, top_size, "hp"),
         plan._panel_chain(lay.bottom, bottom_lines, font_file, bottom_size, "bp"),
         f"[vid][hp]overlay={lay.top.x}:{lay.top.y}:format=yuv444[v1]",
-        f"[v1][bp]overlay={lay.bottom.x}:{lay.bottom.y}:format=yuv444,format={plan.PIX_FMT}[vout]",
-        f"[0:a]aresample={plan.SAMPLE_RATE},aformat=sample_fmts=fltp:channel_layouts=stereo[aout]",
-    ])
+        f"[v1][bp]overlay={lay.bottom.x}:{lay.bottom.y}:format=yuv444,format={plan.PIX_FMT}[contentv]",
+        f"[0:a]aresample={rate}:first_pts=0,asetnsamples=n={samples}:p=0,aselect='{selection}',asetpts=N/SR/TB,"
+        f"aresample={plan.SAMPLE_RATE},aformat=sample_fmts=fltp:channel_layouts=stereo[contenta]",
+    ]
+    if intro:
+        chains += [
+            f"[1:v]fps={f},scale={plan.WIDTH}:{plan.HEIGHT}:force_original_aspect_ratio=decrease,"
+            f"pad={plan.WIDTH}:{plan.HEIGHT}:(ow-iw)/2:(oh-ih)/2,setsar=1,format={plan.PIX_FMT},"
+            "setpts=PTS-STARTPTS[introv]",
+            f"[2:a]aformat=sample_fmts=fltp:channel_layouts=stereo,asetpts=N/SR/TB[introa]",
+            "[introv][introa][contentv][contenta]concat=n=2:v=1:a=1[vout][aout]",
+        ]
+    else:
+        chains += ["[contentv]null[vout]", "[contenta]anull[aout]"]
+    return ";".join(chains)
 
 
 def ffmpeg_command(*, ffmpeg: str, source: Path, output: Path, graph_script: Path, fps: Fraction, crf: int,
-                   preset: str, audio_bitrate: str, threads: int) -> list[str]:
+                   preset: str, audio_bitrate: str, threads: int, intro: Path | None = None) -> list[str]:
+    inputs = ["-i", str(source)]
+    if intro is not None:
+        inputs += ["-loop", "1", "-framerate", plan.fps_text(fps), "-t", str(INTRO_SECONDS), "-i", str(intro),
+                   "-f", "lavfi", "-t", str(INTRO_SECONDS), "-i",
+                   f"anullsrc=r={plan.SAMPLE_RATE}:cl=stereo"]
     return [
-        ffmpeg, "-nostdin", "-hide_banner", "-v", "error", "-y", "-i", str(source),
+        ffmpeg, "-nostdin", "-hide_banner", "-v", "error", "-y", *inputs,
         "-filter_complex_script", str(graph_script), "-map", "[vout]", "-map", "[aout]",
         "-c:v", plan.VCODEC, "-preset", preset, "-crf", str(crf), "-pix_fmt", plan.PIX_FMT, "-r", plan.fps_text(fps),
         "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv",
@@ -282,12 +358,12 @@ def ffmpeg_command(*, ffmpeg: str, source: Path, output: Path, graph_script: Pat
     ]
 
 
-def verify(path: Path, fps: Fraction, src: dict, run) -> dict:
-    """1080x1920 h264 yuv420p aac 48 kHz stereo; video length within one frame of the source, audio within 0.1 s."""
+def verify(path: Path, fps: Fraction, expected_seconds: float, run) -> dict:
+    """1080x1920 h264 yuv420p aac 48 kHz stereo; planned duration and A/V sync within one frame."""
     info = probe_media(path, run)
     v, a = info["video"], info["audio"]
     problems = []
-    src_v = float((src["video"] or {}).get("duration") or src["duration"] or 0)
+    tolerance = 1 / float(fps) + 1e-3
     if v is None:
         problems.append("no video stream")
     else:
@@ -296,8 +372,8 @@ def verify(path: Path, fps: Fraction, src: dict, run) -> dict:
         if got != want:
             problems.append(f"video {got} != {want}")
         vd = float(v.get("duration") or 0)
-        if abs(vd - src_v) > 1 / float(fps) + 1e-3:
-            problems.append(f"video duration {vd:.3f} s != source {src_v:.3f} s")
+        if abs(vd - expected_seconds) > tolerance:
+            problems.append(f"video duration {vd:.3f} s != planned {expected_seconds:.3f} s")
     if a is None:
         problems.append("no audio stream")
     else:
@@ -306,9 +382,10 @@ def verify(path: Path, fps: Fraction, src: dict, run) -> dict:
         if got != want:
             problems.append(f"audio {got} != {want}")
         ad = float(a.get("duration") or 0)
-        src_a = float((src["audio"] or {}).get("duration") or src["duration"] or 0)
-        if abs(ad - src_a) > DURATION_TOLERANCE:
-            problems.append(f"audio duration {ad:.3f} s != source {src_a:.3f} s")
+        if abs(ad - expected_seconds) > tolerance:
+            problems.append(f"audio duration {ad:.3f} s != planned {expected_seconds:.3f} s")
+        if v is not None and abs(ad - vd) > tolerance:
+            problems.append(f"audio/video duration differ: {ad:.3f} / {vd:.3f} s")
     if problems:
         raise RenderError(f"{path.name}: output check failed: {'; '.join(problems)}")
     return {"duration": float((v or {}).get("duration") or 0), "frames": (v or {}).get("nb_frames")}
@@ -392,9 +469,29 @@ def _run_vertical(episode_id: str, config: Config, *, run, force: bool, note: st
                             cfg.min_font_scale, fit_kw)
     except (plan.PlanError, TextError) as exc:
         raise RenderError(str(exc)) from exc
+    candidates = read_stage_json(ws.dir / "candidates.json", "analysis", RenderError)
+    silences = load_silences(ws, candidates)
+    try:
+        max_pause = candidates["params"]["max_pause"]
+        if isinstance(max_pause, bool) or not isinstance(max_pause, (int, float)) or not math.isfinite(max_pause) \
+                or max_pause < 0:
+            raise ValueError("invalid max_pause")
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RenderError("candidates.json has no valid params.max_pause; re-run 'auto-short analysis'") from exc
+    duration = float(src["video"].get("duration") or src["duration"])
+    try:
+        frames = content_frames(duration, silences, max_pause, fps)
+    except plan.PlanError as exc:
+        raise RenderError(str(exc)) from exc
+    content_seconds = float(Fraction(sum(n for _, n in frames)) / fps)
+    image = intro_image(config, owner)
+    intro = {"sha256": hashing.sha256_file(image), "seconds": INTRO_SECONDS} if image is not None else None
+    expected_seconds = content_seconds + (INTRO_SECONDS if intro else 0)
     key = _sha({"full_plan_version": FULL_PLAN_VERSION, "plan_version": plan.RENDER_PLAN_VERSION,
                 "render_config_hash": hashing.config_hash(used_config(cfg, font_sha)), "font_sha256": font_sha,
                 "hd_sha256": hd.sha256, "fps": plan.fps_text(fps),
+                "max_pause": max_pause, "silences_sha256": candidates["silences_sha256"],
+                "intro_sha256": intro["sha256"] if intro else None, "intro_seconds": INTRO_SECONDS,
                 **({} if hd.kind == enhance_state.SRC_HD else {"source_kind": hd.kind}),
                 "layout": lay.as_dict(),
                 "header": {"display_lines": header.lines, "font_size": header.font_size},
@@ -417,17 +514,17 @@ def _run_vertical(episode_id: str, config: Config, *, run, force: bool, note: st
             b_lines = _write_lines(tmp, "b", spk_fit.lines, baselines(len(spk_fit.lines), font=font, size=spk_fit.font_size,
                                                                       pitch=spk_fit.line_pitch, panel_height=lay.bottom.h))
             script = tmp / "full.filter"
-            script.write_text(filter_graph(fps=fps, lay=lay, font_file=fpath, top_lines=h_lines,
+            script.write_text(filter_graph(frames=frames, fps=fps, lay=lay, font_file=fpath, top_lines=h_lines,
                                            top_size=header.font_size, bottom_lines=b_lines,
-                                           bottom_size=spk_fit.font_size), encoding="utf-8")
+                                           bottom_size=spk_fit.font_size, intro=intro is not None), encoding="utf-8")
             log.info("full: %s: encode %s (%.0f s, fps %s, threads %s)", owner, hd.path.name, src["duration"],
                      plan.fps_text(fps), cfg.threads or "auto")
             proc = runner(ffmpeg_command(ffmpeg="ffmpeg", source=hd.path, output=part, graph_script=script, fps=fps,
                                          crf=cfg.crf, preset=cfg.preset, audio_bitrate=cfg.audio_bitrate,
-                                         threads=cfg.threads))
+                                         threads=cfg.threads, intro=image))
         if proc.returncode != 0 or not part.is_file():
             raise RenderError(f"ffmpeg failed: {_last_line(proc.stderr) or f'exit {proc.returncode}'}")
-        facts = verify(part, fps, src, runner)
+        facts = verify(part, fps, expected_seconds, runner)
         for stale in (out_dir / META_NAME,):
             stale.unlink(missing_ok=True)
         os.replace(part, out)
@@ -436,6 +533,8 @@ def _run_vertical(episode_id: str, config: Config, *, run, force: bool, note: st
         raise
     size = out.stat().st_size
     atomic_write_json(out_dir / META_NAME, {"schema_version": 1, "key": key, "hd_sha256": hd.sha256, "source": hd.kind, "size": size,
+                                            "plan_version": FULL_PLAN_VERSION, "intro": intro,
+                                            "trimmed_seconds": duration - content_seconds,
                                             "fps": plan.fps_text(fps), "header": header.lines, "speaker": spk_fit.lines, "layout": lay.as_dict(),
                                             "duration": facts["duration"], "frames": facts["frames"],
                                             "seconds": round(time.monotonic() - t0, 1),

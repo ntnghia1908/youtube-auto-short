@@ -535,7 +535,7 @@ def build(ctx: WebContext) -> APIRouter:
             return bad
         owner = ep.hd_owner(episode_id)
         with ctx.submit_lock:
-            if render_full.on_store(ctx.config, owner) is not None:
+            if render_full.current(ctx.config, owner) and render_full.on_store(ctx.config, owner) is not None:
                 return {"job": None, "hd_video": _hd_video_view(episode_id)}
             restoring = ctx.restore_job(owner)
             if restoring is not None and restoring.active:

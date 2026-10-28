@@ -42,7 +42,7 @@ def kt_only(cfg, *, vertical=False):
         vd = Path(cfg.render.output_dir) / KT / "full"
         vd.mkdir(parents=True, exist_ok=True)
         (vd / "vertical.mp4").write_bytes(VERT)
-        (vd / "vertical.json").write_text(json.dumps({"hd_sha256": HD_SHA, "size": len(VERT), "key": "k"}),
+        (vd / "vertical.json").write_text(json.dumps({"plan_version": full.FULL_PLAN_VERSION, "hd_sha256": HD_SHA, "size": len(VERT), "key": "k"}),
                                           encoding="utf-8")
 
 
@@ -88,7 +88,7 @@ def test_ac1_vertical_job_writes_under_kt(tcfg):
         d = full.vertical_dir(cfg, eid)
         d.mkdir(parents=True, exist_ok=True)
         (d / full.VIDEO_NAME).write_bytes(VERT)
-        (d / full.META_NAME).write_text(json.dumps({"hd_sha256": HD_SHA, "size": len(VERT), "key": "k"}),
+        (d / full.META_NAME).write_text(json.dumps({"plan_version": full.FULL_PLAN_VERSION, "hd_sha256": HD_SHA, "size": len(VERT), "key": "k"}),
                                         encoding="utf-8")
         return full.FullResult(eid, d / full.VIDEO_NAME, True, 0.1, len(VERT))
 
