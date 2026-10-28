@@ -40,9 +40,10 @@ def prepared_episode(tcfg):
 
 
 @pytest.fixture
-def media_runner():
+def media_runner(monkeypatch):
     """Fake ffprobe/ffmpeg while exercising the real layout, key, file publication and output checks."""
     encodes = []
+    monkeypatch.setattr(full, "intro_image", lambda *a: None)  # header/key tests isolate the optional PKG2 intro
 
     def run(cmd):
         path = Path(cmd[-1])

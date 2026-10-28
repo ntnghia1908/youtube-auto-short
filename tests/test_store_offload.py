@@ -55,7 +55,8 @@ def seed(config, owner=VID, *, hd=False, data=VERTICAL):
     path = full.vertical_path(config, owner)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data)
-    atomic_write_json(path.parent / full.META_NAME, {"hd_sha256": sha, "size": len(data), "key": "key"})
+    atomic_write_json(path.parent / full.META_NAME, {"plan_version": full.FULL_PLAN_VERSION,
+                                                   "hd_sha256": sha, "size": len(data), "key": "key"})
     return d, path
 
 

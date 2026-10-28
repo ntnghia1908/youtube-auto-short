@@ -129,7 +129,7 @@ class StoreClient:
             if existing is not None:
                 if existing["sha256"] == want and existing["size"] == size:
                     return
-                if kind != "short":
+                if kind not in ("short", "vertical"):
                     raise StoreMismatch("kho đã có file khác sha256 / kích thước")
             route += "?" + urlencode({"series": series, "name": name})
             with Path(path).open("rb") as stream:

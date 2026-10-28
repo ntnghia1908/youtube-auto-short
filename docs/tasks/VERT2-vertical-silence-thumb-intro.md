@@ -92,11 +92,42 @@ Chạm hợp đồng kho 3090 (API nội bộ, không public) → manual test sa
 
 ## Result
 
-- Main changes:
-- Tests:
-- Diff + / − (app, test):
-- Helper mới (đã tìm, lý do không tái dùng):
-- Review:
-- Important findings / decisions:
-- Known limitations:
-- PR:
+- ORCHESTRATOR 2026-10-28: review diff (cắt lặng: `asetnsamples` = 1 khung + `select`/`aselect` cùng chỉ số khung → không lệch A/V; tập đã archive còn `silences.json` / `candidates.json`; sửa test cũ chỉ thêm `plan_version` / file phân tích / kind `vertical`, không nới kiểm tra). Targeted (8 file) **293 passed**; full suite **3287 passed, 1 skipped**. Codex 1 vòng, 133.243 tokens.
+- Còn mở: ảnh intro — HUMAN LEAD xem mẫu PKG2 mặc định thấy chưa đẹp, đang thử ảnh bìa AI (Codex image_generation); chạy thật chờ chốt ảnh + `store.py` lên 3090.
+
+- IMPLEMENTER handoff 2026-10-28: implementation sẵn sàng review; giữ lifecycle `IN_PROGRESS` tới khi ORCHESTRATOR hoàn tất required verification còn lại. Không claim AC6 PASS.
+- Main changes: `render/full.py` plan v4, cắt lặng bằng `kept_segments_ms` + `frame_plan`, dùng cùng selection theo khung cho audio/video; intro PKG2 3 s, fallback có warning; key/meta/verify mới. `store/offload.py` bỏ qua bản cũ; route tập chỉ trả sớm khi bản kho hiện hành; `store/client.py` và `tools/store/store.py` cho vertical dùng lại nhánh revision của Short.
+- Tests: thêm `tests/test_vertical_silence_intro.py` (14 ca parameterized); sửa fixture trong `test_web_hd_cp827.py`, `test_web_vertical_cp832.py`, `test_store_offload.py`, `test_hd_backup.py`, `test_hd_owner_kt.py`, `test_web_downloads_cp834.py` vì bản dọc không có plan version không còn được coi hiện hành, và render nay cần analysis artifacts. `test_vertical_header_fallback.py` cô lập intro trong runner media giả (intro có test ffmpeg thật riêng). `test_store_client.py` đổi assertion vertical khác byte từ từ chối sang PUT theo G3; assertion HD/source/Short giữ nguyên.
+- Diff + / −: app **+131 / −32**; test **+230 / −14** (tính cả file mới chưa track bằng `git diff --no-index --numstat /dev/null tests/test_vertical_silence_intro.py`; không tính contract).
+- Helper mới (grep trước khi thêm):
+  - `content_frames`: đã tìm `rg -n 'def load_silences|def frame_plan|def kept_segments' src/auto_short/render/stage.py src/auto_short/render/plan.py src/auto_short/review/cuts.py`. Tái dùng cả ba helper; wrapper thuần trả khung dùng chung cho audio/video và gộp biên trùng do làm tròn. Không dùng filter Short vì audio của nó dùng `asplit` N nhánh.
+  - `intro_image`: đã tìm `rg -n 'playlist.*(for|video)|def .*playlist|def .*intro|asetnsamples|aselect' src/auto_short/packaging src/auto_short/render src/auto_short/titling src/auto_short/store`. `playlist_header` chỉ trả series/episode, không trả pid; wrapper tìm pid trong `_playlists`, rồi tái dùng `read_settings`, `valid_files`, `build_episode`, `directory`. Không thêm helper kho: mở rộng nhánh revision Short sẵn có.
+
+| AC | Bằng chứng | Kết quả IMPLEMENTER |
+|---|---|---|
+| 1 | `test_segments_share_rounded_boundaries_and_stream` (25 và 30000/1001 fps, lặng đầu/cuối/ngắn/dài, >600 đoạn); `test_analysis_inputs_required` | PASS |
+| 2 | `test_real_render_intro_silence_sync_and_fallback` (intro ở 25 và 30000/1001 fps): ffmpeg thật, so màu ảnh tại đầu và 2,8 s, PCM 2,98 s đầu im lặng, thời lượng và A/V ≤ 1 khung | PASS |
+| 3 | Cùng test render thật, `broken=True`: PackageError, warning, intro null, vẫn rút lặng | PASS |
+| 4 | `test_old_plan_skipped_by_offload_and_requeued` (local/released, POST direct 202; released hiện hành trả 200 không job); `test_key_tracks_silences_pause_intro_bytes_and_length`; hồi quy `test_released_vertical_reused_without_encode_or_job` | PASS |
+| 5 | `test_store_revision_roundtrip` (client + handler thật qua memory transport, vertical r2/HEAD/giữ file+SHA/cùng SHA/restart; HD 409); `test_put_existing_identity_short_and_vertical_revise_others_refuse`; test revision Short hiện có trong `test_store_server.py` | PASS |
+| 6 | Framework checker + diff check đã PASS; full suite chưa chạy | Chờ ORCHESTRATOR |
+
+Các lệnh dưới đây chạy từ worktree; prefix `PYTEST` tương ứng chính xác:
+
+```sh
+env PYTHONPATH=/home/ntnghia/projects/youtube-auto-short/.claude/worktrees/fix-ytdlp-timeout/src /home/ntnghia/miniconda3/envs/auto-short/bin/python -m pytest
+```
+
+Mỗi nhóm pytest được bọc `timeout 240` (không lệnh nào đợi quá 5 phút):
+
+- `PYTEST -q tests/test_vertical_silence_intro.py tests/test_store_server.py tests/test_store_offload.py -k 'not test_loop_uses_thread_and_short_success_delay and not test_lifespan_stops_hash_worker' -x --tb=short` → **160 passed, 2 deselected**, 21,82 s.
+- `PYTEST -q tests/test_web_hd_cp827.py tests/test_web_vertical_cp832.py tests/test_vertical_header_fallback.py -k 'test_run_vertical or test_split_header or test_full_layout or test_layout_change or test_effective_source_rules or test_refetch_wrong_video or test_refetch_different_bytes or test_ac5_short_jobs or test_ac5_running_lane or test_vertical_fetch_prefetch or test_f3_signal or test_ac1_vertical_without_titles or test_ac2_titling_keeps_header or test_helper_preserves or test_ac3_unresolved_header or test_existing_titles' -x --tb=short` → **21 passed, 29 deselected**, 14,88 s.
+- `PYTEST -q tests/test_store_client.py -k 'test_client_token_from_env_only or test_config_store_section or test_put_ or test_released_vertical_reused_without_encode_or_job or test_short_client_socket_free_roundtrip or test_short_client_requires_valid_clip' -x --tb=short` → **35 passed, 13 deselected**, 4,46 s.
+- `PYTEST -q tests/test_store_download.py -k 'direct or test_client_open_stream_is_lazy_range_and_closes' -x --tb=short` → **16 passed, 17 deselected**, 2,83 s.
+- `PYTEST -q tests/test_vertical_silence_intro.py -x --tb=short` → **14 passed**, 16,46 s, kiểm tra lại sau khi đồng bộ mốc đầu audio/video về 0. Vòng đầu có lỗi trong test trích khung JPEG bằng input seek `-ss 0` (không trả khung); đã bỏ seek cho JPEG, kiểm cả độ dài buffer ảnh rồi chạy lại PASS.
+- `node scripts/framework-check.mjs` → **PASS**; `git diff --check` → **PASS**.
+
+- Review: IMPLEMENTER đã tự đọc diff theo A–F/AC; ORCHESTRATOR chưa review độc lập.
+- Important findings / decisions: `aselect` trên packet đầu vào có thể lệch tích lũy tại mỗi biên. Dùng `aresample` nội bộ tới bội của tử số fps + `asetnsamples` đúng một khung trước `aselect`; cả hai stream chọn cùng chỉ số khung, bắt đầu grid 0, cuối cùng audio về 48 kHz stereo. Nhờ vậy cả NTSC không phải làm tròn sample riêng ở từng điểm cắt. Chỉ concat 2 đoạn intro/content, không split/asplit theo số đoạn.
+- Known limitations / verification giao ORCHESTRATOR theo chỉ dẫn session: **không thử chạy** các ca TestClient/ASGI event loop/server loopback có thể treo trong sandbox. Cần chạy lại lệnh required verification không lọc ở trên (thêm `tests/test_store_server.py`), các test đã sửa fixture `tests/test_hd_backup.py tests/test_hd_owner_kt.py tests/test_web_downloads_cp834.py`, `PYTEST -q -n auto` (AC6), và slow render liên quan theo project policy (`PYTEST -q -n auto -m slow`). Chạy thật VLT + đẩy r2 và manual checklist vẫn chưa thực hiện; không gọi mạng thật.
+- PR: không tạo; không commit/push, không gọi agent khác.

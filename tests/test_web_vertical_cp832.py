@@ -52,6 +52,10 @@ def make_ep(cfg, eid=VID, *, height=1080, data=ORIG, archived=False, name="sourc
     the file like CP8.6 (``archive.json``; the manifest keeps its sha256 / size)."""
     write_episode(cfg, eid, clips=("k01",), render_status=render_status)
     d = Path(cfg.workspace.dir) / eid
+    from auto_short.workspace import atomic_write_json
+    silences = {"silences": []}
+    atomic_write_json(d / "silences.json", silences)
+    atomic_write_json(d / "candidates.json", {"params": {"max_pause": 1}, "silences_sha256": full._sha(silences)})
     if with_titles:
         fields = {"speaker": "HT. Tịnh Không", "series": SERIES, "episode": episode}
         (d / "titles.json").write_text(json.dumps({"header": {"fields": fields, "lines": [
@@ -88,7 +92,8 @@ def fake_vertical(calls):
         d = full.vertical_dir(cfg, eid)
         d.mkdir(parents=True, exist_ok=True)
         (d / full.VIDEO_NAME).write_bytes(b"v" * 77)
-        (d / full.META_NAME).write_text(json.dumps({"hd_sha256": src.sha256, "size": 77, "key": "k",
+        (d / full.META_NAME).write_text(json.dumps({"plan_version": full.FULL_PLAN_VERSION,
+                                                    "hd_sha256": src.sha256, "size": 77, "key": "k",
                                                     "source": src.kind}), encoding="utf-8")
         return full.FullResult(eid, d / full.VIDEO_NAME, True, 0.1, 77)
     return run
@@ -334,7 +339,8 @@ def seed_five(cfg):
     vd = full.vertical_dir(cfg, ids[2])
     vd.mkdir(parents=True, exist_ok=True)
     (vd / full.VIDEO_NAME).write_bytes(b"v" * 9)
-    (vd / full.META_NAME).write_text(json.dumps({"hd_sha256": sha, "size": 9, "key": "k", "source": "original"}))
+    (vd / full.META_NAME).write_text(json.dumps({"plan_version": full.FULL_PLAN_VERSION,
+                                               "hd_sha256": sha, "size": 9, "key": "k", "source": "original"}))
     make_ep(cfg, ids[3], height=480, episode="4")  # 4: < 720p, not enhanced -> skipped
     make_ep(cfg, ids[4], height=1080, episode="5", render_status="pending")  # 5: Short not done -> skipped
     seed_playlist(cfg)
