@@ -128,7 +128,7 @@ def push_vertical(config: Config, owner: str, *, client=None, busy=None, lock=No
         return {"owner": owner, "pushed": False, "released": False, "busy": True}
     path = full.ready_file(config, owner)
     if path is None or not full.current(config, owner):
-        raise StoreMismatch("bản dọc không còn hiện hành")
+        return {"owner": owner, "pushed": False, "released": False}
     snapshot = _vertical_snapshot(config, owner, stop=stop)
     if snapshot is None:
         raise StoreMismatch("không còn bản dọc trên VM")

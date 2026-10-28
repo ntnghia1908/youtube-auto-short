@@ -219,7 +219,7 @@ def test_hd_and_vertical_routes_track_and_stay_identical(tcfg):
     d = full.vertical_dir(tcfg, VID)
     d.mkdir(parents=True, exist_ok=True)
     (d / full.VIDEO_NAME).write_bytes(b"v" * 5000)
-    (d / full.META_NAME).write_text(json.dumps({"hd_sha256": sha, "size": 5000, "key": "k"}), encoding="utf-8")
+    (d / full.META_NAME).write_text(json.dumps({"plan_version": full.FULL_PLAN_VERSION, "hd_sha256": sha, "size": 5000, "key": "k"}), encoding="utf-8")
     c = client(tcfg)
     login(c)
     for n, (url, size) in enumerate(((f"/api/episodes/{VID}/source-hd", len(BIG)), (f"/api/episodes/{VID}/vertical", 5000))):
@@ -296,7 +296,7 @@ def test_playlist_entries_expose_kinds_for_the_queue(tcfg):
     d = full.vertical_dir(tcfg, VID)
     d.mkdir(parents=True, exist_ok=True)
     (d / full.VIDEO_NAME).write_bytes(b"v" * 50)
-    (d / full.META_NAME).write_text(json.dumps({"hd_sha256": sha, "size": 50, "key": "k"}), encoding="utf-8")
+    (d / full.META_NAME).write_text(json.dumps({"plan_version": full.FULL_PLAN_VERSION, "hd_sha256": sha, "size": 50, "key": "k"}), encoding="utf-8")
     root = Path(tcfg.workspace.dir) / "_playlists"
     root.mkdir(parents=True, exist_ok=True)
     (root / f"{PL}.json").write_text(json.dumps({

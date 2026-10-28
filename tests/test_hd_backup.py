@@ -59,7 +59,7 @@ def make_ep(cfg, *, kt=False, hd=True, vertical=True, data=HD, vdata=VERT):
         vd = full.vertical_dir(cfg, VID)
         vd.mkdir(parents=True, exist_ok=True)
         (vd / full.VIDEO_NAME).write_bytes(vdata)
-        (vd / full.META_NAME).write_text(json.dumps({"hd_sha256": hashlib.sha256(data).hexdigest(),
+        (vd / full.META_NAME).write_text(json.dumps({"plan_version": full.FULL_PLAN_VERSION, "hd_sha256": hashlib.sha256(data).hexdigest(),
                                                      "size": len(vdata), "key": "k"}), encoding="utf-8")
     for name, body in (("transcript.json", "{}"), ("clips.json", "{}"), ("titles.json", '{"header": {}}')):
         (d / name).write_text(body, encoding="utf-8")

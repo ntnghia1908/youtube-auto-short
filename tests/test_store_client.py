@@ -285,7 +285,7 @@ def test_put_heads_existing_identity_without_sending_body(tmp_path, monkeypatch,
 
 @pytest.mark.parametrize("kind", ["short", "hd", "vertical", "source"])
 @pytest.mark.parametrize("difference", [None, "sha", "size"])
-def test_put_existing_identity_short_revises_others_refuse(tmp_path, monkeypatch, kind, difference):
+def test_put_existing_identity_short_and_vertical_revise_others_refuse(tmp_path, monkeypatch, kind, difference):
     import io
     from urllib.parse import urlsplit
 
@@ -303,7 +303,7 @@ def test_put_existing_identity_short_revises_others_refuse(tmp_path, monkeypatch
         response.headers = {"X-Sha256": "0" * 64 if difference == "sha" else sha,
                             "Content-Length": str(len(BIG) + (difference == "size"))}
         if req.method == "PUT":
-            assert kind == "short" and difference
+            assert kind in ("short", "vertical") and difference
             assert req.data.read() == BIG and req.get_header("X-sha256") == sha
             assert int(req.get_header("Content-length")) == len(BIG)
         else:
@@ -313,12 +313,12 @@ def test_put_existing_identity_short_revises_others_refuse(tmp_path, monkeypatch
     monkeypatch.setattr("urllib.request.urlopen", opened)
     client = StoreClient("http://unused", TOKEN)
     kw = {"clip": "k01.mp4"} if kind == "short" else {}
-    if difference and kind != "short":
+    if difference and kind not in ("short", "vertical"):
         with pytest.raises(StoreMismatch):
             client.put(VID, kind, "PL1", path.name, path, sha, **kw)
     else:
         client.put(VID, kind, "PL1", path.name, path, sha, **kw)
-    assert calls == (["HEAD", "PUT"] if kind == "short" and difference else ["HEAD"])
+    assert calls == (["HEAD", "PUT"] if kind in ("short", "vertical") and difference else ["HEAD"])
 
 
 def test_put_rejects_invalid_series_before_sending_body(tmp_path, monkeypatch):
