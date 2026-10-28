@@ -227,7 +227,7 @@ def test_run_vertical_real_encode_and_reuse(tcfg):
     assert not any(p.name.endswith(".part") for p in r1.path.parent.iterdir())
 
 
-def test_run_vertical_without_hd_or_header(tcfg):
+def test_run_vertical_without_hd_then_without_titles(tcfg):
     make_ep(tcfg)
     with pytest.raises(RenderError, match="HD"):
         full.run_vertical(VID, tcfg)
@@ -235,8 +235,8 @@ def test_run_vertical_without_hd_or_header(tcfg):
     _ffmpeg_clip(d / "source_hd.mp4", seconds=1)
     write_hd(tcfg, VID, (d / "source_hd.mp4").read_bytes())
     (d / "titles.json").unlink()
-    with pytest.raises(RenderError, match="titles"):
-        full.run_vertical(VID, tcfg)
+    full.run_vertical(VID, tcfg)  # VERT1: no titles.json -> the deterministic header, titles.json not written
+    assert not (d / "titles.json").exists()
 
 
 def test_split_header_and_dot_space():

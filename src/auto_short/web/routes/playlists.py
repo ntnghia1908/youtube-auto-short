@@ -100,7 +100,9 @@ def build(ctx: WebContext) -> APIRouter:
         """CP8.32 V3: ``("todo", None)`` when "Tạo bản dọc cả bộ" would queue this entry, else ``("skip", reason)``."""
         if not e.get("available"):
             return "skip", "tập không khả dụng"
-        if e.get("state") not in (playlists_mod.RENDERED, playlists_mod.COMPLETE):
+        if e.get("state") == playlists_mod.NEW:
+            return "skip", "chưa tải — bấm Chuẩn bị + HD trước"
+        if e.get("state") not in (playlists_mod.PREPARED, playlists_mod.RENDERED, playlists_mod.COMPLETE):
             return "skip", "chưa xong Short"
         if render_full.current(ctx.config, vid):
             return "skip", "đã có bản dọc"

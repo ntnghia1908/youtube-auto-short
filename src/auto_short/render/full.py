@@ -358,13 +358,20 @@ def _run_vertical(episode_id: str, config: Config, *, run, force: bool, note: st
                           f"{config.enhance.min_height}p)")
     cfg = config.render
     titles_path = ws.dir / "titles.json"
-    if not titles_path.is_file():
-        raise RenderError(f"chưa có tiêu đề (titles.json) của {owner!r}; chạy xử lý tập trước")
-    titles = read_stage_json(titles_path, "titling", RenderError)
-    lines = [nfc(x) for x in ((titles.get("header") or {}).get("lines") or []) if isinstance(x, str)]
+    if titles_path.is_file():
+        titles = read_stage_json(titles_path, "titling", RenderError)
+        header_doc = titles.get("header") or {}
+    else:
+        from ..titling.stage import TitlingError, resolve_workspace_header
+        try:
+            header_doc = resolve_workspace_header(config, ws.dir)
+        except TitlingError as exc:
+            raise RenderError(f"không xác định được tiêu đề của {owner!r}; đặt \"Tên bộ kinh\" hoặc cấu hình "
+                              f"mẫu tiêu đề [titling.header] title_patterns: {exc}") from exc
+    lines = [nfc(x) for x in (header_doc.get("lines") or []) if isinstance(x, str)]
     if not lines:
         raise RenderError(f"titles.json của {owner!r} không có header")
-    top_text, speaker = split_header(lines, ((titles.get("header") or {}).get("fields") or {}).get("speaker"))
+    top_text, speaker = split_header(lines, (header_doc.get("fields") or {}).get("speaker"))
     fpath = font_path(cfg)
     if not fpath.is_file():
         raise RenderError(f"font file not found: {fpath} (config render.font_file)")

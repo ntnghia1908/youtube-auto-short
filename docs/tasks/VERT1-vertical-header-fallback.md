@@ -12,7 +12,7 @@
 - Authorization mode: task
 - Authorization source: HUMAN LEAD 2026-10-28 "Sửa code để bản dọc tự tạo dòng tiêu đề khi không có Short" (trả lời đề xuất ORCHESTRATOR cùng ngày)
 - Parallel group: —
-- Owned paths: `src/auto_short/render/full.py`, `src/auto_short/titling/stage.py`, `src/auto_short/web/episodes.py` (`video_download_name`), `src/auto_short/web/routes/playlists.py` (`_vertical_status`), `tests/test_vertical_header_fallback.py`, contract này
+- Owned paths: `src/auto_short/render/full.py`, `src/auto_short/titling/stage.py`, `src/auto_short/web/episodes.py` (`video_download_name`), `src/auto_short/web/routes/playlists.py` (`_vertical_status`), `tests/test_vertical_header_fallback.py`, `tests/test_web_hd_cp827.py` (ORCHESTRATOR bổ sung 2026-10-28: test cũ khẳng định hành vi bị thay), contract này
 - Dependencies: CP8.27 H4 (bản dọc), CP8.32 V3 ("Tạo bản dọc cả bộ"), CP13.2 H1 ("Chuẩn bị + HD"), HD2b (offload)
 - Base commit / branch: `8de2f9d` (`main`) / `feature/vert1-header-fallback`
 - Human Lead approval: APPROVED 2026-10-28 (yêu cầu trực tiếp)
@@ -87,11 +87,30 @@ Không chạm database, security model hay public API contract → điểm danh.
 
 ## Result
 
-- Main changes:
-- Tests:
-- Diff + / − (app, test):
-- Helper mới (đã tìm, lý do không tái dùng):
-- Review:
-- Important findings / decisions:
-- Known limitations:
-- PR:
+- Main changes: IMPLEMENTER hoàn tất 2026-10-28; giữ IN_PROGRESS, chờ ORCHESTRATOR chạy web / full suite và review trước READY. Sửa `titling/stage.py`, `render/full.py`, `web/episodes.py` (`video_download_name`), `web/routes/playlists.py` (`_vertical_status`); thêm `tests/test_vertical_header_fallback.py`.
+- Tests (Python và PYTHONPATH đúng worktree được giao, không gọi mạng thật):
+  - `env PYTHONPATH=/home/ntnghia/projects/youtube-auto-short/.claude/worktrees/fix-ytdlp-timeout/src /home/ntnghia/miniconda3/envs/auto-short/bin/python -m pytest -q -x --tb=short tests/test_vertical_header_fallback.py tests/test_titling_stage.py tests/test_titling_logic.py tests/test_titling_added_cp9.py -k 'not test_ac5_playlist_queues_prepared_and_rendered_skips_new_and_unfinished'` → **110 passed, 1 deselected**, 2.33 s (sau khi sửa assertion để tính việc ngắt dòng của layout hiện có).
+  - `env PYTHONPATH=/home/ntnghia/projects/youtube-auto-short/.claude/worktrees/fix-ytdlp-timeout/src /home/ntnghia/miniconda3/envs/auto-short/bin/python -m pytest -q -x --tb=short tests/test_web_vertical_cp832.py tests/test_web_auto_vertical_cp835.py -k 'test_effective_source_rules or test_run_vertical_from_original_real_encode_and_reuse or test_refetch_wrong_video_is_refused_and_cleaned or test_refetch_different_bytes_warns_but_is_used or test_auto_archive_waits_for_a_vertical_job or test_ac1_ui_boxes_and_defaults or test_wish_file_unreadable_is_ignored'` → **7 passed, 30 deselected**, 7.25 s; có render thật bằng ffmpeg, không TestClient.
+  - `node scripts/framework-check.mjs` → PASS; `git diff --check` → PASS.
+
+  | AC | Test trong `test_vertical_header_fallback.py` | Kết quả IMPLEMENTER |
+  |---|---|---|
+  | 1 | `test_ac1_vertical_without_titles` (patterns / playlist) | PASS |
+  | 2 | `test_ac2_titling_keeps_header_hash_and_vertical_key` | PASS |
+  | 3 | `test_ac3_unresolved_header_is_render_error_and_name_falls_back` | PASS |
+  | 4 | AC1 kiểm số tập từ cả hai nguồn; AC3 kiểm fallback; `test_existing_titles_keep_manual_header_and_download_name` | PASS |
+  | 5 | `test_ac5_playlist_queues_prepared_and_rendered_skips_new_and_unfinished` | PASS (ORCHESTRATOR, ngoài sandbox) |
+  | 6 | Full suite `-q -n auto` | PASS (ORCHESTRATOR) |
+
+- Diff + / − (app, test): app **+40 / −13**; test **+179 / −0** (file mới, dùng `git diff --no-index --numstat /dev/null tests/test_vertical_header_fallback.py` để tính khi chưa stage).
+- Helper mới (đã tìm, lý do không tái dùng): `titling.stage.resolve_workspace_header(config, workspace_dir, metadata=None, cli=None)` ghép đọc metadata với quy tắc header sẵn có. Đã tìm bằng `rg -n 'resolve_header|playlist_header|split_header|def .*header|def run_titling|def _run_vertical|def video_download_name|def _vertical_status' src/auto_short tests/render_helpers.py tests/titling_helpers.py`. Tái dùng `resolve_header`, `playlist_header`, `split_header`; `packaging.episode.header` chỉ trả fields và áp validation thumbnail nên không thay thế được helper này. Test tái dùng `HEADER` của `render_helpers`, workspace / client giả của `titling_helpers`, fixture / workspace / HD / playlist của `test_web_vertical_cp832`; thêm hai fixture cục bộ cho workspace prepared và ffprobe / ffmpeg giả vì chưa có helper phù hợp (đã tìm `CompletedProcess`, `fake.*(probe|ffmpeg)`, `def .*runner` trong các test helper / render liên quan).
+- Review: IMPLEMENTER tự soát diff theo scope / AC; giữ nhánh ưu tiên `titles.json`, cfg hash titling, key và schema vertical; không sửa auto vertical / borrow / offload. Review độc lập chờ ORCHESTRATOR.
+- Important findings / decisions: `vertical.json.header` hiện lưu dòng hiển thị đã fit của panel trên, người giảng ở `speaker`; test so sánh nội dung qua `split_header` và cho phép layout ngắt dòng. Không đổi schema hay ghi `titles.json` từ bản dọc.
+- Known limitations: theo chỉ thị giao việc, không chạy TestClient do sandbox thiếu socket loopback; không thử khởi chạy rồi đợi treo. Hai lệnh Required verification pytest không lọc (AC1–5 và `-q -n auto`) chưa chạy; ORCHESTRATOR chạy ngoài sandbox. Chạy thật và manual checklist chưa thực hiện.
+- ORCHESTRATOR 2026-10-28:
+  - Review diff: đúng scope / Code bị thay; lỗi header ở `video_download_name` được nuốt → tập chưa có workspace giữ tên theo id.
+  - `pytest -q tests/test_vertical_header_fallback.py tests/test_web_vertical_cp832.py tests/test_web_auto_vertical_cp835.py tests/test_titling_logic.py tests/test_titling_stage.py tests/test_titling_added_cp9.py tests/test_web_titles.py` → **167 passed**.
+  - Full suite lần 1: 1 fail `test_web_hd_cp827.py::test_run_vertical_without_hd_or_header` — test khẳng định hành vi cũ (thiếu `titles.json` → lỗi) mà contract thay; đổi tên thành `test_run_vertical_without_hd_then_without_titles`, phần cuối khẳng định dựng được + không ghi `titles.json`. Lần 2: **3273 passed, 1 skipped**. `framework-check` PASS, `git diff --check` PASS.
+  - Codex: 1 vòng, 84.930 tokens, không vòng sửa.
+  - Chạy thật: chờ 20 job bản dọc VLT 31–50 xong rồi pin 8080 lên nhánh.
+- PR: (điền khi mở)
