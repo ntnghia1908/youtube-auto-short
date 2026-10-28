@@ -80,11 +80,40 @@ Không chạm database / security model / public API.
 
 ## Result
 
-- Main changes:
-- Tests:
-- Diff + / − (app, test):
+- Main changes (IMPLEMENTER 2026-10-28): implementation hoàn tất trong Owned paths; **chưa READY, BLOCKED ở verification AC6** do sandbox không có socket. Giữ Status `IN_PROGRESS` để ORCHESTRATOR chạy verification còn lại / review.
+  - Thêm `packaging/cover.py`: `cover.json` schema 1, `shapes.<shape> = {file, sha256, box, prompt?}`; chuẩn hoá PNG theo `EPISODE_SIZES` bằng scale + crop giữa (`exact=1`), quy đổi box; kiểm probe / decode / SHA / symlink; thay file nguyên tử và rollback ảnh nếu ghi metadata lỗi; gỡ theo khổ.
+  - Chữ `TẬP N`: PlayfairDisplaySC-Bold (font serif style A), vàng kim + bóng 2 px; đo cả dấu bằng `Font` / `_fit_line`, căn giữa box, giới hạn 80 % rộng / 60 % cao; JPEG dùng `_encode` / `MAX_BYTES` hiện có.
+  - `episode.py`: cover ưu tiên theo khổ trong build / preview / valid_files, cache gồm SHA ảnh + box + số tập + `COVER_LAYOUT_VERSION` + SHA font + shape. `asset_id` / `asset_ids` đọc được nguồn `cover:<sha>`. Khổ không có mẫu giữ nguyên key và đường render PKG2.
+  - CLI `python -m auto_short.packaging [--config F] cover install|remove|show`; `install` nhận `--playlist`, `--shape`, `--image`, `--box`, `--prompt-file` tùy chọn.
+  - Files đổi: `src/auto_short/packaging/{cover.py,episode.py,__main__.py}`, `tests/test_packaging_cover.py`, contract này.
+- Tests — AC → bằng chứng (tên test dưới đây thuộc `test_packaging_cover.py` trừ khi ghi khác):
+
+  | AC | Test |
+  |---|---|
+  | 1 | `test_install_normalizes_box_sha_and_prompt`; `test_invalid_install_preserves_previous_cover`; `test_cli_install_show_remove_and_bad_box` |
+  | 2 | `test_build_preview_and_other_shape_remains_byte_identical`; `test_number_fits_and_pixels_change_only_inside_box` (JPEG 2 khổ; sai lệch xám ngoài box trung bình < 2, cực đại < 24 / 255; trong box có chữ) |
+  | 3 | `test_cache_invalidates_cover_only` (ảnh / box / số / layout / font, gỡ mẫu); `test_tampered_cover_or_thumbnail_is_never_current`; `test_vert2_intro_rebuilds_when_cover_changes` |
+  | 4 | `test_number_fits_and_pixels_change_only_inside_box` (1, 51, 102 × 2 khổ); `test_small_box_and_missing_glyph_fail_before_ffmpeg` |
+  | 5 | `test_packaging_episode.py::test_keys_unchanged_without_vertical_override`; `test_packaging_thumbnail.py::test_episode_filtergraph_identical_to_pre_refactor`; test build / preview ở AC2 so byte khổ không có mẫu |
+  | 6 | Framework checker + diff check PASS; full suite chưa chạy trong sandbox; không khẳng định AC6 PASS |
+
+  Prefix cho các lệnh pytest dưới đây: `env PYTHONPATH=/home/ntnghia/projects/youtube-auto-short/.claude/worktrees/fix-ytdlp-timeout/src /home/ntnghia/miniconda3/envs/auto-short/bin/python -m pytest -q`.
+  - `<prefix> tests/test_packaging_cover.py tests/test_packaging_thumbnail.py -x --tb=short`: **122 passed**, 59.55 s (33 test cover).
+  - `<prefix> tests/test_packaging_episode.py tests/test_packaging_thumbnail.py -x --tb=short`: **173 passed**, 51.94 s.
+  - `<prefix> tests/test_web_episode_thumbs.py -k service -x --tb=short`: **8 passed, 7 deselected**, 4.35 s; 1 warning Starlette/httpx có sẵn.
+  - `<prefix> tests/test_publish_thumbs.py tests/test_vertical_silence_intro.py -x --tb=short`: **44 passed**, 17.84 s; transport giả / gọi handler trực tiếp, không socket.
+  - Sau khi thêm `crop exact=1`: `<prefix> tests/test_packaging_cover.py -k install -x --tb=short`: **13 passed, 20 deselected**, 6.99 s.
+  - `node scripts/framework-check.mjs`: PASS. `git diff --check`: PASS. Các lệnh test bổ sung dùng `timeout 295s`; không lệnh nào vượt 5 phút.
+- Diff + / − (app, test): app **+231 / −18**; test **+254 / −0**. Đếm từ `git diff --numstat` và `git diff --no-index --numstat /dev/null <file mới>` (không stage).
 - Helper mới (đã tìm, lý do không tái dùng):
-- Review:
-- Important findings / decisions:
-- Known limitations:
-- PR:
+  - Đã grep `rg -n 'probe|atomic_write_json|def .*image|def .*box|cache_key|recorded_asset|asset_ids' src/auto_short/packaging src/auto_short/ingest tests/test_packaging* tests/test_web_episode_thumbs.py` và `rg -n '^def |EPISODE_|STYLE_FONTS|class .*Line' src/auto_short/packaging/thumbnail.py src/auto_short/render/text.py src/auto_short/packaging/assets.py` trước khi thêm helper.
+  - `cover.directory/read/current/install/remove`: namespace / schema / lifecycle ảnh mẫu mới, khác kho asset có license; tái dùng `episode.settings_path/_no_symlinks`, `probe_media`, `read_json_dict`, `atomic_write_json`, `sha256_file`.
+  - `cover._box`: cần kiểm hình chữ nhật trước và sau crop; helper có sẵn chỉ định nghĩa layout/badge, không kiểm box ảnh đầu vào.
+  - `cover.number_line/build_episode`: một nhãn căn giữa box tuỳ ý khác layout A/B/C cố định; tái dùng `thumbnail._fit_line/_draw_text/_encode/EpisodeLine`, `STYLE_FONTS/EPISODE_FONTS`, `Font/check_glyphs`. Không thêm thuật toán đo chữ / encoder khác.
+  - Test `cfg` tái dùng `seed_episodes`; `source_image` dựng ảnh lavfi nhiều kích thước / màu, `gray` giải mã kênh xám để so pixel; đã tìm `rg -n 'def .*rgb|def .*gray|def .*pixel|source_image|number_line' tests src/auto_short/packaging`, helper RGB hiện có ở test render không cung cấp dữ liệu xám cho 2 kích thước này.
+- Review: IMPLEMENTER tự rà diff / AC / cache / rollback / symlink; không thấy blocking finding trong implementation. Review độc lập của ORCHESTRATOR còn chờ. Không commit / push / PR; không gọi mạng, agent khác hoặc công cụ tạo ảnh.
+- Important findings / decisions: box bị crop ra ngoài ảnh hoặc quá nhỏ sau quy đổi bị từ chối trước khi ghi; cover có SHA sai / file thiếu không âm thầm quay về PKG2. Hai file được replace riêng, kiểm SHA ngăn phục vụ dữ liệu lệch nếu tiến trình bị ngắt giữa hai lần replace; ghi metadata lỗi thông thường đã có rollback được test.
+- Known limitations / lệnh chưa chạy:
+  - `<prefix> -n auto` (full suite) và `<prefix> tests/test_web_episode_thumbs.py` đầy đủ (7 test HTTP TestClient): không chạy vì ràng buộc không socket / loopback của sandbox; ORCHESTRATOR cần chạy ngoài sandbox. Các service test đã chạy riêng.
+  - Chạy thật cài 4 mẫu VLT / Địa Tạng × 2 khổ và HUMAN LEAD duyệt ảnh tập 1 / 51 / 102: còn chờ ORCHESTRATOR; IMPLEMENTER chỉ dùng ảnh tổng hợp cục bộ.
+- PR: chưa tạo theo chỉ thị.
