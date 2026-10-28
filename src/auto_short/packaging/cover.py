@@ -13,9 +13,9 @@ from ..render.text import Font, check_glyphs
 from ..workspace import atomic_write_json, read_json_dict
 from . import PackageError, assets, thumbnail
 
-COVER_LAYOUT_VERSION = 2
+COVER_LAYOUT_VERSION = 3
 FIT_WIDTH, FIT_HEIGHT = 0.8, 0.85  # share of the box the number ink (with diacritics) may fill
-FONT_NAME = thumbnail.STYLE_FONTS["A"][0]
+FONT_NAME = "old"  # Old Standard: lining figures; Playfair SC old-style digits read poorly (HUMAN LEAD 2026-10-28)
 
 
 def directory(config, pid):
