@@ -13,7 +13,8 @@ from ..render.text import Font, check_glyphs
 from ..workspace import atomic_write_json, read_json_dict
 from . import PackageError, assets, thumbnail
 
-COVER_LAYOUT_VERSION = 1
+COVER_LAYOUT_VERSION = 2
+FIT_WIDTH, FIT_HEIGHT = 0.8, 0.85  # share of the box the number ink (with diacritics) may fill
 FONT_NAME = thumbnail.STYLE_FONTS["A"][0]
 
 
@@ -147,7 +148,7 @@ def number_line(number, box):
     font = Font(thumbnail.EPISODE_FONTS[FONT_NAME])
     check_glyphs(font, [text])
     x, y, w, h = box
-    width, height = int(w * 0.8), int(h * 0.6)
+    width, height = int(w * FIT_WIDTH), int(h * FIT_HEIGHT)
     # _fit_line keeps a fixed reference baseline; using the same text centres this single label.
     size, _ = thumbnail._fit_line(text, FONT_NAME, max(12, height * 2), width,
                                 reference=text, nominal_top=y + (h - height) / 2 + 2,

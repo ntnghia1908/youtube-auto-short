@@ -144,8 +144,8 @@ def test_number_fits_and_pixels_change_only_inside_box(cfg, tmp_path, shape, num
     line = cover.number_line(str(number), box)
     font = Font(thumbnail.EPISODE_FONTS[line.font])
     top, bottom = font.ink_bounds(line.text, line.size)
-    assert font.width(line.text, line.size) <= box[2] * 0.8
-    assert bottom - top + 2 <= box[3] * 0.6
+    assert font.width(line.text, line.size) <= box[2] * cover.FIT_WIDTH
+    assert bottom - top + 2 <= box[3] * cover.FIT_HEIGHT
     assert line.y + (top + bottom + 2) / 2 == pytest.approx(box[1] + box[3] / 2, abs=1)
     before, after = gray(image), gray(output)
     x, y, w, h = box
@@ -166,7 +166,7 @@ def test_number_fits_and_pixels_change_only_inside_box(cfg, tmp_path, shape, num
     assert outside_peak < 24  # no painted text can hide in the average of the untouched image
     assert len(inside_changes) > 500
     xs, ys = zip(*inside_changes)
-    assert max(xs) - min(xs) <= w * 0.8 and max(ys) - min(ys) <= h * 0.6 + 4
+    assert max(xs) - min(xs) <= w * cover.FIT_WIDTH and max(ys) - min(ys) <= h * cover.FIT_HEIGHT + 4
     assert (min(xs) + max(xs)) / 2 == pytest.approx(x + w / 2, abs=12)
 
 
