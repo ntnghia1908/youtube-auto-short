@@ -173,18 +173,56 @@ def build_episode(work, fields, shape, image, filename, *, entry, run=None):
     return draw_lines(work, [line], image, filename, run=run)
 
 
-def draw_lines(work, lines, image, filename, *, run=None):
-    """Shared COV1 encoder: one number or several title lines, identical styling."""
+def portrait_box(shape, box, source_size):
+    """Bottom-anchor an RGBA cutout without covering the writing surface."""
+    width, height = SIZES[shape]
+    sw, sh = source_size
+    if shape == "landscape":
+        ph = round(height * .92)
+        pw = round(ph * sw / sh)
+        # Keep the right edge flush; shrink wide portraits to at most 4% overlap.
+        pw = min(pw, max(1, round(width - box[0] - box[2] + width * .04)))
+        ph = min(ph, round(pw * sh / sw))
+        pw = max(1, round(ph * sw / sh))
+        return pw, ph, width - pw, height - ph
+    ph = min(round(height * .48), height - box[1] - box[3])
+    ph = max(1, min(ph, round(width * .84 * sh / sw)))
+    pw = max(1, round(ph * sw / sh))
+    return pw, ph, round(width * .42 - pw / 2), height - ph
+
+
+def draw_lines(work, lines, image, filename, *, run=None, styles=None, portrait=None, shape=None, box=None):
+    """Shared COV1 encoder, with optional KT fonts, colors and portrait before text."""
     font = work / "cover.ttf"
     shutil.copyfile(thumbnail.EPISODE_FONTS[FONT_NAME], font)
     graph = "[0:v]setsar=1[base]"
+    runner = run or _run
+    if portrait is not None:
+        stream = probe_media(portrait, runner)["video"]
+        pw, ph, px, py = portrait_box(shape, box, (int(stream["width"]), int(stream["height"])))
+        local = work / "portrait.png"
+        shutil.copyfile(portrait, local)
+        graph = (f"[0:v]setsar=1[background];[1:v]scale={pw}:{ph},setsar=1,format=rgba[portrait];"
+                 f"[background][portrait]overlay={px}:{py}:format=auto[base]")
+        def encode_runner(cmd):
+            index = cmd.index("-filter_complex_script")
+            return runner(cmd[:index] + ["-i", str(local)] + cmd[index:])
+    else:
+        encode_runner = runner
     for index, line in enumerate(lines):
+        color, shadow = "0xe8bf62", True
+        line_font = font
+        if styles is not None:
+            style = styles[index]
+            line_font = work / f"cover-{line.font}.ttf"
+            shutil.copyfile(thumbnail.EPISODE_FONTS[line.font], line_font)
+            color, shadow = style["color"], style["shadow"]
         graph += ";" + thumbnail._draw_text(
-            work, index, line.text, line.size, "0xe8bf62", f"{line.x}+({line.width}-text_w)/2", line.y,
-            "base" if index == 0 else f"text{index - 1}", font_file=font,
-            options=":y_align=baseline:shadowcolor=0x241507@0.65:shadowx=2:shadowy=2")
+            work, index, line.text, line.size, color, f"{line.x}+({line.width}-text_w)/2", line.y,
+            "base" if index == 0 else f"text{index - 1}", font_file=line_font,
+            options=":y_align=baseline" + (":shadowcolor=0x241507@0.65:shadowx=2:shadowy=2" if shadow else ""))
     return thumbnail._encode(work, graph + f";[text{len(lines) - 1}]format=yuvj420p[out]",
-                             image, filename, run or _run)
+                             image, filename, encode_runner)
 
 
 def install_set(config, pid, images, *, prompt=None, run=None):
@@ -192,14 +230,27 @@ def install_set(config, pid, images, *, prompt=None, run=None):
 
     A crash before the manifest swap leaves only unreferenced images; readers keep the old set.
     """
-    from . import episode
     if set(images) != set(SIZES):
         raise PackageError("cần đủ bốn khổ ảnh bìa")
+    return _install_shapes(config, pid, images, {}, prompt=prompt, run=run)
+
+
+def install_kt(config, pid, images, *, prompt=None, run=None):
+    """Publish just the KT pair; preserve existing episode entries byte for byte."""
+    if set(images) != {"kt_vertical", "kt_landscape"}:
+        raise PackageError("cần đủ hai khổ ảnh khai thị")
+    entries = current(config, pid)
+    if "vertical" not in entries:
+        raise PackageError("bộ kinh chưa có bìa dọc")
+    return _install_shapes(config, pid, images, dict(entries), prompt=prompt, run=run)
+
+
+def _install_shapes(config, pid, images, entries, *, prompt=None, run=None):
+    from . import episode
     folder = directory(config, pid)
     folder.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".cover-set-", dir=folder) as tmp:
         staging = replace(config, render=replace(config.render, output_dir=Path(tmp)))
-        entries = {}
         for shape, (image, box) in images.items():
             entry = install(staging, pid, shape, image, box, prompt=prompt, run=run)
             source = directory(staging, pid) / entry["file"]

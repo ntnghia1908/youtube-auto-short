@@ -25,7 +25,14 @@ def cfg(tmp_path):
 
 @pytest.fixture
 def artwork(tmp_path):
-    return {"vertical": source_image(tmp_path, (540, 960)), "landscape": source_image(tmp_path, (640, 360))}
+    images = {}
+    for shape, size in (("vertical", (540, 960)), ("landscape", (640, 360))):
+        path = tmp_path / f"{shape}-flat.png"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+                        f"color=c=0x145b58:s={size[0]}x{size[1]}", "-frames:v", "1", "-threads", "1", str(path)],
+                       check=True, timeout=30)
+        images[shape] = path
+    return images
 
 
 def fake_codex(artwork, calls=None, damage=None):
@@ -33,12 +40,12 @@ def fake_codex(artwork, calls=None, damage=None):
         if calls is not None:
             calls.append(dict(cmd=cmd, prompt=input, timeout=timeout))
         folder = Path(cmd[cmd.index("-C") + 1])
-        names = suggest.OPTIONS if '"option-1.png": {"shape":' in input else suggest.VARIANTS
+        names = suggest.OPTIONS if '"option-1.png": {"shape":' in input else suggest.KT if '"landscape.png": {"shape":' not in input else suggest.VARIANTS
         boxes = {}
         for name, shape in names.items():
             vertical = shape.endswith("vertical")
             shutil.copyfile(artwork["vertical" if vertical else "landscape"], folder / name)
-            boxes[name] = ([60, 500, 420, 300] if vertical else [60, 160, 520, 150]) if shape.startswith("kt_") else (
+            boxes[name] = ([50, 130, 440, 380] if vertical else [30, 125, 360, 235]) if shape.startswith("kt_") else (
                 [100, 700, 300, 100] if vertical else [100, 240, 300, 50])
         atomic_write_json(folder / "boxes.json", boxes)
         if damage:
@@ -346,8 +353,8 @@ def test_suggestion_response_keeps_preview_urls_and_redacts_paths(cfg, phase):
     ("landscape", [40, 240, 353, 50], True),
     ("landscape", [40, 240, 300, 65], True),
     ("landscape", [40, 240, 180, 50], False),
-    ("kt_vertical", [60, 500, 420, 300], False),
-    ("kt_landscape", [60, 160, 520, 150], False),
+    ("kt_vertical", [50, 130, 440, 380], False),
+    ("kt_landscape", [30, 125, 360, 235], False),
 ])
 def test_box_limits_use_original_image_dimensions(artwork, tmp_path, shape, box, oversized):
     work = tmp_path / "validate"
@@ -484,3 +491,92 @@ def test_feedback_state_schema_rejects_invalid_fields(cfg, field, value):
     suggest.save(suggest.directory(cfg, PID, doc["run_id"]), doc)
     with pytest.raises(PackageError, match="trạng thái"):
         suggest.state(cfg, PID, doc["run_id"])
+
+
+@pytest.mark.parametrize("shape,box,valid", [
+    ("kt_landscape", [30, 30, 320, 260], True),
+    ("kt_landscape", [0, 0, 288, 234], True),
+    ("kt_landscape", [10, 20, 287, 260], False),
+    ("kt_landscape", [0, 20, 423, 260], False),
+    ("kt_landscape", [10, 20, 320, 233], False),
+    ("kt_landscape", [120, 20, 320, 260], False),
+    ("kt_vertical", [50, 130, 440, 380], True),
+    ("kt_vertical", [0, 0, 405, 269], True),
+    ("kt_vertical", [50, 80, 404, 380], False),
+    ("kt_vertical", [50, 80, 440, 268], False),
+    ("kt_vertical", [50, 20, 440, 461], False),
+    ("kt_vertical", [50, 200, 440, 380], False),
+])
+def test_kt_frame_new_size_and_position_limits(artwork, tmp_path, shape, box, valid):
+    name = shape + ".png"
+    shutil.copyfile(artwork[shape.removeprefix("kt_")], tmp_path / name)
+    atomic_write_json(tmp_path / "boxes.json", {name: box})
+    good, errors = suggest.validate(tmp_path, {name: shape})
+    assert bool(good) == valid
+    assert errors == ({} if valid else {name: "khung khai thị sai vị trí / cỡ"})
+
+
+def test_kt_prompt_and_only_two_output_specs():
+    text = suggest.prompt(dict(series="Kinh", speaker="HT. Tịnh Không"), "", "kt")
+    for rule in ("không vẽ chữ", "không vẽ người", "50–62%", "70%", "80%", "30–45%", "52%", "nửa phải", "nửa dưới", "phẳng tối"):
+        assert rule in text
+    spec = json.loads(text.split("ưu tiên kích thước yêu cầu):\n")[1].split("\nTự dùng")[0])
+    assert set(spec) == set(suggest.KT)
+
+
+def test_kt_run_uses_installed_reference_previews_install_and_feedback(cfg, artwork, monkeypatch):
+    from test_khaithi_thumbs import seed_kt, portrait_manifest
+    from test_packaging_episode import IDS
+    from auto_short.hashing import sha256_file
+    seed_kt(cfg)
+    portrait_manifest(cfg)
+    for shape in ("vertical", "landscape"):
+        cover.install(cfg, PID, shape, artwork[shape], [100, 700, 300, 100] if shape == "vertical" else [100, 240, 300, 50])
+    original = cover.current(cfg, PID)
+    expected = (cover.directory(cfg, PID) / original["vertical"]["file"]).read_bytes()
+    episode.build_episode(cfg, IDS[0], pid=PID)
+    before = episode.read(cfg, IDS[0])
+    hashes = {s: sha256_file(episode.directory(cfg, IDS[0]) / e["file"]) for s, e in before["files"].items()}
+    calls = []
+    def runner(cmd, **kwargs):
+        assert Path(cmd[cmd.index("-i") + 1]).read_bytes() == expected
+        return fake_codex(artwork, calls)(cmd, **kwargs)
+    doc = suggest.create_kt(cfg, PID)
+    assert doc["phase"] == "kt" and doc["options"] == {} and doc["selected"] is None
+    folder = suggest.directory(cfg, PID, doc["run_id"])
+    assert (folder / "ref.png").read_bytes() == expected
+    done = suggest.execute(cfg, PID, doc["run_id"], runner=runner)
+    assert done["status"] == "done", done.get("error")
+    assert set(done["variants"]) == set(suggest.KT) and not done["options"]
+    assert [p["file"] for p in done["previews"]] == ["preview-kt-vertical.jpg", "preview-kt-landscape.jpg"]
+    assert not list(folder.glob("option-*.png")) and not (folder / "landscape.png").exists()
+    entries = suggest.install(cfg, PID, doc["run_id"])
+    assert {s: entries[s] for s in original} == original
+    assert cover.read(cfg, PID)["schema_version"] == 2
+    assert episode.build_episode(cfg, IDS[0], pid=PID) == "reused"
+    assert before == episode.read(cfg, IDS[0])
+    assert hashes == {s: sha256_file(episode.directory(cfg, IDS[0]) / e["file"]) for s, e in before["files"].items()}
+    child = suggest.create_feedback(cfg, PID, doc["run_id"], "Nền xanh dịu", "kt")
+    assert child["phase"] == "kt" and child["feedback"] == ["Nền xanh dịu"]
+    shutil.rmtree(folder)
+    result = suggest.execute(cfg, PID, child["run_id"], runner=runner)
+    assert result["status"] == "done", result.get("error")
+    assert set(result["variants"]) == set(suggest.KT)
+    assert "Nền xanh dịu" in json.loads(calls[-1]["prompt"].split("BEGIN_DATA_JSON\n")[1].split("\nEND_DATA_JSON")[0])["gop_y"]
+    with pytest.raises(PackageError):
+        suggest.select(cfg, PID, child["run_id"], "option-1.png")
+    with pytest.raises(PackageError):
+        suggest.create_feedback(cfg, PID, child["run_id"], "Xanh", "options")
+
+
+def test_kt_missing_cover_and_incomplete_pair_fail(cfg, artwork):
+    with pytest.raises(PackageError, match="bìa dọc"):
+        suggest.create_kt(cfg, PID)
+    cover.install(cfg, PID, "vertical", artwork["vertical"], [100, 700, 300, 100])
+    doc = suggest.create_kt(cfg, PID)
+    def damage(folder, boxes):
+        (folder / "kt_landscape.png").unlink()
+    result = suggest.execute(cfg, PID, doc["run_id"], runner=fake_codex(artwork, damage=damage))
+    assert result["status"] == "failed" and "kt_landscape.png" in result["error"]
+    with pytest.raises(PackageError, match="chưa hoàn tất"):
+        suggest.install(cfg, PID, doc["run_id"])

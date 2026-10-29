@@ -86,7 +86,7 @@ class EpisodeThumbs:
         return self.runner.submit(render_key(pid), KIND, ThumbnailTarget(self, pid))
 
     def suggest(self, pid, *, notes="", run_id=None, selected=None,
-                parent_run=None, feedback=None, mode=None, reference=None):
+                parent_run=None, feedback=None, mode=None, reference=None, kt=False):
         if not self.codex_lock.acquire(blocking=False):
             raise Unavailable("đang có một lượt Codex chạy; chờ hoàn tất hoặc hủy")
         try:
@@ -96,6 +96,8 @@ class EpisodeThumbs:
                 raise cover_suggest.MissingCodex(problem)
             if parent_run is not None:
                 doc = cover_suggest.create_feedback(self.config, pid, parent_run, feedback, mode, reference)
+            elif kt:
+                doc = cover_suggest.create_kt(self.config, pid, notes)
             else:
                 doc = (cover_suggest.select(self.config, pid, run_id, selected) if run_id else
                        cover_suggest.create(self.config, pid, notes))
@@ -316,6 +318,10 @@ def register(app: FastAPI, service: EpisodeThumbs):
         # suggestion_view redacts artifact data before attaching trusted application URLs.
         return invoke(pid, lambda: JSONResponse(service.suggestion_view(pid, run_id),
                                                headers={"Cache-Control": "no-store"}))
+
+    @app.post("/api/playlists/{pid}/thumbs/suggest-kt")
+    def suggest_kt(pid: str, body: SuggestIn):
+        return invoke(pid, lambda: response(service.suggest(pid, notes=body.notes, kt=True), 202), write=True)
 
     @app.post("/api/playlists/{pid}/thumbs/suggest/{run_id}/select")
     def select(pid: str, run_id: str, body: SelectIn):

@@ -305,3 +305,50 @@ def test_number_height_capped_in_large_box(shape, box, ratio):
     assert bottom - top + 2 <= cover.SIZES[shape][1] * ratio
     assert line.y + (top + bottom + 2) / 2 == pytest.approx(box[1] + box[3] / 2, abs=1)
     assert bottom - top + 2 < box[3] * cover.FIT_HEIGHT
+
+
+@pytest.mark.parametrize("shape,box,size", [
+    ("landscape", [40, 50, 740, 570], (769, 879)),
+    ("landscape", [40, 50, 740, 570], (1600, 300)),
+    ("vertical", [60, 120, 960, 740], (769, 879)),
+    ("vertical", [60, 120, 960, 740], (1600, 300)),
+])
+def test_kt_portrait_geometry_bottom_and_clear_text_box(shape, box, size):
+    w, h = cover.SIZES[shape]
+    pw, ph, px, py = cover.portrait_box(shape, box, size)
+    assert py + ph == h and pw > 0 and ph > 0
+    assert pw / ph == pytest.approx(size[0] / size[1], abs=.02)
+    if shape == "landscape":
+        assert px + pw == w
+        assert box[0] + box[2] - px <= w * .04 + 1
+        assert ph <= h * .92 + 1
+    else:
+        assert py >= box[1] + box[3]
+        assert px + pw / 2 == pytest.approx(w * .42, abs=1)
+        assert ph <= h * .48 + 1
+
+
+def test_install_kt_schema_one_preserves_episode_entries_and_atomic_failure(cfg, tmp_path, monkeypatch):
+    image = source_image(tmp_path)
+    cover.install(cfg, PID, "vertical", image, [200, 1200, 600, 200])
+    original = cover.current(cfg, PID)
+    assert cover.read(cfg, PID)["schema_version"] == 1
+    images = {"kt_vertical": (image, [60, 120, 960, 740]),
+              "kt_landscape": (source_image(tmp_path, (1280, 720)), [40, 50, 740, 570])}
+    entries = cover.install_kt(cfg, PID, images)
+    assert entries["vertical"] == original["vertical"]
+    assert cover.read(cfg, PID)["schema_version"] == 2
+    folder = cover.directory(cfg, PID)
+    before = (folder / "cover.json").read_bytes()
+    actual = cover.atomic_write_json
+    def fail(path, doc):
+        if path == folder / "cover.json":
+            raise OSError("manifest failed")
+        return actual(path, doc)
+    monkeypatch.setattr(cover, "atomic_write_json", fail)
+    with pytest.raises(OSError, match="manifest failed"):
+        cover.install_kt(cfg, PID, images)
+    assert (folder / "cover.json").read_bytes() == before
+    assert cover.current(cfg, PID) == entries
+    with pytest.raises(PackageError, match="hai khổ"):
+        cover.install_kt(cfg, PID, {"kt_vertical": images["kt_vertical"]})

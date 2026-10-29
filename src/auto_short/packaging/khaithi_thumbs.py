@@ -8,13 +8,15 @@ from pathlib import Path
 
 from .. import khaithi
 from ..hashing import config_hash, sha256_file
+from ..render.stage import RenderError, _run, probe_media
 from ..render.text import Font, TextError, check_glyphs, nfc, wrap_balanced
 from ..review.logic import ReviewError, added_entries, read_review, resolve_titles
 from ..titling.logic import TitlingError
 from ..workspace import atomic_write_json, read_json_dict, utc_now
 from . import PackageError, cover, episode, thumbnail
 
-LAYOUT_VERSION = 1
+LAYOUT_VERSION = 2
+PORTRAIT_NAME = re.compile(r"[0-9]{2}-[0-9a-f]{12}\.png")
 CLIP_ID = re.compile(r"[km][0-9]{2,}")
 FILE_NAME = re.compile(r"([km][0-9]{2,}-(?:vertical|landscape))-([a-f0-9]{64})\.jpg")
 
@@ -83,9 +85,132 @@ def title_lines(title, number, box):
     raise TextError("tiêu đề khai thị không vừa tối đa 3 dòng trong khung")
 
 
-def cache_key(title, number, entry, shape):
+_PORTRAITS = {}  # folder -> (stat signature, result): valid_files runs per episode, decoding 8 PNGs each time is slow
+
+
+def _signature(folder):
+    try:
+        return tuple((p.name, st.st_mtime_ns, st.st_size, st.st_ino) for p in sorted(folder.iterdir())
+                     if (st := p.lstat()))
+    except OSError:
+        return None
+
+
+def portraits(config):
+    """Read only verified, decodable local RGBA PNGs, retaining manifest order."""
+    folder = Path(config.packaging.asset_dir) / "portraits"
+    signature = _signature(folder)
+    cached = _PORTRAITS.get(folder)
+    if signature is not None and cached and cached[0] == signature:
+        return list(cached[1])
+    result = _read_portraits(folder)
+    if signature is not None:
+        _PORTRAITS[folder] = (signature, tuple(result))
+    return result
+
+
+def _read_portraits(folder):
+    try:
+        folder = episode._no_symlinks(folder)
+        doc = read_json_dict(episode._no_symlinks(folder / "portraits.json"))
+        if not doc or type(doc.get("schema_version")) is not int or doc["schema_version"] != 1 \
+                or not isinstance(doc.get("portraits"), list):
+            return []
+    except (PackageError, OSError, ValueError):
+        return []
+    result = []
+    for entry in doc["portraits"]:
+        try:
+            if not isinstance(entry, dict) or not isinstance(entry.get("file"), str) \
+                    or not PORTRAIT_NAME.fullmatch(entry["file"]) \
+                    or not isinstance(entry.get("sha256"), str) or not re.fullmatch(r"[a-f0-9]{64}", entry["sha256"]):
+                continue
+            path = episode._no_symlinks(folder / entry["file"])
+            if not path.is_file() or path.read_bytes()[:8] != b"\x89PNG\r\n\x1a\n" or sha256_file(path) != entry["sha256"]:
+                continue
+            stream = probe_media(path, _run)["video"]
+            if not stream or stream.get("codec_name") != "png" or stream.get("pix_fmt") != "rgba":
+                continue
+            proc = _run(["ffmpeg", "-v", "error", "-xerror", "-i", str(path), "-frames:v", "1", "-f", "null", "-"])
+            if proc.returncode == 0:
+                result.append((path, entry["sha256"]))
+        except (PackageError, RenderError, OSError, ValueError, KeyError, TypeError):
+            continue
+    return result
+
+
+EPISODES_PER_PORTRAIT = 20  # HUMAN LEAD 2026-10-29: every clip of episodes 1-20 shares portrait 1, 21-40 portrait 2, ...
+
+
+def choose_portrait(items, number):
+    return items[(int(number) - 1) // EPISODES_PER_PORTRAIT % len(items)] if items else (None, None)
+
+
+def layout(title, fields, box):
+    """Fit four text groups as one scaled block, including Vietnamese ink and shadow."""
+    title = " ".join(nfc(title).split())
+    if not title:
+        raise TextError("tiêu đề khai thị rỗng")
+    label = "TRÍCH ĐOẠN KHAI THỊ"
+    speaker = " ".join(nfc(fields["speaker"]).upper().split())
+    if not speaker:
+        raise TextError("tên chủ giảng khai thị rỗng")
+    series = nfc(f"{fields['series']} · Tập {fields['episode']}")
+    fonts = {name: Font(thumbnail.EPISODE_FONTS[name]) for name in ("old", "sans")}
+    check_glyphs(fonts["old"], [title])
+    check_glyphs(fonts["sans"], [label, speaker, series])
+    x, y, w, h = box
+    width, height = int(w * cover.FIT_WIDTH), int(h * cover.FIT_HEIGHT)
+    for size in range(min(180, height // 2), 12, -1):
+        wrapped = wrap_balanced(fonts["old"], title, size, width, max_lines=3)
+        if not wrapped:
+            continue
+        # Set speaker size from actual ink, not nominal font size (fonts have different metrics).
+        title_ink = max(b - a for a, b in (fonts["old"].ink_bounds(t, size) for t in wrapped))
+        speaker_size = max(12, round(size * .65))
+        while speaker_size < size:
+            speaker_top, speaker_bottom = fonts["sans"].ink_bounds(speaker, speaker_size)
+            if speaker_bottom - speaker_top >= title_ink * .55:
+                break
+            speaker_size += 1
+        if speaker_size >= size:
+            continue
+        texts = [(label, "sans", max(12, round(size * .36)), "0xf2c66d", False)]
+        texts += [(t, "old", size, "0xe8bf62", True) for t in wrapped]
+        texts += [(speaker, "sans", speaker_size, "0xfff3d6", True),
+                  (series, "sans", max(12, round(size * .32)), "0xe9d9b0", False)]
+        bounds = [fonts[f].ink_bounds(t, s) for t, f, s, _, _ in texts]
+        gap = max(6, round(size * .2))
+        total = sum(b - a + (8 if shadow else 6) for (_, _, _, _, shadow), (a, b) in zip(texts, bounds)) + gap * (len(texts) - 1)
+        if total > height or any(fonts[f].width(t, s) > width * .98 for t, f, s, _, _ in texts):
+            continue
+        top = round(y + (h - total) / 2)
+        lines, styles = [], []
+        try:
+            for (text, font, nominal, color, shadow), (a, b) in zip(texts, bounds):
+                bottom = top + b - a + (8 if shadow else 6)
+                fitted, baseline = thumbnail._fit_line(text, font, nominal, width, reference=text,
+                    nominal_top=top + 2, top=top, bottom=bottom, shadow=2 if shadow else 0, floor=nominal)
+                lines.append(thumbnail.EpisodeLine(text, font, fitted, x, baseline, w, centered=True))
+                styles.append(dict(color=color, shadow=shadow))
+                top = bottom + gap
+            return lines, styles
+        except TextError:
+            continue
+    raise TextError("chữ khai thị không vừa tối đa 3 dòng tiêu đề trong khung")
+
+
+def draw(work, title, fields, entry, shape, image, filename, *, portrait=None, run=None):
+    lines, styles = layout(title, fields, entry["box"])
+    return cover.draw_lines(work, lines, image, filename, styles=styles, portrait=portrait,
+                            shape=shape, box=entry["box"], run=run)
+
+
+def cache_key(title, number, entry, shape, *, portrait_sha256=None, speaker="", series="", portrait_library=()):
     return config_hash(dict(title=nfc(title), episode=number, cover_sha256=entry["sha256"], box=entry["box"],
                             layout_version=LAYOUT_VERSION, font_sha256=sha256_file(thumbnail.EPISODE_FONTS[cover.FONT_NAME]),
+                            sans_sha256=sha256_file(thumbnail.EPISODE_FONTS["sans"]), speaker=nfc(speaker), series=nfc(series),
+                            portrait_sha256=portrait_sha256, portrait_library=portrait_library,
                             shape=shape))
 
 
@@ -118,7 +243,8 @@ def valid_files(config, ident, *, pid=None):
             return {}
         pid = pid or doc["playlist_id"]
         covers = cover.current(config, pid)
-        number = episode.header(config, ident[:-3])["episode"]
+        fields = episode.header(config, ident[:-3])
+        items = portraits(config)
         result = {}
         current_titles = titles(config, ident, include_hidden=True)
         if doc["clip_numbers"] != {t.clip_id: n for n, t in enumerate(current_titles, 1)}:
@@ -127,10 +253,13 @@ def valid_files(config, ident, *, pid=None):
             if not title.title or title.rejected:
                 continue
             files = {}
+            _, portrait_sha = choose_portrait(items, fields["episode"])
             for shape, entry in doc["clips"].get(title.clip_id, {}).items():
                 c = covers.get("kt_" + shape)
                 if c and thumbnail.reusable(directory(config, ident), entry,
-                        cache_key(title.title, number, c, shape), file_pattern=FILE_NAME):
+                        cache_key(title.title, fields["episode"], c, shape, portrait_sha256=portrait_sha,
+                                  speaker=fields["speaker"], series=fields["series"],
+                                  portrait_library=[sha for _, sha in items]), file_pattern=FILE_NAME):
                     files[shape] = entry
             if files:
                 result[title.clip_id] = files
@@ -150,17 +279,21 @@ def build_episode(config, ident, *, pid, run=None):
     if not selected:
         return dict(built=0, reused=0, skipped_reason="chưa có tiêu đề clip khai thị")
     fields = episode.header(config, ident[:-3])
+    items = portraits(config)
     old = read(config, ident) or {}
     doc = dict(schema_version=1, video_id=ident, playlist_id=pid, header=fields, clips={},
                clip_numbers={t.clip_id: n for n, t in enumerate(all_titles, 1)}, updated_at=utc_now())
+    doc["portrait_reason"] = None if items else "chưa có chân dung"
     folder.mkdir(parents=True, exist_ok=True)
     counts = dict(built=0, reused=0, skipped_reason=None)
     staged = []
     with tempfile.TemporaryDirectory(prefix=".kt-thumbs-", dir=folder) as tmp:
         for title in selected:
             files = doc["clips"][title.clip_id] = {}
+            portrait, portrait_sha = choose_portrait(items, fields["episode"])
             for shape, entry in covers.items():
-                key = cache_key(title.title, fields["episode"], entry, shape)
+                key = cache_key(title.title, fields["episode"], entry, shape, portrait_sha256=portrait_sha,
+                                speaker=fields["speaker"], series=fields["series"], portrait_library=[sha for _, sha in items])
                 previous = old.get("clips", {}).get(title.clip_id, {}).get(shape)
                 if thumbnail.reusable(folder, previous, key, file_pattern=FILE_NAME):
                     files[shape] = previous
@@ -169,15 +302,15 @@ def build_episode(config, ident, *, pid, run=None):
                 work = Path(tmp) / f"{title.clip_id}-{shape}"
                 work.mkdir()
                 name = f"{title.clip_id}-{shape}-{key}.jpg"
-                image = cover.draw_lines(work, title_lines(title.title, fields["episode"], entry["box"]),
-                                         cover.directory(config, pid) / entry["file"], name, run=run)
+                image = draw(work, title.title, fields, entry, shape,
+                             cover.directory(config, pid) / entry["file"], name, portrait=portrait, run=run)
                 files[shape] = dict(file=name, key=key, sha256=sha256_file(image))
                 staged.append((image, episode._no_symlinks(folder / name)))
                 counts["built"] += 1
         for source, destination in staged:
             os.replace(source, destination)
         if staged or doc["clips"] != old.get("clips") or fields != old.get("header") \
-                or doc["clip_numbers"] != old.get("clip_numbers"):
+                or doc["clip_numbers"] != old.get("clip_numbers") or doc["portrait_reason"] != old.get("portrait_reason"):
             atomic_write_json(folder / "thumbs.json", doc)
     keep = {f["file"] for files in doc["clips"].values() for f in files.values()}
     for path in folder.iterdir():

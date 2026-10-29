@@ -431,3 +431,65 @@ def test_http_feedback_auth_and_input_status(client, monkeypatch):
     result = s.c.post(url, json=body)
     assert result.status_code == 202 and result.json()["parent_run"] == parent["run_id"]
     s.service.suggest_thread.join(3)
+
+
+def test_http_kt_current_cover_flow_auth_busy_ids_feedback_and_install(client, tmp_path, monkeypatch):
+    """AC10: ORCHESTRATOR runs TestClient coverage outside the socket-restricted sandbox."""
+    import threading
+    from auto_short.packaging import cover, cover_suggest
+    from test_cover_suggest import fake_codex
+    from test_khaithi_thumbs import seed_kt, portrait_manifest
+    from test_packaging_cover import source_image
+    s = client
+    seed_kt(s.cfg)
+    portrait_manifest(s.cfg)
+    monkeypatch.setattr(cover_suggest, "available", lambda _: None)
+    anon = TestClient(s.app, follow_redirects=False)
+    url = BASE + "/suggest-kt"
+    assert anon.post(url, json={}).status_code == 401
+    assert s.c.post("/api/playlists/bad!/thumbs/suggest-kt", json={}).status_code == 404
+    monkeypatch.setattr(cover_suggest, "available", lambda _: "chưa cài Codex trên máy chủ")
+    assert s.c.post(url, json={}).status_code == 503
+    monkeypatch.setattr(cover_suggest, "available", lambda _: None)
+    assert s.c.post(url, json={}).status_code == 400  # no installed vertical cover
+    artwork = {"vertical": source_image(tmp_path, (540, 960)), "landscape": source_image(tmp_path, (640, 360))}
+    for shape in ("vertical", "landscape"):
+        cover.install(s.cfg, PID, shape, artwork[shape], [100, 700, 300, 100] if shape == "vertical" else [100, 240, 300, 50])
+    original = cover.current(s.cfg, PID)
+    reference = (cover.directory(s.cfg, PID) / original["vertical"]["file"]).read_bytes()
+    s.service.media_runner = None
+    entered, release = threading.Event(), threading.Event()
+    def runner(cmd, **kwargs):
+        from pathlib import Path
+        assert Path(cmd[cmd.index("-i") + 1]).read_bytes() == reference
+        entered.set()
+        assert release.wait(10)
+        return fake_codex(artwork)(cmd, **kwargs)
+    s.service.codex_runner = runner
+    try:
+        result = s.c.post(url, json=dict(notes="Nền dịu"))
+        assert result.status_code == 202
+        run_id = result.json()["run_id"]
+        assert entered.wait(3)
+        assert s.c.post(url, json={}).status_code == 409
+    finally:
+        release.set()
+        s.service.suggest_thread.join(30)
+    assert not s.service.suggest_thread.is_alive()
+    run_url = BASE + f"/suggest/{run_id}"
+    done = s.c.get(run_url).json()
+    assert done["phase"] == "kt" and done["status"] == "done", done.get("error")
+    assert len(done["previews"]) == 2
+    for preview in done["previews"]:
+        assert s.c.get(preview["preview_url"]).status_code == 200
+    assert s.c.get(run_url + "/images/ref.png").status_code == 400
+    assert s.c.post(run_url + "/install").status_code == 200
+    assert {shape: cover.current(s.cfg, PID)[shape] for shape in original} == original
+    assert s.c.post(run_url + "/feedback", json=dict(mode="kt", feedback="Màu xanh dịu")).status_code == 202
+    s.service.suggest_thread.join(30)
+    assert not s.service.suggest_thread.is_alive()
+    html = s.c.get(f"/playlists/{PID}/thumbs").text
+    script = s.c.get("/static/thumbs.js").text
+    assert "Vẽ ảnh khai thị theo bìa hiện tại" in html
+    assert "Dùng 2 ảnh này" in script and "Vẽ lại 2 ảnh theo góp ý" in script
+    assert '"/suggest-kt"' in script and 'feedback("kt")' in script

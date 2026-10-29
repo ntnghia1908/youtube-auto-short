@@ -31,15 +31,20 @@
   }
   function draw() {
     const s = view.suggestion, running = s && s.status === "running";
+    const kt = s && s.phase === "kt";
     const job = view.job, active = job && job.active;
     const feedbackDisabled = pending || running || active || Boolean(view.codex_unavailable) || !$("thumbs-feedback").value.trim();
     $("thumbs-feedback-panel").hidden = !s || running;
     $("thumbs-feedback-options").disabled = feedbackDisabled || !s;
-    $("thumbs-feedback-variants").disabled = feedbackDisabled || !s || !s.selected;
+    $("thumbs-feedback-options").hidden = kt;
+    $("thumbs-feedback-variants").disabled = feedbackDisabled || !s || (!kt && !s.selected);
+    $("thumbs-feedback-variants").textContent = kt ? "Vẽ lại 2 ảnh theo góp ý" : "Vẽ lại 3 ảnh theo góp ý";
     $("thumbs-feedback-history").hidden = !s || !(s.feedback || []).length;
     $("thumbs-feedback-list").replaceChildren(...((s && s.feedback) || []).map((text) => el("li", { text })));
     $("thumbs-title").textContent = "Thumbnail cả bộ — " + view.series;
     $("thumbs-suggest").disabled = pending || running || active || Boolean(view.codex_unavailable);
+    $("thumbs-suggest-kt").hidden = !view.covers.vertical;
+    $("thumbs-suggest-kt").disabled = $("thumbs-suggest").disabled;
     $("thumbs-build").disabled = pending || active;
     $("thumbs-cancel").hidden = !running;
     $("thumbs-cancel").disabled = pending;
@@ -49,7 +54,7 @@
     $("thumbs-status").textContent = job ? (job.error || job.summary || job.status) : "";
     $("thumbs-zip").href = view.zip_url;
     $("thumbs-suggest-status").textContent = view.codex_unavailable || (s ?
-      (running ? `Đang vẽ ${s.phase === "options" ? "4 mẫu" : "3 ảnh cùng phong cách"}… Có thể mất vài phút.` :
+      (running ? `Đang vẽ ${kt ? "2 ảnh khai thị" : s.phase === "options" ? "4 mẫu" : "3 ảnh cùng phong cách"}… Có thể mất vài phút.` :
         s.error || (s.installed ? "Đã dùng bộ ảnh này. Bấm Dựng cả bộ để cập nhật thumbnail." : "Đã vẽ xong. Hãy kiểm tra dấu tiếng Việt.")) +
       (s.tokens ? ` (${s.tokens} tokens)` : "") : "");
     const covers = $("thumbs-covers");
@@ -78,7 +83,10 @@
       }
     }
     for (const button of options.querySelectorAll("[data-feedback-revise]")) button.disabled = feedbackDisabled;
-    $("thumbs-accept").hidden = !(s && s.phase === "variants" && s.selected && !running);
+    $("thumbs-accept").hidden = !(s && (kt || (s.phase === "variants" && s.selected)) && !running);
+    $("thumbs-install").textContent = kt ? "Dùng 2 ảnh này" : "Dùng bộ ảnh này";
+    $("thumbs-redraw").hidden = kt;
+    $("thumbs-again").hidden = kt;
     $("thumbs-install").disabled = pending || active || !s || s.status !== "done";
     $("thumbs-redraw").disabled = pending || Boolean(view.codex_unavailable);
     drawEpisodes();
@@ -104,7 +112,8 @@
   }
   $("thumbs-feedback").addEventListener("input", () => { if (view) draw(); });
   $("thumbs-feedback-options").addEventListener("click", () => feedback("options"));
-  $("thumbs-feedback-variants").addEventListener("click", () => feedback("variants"));
+  $("thumbs-feedback-variants").addEventListener("click", () => { if (view.suggestion.phase === "kt") return feedback("kt"); return feedback("variants"); });
+  $("thumbs-suggest-kt").addEventListener("click", () => action("/suggest-kt", { notes: $("thumbs-notes").value }));
   $("thumbs-suggest").addEventListener("click", suggest);
   $("thumbs-again").addEventListener("click", suggest);
   $("thumbs-redraw").addEventListener("click", () => select(view.suggestion.selected));
