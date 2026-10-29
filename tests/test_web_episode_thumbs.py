@@ -321,3 +321,113 @@ def test_http_suggest_choose_install_build_zip_and_kt_links(client, tmp_path, mo
     path.write_bytes(b"tampered")
     assert s.c.get(f"/files/episodes/{IDS[0]}.kt/thumbs/k01-vertical.jpg").status_code == 404
     assert "Thumbnail dọc" in s.c.get("/static/app.js").text
+
+
+def feedback_endpoint(app):
+    return next(route.endpoint for route in app.routes if getattr(route, "path", None) ==
+                "/api/playlists/{pid}/thumbs/suggest/{run_id}/feedback")
+
+
+@pytest.mark.parametrize("status", ["done", "failed", "cancelled"])
+def test_feedback_api_creates_child_and_exposes_metadata_without_socket(service, monkeypatch, status):
+    from auto_short.packaging import cover_suggest
+    s = service
+    monkeypatch.setattr(cover_suggest, "available", lambda _: None)
+    parent = cover_suggest.create(s.cfg, PID, "hoa sen")
+    parent.update(status=status, feedback=["Đổi màu"])
+    cover_suggest.save(cover_suggest.directory(s.cfg, PID, parent["run_id"]), parent)
+    executed = []
+    monkeypatch.setattr(cover_suggest, "execute", lambda *args, **kwargs: executed.append(args[2]))
+    result = feedback_endpoint(s.app)(pid=PID, run_id=parent["run_id"],
+                                      body=dict(feedback="  Khung nhỏ hơn  ", mode="options"))
+    assert result.status_code == 202
+    child = json.loads(result.body)
+    s.service.suggest_thread.join(3)
+    assert executed == [child["run_id"]] and child["run_id"] != parent["run_id"]
+    view = s.service.suggestion_view(PID, child["run_id"])
+    assert view["parent_run"] == parent["run_id"] and view["reference"] is None
+    assert view["feedback"] == ["Đổi màu", "Khung nhỏ hơn"] and view["notes"] == "hoa sen"
+
+
+@pytest.mark.parametrize("body", [
+    None, [], "text", {}, {"feedback": "", "mode": "options"},
+    {"feedback": "  ", "mode": "options"}, {"feedback": "x" * 301, "mode": "options"},
+    {"feedback": 1, "mode": "options"}, {"feedback": "x", "mode": "bad"},
+    {"feedback": "x", "mode": "revise", "reference": "../option-1.png"},
+    {"feedback": "x", "mode": "revise", "reference": "option-2.png"},
+    {"feedback": "x", "mode": "variants"},
+])
+def test_feedback_api_invalid_input_is_400_without_socket(service, monkeypatch, body):
+    from auto_short.packaging import cover_suggest
+    monkeypatch.setattr(cover_suggest, "available", lambda _: None)
+    doc = cover_suggest.create(service.cfg, PID)
+    doc["status"] = "done"
+    cover_suggest.save(cover_suggest.directory(service.cfg, PID, doc["run_id"]), doc)
+    result = feedback_endpoint(service.app)(pid=PID, run_id=doc["run_id"], body=body)
+    assert result.status_code == 400
+    assert len(list(cover_suggest.directory(service.cfg, PID).iterdir())) == 1
+
+
+def test_feedback_api_busy_parent_and_global_lock_without_socket(service, monkeypatch):
+    import threading
+    from auto_short.packaging import cover_suggest
+    s = service
+    monkeypatch.setattr(cover_suggest, "available", lambda _: None)
+    parent = cover_suggest.create(s.cfg, PID)
+    endpoint = feedback_endpoint(s.app)
+    body = dict(feedback="Thu nhỏ khung", mode="options")
+    assert endpoint(pid=PID, run_id=parent["run_id"], body=body).status_code == 409
+    parent["status"] = "done"
+    cover_suggest.save(cover_suggest.directory(s.cfg, PID, parent["run_id"]), parent)
+    entered, release = threading.Event(), threading.Event()
+    def hold(*args, **kwargs):
+        entered.set()
+        assert release.wait(5)
+    monkeypatch.setattr(cover_suggest, "execute", hold)
+    try:
+        s.service.suggest(PID)
+        assert entered.wait(2)
+        assert endpoint(pid=PID, run_id=parent["run_id"], body=body).status_code == 409
+        other = web.EpisodeThumbs(s.service.plans)
+        with pytest.raises(web.Unavailable):
+            other.suggest(PID, parent_run=parent["run_id"], feedback="Màu xanh", mode="options")
+    finally:
+        release.set()
+        s.service.suggest_thread.join(3)
+    assert endpoint(pid=PID, run_id=parent["run_id"], body=body).status_code == 202
+    s.service.suggest_thread.join(3)
+
+
+def test_feedback_ui_controls_without_socket():
+    from pathlib import Path
+    static = Path(web.__file__).parent / "static"
+    html = (static / "thumbs.html").read_text()
+    script = (static / "thumbs.js").read_text()
+    assert 'id="thumbs-feedback" maxlength="300"' in html
+    for text in ("Góp ý cho Codex", "Vẽ lại 4 mẫu theo góp ý", "Vẽ lại 3 ảnh theo góp ý", "Góp ý đã áp dụng"):
+        assert text in html
+    assert "Sửa mẫu này theo góp ý" in script
+    assert 'feedback("options")' in script and 'feedback("variants")' in script and 'feedback("revise", name)' in script
+    assert "feedbackDisabled" in script and "view.codex_unavailable" in script
+    assert '$("thumbs-feedback-panel").hidden = !s || running' in script
+
+
+def test_http_feedback_auth_and_input_status(client, monkeypatch):
+    from auto_short.packaging import cover_suggest
+    s = client
+    monkeypatch.setattr(cover_suggest, "available", lambda _: None)
+    parent = cover_suggest.create(s.cfg, PID)
+    url = BASE + f"/suggest/{parent['run_id']}/feedback"
+    body = dict(feedback="Thu nhỏ khung", mode="options")
+    anon = TestClient(s.app, follow_redirects=False)
+    assert anon.post(url, json=body).status_code == 401
+    assert s.c.post(url, json=body).status_code == 409
+    parent["status"] = "done"
+    cover_suggest.save(cover_suggest.directory(s.cfg, PID, parent["run_id"]), parent)
+    for invalid in ({}, [], dict(feedback=" ", mode="options"), dict(feedback="x" * 301, mode="options"),
+                    dict(feedback="x", mode="revise", reference="../option-1.png")):
+        assert s.c.post(url, json=invalid).status_code == 400
+    monkeypatch.setattr(cover_suggest, "execute", lambda *args, **kwargs: None)
+    result = s.c.post(url, json=body)
+    assert result.status_code == 202 and result.json()["parent_run"] == parent["run_id"]
+    s.service.suggest_thread.join(3)

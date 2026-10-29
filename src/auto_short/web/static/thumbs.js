@@ -32,6 +32,12 @@
   function draw() {
     const s = view.suggestion, running = s && s.status === "running";
     const job = view.job, active = job && job.active;
+    const feedbackDisabled = pending || running || active || Boolean(view.codex_unavailable) || !$("thumbs-feedback").value.trim();
+    $("thumbs-feedback-panel").hidden = !s || running;
+    $("thumbs-feedback-options").disabled = feedbackDisabled || !s;
+    $("thumbs-feedback-variants").disabled = feedbackDisabled || !s || !s.selected;
+    $("thumbs-feedback-history").hidden = !s || !(s.feedback || []).length;
+    $("thumbs-feedback-list").replaceChildren(...((s && s.feedback) || []).map((text) => el("li", { text })));
     $("thumbs-title").textContent = "Thumbnail cả bộ — " + view.series;
     $("thumbs-suggest").disabled = pending || running || active || Boolean(view.codex_unavailable);
     $("thumbs-build").disabled = pending || active;
@@ -54,7 +60,7 @@
         : el("p", { text: labels[shape] + ": chưa có ảnh bìa" })));
     }
     const options = $("thumbs-options"), previews = $("thumbs-previews");
-    const key = JSON.stringify(s);
+    const key = JSON.stringify([s, pending, active, view.codex_unavailable]);
     if (options.dataset.key !== key) {
       options.dataset.key = key;
       options.replaceChildren(); previews.replaceChildren();
@@ -63,12 +69,15 @@
           const card = picture(`${base}/suggest/${s.run_id}/images/${name.replace(".png", "-preview.jpg")}?v=${encodeURIComponent(s.updated_at)}`, "Mẫu " + name.match(/[1-4]/)[0]);
           const button = el("button", { type: "button", class: "btn", text: name === s.selected ? "Đã chọn · Vẽ lại 3 ảnh" : "Chọn mẫu này" });
           button.disabled = pending || running || Boolean(view.codex_unavailable);
-          button.addEventListener("click", () => select(name)); card.append(button); options.append(card);
+          button.addEventListener("click", () => select(name)); card.append(button);
+          const revise = el("button", { type: "button", class: "btn", text: "Sửa mẫu này theo góp ý", "data-feedback-revise": "" });
+          revise.addEventListener("click", () => feedback("revise", name)); card.append(revise); options.append(card);
         }
         for (const entry of s.previews || []) previews.append(picture(entry.preview_url + "?v=" + encodeURIComponent(s.updated_at), entry.label));
         for (const [name, reason] of Object.entries(s.errors || {})) options.append(el("p", { class: "small", text: `${name}: ${reason}` }));
       }
     }
+    for (const button of options.querySelectorAll("[data-feedback-revise]")) button.disabled = feedbackDisabled;
     $("thumbs-accept").hidden = !(s && s.phase === "variants" && s.selected && !running);
     $("thumbs-install").disabled = pending || active || !s || s.status !== "done";
     $("thumbs-redraw").disabled = pending || Boolean(view.codex_unavailable);
@@ -90,6 +99,12 @@
   }
   function suggest() { return action("/suggest", { notes: $("thumbs-notes").value }); }
   function select(name) { return action(`/suggest/${view.suggestion.run_id}/select`, { name }); }
+  function feedback(mode, reference) {
+    return action(`/suggest/${view.suggestion.run_id}/feedback`, { feedback: $("thumbs-feedback").value.trim(), mode, ...(reference ? { reference } : {}) });
+  }
+  $("thumbs-feedback").addEventListener("input", () => { if (view) draw(); });
+  $("thumbs-feedback-options").addEventListener("click", () => feedback("options"));
+  $("thumbs-feedback-variants").addEventListener("click", () => feedback("variants"));
   $("thumbs-suggest").addEventListener("click", suggest);
   $("thumbs-again").addEventListener("click", suggest);
   $("thumbs-redraw").addEventListener("click", () => select(view.suggestion.selected));

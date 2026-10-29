@@ -9,7 +9,7 @@
 .th-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 16px; }
 .th-grid img { display: block; width: 100%; max-height: 560px; object-fit: contain; background: #182120; cursor: zoom-in; }
 .th-bar { position: sticky; bottom: 0; background: var(--card); border-top: 1px solid var(--border); padding: .8rem; z-index: 5; }
-#thumbs-notes { display: block; width: 100%; box-sizing: border-box; margin: .5rem 0; font: inherit; }
+#thumbs-notes, #thumbs-feedback { display: block; width: 100%; box-sizing: border-box; margin: .5rem 0; font: inherit; }
 #thumbs-bar { width: 100%; }
 dialog { width: min(95vw, 1300px); max-width: 95vw; padding: .5rem; }
 dialog img { display: block; max-width: 100%; max-height: 85vh; margin: auto; }
@@ -29,11 +29,17 @@ dialog img { display: block; max-width: 100%; max-height: 85vh; margin: auto; }
 <button id="thumbs-cancel" class="btn" type="button" hidden>Hủy</button></div>
 <p id="thumbs-suggest-status" role="status"></p>
 <p class="small muted">Bấm ảnh để phóng to. Kiểm tra dấu tiếng Việt trước khi chọn.</p>
+<div id="thumbs-feedback-panel" hidden>
+<label for="thumbs-feedback">Góp ý cho Codex</label>
+<textarea id="thumbs-feedback" maxlength="300" rows="3" placeholder="Ví dụ: thu nhỏ khung TẬP, thêm hoa sen"></textarea>
+<button id="thumbs-feedback-options" class="btn" type="button">Vẽ lại 4 mẫu theo góp ý</button></div>
+<div id="thumbs-feedback-history" hidden><p>Góp ý đã áp dụng</p><ul id="thumbs-feedback-list"></ul></div>
 <div id="thumbs-options" class="th-grid"></div>
 <div id="thumbs-previews" class="th-grid"></div>
 <div id="thumbs-accept" class="actions" hidden>
 <button id="thumbs-install" class="btn primary" type="button">Dùng bộ ảnh này</button>
 <button id="thumbs-redraw" class="btn" type="button">Vẽ lại 3 ảnh</button>
+<button id="thumbs-feedback-variants" class="btn" type="button">Vẽ lại 3 ảnh theo góp ý</button>
 <button id="thumbs-again" class="btn" type="button">Gợi ý lại</button></div>
 <p id="thumbs-msg" role="status"></p>
 <details id="thumbs-episodes"><summary>Xem từng tập</summary><div id="thumbs-grid" class="th-grid"></div></details>

@@ -149,13 +149,14 @@ def remove(config, pid, shape):
     return doc
 
 
-def number_line(number, box):
+def number_line(number, box, shape="vertical"):
     """Fit the full Vietnamese ink and its shadow, then centre its baseline in the box."""
     text = f"TẬP {number}"
     font = Font(thumbnail.EPISODE_FONTS[FONT_NAME])
     check_glyphs(font, [text])
     x, y, w, h = box
-    width, height = int(w * FIT_WIDTH), int(h * FIT_HEIGHT)
+    width = int(w * FIT_WIDTH)
+    height = min(int(h * FIT_HEIGHT), int(SIZES[shape][1] * (.08 if shape == "vertical" else .12)))
     # _fit_line keeps a fixed reference baseline; using the same text centres this single label.
     size, _ = thumbnail._fit_line(text, FONT_NAME, max(12, height * 2), width,
                                 reference=text, nominal_top=y + (h - height) / 2 + 2,
@@ -168,7 +169,7 @@ def number_line(number, box):
 
 def build_episode(work, fields, shape, image, filename, *, entry, run=None):
     _box(entry["box"], *SIZES[shape])
-    line = number_line(fields["episode"], entry["box"])
+    line = number_line(fields["episode"], entry["box"], shape)
     return draw_lines(work, [line], image, filename, run=run)
 
 

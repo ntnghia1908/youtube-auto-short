@@ -141,7 +141,7 @@ def test_number_fits_and_pixels_change_only_inside_box(cfg, tmp_path, shape, num
     stream = probe_media(output, _run)["video"]
     assert (stream["width"], stream["height"]) == size
     assert (work / "line0.txt").read_text() == f"TẬP {number}"
-    line = cover.number_line(str(number), box)
+    line = cover.number_line(str(number), box, shape)
     font = Font(thumbnail.EPISODE_FONTS[line.font])
     top, bottom = font.ink_bounds(line.text, line.size)
     assert font.width(line.text, line.size) <= box[2] * cover.FIT_WIDTH
@@ -278,3 +278,30 @@ def test_install_set_atomic_manifest_and_legacy_schema(cfg, tmp_path, monkeypatc
     assert all(entry["sha256"] in entry["file"] for entry in entries.values())
     cover.remove(cfg, PID, "kt_vertical")
     assert "kt_vertical" not in cover.current(cfg, PID)
+
+
+@pytest.mark.parametrize("shape,box,size,baseline", [
+    ("vertical", [305, 1630, 470, 125], 87, 1723),
+    ("landscape", [133, 484, 354, 79], 53, 542),
+    ("vertical", [248, 1632, 584, 146], 103, 1741),
+    ("landscape", [107, 503, 444, 76], 50, 558),
+])
+@pytest.mark.parametrize("number", [1, 51, 102])
+def test_approved_vlt_dia_tang_number_line_unchanged(shape, box, size, baseline, number):
+    # Golden size/baseline computed with the pre-D-THUMB1-6 number_line code.
+    expected = thumbnail.EpisodeLine(f"TẬP {number}", cover.FONT_NAME, size,
+                                     box[0], baseline, box[2], centered=True)
+    assert cover.number_line(str(number), box, shape) == expected
+
+
+@pytest.mark.parametrize("shape,box,ratio", [
+    ("vertical", [40, 900, 1000, 900], .08),
+    ("landscape", [40, 200, 1200, 450], .12),
+])
+def test_number_height_capped_in_large_box(shape, box, ratio):
+    line = cover.number_line("1", box, shape)
+    font = Font(thumbnail.EPISODE_FONTS[line.font])
+    top, bottom = font.ink_bounds(line.text, line.size)
+    assert bottom - top + 2 <= cover.SIZES[shape][1] * ratio
+    assert line.y + (top + bottom + 2) / 2 == pytest.approx(box[1] + box[3] / 2, abs=1)
+    assert bottom - top + 2 < box[3] * cover.FIT_HEIGHT

@@ -8,7 +8,7 @@ import threading
 import zipfile
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import Body, FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field, StrictStr
 
@@ -85,7 +85,8 @@ class EpisodeThumbs:
             return job, False
         return self.runner.submit(render_key(pid), KIND, ThumbnailTarget(self, pid))
 
-    def suggest(self, pid, *, notes="", run_id=None, selected=None):
+    def suggest(self, pid, *, notes="", run_id=None, selected=None,
+                parent_run=None, feedback=None, mode=None, reference=None):
         if not self.codex_lock.acquire(blocking=False):
             raise Unavailable("đang có một lượt Codex chạy; chờ hoàn tất hoặc hủy")
         try:
@@ -93,8 +94,11 @@ class EpisodeThumbs:
             problem = cover_suggest.available(self.config)
             if problem:
                 raise cover_suggest.MissingCodex(problem)
-            doc = (cover_suggest.select(self.config, pid, run_id, selected) if run_id else
-                   cover_suggest.create(self.config, pid, notes))
+            if parent_run is not None:
+                doc = cover_suggest.create_feedback(self.config, pid, parent_run, feedback, mode, reference)
+            else:
+                doc = (cover_suggest.select(self.config, pid, run_id, selected) if run_id else
+                       cover_suggest.create(self.config, pid, notes))
             self.suggest_cancel = threading.Event()
             self.suggest_active = (pid, doc["run_id"])
             def work():
@@ -279,7 +283,7 @@ def register(app: FastAPI, service: EpisodeThumbs):
             return action()
         except cover_suggest.MissingCodex as exc:
             return response({"detail": str(exc)}, 503)
-        except Unavailable as exc:
+        except (Unavailable, cover_suggest.Busy) as exc:
             return response({"detail": str(exc)}, 409)
         except (PackageError, TextError, RenderError) as exc:
             return response({"detail": str(exc)}, 400)
@@ -316,6 +320,15 @@ def register(app: FastAPI, service: EpisodeThumbs):
     @app.post("/api/playlists/{pid}/thumbs/suggest/{run_id}/select")
     def select(pid: str, run_id: str, body: SelectIn):
         return invoke(pid, lambda: response(service.suggest(pid, run_id=run_id, selected=body.name), 202), write=True)
+
+    @app.post("/api/playlists/{pid}/thumbs/suggest/{run_id}/feedback")
+    def feedback(pid: str, run_id: str, body: object = Body(default=None)):
+        def action():
+            if not isinstance(body, dict):
+                raise PackageError("dữ liệu góp ý không hợp lệ")
+            return response(service.suggest(pid, parent_run=run_id, feedback=body.get("feedback"),
+                                            mode=body.get("mode"), reference=body.get("reference")), 202)
+        return invoke(pid, action, write=True)
 
     @app.post("/api/playlists/{pid}/thumbs/suggest/{run_id}/cancel")
     def cancel(pid: str, run_id: str):
