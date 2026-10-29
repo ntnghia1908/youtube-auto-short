@@ -692,7 +692,7 @@ const AutoShort = (() => {
     renderEpisode(data);
     const running = jobActive(data.job) || jobActive(data.restore_job) || data.stages.some((s) => s.status === "running");
     if (running) pollTimer = setTimeout(refreshEpisode, POLL_MS);
-    else if (enhanceBusy(data.enhance) || verticalBusy(data.hd_video)) pollTimer = setTimeout(refreshEpisode, POLL_MS * 2);
+    else if (enhanceBusy(data.enhance) || verticalBusy(data.hd_video) || jobActive(data.hd_video?.hd_intro?.job)) pollTimer = setTimeout(refreshEpisode, POLL_MS * 2);
   }
 
   // --- CP13.1b enhance (E10): status line + buttons on the episode page ---------------------------------
@@ -791,6 +791,22 @@ const AutoShort = (() => {
     const h = d.hd_video;
     box.hidden = !h;
     if (!h) return;
+    const hi = h.hd_intro;
+    const introMake = $("#hd-intro-make"), introNote = $("#hd-intro-note");
+    introMake.hidden = !hi || !hi.can_make;
+    introMake.disabled = jobActive(hi?.job);
+    introNote.hidden = !hi;
+    if (hi) {
+      introMake.textContent = jobActive(hi.job) ? "HD intro: đang tạo…" : "Tạo HD có intro";
+      introNote.textContent = hi.job?.status === "failed" ? hi.job.error : hi.ready ? "HD có intro ✓"
+        : hi.stale ? "cần tạo lại" : "";
+      introMake.onclick = async () => {
+        introMake.disabled = true;
+        try { await api("/api/episodes/" + encodeURIComponent(episodeId) + "/hd-intro", { method: "POST" }); }
+        catch (e) { alert(e.message); }
+        refreshEpisode();
+      };
+    }
     const land = $("#hd-landscape");
     if (h.released && !h.url && !(h.vertical || {}).url) {
       land.hidden = true;

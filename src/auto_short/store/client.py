@@ -67,6 +67,8 @@ class StoreClient:
                 raise StoreMismatch(f"kho không có file {path}") from None
             if exc.code == 416:
                 raise StoreRangeError(content_range) from None
+            if method == "PUT" and exc.code == 409 and (headers or {}).get("X-Replace-Sha256"):
+                raise StoreMismatch("kho từ chối thay HD: sha hiện có đã đổi hoặc cần cập nhật store.py trên 3090") from None
             if method == "PUT" and exc.code in (400, 409, 413, 422):
                 raise StoreMismatch(f"kho từ chối file (HTTP {exc.code})") from None
             raise StoreUnavailable(f"kho trả HTTP {exc.code}") from None
@@ -140,6 +142,30 @@ class StoreClient:
                         raise StoreUnavailable(f"kho trả HTTP {resp.status} khi gửi file")
         except (OSError, http.client.HTTPException) as exc:
             raise StoreUnavailable(f"không gửi được file lên kho: {type(exc).__name__}") from None
+
+    def replace(self, video_id: str, kind: str, series: str, name: str, path: Path, sha256: str,
+                *, current_sha256: str) -> None:
+        route = self._path(video_id, kind)
+        if kind != "hd" or not _SHA.fullmatch(sha256) or not _SHA.fullmatch(current_sha256):
+            raise StoreMismatch("thay thế cần loại hd và sha256 hợp lệ")
+        if not isinstance(series, str) or re.fullmatch(r"[A-Za-z0-9_-]{1,128}", series) is None:
+            raise StoreMismatch("series gửi lên không hợp lệ")
+        try:
+            size = Path(path).stat().st_size
+            info = self.head(video_id, kind)
+            if info == {"sha256": sha256, "size": size}:
+                return
+            if info["sha256"] != current_sha256:
+                raise StoreMismatch("sha hiện có trên kho đã đổi; không thay HD")
+            route += "?" + urlencode({"series": series, "name": name})
+            with Path(path).open("rb") as stream:
+                headers = {"Content-Length": str(os.fstat(stream.fileno()).st_size), "X-Sha256": sha256,
+                           "X-Replace-Sha256": current_sha256, "Content-Type": "application/octet-stream"}
+                with self._open(route, method="PUT", headers=headers, data=stream) as resp:
+                    if resp.status not in (200, 201):
+                        raise StoreUnavailable(f"kho trả HTTP {resp.status} khi thay HD")
+        except (OSError, http.client.HTTPException) as exc:
+            raise StoreUnavailable(f"không thay được HD trên kho: {type(exc).__name__}") from None
 
     def open_stream(self, video_id: str, kind: str, range_header: str | None = None,
                     *, clip: str | None = None):

@@ -494,3 +494,37 @@ def test_clip_far_past_the_video_end_fails_without_encode(tmp_path, rcfg):
     assert run.ffmpeg_calls == 0
     assert not list((_out(cfg) / "shorts").glob(".*")) if (_out(cfg) / "shorts").exists() else True
     assert _stage(ws)["status"] == "failed"
+
+
+def test_hd_intro_offset_preserves_short_frames_and_keys(ws, rcfg, tmp_path):
+    from auto_short.enhance import state as enh
+    from auto_short.render import hd_intro
+    from auto_short.workspace import atomic_write_json
+
+    source = ws.dir / "source.mp4"
+    path = enh.hd_path(ws.dir)
+    path.write_bytes(source.read_bytes())
+    original_sha = sha256_file(path)
+    edoc = enh.new_doc(EID)
+    edoc.update(state=enh.DONE, source_hd_sha256=original_sha, source_hd_size=path.stat().st_size,
+                source_hd_mtime_ns=path.stat().st_mtime_ns)
+    enh.write(ws.dir, edoc)
+    run_render(EID, rcfg)
+    before = _rm(rcfg)
+    hashes = {s["clip_id"]: [hd_intro.frame_hash(_out(rcfg) / s["file"], t, hd_intro._run) for t in (0.2, 0.8)]
+              for s in before["shorts"]}
+    image = tmp_path / "thumb.ppm"
+    image.write_bytes(b"P6\n160 90\n255\n" + bytes([255, 0, 0]) * 160 * 90)
+    joined = tmp_path / "joined.mp4"
+    spec = hd_intro.render(path, image, joined)
+    path.write_bytes(joined.read_bytes())
+    atomic_write_json(ws.dir / "hd_intro.json", {"version": 1, "status": "done",
+        "original": {"sha256": original_sha, "size": source.stat().st_size},
+        "stored": {"sha256": sha256_file(path), "size": path.stat().st_size},
+        "frames": spec["frames"], "fps": str(spec["fps"]), "offset_seconds": spec["offset"]})
+    run_render(EID, rcfg, force=True)
+    after = _rm(rcfg)
+    assert after["source_sha256"] == before["source_sha256"]
+    assert [s["render_key"] for s in after["shorts"]] == [s["render_key"] for s in before["shorts"]]
+    for s in after["shorts"]:
+        assert [hd_intro.frame_hash(_out(rcfg) / s["file"], t, hd_intro._run) for t in (0.2, 0.8)] == hashes[s["clip_id"]]

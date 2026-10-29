@@ -554,3 +554,66 @@ def test_real_aspect_ratio_padding_and_square_pixels(tmp_path, sar, bars):
 
     assert pixel(96)[0] > 200 and pixel(96)[1] < 20  # centre preserves the full red picture
     assert (max(pixel(5)) < 20) if bars else (pixel(5)[0] > 200)
+
+
+def test_hd_intro_preserves_landscape_frames_identity_and_cache(media, tmp_path):
+    from auto_short.enhance import state as enhance
+    from auto_short.render import hd_intro
+
+    cfg, ws, folder, out, _ = media
+    source = ws.dir / 'source.mp4'
+    owner = cfg.workspace.dir / 'lecture'
+    hd = enhance.hd_path(owner)
+    shutil.copyfile(source, hd)
+    original = hashing.fingerprint(hd)
+    edoc = enhance.new_doc('lecture')
+    edoc.update(state=enhance.DONE, source_sha256=hashing.sha256_file(source),
+                source_hd_sha256=original.sha256, source_hd_size=original.size,
+                source_hd_mtime_ns=original.mtime_ns)
+    enhance.write(owner, edoc)
+    enhance.mirror(cfg, 'lecture')
+    doc = make_plan(cfg)
+    records = theme_index.build_index(cfg, 'PLtest', client=Fake(), write=False)['records']
+    calls = []
+    def runner(command):
+        calls.append(command)
+        return checked(command)
+    def frames(path):
+        proc = checked(['ffmpeg', '-v', 'error', '-i', str(path), '-map', '0:v:0', '-f', 'framemd5', '-'])
+        return [line.split(',')[-1].strip() for line in proc.stdout.splitlines() if line and not line.startswith('#')]
+    baseline = tr.render_landscape(cfg, 'PLtest', doc['plan_id'], runner=runner, downloader=no_call)
+    expected = frames(baseline.path)
+    zero_commands = [c for c in calls if c[0] == 'ffmpeg' and str(enhance.hd_path(ws.dir)) in c]
+    assert len(zero_commands) == 2
+    for command in zero_commands:
+        assert enhance.hd_input_command(tr._hd_source(records[0], enhance.hd_path(ws.dir)),
+                                        command, enhance.hd_path(ws.dir)) == command
+        assert '-itsoffset' not in command
+    image = tmp_path / 'thumb.ppm'
+    image.write_bytes(b'P6\n160 90\n255\n' + bytes([255, 0, 0]) * 160 * 90)
+    joined = tmp_path / 'hd-intro.mp4'
+    spec = hd_intro.render(hd, image, joined)
+    hd.write_bytes(joined.read_bytes())  # the khai thị hard link reads the replaced bytes too
+    hd_intro.write(owner, dict(version=1, status='done', original=dict(sha256=original.sha256, size=original.size),
+        stored=dict(sha256=hashing.sha256_file(hd), size=hd.stat().st_size), frames=spec['frames'],
+        fps=str(spec['fps']), offset_seconds=spec['offset']))
+    current = theme_index.build_index(cfg, 'PLtest', client=Fake(), write=False)['records']
+    assert [r['input_fingerprint'] for r in current] == [r['input_fingerprint'] for r in records]
+    assert all(r['source_reference']['sha256'] == original.sha256 for r in current)
+    assert all(r['cached'] for r in current)
+    assert not tr.render_landscape(cfg, 'PLtest', doc['plan_id'], runner=no_call, downloader=no_call).ran
+    baseline.path.unlink()
+    calls.clear()
+    result = tr.render_landscape(cfg, 'PLtest', doc['plan_id'], runner=runner, downloader=no_call)
+    assert frames(result.path) == expected
+    assert result.metadata['encode_key'] == baseline.metadata['encode_key']
+    assert result.metadata['plan_fingerprint'] == baseline.metadata['plan_fingerprint']
+    assert all(c['source'] == 'present' and c['warning'] is None for c in result.metadata['clips'])
+    assert all(abs(c['audio_match']['lag']) <= .04 for c in result.metadata['clips'])
+    hd_commands = [c for c in calls if c[0] == 'ffmpeg' and str(enhance.hd_path(ws.dir)) in c]
+    assert len(hd_commands) == 2 and all('-itsoffset' in c for c in hd_commands)
+    assert tr._hd_source(current[0], source) is None  # a refetched original never inherits the HD offset
+    enhance.hd_path(ws.dir).write_bytes(b'changed after audit')
+    with pytest.raises(RenderError, match='sau khi audit'):
+        tr._source(cfg, current[0], {}, no_call)
+    assert_clean(folder)

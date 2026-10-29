@@ -758,3 +758,22 @@ def test_change_during_hash_is_not_cached(tmp_path, memo_cache, monkeypatch):
     assert tc1._file_digest.cache_info().currsize == 0
     monkeypatch.setattr(hashing, 'sha256_file', original)
     assert tc1._file(path) == original(path)
+
+
+def test_hd_intro_stored_bytes_keep_content_identity_and_index_cache(episode):
+    cfg, ws, _, out = episode
+    original_sha = json.loads((ws.dir / 'manifest.json').read_text())['source']['sha256']
+    path, hd_sha = _write_hd(ws, original_sha)
+    change(out / 'render_manifest.json', lambda d: d.update(source_sha256=hd_sha))
+    fake = Fake()
+    before = build_index(cfg, 'PLtest', client=fake)['records'][0]
+    assert before['status'] == 'indexed'
+    size = path.stat().st_size
+    path.write_bytes(b'intro-and-enhanced-hd')
+    atomic_write_json(ws.dir / 'hd_intro.json', {'version': 1, 'status': 'done',
+        'original': {'sha256': hd_sha, 'size': size},
+        'stored': {'sha256': hashing.sha256_file(path), 'size': path.stat().st_size},
+        'frames': 90, 'fps': '30000/1001', 'offset_seconds': 3.003})
+    after = build_index(cfg, 'PLtest', client=fake)['records'][0]
+    assert after['cached'] and after['source_reference'] == before['source_reference']
+    assert len(fake.calls) == 1

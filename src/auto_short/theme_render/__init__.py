@@ -18,6 +18,7 @@ from ..compilation import meta, store
 from ..compilation.assemble import Encode, assemble
 from ..compilation.spec import item_from_json
 from ..config import Config
+from ..enhance import state as enhance
 from ..ingest.youtube import DownloadError, YoutubeBlocked, ytdlp_download
 from ..render import plan
 from ..render.full import SourceBlocked
@@ -127,13 +128,23 @@ def _verify(path: Path, expected: float, tolerance: float, runner, *, fps: Fract
     return info
 
 
+def _hd_source(record: dict, path: Path) -> enhance.EffectiveSource | None:
+    ref = record["source_reference"]
+    original = Path(ref["path"])
+    if original.name != enhance.HD_NAME or path.resolve() != original.resolve():
+        return None
+    return enhance.hd_source(original.parent, ref["sha256"], path)
+
+
 def _source(config: Config, record: dict, fetched: dict, downloader, tmp: Path | None = None):
     from . import sources
 
     ref = record["source_reference"]
     src = Path(ref["path"])
     if record["source_status"] == "present":
-        if not src.is_file() or hashing.sha256_file(src) != ref["sha256"]:
+        hd = _hd_source(record, src)
+        expected_sha = hd.stored_sha256 if hd is not None else ref["sha256"]
+        if not src.is_file() or hashing.sha256_file(src) != expected_sha:
             raise RenderError("video nguồn đã thay đổi hoặc bị xóa sau khi audit")
         return src, "present", None
     video_id = sources._owner(record["identity"]["episode_id"])
@@ -227,6 +238,7 @@ def render_landscape(config: Config, playlist_id: str, plan_id: str, *, hashtags
             for n, (snap, record, (reference, title)) in enumerate(zip(approved["clips"], records, references)):
                 try:
                     source, status, warning = _source(config, record, fetched, downloader, tmp)
+                    hd = _hd_source(record, source)
                     info = probe_media(source, runner)
                     if info["video"] is None or info["audio"] is None:
                         raise RenderError("video nguồn thiếu video / audio")
@@ -234,15 +246,20 @@ def render_landscape(config: Config, playlist_id: str, plan_id: str, *, hashtags
                     segments = [(round(a * 1000), round(b * 1000)) for a, b in record["final_segments"]]
                     if not segments or any(b <= a for a, b in segments):
                         raise RenderError("final_segments rỗng hoặc không hợp lệ")
+                    if hd is not None and hd.offset:
+                        duration = enhance.hd_duration(hd, float(info["video"].get("duration") or info["duration"]))
+                        if any(b / 1000 > duration + 1 / float(fps) for _, b in segments):
+                            raise RenderError("final_segments vượt quá thời lượng HD sau intro")
                     seconds = plan.total_ms(segments) / 1000
                     if abs(seconds - snap["duration"]) > 0.001:
                         raise RenderError("thời lượng final_segments không khớp plan")
                     dissolve = episode_render_config(config, Path(config.workspace.dir) / record["identity"]["episode_id"])[0].dissolve
                     graph, clip = tmp / f"{n}.filter", tmp / f"{n}.mp4"
                     graph.write_text(filter_graph(segments, fps, dissolve), encoding="utf-8")
-                    proc = runner(plan.ffmpeg_command(ffmpeg="ffmpeg", source=source, output=clip, graph_script=graph,
+                    command = plan.ffmpeg_command(ffmpeg="ffmpeg", source=source, output=clip, graph_script=graph,
                         segments=segments, fps=fps, crf=cfg.crf, preset=cfg.preset,
-                        audio_bitrate=cfg.audio_bitrate, threads=cfg.threads))
+                        audio_bitrate=cfg.audio_bitrate, threads=cfg.threads)
+                    proc = runner(enhance.hd_input_command(hd, command, source))
                     if proc.returncode != 0 or not clip.is_file():
                         raise RenderError(f"ffmpeg lỗi: {_last_line(proc.stderr)}")
                     _verify(clip, seconds, 1 / float(fps), runner, fps=fps, frames=plan.planned_frames(segments, fps))

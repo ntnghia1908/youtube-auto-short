@@ -296,8 +296,43 @@ class Store:
             writer.writerow(row)
         self._cache.pop(folder, None)
 
+    def _replaced_metadata(self, folder: Path, video_id: str, name: str, sha: str, size: int) -> None:
+        index = inside(folder, "index.csv" if (folder / "index.csv").exists() else "danh-sach.csv")
+        sums = inside(folder, "SHA256SUMS.txt")
+        with index.open(encoding="utf-8-sig", newline="") as stream:
+            reader = csv.DictReader(stream)
+            fields, rows = reader.fieldnames, list(reader)
+        for row in rows:
+            if row.get("video_id") == video_id and row.get("file") == name:
+                for key, value in (("sha256", sha), ("size", str(size))):
+                    if key in fields:
+                        row[key] = value
+        checksums = sums.read_text(encoding="utf-8-sig").splitlines() if sums.exists() else []
+        checksums = [line for line in checksums if line[66:].lstrip(" *") != name]
+        checksums.append(f"{sha}  {name}")
+        for path in (sums, index):
+            temp = path.with_name(path.name + ".replace.part")
+            owned = False
+            try:
+                with temp.open("x", encoding="utf-8", newline="") as stream:
+                    owned = True
+                    if path == index:
+                        writer = csv.DictWriter(stream, fieldnames=fields)
+                        writer.writeheader()
+                        writer.writerows(rows)
+                    else:
+                        stream.write("\r\n".join(checksums) + "\r\n")
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(temp, path)
+            finally:
+                if owned:
+                    temp.unlink(missing_ok=True)
+        self._cache.pop(folder, None)
+
     def put(self, video_id: str, kind: str, series: str, name: str,
-            sha: str, stream, length: int, clip: str | None = None) -> int:
+            sha: str, stream, length: int, clip: str | None = None,
+            replace_sha: str | None = None) -> int:
         """Stream exactly Content-Length bytes. Return 201 (created) or 200 (same file)."""
         validate_identity(video_id, kind, clip)
         validate_name(name)
@@ -306,6 +341,9 @@ class Store:
         if length < 0 or length > MAX_BODY:
             raise StoreError(413, "Body exceeds 20 GiB limit")
         sha = sha.lower()
+        if replace_sha is not None and (kind != "hd" or not SHA256.fullmatch(replace_sha)):
+            raise StoreError(400, "Replacement requires hd and a valid current sha256")
+        replace_sha = replace_sha.lower() if replace_sha is not None else None
         with self._put_lock:
             folder = no_links(self.config["series"].get(series, self.root / series))
             folder.mkdir(parents=True, exist_ok=True)
@@ -317,6 +355,11 @@ class Store:
                 for row in entries:
                     same_key = (row["video_id"], row["kind"], row.get("clip")) == (video_id, kind, clip)
                     same_path = inside(self.folders()[row["series"]], row["file"]) == dest
+                    if same_key and replace_sha is not None:
+                        if not same_path or row["sha256"] != replace_sha:
+                            raise StoreError(409, "Replacement sha256 or path does not match")
+                        current = row
+                        continue
                     if same_key and kind in ("short", "vertical"):
                         base = re.sub(r" \(r[0-9]+\)(?=\.mp4$)", "", row["file"])
                         if row["series"] != series or name not in (base, row["file"]):
@@ -330,7 +373,9 @@ class Store:
                 # Validate metadata before creating a file.
                 self._rows(folder)
                 self._metadata(folder, kind)
-                if current is not None:
+                if replace_sha is not None and current is None:
+                    raise StoreError(409, "Replacement requires an existing HD")
+                if current is not None and replace_sha is None:
                     if current["sha256"] == sha:
                         name = current["file"]
                         dest = inside(folder, name)
@@ -348,12 +393,17 @@ class Store:
             if dest.exists():
                 with dest.open("rb") as existing:
                     actual = hashlib.file_digest(existing, "sha256").hexdigest()
-                if actual != sha:
+                if replace_sha is not None and actual != replace_sha:
+                    raise StoreError(409, "Replacement sha256 does not match existing bytes")
+                if replace_sha is None and actual != sha:
                     raise StoreError(409, "Existing file has a different sha256")
                 if not any((r["video_id"], r["kind"], r.get("clip")) == (video_id, kind, clip) for r in entries):
                     with self._lock:
                         self._publish(folder, video_id, kind, name, sha, clip)
-                return 200
+                if replace_sha is None:
+                    return 200
+            elif replace_sha is not None:
+                raise StoreError(409, "Replacement file disappeared")
             owned_part = False
             try:
                 # Exclusive creation refuses stale/foreign .part files rather than overwriting them.
@@ -380,11 +430,19 @@ class Store:
                 with self._lock:
                     inside(folder, name)
                     inside(folder, name + ".part")
-                    if dest.exists():
+                    if replace_sha is not None:
+                        with dest.open("rb") as existing:
+                            actual = hashlib.file_digest(existing, "sha256").hexdigest()
+                        if actual != replace_sha:
+                            raise StoreError(409, "Replacement file changed during upload")
+                    elif dest.exists():
                         raise StoreError(409, "Destination appeared during upload")
                     os.replace(part, dest)
-                    self._publish(folder, video_id, kind, name, sha, clip)
-                return 201
+                    if replace_sha is not None:
+                        self._replaced_metadata(folder, video_id, name, sha, length)
+                    else:
+                        self._publish(folder, video_id, kind, name, sha, clip)
+                return 200 if replace_sha is not None else 201
             finally:
                 # Only clean up a part created by this request.
                 if owned_part and part.exists():
@@ -444,8 +502,12 @@ class StoreHandler(BaseHTTPRequestHandler):
                 shas = self.headers.get_all("X-Sha256", [])
                 if len(shas) != 1:
                     raise StoreError(400, "X-Sha256 required exactly once")
+                replacements = self.headers.get_all("X-Replace-Sha256", [])
+                if len(replacements) > 1:
+                    raise StoreError(400, "X-Replace-Sha256 must occur at most once")
                 status = store.put(video_id, kind, query["series"][0], query["name"][0],
-                                   shas[0], self.rfile, int(lengths[0]), clip)
+                                   shas[0], self.rfile, int(lengths[0]), clip,
+                                   replacements[0] if replacements else None)
                 self._reply(status)
                 return
             if self.command not in ("GET", "HEAD"):

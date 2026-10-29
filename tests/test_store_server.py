@@ -482,3 +482,36 @@ def test_short_revisions_keep_history_and_current_index(archive, video_id):
                    {"Content-Length": "3", "X-Sha256": "0" * 64}, b"bad")[0] == 422
     assert not (folder / (name[:-4] + " (r4).mp4")).exists()
     assert request(service, "GET", route)[2] == b"third"
+
+
+@pytest.mark.parametrize("filename", ["index.csv", "danh-sach.csv"])
+def test_hd_conditional_replace_preserves_identity_csv_and_rejects_conflicts(archive, filename):
+    service, folder, _ = archive
+    seed(folder, filename)
+    new = b"new-intro-" + DATA
+    sha = hashlib.sha256(new).hexdigest()
+    route = f"/files/{VIDEO}/hd?" + urlencode(dict(series=PLAYLIST, name=NAME))
+    headers = {"Content-Length": str(len(new)), "X-Sha256": sha}
+    for extra in ({}, {"X-Replace-Sha256": "0" * 64}):
+        assert request(service, "PUT", route, {**headers, **extra}, new)[0] == 409
+        assert (folder / NAME).read_bytes() == DATA
+    assert request(service, "PUT", route, {**headers, "X-Replace-Sha256": SHA}, new)[0] == 200
+    assert (folder / NAME).read_bytes() == new
+    assert service.index() == [dict(video_id=VIDEO, kind="hd", series=PLAYLIST, file=NAME, size=len(new), sha256=sha)]
+    with (folder / filename).open(encoding="utf-8-sig", newline="") as stream:
+        rows = list(csv.DictReader(stream))
+    assert len(rows) == 1 and rows[0]["tap"] == "001" and rows[0]["tieu_de"] == "Địa Tạng, tập 1"
+    assert request(service, "PUT", route, {**headers, "X-Replace-Sha256": SHA}, new)[0] == 409
+    assert request(service, "PUT", route, headers, new)[0] == 200
+    assert not list(folder.glob("*.part"))
+
+
+def test_hd_replace_bad_body_and_other_kinds_do_not_change_store(archive):
+    service, folder, _ = archive
+    seed(folder)
+    route = f"/files/{VIDEO}/hd?" + urlencode(dict(series=PLAYLIST, name=NAME))
+    headers = {"Content-Length": str(len(DATA)), "X-Sha256": "1" * 64, "X-Replace-Sha256": SHA}
+    assert request(service, "PUT", route, headers, DATA)[0] == 422
+    assert (folder / NAME).read_bytes() == DATA and service.index()[0]["sha256"] == SHA
+    assert request(service, "PUT", route.replace("/hd?", "/vertical?"), headers, DATA)[0] == 400
+    assert not list(folder.glob("*.part"))

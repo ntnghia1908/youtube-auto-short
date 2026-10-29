@@ -277,3 +277,31 @@ def test_layout_change_changes_reuse_key(tcfg, monkeypatch):
     assert not full.run_vertical(VID, tcfg).ran
     monkeypatch.setattr(full, "SPEAKER_SCALE", 2.0)
     assert full.run_vertical(VID, tcfg).ran
+
+
+def test_hd_intro_auth_and_keep_original_body(tcfg, monkeypatch):
+    from dataclasses import replace
+    from auto_short.config import HDIntroConfig, StoreConfig
+    from auto_short.render import hd_intro
+    from auto_short.workspace import atomic_write_json
+
+    pid = "PLhdIntroTest001"
+    tcfg = replace(tcfg, store=StoreConfig(enabled=True), hd_intro=HDIntroConfig((pid,)))
+    make_ep(tcfg)
+    write_hd(tcfg, VID)
+    d = Path(tcfg.workspace.dir) / VID
+    doc = st.read(d)
+    doc["released"] = True
+    st.write(d, doc)
+    (d / "source_hd.mp4").unlink()
+    atomic_write_json(Path(tcfg.workspace.dir) / "_playlists" / f"{pid}.json",
+                      {"playlist_id": pid, "entries": [{"video_id": VID}]})
+    monkeypatch.setattr(hd_intro, "thumbnail", lambda *a, **kw: None)
+    c = client(tcfg)
+    url = f"/api/episodes/{VID}/hd-intro"
+    assert c.post(url).status_code in (303, 401)
+    login(c)
+    response = c.post(url, json={"keep_original": True})
+    assert response.status_code == 202
+    job = c.app.state.runner.jobs()[0]
+    assert job.kind == "hd_intro" and job.target.keep_original is True

@@ -200,3 +200,34 @@ def test_store_revision_roundtrip(memory_store, tmp_path, kind):
     assert len(list(stored.parent.glob("*.mp4"))) == 2
     restarted = store.Store(service.config)
     assert restarted.lookup(VIDEO, kind)[0]["file"] == row["file"]
+
+
+def test_hd_intro_offset_keeps_full_key_and_original_duration(tcfg, media_runner):
+    from auto_short import hashing
+    from auto_short.enhance import state as enh
+
+    d = make_ep(tcfg, height=480)
+    write_hd(tcfg, VID)
+    run, encodes = media_runner
+    full.run_vertical(VID, tcfg, run=run)
+    before = full.read_meta(tcfg, VID)
+    original = enh.hd_fingerprint(d)
+    path = enh.hd_path(d)
+    path.write_bytes(b"intro-and-hd")
+    atomic_write_json(d / "hd_intro.json", {"version": 1, "status": "done",
+        "original": {"sha256": original.sha256, "size": original.size},
+        "stored": {"sha256": hashing.sha256_file(path), "size": path.stat().st_size},
+        "frames": 75, "fps": "25/1", "offset_seconds": 3})
+    assert full.current(tcfg, VID)
+    def with_intro(cmd):
+        proc = run(cmd)
+        if cmd[0] == "ffprobe" and not cmd[-1].endswith(".part"):
+            doc = json.loads(proc.stdout)
+            doc["format"]["duration"] = "5"
+            doc["streams"][0].update(duration="5", nb_frames="125")
+            proc.stdout = json.dumps(doc)
+        return proc
+    full.run_vertical(VID, tcfg, force=True, run=with_intro)
+    assert full.read_meta(tcfg, VID)["key"] == before["key"]
+    command = encodes[-1]
+    assert command[command.index("-ss") + 1] == "3.0"

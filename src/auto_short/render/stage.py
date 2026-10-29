@@ -586,7 +586,8 @@ def run_render(episode_id: str, config: Config, *, force: bool = False, run: Run
         try:
             doc = _render_all(ws, cfg, fpath, font_sha, media, media_fp.sha256, cfg_hash, paths, review_path,
                               out_dir, runner, force=force, old_outputs=previous_outputs(out_dir, prior),
-                              files=files)
+                              files=files, hd_source=enhance_state.hd_source(ws.dir, media_fp.sha256, media)
+                              if hd_fp is not None else None)
         except BaseException:
             # Only files of this run; once the commit has started the previous manifest no longer
             # describes the files on disk, so it goes too.
@@ -609,7 +610,8 @@ def run_render(episode_id: str, config: Config, *, force: bool = False, run: Run
 
 def _render_all(ws: Workspace, cfg: RenderConfig, fpath: Path, font_sha: str, media: Path, source_sha: str,
                 cfg_hash: str, paths: dict[str, Path], review_path: Path, out_dir: Path, run: Runner, *,
-                force: bool, old_outputs: list[Path], files: _RunFiles) -> dict:
+                force: bool, old_outputs: list[Path], files: _RunFiles,
+                hd_source: enhance_state.EffectiveSource | None = None) -> dict:
     clips_doc = read_stage_json(paths[CLIPS_NAME], "selection", RenderError)
     titles_doc = read_stage_json(paths[TITLES_NAME], "titling", RenderError)
     cand_doc = read_stage_json(paths[CANDIDATES_NAME], "analysis", RenderError)
@@ -634,7 +636,7 @@ def _render_all(ws: Workspace, cfg: RenderConfig, fpath: Path, font_sha: str, me
         raise RenderError(f"source media needs a video and an audio stream: {media}")
     src_w, src_h = int(info["video"]["width"]), int(info["video"]["height"])
     fps = plan.output_fps(_rate(info["video"]))
-    video_end = video_end_seconds(info["video"], fps)
+    video_end = enhance_state.hd_duration(hd_source, video_end_seconds(info["video"], fps))
 
     header_lines = [nfc(x) for x in titles_doc["header"]["lines"]]
     try:
@@ -720,6 +722,7 @@ def _render_all(ws: Workspace, cfg: RenderConfig, fpath: Path, font_sha: str, me
             cmd = plan.ffmpeg_command(ffmpeg="ffmpeg", source=media, output=part, graph_script=script,
                                       segments=cp.segments, fps=fps, crf=cfg.crf, preset=cfg.preset,
                                       audio_bitrate=cfg.audio_bitrate, threads=cfg.threads)
+            cmd = enhance_state.hd_input_command(hd_source, cmd, media)
             tasks.append(_Encode(clip, cp, record, fit, dissolves, part, cmd))
         _encode_all(tasks, run, fps, cfg.jobs)
 

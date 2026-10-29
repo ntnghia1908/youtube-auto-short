@@ -64,6 +64,11 @@ def read_backup(ws_dir: Path) -> dict:
         return {"schema_version": SCHEMA_VERSION, "confirmed": {}, "vertical_sha": None, "released": None}
     for key, default in (("confirmed", {}), ("vertical_sha", None), ("released", None)):
         doc.setdefault(key, default)
+    intro = enh.hd_intro_record(ws_dir)
+    if intro and (doc.get("released") or {}).get("hd"):
+        doc["released"]["hd"] = dict(intro["stored"])
+        if (doc.get("confirmed") or {}).get("hd"):
+            doc["confirmed"]["hd"].update(intro["stored"])
     return doc
 
 
@@ -102,7 +107,10 @@ def vertical_sha(config: Config, owner: str, doc: dict) -> tuple[str, int, int] 
 
 
 def _current_hd(d: Path) -> tuple[str, int] | None:
+    intro = enh.hd_intro_record(d)
     fp = enh.hd_fingerprint(d)
+    if intro is not None and fp is not None:
+        return intro["stored"]["sha256"], intro["stored"]["size"]
     return (fp.sha256, fp.size) if fp is not None else None
 
 
