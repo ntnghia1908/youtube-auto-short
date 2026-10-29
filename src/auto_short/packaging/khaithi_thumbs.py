@@ -180,6 +180,142 @@ def before_start(config, pid, number):
         return False
 
 
+def intro_context(config, ident):
+    """Containing configured playlist and header, or None for a Short / an episode outside KTI1."""
+    if not (Path(config.workspace.dir) / ident / "khaithi.json").is_file():
+        return None
+    base = ident.removesuffix(khaithi.SUFFIX)
+    for path in sorted((Path(config.workspace.dir) / "_playlists").glob("*.json")):
+        doc = read_json_dict(episode._no_symlinks(path)) or {}
+        pid = path.stem
+        if doc.get("playlist_id") != pid or start_episode(config, pid) is None:
+            continue
+        if any(isinstance(e, dict) and e.get("video_id") == base for e in doc.get("entries", [])):
+            fields = display_fields(config, pid, episode.header(config, base))
+            if not before_start(config, pid, fields["episode"]):
+                return pid, fields
+    return None
+
+
+def vertical_clip(config, ident, clip_id, *, pid, fields, run=None):
+    """Build/reuse precisely THUMB1's vertical image without building the other clips or orientations."""
+    entry = cover.current(config, pid).get("kt_vertical")
+    if entry is None:
+        raise PackageError(f"Bộ kinh chưa có ảnh bìa khai thị — /playlists/{pid}/thumbs")
+    all_titles = titles(config, ident, include_hidden=True)
+    title = next((t for t in all_titles if t.clip_id == clip_id and t.title and not t.rejected), None)
+    if title is None:
+        raise PackageError("chưa có tiêu đề clip khai thị")
+    folder = directory(config, ident)
+    items = portraits(config)
+    portrait, portrait_sha, facing = choose_portrait(items, fields["episode"])
+    key = cache_key(title.title, fields["episode"], entry, "vertical", portrait_sha256=portrait_sha,
+                    speaker=fields["speaker"], series=fields["series"], portrait_library=[sha for _, sha, _ in items])
+    old = read(config, ident) or {}
+    previous = old.get("clips", {}).get(clip_id, {}).get("vertical")
+    numbers = {t.clip_id: n for n, t in enumerate(all_titles, 1)}
+    if thumbnail.reusable(folder, previous, key, file_pattern=FILE_NAME):
+        destination = folder / previous["file"]
+        if old.get("clip_numbers") == numbers and old.get("header") == fields:
+            return destination
+        result = previous
+    else:
+        folder.mkdir(parents=True, exist_ok=True)
+        name = f"{clip_id}-vertical-{key}.jpg"
+        with tempfile.TemporaryDirectory(prefix=".kt-intro-", dir=folder) as tmp:
+            image = draw(Path(tmp), title.title, fields, entry, "vertical", cover.directory(config, pid) / entry["file"],
+                         name, portrait=portrait, facing=facing, run=run)
+            destination = episode._no_symlinks(folder / name)
+            os.replace(image, destination)
+        result = dict(file=name, key=key, sha256=sha256_file(destination))
+    doc = dict(old, schema_version=1, video_id=ident, playlist_id=pid, header=fields,
+               clip_numbers=numbers, updated_at=utc_now(),
+               portrait_reason=None if items else "chưa có chân dung")
+    doc["clips"] = {cid: files for cid, files in old.get("clips", {}).items() if cid in numbers}
+    doc["clips"].setdefault(clip_id, {})["vertical"] = result
+    atomic_write_json(folder / "thumbs.json", doc)
+    return destination
+
+
+def enqueue_intro_rebuild(config, runner, pid, first, last, *, prioritize_first_ten=False):
+    """Queue D-KTI1-2 on the live web runner (no HTTP needed, including already published clips).
+
+    Example: ``enqueue_intro_rebuild(config, runner, pid, 31, 500, prioritize_first_ten=True)``.
+    The first ten means the configured start..start+9, independently of the requested range.
+    Existing current clips, active jobs and episodes without rendered clips are left alone.
+    """
+    from ..render.stage import font_path, used_config, episode_render_config
+    from ..render.intro import INTRO_SECONDS
+    from .. import hashing
+    from ..enhance import state as enhance_state
+    from ..web.jobs import KIND_RENDER, render_target
+    from ..workspace import Workspace
+
+    if type(first) is not int or type(last) is not int or first < 1 or last < first:
+        raise PackageError("khoảng tập không hợp lệ")
+    start = start_episode(config, pid)
+    selected, skipped = [], []
+    for entry in episode.playlist(config, pid)["entries"]:
+        base = entry.get("video_id")
+        if not isinstance(base, str):
+            continue
+        ident = base + khaithi.SUFFIX
+        if not (Path(config.workspace.dir) / ident / "khaithi.json").is_file() or start is None:
+            continue
+        fields = display_fields(config, pid, episode.header(config, base))
+        number = int(fields["episode"])
+        if not first <= number <= last or before_start(config, pid, number):
+            continue
+        doc = read_json_dict(directory(config, ident).parent / "render_manifest.json") or {}
+        clips = [s for s in doc.get("shorts", []) if s.get("status") == "rendered"]
+        if not clips:
+            continue
+        ws = Workspace(config.workspace.dir, ident)
+        manifest = ws.load_manifest() or {}
+        stage = manifest.get("stages", {}).get("render") or {}
+        source_paths = {ws.resolve(manifest.get("source", {}).get("path", "source.mp4")).resolve(),
+                        enhance_state.hd_path(ws.dir).resolve()}
+        hd = enhance_state.read(ws.dir) or {}
+        source_sha = hd.get("source_hd_sha256") if enhance_state._hd_usable(hd) else manifest.get("source", {}).get("sha256")
+        cached = ws.source_fingerprint(manifest)
+        hd_fp = enhance_state.hd_fingerprint(ws.dir)
+        if hd_fp is not None:
+            cached.append(hd_fp)
+        cfg, kt = episode_render_config(config, ws.dir)
+        current = source_sha == doc.get("source_sha256") and stage.get("status") == "done" and stage.get("config_hash") == config_hash(
+            used_config(cfg, sha256_file(font_path(cfg)), kt))
+        for inp in stage.get("inputs", []):
+            if "path" in inp:
+                path = ws.resolve(inp["path"])
+                if path.is_file():
+                    sha = hashing.fingerprint(path, cached).sha256 if path.resolve() in source_paths else sha256_file(path)
+                    current = current and sha == inp["sha256"]
+                else:
+                    current = current and path.resolve() in source_paths and inp["sha256"] == source_sha
+        for clip in clips:
+            if not current or not clip.get("intro") or clip["intro"].get("seconds") != INTRO_SECONDS:
+                current = False
+                break
+            image = vertical_clip(config, ident, clip["clip_id"], pid=pid, fields=fields)
+            current = current and clip["intro"].get("sha256") == sha256_file(image)
+            local = directory(config, ident).parent / clip["file"]
+            release = (read_json_dict(local.parent.parent / "store.json") or {}).get("released", {}).get(clip["clip_id"], {})
+            current = current and (sha256_file(local) == clip["sha256"] if local.is_file()
+                                   else release.get("sha256") == clip["sha256"])
+        if current:
+            skipped.append(ident)
+        else:
+            selected.append((number, ident))
+    selected.sort()
+    if prioritize_first_ten:
+        runner.priority.mark([ident for number, ident in selected if start <= number < start + 10])
+    queued = []
+    for _, ident in selected:
+        _, created = runner.submit(ident, KIND_RENDER, render_target(config))
+        (queued if created else skipped).append(ident)
+    return dict(queued=queued, skipped=skipped)
+
+
 def choose_portrait(items, number):
     return items[(int(number) - 1) // EPISODES_PER_PORTRAIT % len(items)] if items else (None, None, "front")
 

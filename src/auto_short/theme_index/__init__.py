@@ -23,6 +23,7 @@ from ..compilation.spec import CompilationError, item_from_json
 from ..config import Config
 from ..enhance import state as enhance
 from ..render import plan, stage as render
+from ..render.intro import content_manifest, content_record
 from ..review import logic
 from ..selection.client import ChatClient, ChatError, OllamaClient, resolve_host
 from ..workspace import Workspace, WorkspaceError, atomic_write_json, utc_now, validate_episode_id
@@ -109,10 +110,10 @@ def _sha(doc: object) -> str:
 
 
 @lru_cache(maxsize=_HASH_CACHE_SIZE)
-def _json_digest(key: tuple, field: str | None = None) -> str:
+def _json_digest(key: tuple, field: str | None = None, *, content_only: bool = False) -> str:
     # Use exactly the parsed version validated by the caller, not a later read.
     doc = _cached_json(key)
-    return _sha(doc if field is None else doc[field])
+    return _sha(content_manifest(doc) if content_only else doc if field is None else doc[field])
 
 
 @lru_cache(maxsize=_HASH_CACHE_SIZE)
@@ -260,11 +261,14 @@ def _prepare(config: Config, playlist: dict, raw: object, playlist_digest: str) 
              ("khaithi.json", "manifest.json", "clips.json", "candidates.json", "titles.json", "transcript.json")}
     for name in ("review.json", "silences.json", "enhance.json"):
         files[name] = _file(ws.dir / name) if (ws.dir / name).is_file() else None
+    if rendered.get("content_workspace_manifest_sha256"):
+        files["manifest.json"] = rendered["content_workspace_manifest_sha256"]
+    video_sha = content_record(short)["sha256"]
     return {"identity": {"playlist_id": playlist["playlist_id"], **item.to_json()}, "duration": duration,
             "source_status": "present" if present else "missing",
             "final_segments": ranges, "source_reference": {"path": str(media.resolve()), "sha256": source_sha,
             "original_sha256": original_sha}, "evidence": evidence, "uncertainty": uncertainty,
-            "inputs": {"files": files, "render_manifest": _json_digest(rendered_key), "render_sha256": video_sha,
+            "inputs": {"files": files, "render_manifest": _json_digest(rendered_key, content_only=True), "render_sha256": video_sha,
                        "favorite": raw, "playlist": playlist_digest}}
 
 

@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..render.plan import ACODEC, CHANNELS, PIX_FMT, SAMPLE_RATE, VCODEC
+from ..render.intro import clip_record, offset
 from .probe import MediaInfo, Runner, compatible, last_line, probe, run
 from .spec import CompilationError
 
@@ -59,12 +60,13 @@ def concat_command(listing: Path, output: Path) -> list[str]:
             str(output)]
 
 
-def normalize_command(src: Path, dst: Path, ref: MediaInfo, enc: Encode) -> list[str]:
+def normalize_command(src: Path, dst: Path, ref: MediaInfo, enc: Encode, start: float = 0) -> list[str]:
     """Re-encode one input to the size / fps of the first input and the CP7 codec parameters."""
     w, h = (ref.width or 0) // 2 * 2, (ref.height or 0) // 2 * 2
     vf = (f"scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,"
           f"fps={ref.fps}")
-    return ["ffmpeg", "-nostdin", "-hide_banner", "-v", "error", "-y", "-i", str(src), "-vf", vf,
+    return ["ffmpeg", "-nostdin", "-hide_banner", "-v", "error", "-y",
+            *(["-ss", str(start)] if start else []), "-i", str(src), "-vf", vf,
             "-c:v", VCODEC, "-preset", enc.preset, "-crf", str(enc.crf), "-pix_fmt", PIX_FMT,
             "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv",
             "-threads", str(enc.threads), "-c:a", ACODEC, "-b:a", enc.audio_bitrate, "-ar", str(SAMPLE_RATE),
@@ -72,9 +74,10 @@ def normalize_command(src: Path, dst: Path, ref: MediaInfo, enc: Encode) -> list
             "-f", "mp4", str(dst)]
 
 
-def _join(paths: list[Path], tmp: Path, runner: Runner) -> Path:
+def _join(paths: list[Path], tmp: Path, runner: Runner, offsets: dict[Path, float]) -> Path:
     listing, out = tmp / "list.txt", tmp / "joined.mp4"
-    listing.write_text("".join(list_line(p) for p in paths), encoding="utf-8")
+    listing.write_text("".join(list_line(p) + (f"inpoint {offsets[p]:.12f}\n" if offsets.get(p) else "")
+                               for p in paths), encoding="utf-8")
     _ffmpeg(concat_command(listing, out), runner, "ghép")
     return out
 
@@ -90,12 +93,12 @@ def _infos(paths: list[Path], runner: Runner) -> dict[Path, MediaInfo]:
 
 
 def _reencode(paths: list[Path], infos: dict[Path, MediaInfo], tmp: Path, enc: Encode,
-              runner: Runner) -> tuple[list[Path], dict[Path, MediaInfo]]:
+              runner: Runner, offsets: dict[Path, float]) -> tuple[list[Path], dict[Path, MediaInfo]]:
     ref = infos[paths[0]]
     mapping: dict[Path, Path] = {}
     for n, p in enumerate(dict.fromkeys(paths)):
         dst = tmp / f"n{n:04d}.mp4"
-        _ffmpeg(normalize_command(p, dst, ref, enc), runner, f"encode lại {p.name}")
+        _ffmpeg(normalize_command(p, dst, ref, enc, offsets.get(p, 0)), runner, f"encode lại {p.name}")
         mapping[p] = dst
     out = [mapping[p] for p in paths]
     return out, _infos(out, runner)
@@ -117,22 +120,29 @@ def assemble(paths: list[Path], out: Path, enc: Encode = Encode(), *, runner: Ru
     tmp = Path(tempfile.mkdtemp(dir=out.parent, prefix=f".{out.stem}."))
     try:
         paths = [Path(p).resolve() for p in paths]
+        try:
+            offsets = {p: offset(clip_record(p)) for p in dict.fromkeys(paths)}
+        except ValueError as exc:
+            raise CompilationError(str(exc)) from exc
         infos = _infos(paths, runner)
         reencoded = not compatible(list(infos.values()))
         sources = paths
+        join_offsets = offsets
         if reencoded:
-            sources, infos = _reencode(paths, infos, tmp, enc, runner)
+            sources, infos = _reencode(paths, infos, tmp, enc, runner, offsets)
+            join_offsets = {}
         try:
-            joined = _join(sources, tmp, runner)
+            joined = _join(sources, tmp, runner, join_offsets)
         except CompilationError:
             if reencoded:
                 raise
             reencoded = True  # G3: a copy that fails is retried once, re-encoded
             for leftover in (tmp / "joined.mp4", tmp / "list.txt"):
                 leftover.unlink(missing_ok=True)
-            sources, infos = _reencode(paths, infos, tmp, enc, runner)
-            joined = _join(sources, tmp, runner)
-        parts = tuple(infos[p].duration for p in sources)
+            sources, infos = _reencode(paths, infos, tmp, enc, runner, offsets)
+            join_offsets = {}
+            joined = _join(sources, tmp, runner, join_offsets)
+        parts = tuple(infos[p].duration - join_offsets.get(p, 0) for p in sources)
         result = probe(joined, runner)
         if not result.complete or result.duration < DURATION_FLOOR * sum(parts):
             raise CompilationError(f"video ghép không hợp lệ ({result.duration:.1f} s, mong đợi {sum(parts):.1f} s)")

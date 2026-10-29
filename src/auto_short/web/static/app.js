@@ -902,6 +902,12 @@ const AutoShort = (() => {
     else if (job && job.status === "interrupted" && String(job.error || "").startsWith("đợi 3090")) setJobStatus(`${job.error} — tự thử lại khi kho trả lời.`, "busy");
     else if (job && job.status === "interrupted") setJobStatus(`Bị ngắt (${job.error}). Bấm chạy tiếp để tiếp tục.`, "error");
     else setJobStatus("", "");
+    const coverError = !jobActive(job) && ((job && job.status === "failed" && job.error) ||
+      (d.stages.find((s) => s.stage === "render" && s.status === "failed") || {}).error);
+    const coverLink = String(coverError || "").includes("Bộ kinh chưa có ảnh bìa khai thị") &&
+      String(coverError).match(/\/playlists\/([A-Za-z0-9_-]+)\/thumbs/);
+    if (coverLink) $("#job-status").append(document.createTextNode(" · "),
+      el("a", { href: `/playlists/${encodeURIComponent(coverLink[1])}/thumbs`, text: "Thiết kế bìa khai thị" }));
     applyStagesOpen(d);
 
     const stages = d.stages.length ? d.stages : Object.keys(STAGE_LABELS).map((s) => ({ stage: s, status: "pending" }));

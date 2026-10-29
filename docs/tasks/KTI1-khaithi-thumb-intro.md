@@ -71,4 +71,63 @@ Prefix như THUMB1.
 
 ## Result
 
--
+IMPLEMENTER hoàn tất 2026-10-29, sẵn sàng ORCHESTRATOR review. Status task vẫn `IN_PROGRESS`: AC7 (full suite / TestClient) và chạy thật do ORCHESTRATOR xác nhận; không tuyên bố PASS các phần chưa chạy. Không commit / push / PR, không gọi agent, không mạng thật.
+
+- File đổi: `render/stage.py`, **mới** `render/intro.py`, `render/full.py` (chỉ tách helper VERT2); `packaging/khaithi_thumbs.py`; `compilation/assemble.py`, `compilation/store.py`; `web/compilations.py`, `web/static/app.js`; `theme_index/__init__.py`, `theme_render/__init__.py`; `store/shorts.py`; **mới** `tests/test_khaithi_intro.py`, thêm ca vào `tests/test_khaithi_thumbs.py`, `tests/test_theme_render.py`; contract này.
+- Nội dung clip giữ nguyên packet encode. Intro dùng chung input/filter VERT2, encode riêng ảnh rồi concat copy; có `-force_key_frames 3`, content bắt đầu bằng IDR. Giữ timestamp với `-copyts` / `-avoid_negative_ts disabled`, tránh lệch AAC 21 ms. `intro.seconds=3`; `content_offset` là mốc frame thực tế (NTSC 90 / 29.97 ≈ 3.003 s), dùng thống nhất khi cắt.
+- Sidecar render có `intro`, `content_offset`, `content_sha256`, `content_render_key`; fingerprint TC1/TC3 chiếu về manifest nội dung cũ. `content_workspace_manifest_sha256` giữ fingerprint trước lần thêm intro khi nội dung không đổi. Clip mượn từ kho và kept có `.intro.json` kèm SHA được kiểm; un-heart xóa cả sidecar.
+- `_intro_from_existing` kiểm config, artifact, review / ranges / title và sha trước khi thêm intro vào clip cũ. Dùng được khi nguồn đã dọn / HD đã giải phóng; lấy lại clip qua SHO1 nếu cần, không lấy nguồn HD. Khi đổi nội dung / intro cũ, dùng đường render hiện hành.
+- Hàm cho ORCHESTRATOR trên **runner web đang chạy**: `auto_short.packaging.khaithi_thumbs.enqueue_intro_rebuild(config, runner, pid, first, last, prioritize_first_ten=True)`. Chọn tập theo `khaithi_from.json`, bỏ clip current (kể cả nguồn archived), dùng `render_target`, `runner.submit`, `runner.priority.mark`; 10 tập tính từ mốc cấu hình, không tính từ đầu khoảng yêu cầu. Không xếp / upload dữ liệu thật trong session.
+
+### AC → test
+
+| AC | Bằng chứng |
+|---|---|
+| 1 | `test_intro_pixels_silence_content_sha_cache_and_title` (mới + nâng cấp), `test_kti1_single_vertical_is_thumb1_download_with_same_portrait_and_cache`, `test_existing_content_gets_intro_after_source_cleanup` (local / kho + retry) |
+| 2 | `test_outside_scope_keeps_bytes_and_key` (Short / trước mốc / chưa cấu hình), regression `test_khaithi_ac1.py` |
+| 3 | `test_missing_cover_fails_with_link_and_no_new_clip`: stage + JobFailed + gọi route trực tiếp, không socket; kiểm reason, URL, không ghi clip |
+| 4 | `test_compilation_copy_and_reencode_skip_intro` (25 fps B-frame + NTSC, framemd5); `test_borrow_revision_kept_duration_and_cleanup` (handler kho thật qua I/O giả, upload `(r2)` + mượn + kept); `test_kti1_intro_preserves_approval_and_content_reference` (local / kho); `test_kti1_real_theme_rebuild_strips_reference_intro` (audio gate + framemd5) |
+| 5 | `test_intro_pixels_silence_content_sha_cache_and_title`: đổi title → ảnh / key / clip đổi |
+| 6 | `test_rebuild_range_priority_and_skip_current`: khoảng tập, trước mốc, 31–40 được ưu tiên / 41 không, bỏ current; ca archived ở AC1 kiểm skip sau dựng |
+| 7 | Framework / diff / JS syntax PASS; full suite + TestClient + chạy thật chưa chạy |
+
+AC4 dùng 4 hàm thay vì ≤3 vì có bốn boundary độc lập: concat copy/fallback, kho/kept, approval/fingerprint, dựng TC3 thực. Không sửa/xóa assertion của test cũ.
+
+### Helper mới / tái dùng
+
+Đã tìm bằng `rg -n 'intro|def .*command|def .*filter' src/auto_short/render/{full,plan}.py`, `rg -n 'sha256|duration|borrow|render_manifest|shorts'` trên các consumer, đọc `khaithi_thumbs` và `git show df562e6:src/auto_short/enhance/state.py`.
+
+- `intro.inputs`, `intro.filters`: tách từ VERT2, full giữ nguyên graph / command mặc định. `intro.prepend`: cần giữ packet nội dung; encode toàn clip qua filter sẽ đổi SHA và tốn CPU. Dùng lại concat command / escaping của compilation.
+- `intro.offset`, `clip_record`, `content_record`, `content_manifest`: consumer cần phân biệt stored SHA và content SHA, hỗ trợ local / kept / kho; HDI1 chỉ là mẫu chưa merge nên không import từ đó. Digest tiếp tục dùng memo `_json_digest` hiện có.
+- `_intro_from_existing`: `reusable` chỉ nhận cùng render key của cả file; thêm intro làm key đổi nhưng nội dung cũ vẫn dùng được, kể cả nguồn đã dọn.
+- `khaithi_thumbs.intro_context`, `vertical_clip`: `build_episode` dựng mọi clip / cả hai chiều, không phù hợp render một clip. Tái dùng `before_start`, `cache_key`, `choose_portrait`, `draw`, `thumbnail.reusable`, không đổi key/byte THUMB1.
+- `enqueue_intro_rebuild`: chưa có selector playlist + khoảng tập + intro hiện hành; tái dùng runner/priority/render target, không thêm queue hay UI.
+
+Diff ứng dụng **+496 / −32**, test **+376 / −0** (gồm file mới, tính theo `git diff --numstat` cộng số dòng file untracked). Không tính contract.
+
+### Verification đã chạy
+
+Mọi lệnh pytest dưới đây dùng `timeout 290s env PYTHONPATH=/home/ntnghia/projects/youtube-auto-short/.claude/worktrees/kti1/src /home/ntnghia/miniconda3/envs/auto-short/bin/python -m pytest -q -x --tb=short -n 2`:
+
+| Test arguments | Kết quả |
+|---|---|
+| `tests/test_khaithi_intro.py tests/test_khaithi_thumbs.py` | **96 PASS**, 115.07 s, sau thay đổi cuối |
+| `tests/test_compilation_thumbs.py tests/test_compilation.py` | **65 PASS**, 83.37 s |
+| `tests/test_theme_index.py tests/test_theme_plan.py tests/test_theme_render.py` | **250 PASS**, 111.85 s |
+| `tests/test_render_stage.py tests/test_render_reuse.py tests/test_render_plan.py tests/test_render_cp9.py` | **76 PASS**, 283.68 s |
+| `tests/test_render_stage.py tests/test_render_reuse.py` | **28 PASS**, 89.65 s, chạy lại sau thêm đường dùng clip cũ |
+| `tests/test_vertical_silence_intro.py tests/test_store_shorts_edit.py tests/test_khaithi_ac1.py tests/test_render_parallel.py` | **56 PASS**, 138.40 s |
+| `-m slow tests/test_render_stage.py tests/test_render_reuse.py tests/test_render_parallel.py` | **5 PASS**, 51.32 s |
+
+- `node scripts/framework-check.mjs`: PASS; `git diff --check`: PASS; `node --check src/auto_short/web/static/app.js`: PASS.
+- Hai lượt gộp tuần tự ban đầu (nhóm KTI1/THUMB/compilation/theme và nhóm render/VERT2/kho) hết 290 s, exit 124, chưa hoàn tất, không tính PASS. Đã tách nhóm chạy lại thành công như bảng. Trong vòng sửa, test phát hiện màu JPEG/BT709 và AAC dời timestamp; đã sửa, ca pixel / silence đủ 3 s / keyframe / framemd5 hiện PASS.
+
+### Chưa chạy / giới hạn còn lại
+
+- `<prefix> -n auto` toàn suite và TestClient AC3: không chạy theo ràng buộc sandbox không loopback; route trực tiếp đã kiểm, chưa thay cho kiểm UI trình duyệt.
+- Chạy thật 8080, gửi 10 s đầu VLT, ghép so bản cũ, bộ Cảm Ứng Thiên thiếu bìa, đợt dựng lại / upload kho 3090: để ORCHESTRATOR thực hiện sau review/merge theo contract. Không xác nhận dữ liệu thật hoặc thao tác YouTube.
+- NTSC có offset theo frame (≈3.003 s), không giả định mọi clip luôn có offset đúng 3.000 s. Sửa title/cut hoặc đổi intro đã có vẫn cần đường nguồn/render hiện hành; đường không cần nguồn chỉ áp dụng thêm intro lần đầu vào nội dung được xác minh hiện hành.
+- ORCHESTRATOR (2026-10-29): review diff (inventory ⊆ Owned paths; `render/intro.py` tách từ VERT2; intro encode riêng 3 s rồi concat copy trước nội dung — byte nội dung giữ nguyên nên plan TC3 không stale, clip đã giải phóng lên kho gắn intro không cần nguồn). Codex 213.755 tokens, 1 vòng.
+  - Full suite `-n auto`: **3469 passed, 2 failed, 1 skipped** — `test_ollama_wait_runner.py::test_posts_compose_202_while_down`, `test_theme_render.py::test_description_refresh_on_cache_hit_without_encoding[...]`; chạy riêng (`tests/test_theme_render.py` + test Ollama) 3 lần: **42 passed** mỗi lần (test theme_render cũng chập chờn trên nhánh FIX không đụng file này).
+  - Media thật (bản sao, không đụng output): VLT tập 31 `RmhVpxr-U_I.kt/k01` + thumbnail KT THUMB1 → `intro.prepend`: 29,97 fps, offset 3,003 s; 243,376 → 246,379 s; `ffmpeg -f null` không lỗi; 7294 khung nội dung framemd5 trùng bản gốc, 90 khung intro; khung 1,5 s = thumbnail đúng clip, 3,2 s = nội dung.
+  - Còn: chạy thật trên 8080 (job render 1 tập VLT ≥ 31, ghép 1 video yêu thích có clip đó), đợt dựng lại theo D-KTI1-5 sau khi Cảm Ứng Thiên / Thập Thiện cài bìa KT (HUMAN LEAD chọn 2026-10-29: CƯT mẫu 3, TT mẫu 4), manual checklist.
