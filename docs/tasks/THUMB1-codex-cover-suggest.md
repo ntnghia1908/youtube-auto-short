@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -143,10 +143,10 @@ Tất cả required verification phải chạy và PASS trước READY.
 
 Không chạm database / security model; chạm web API nội bộ có auth (thêm route) và gọi AI CLI ngoài → manual test là gate trước merge.
 
-- [ ] Gợi ý 4 mẫu ra 4 ảnh khác phong cách, chữ đúng dấu, "TẬP 1" nằm gọn trong khung.
-- [ ] Chọn mẫu → 3 ảnh còn lại cùng phong cách; xem thử tập 1 / tập cuối / khai thị ổn.
-- [ ] Dựng cả bộ + tải zip có thumbnail khai thị; tiêu đề dài 3 dòng vẫn vừa khung.
-- [ ] Bộ VLT / Địa Tạng: trang hiện ảnh bìa đang dùng, thumbnail không đổi.
+- [x] Gợi ý 4 mẫu ra 4 ảnh khác phong cách, chữ đúng dấu, "TẬP 1" nằm gọn trong khung.
+- [x] Chọn mẫu → 3 ảnh còn lại cùng phong cách; xem thử tập 1 / tập cuối / khai thị ổn.
+- [x] Dựng cả bộ + tải zip có thumbnail khai thị; tiêu đề dài 3 dòng vẫn vừa khung.
+- [x] Bộ VLT / Địa Tạng: trang hiện ảnh bìa đang dùng, thumbnail không đổi.
 
 ## Result
 
@@ -227,3 +227,4 @@ Không chạm database / security model; chạm web API nội bộ có auth (th�
 - D-THUMB1-12 (2026-10-29, ORCHESTRATOR tự làm, 1 dòng): HUMAN LEAD xem 8 mẫu so sánh (ngang tập 41 lật / không lật; dọc tập 1 / 21 / 41 tâm 42 % / giữa) → chọn ngang A (giữ lật), dọc B (giữa). `cover.portrait_box` dọc `px = (W − pw) / 2`; `khaithi_thumbs.LAYOUT_VERSION` 5 → 6. Chân dung #4 bỏ khỏi `portraits.json` (backup `ops-2026-10-29/portraits.json.bak-drop4`). AC14 → `test_packaging_cover.py::test_kt_portrait_geometry_bottom_and_clear_text_box` (tâm = W / 2). Verification: test liên quan 221 passed; full suite `-n auto` **3532 passed, 1 skipped**; `framework-check` PASS; `git diff --check` PASS.
 - D-THUMB1-13 (2026-10-29, ORCHESTRATOR tự làm): `khaithi_thumbs.start_episode` / `before_start` đọc `<asset_dir>/khaithi_from.json`; `build_episode` bỏ qua tập < N kèm lý do, `valid_files` trả rỗng (không phục vụ / không vào zip). Dữ liệu thật đã ghi: VLT 31, Cảm Ứng Thiên 21, Thập Thiện 21. AC15 → `test_khaithi_thumbs.py::test_kt_thumbs_start_from_configured_episode` (5 ca: chặn / mốc = tập / bộ khác / sai schema / N chuỗi), `test_kt_start_hides_already_built_files`. Verification: full suite `-n auto` 3537 passed, 1 skipped, 1 failed `test_ollama_wait_runner.py::test_submit_202_and_gpu_field_while_down` (không liên quan; chạy riêng file 22 passed); `framework-check` PASS; `git diff --check` PASS. Diff +55 / −0 (3 file). Restart 8080 `27fae09` (HUMAN LEAD chạy `--force`) + dựng lại KT VLT: 532 KT mới, 374 tập dùng lại (274 s).
   - Chạy thật 8080 `74e161b` (HUMAN LEAD restart): dựng cả bộ VLT 26 s — KT 0 mới / 206 dùng lại, 30 tập < 31 bỏ qua lý do "trước tập 31 (khai thị đã đăng)"; `thumbs.zip` VLT 954 file, KT chỉ tập 31–50 (206 file). Cảm Ứng Thiên / Thập Thiện: zip rỗng (chưa cài bộ ảnh bìa).
+- Manual test checklist: HUMAN LEAD **PASS** 2026-10-29 (4 / 4). Status → READY; PR #182 merge.
