@@ -561,3 +561,34 @@ def test_facing_change_invalidates_only_landscape_and_reaches_renderer(cfg, monk
     after = kt.read(cfg, ident)
     assert all(before["clips"][cid]["vertical"] == files["vertical"] for cid, files in after["clips"].items())
     assert kt.build_episode(cfg, ident, pid=PID, run=lambda _: pytest.fail("cache ran ffmpeg"))["reused"] == 4
+
+
+@pytest.mark.parametrize("doc, skipped", [
+    ({"schema_version": 1, "playlists": {PID: 102}}, True),
+    ({"schema_version": 1, "playlists": {PID: 101}}, False),
+    ({"schema_version": 1, "playlists": {"PLother": 200}}, False),
+    ({"schema_version": 2, "playlists": {PID: 102}}, False),
+    ({"schema_version": 1, "playlists": {PID: "102"}}, False),
+])
+def test_kt_thumbs_start_from_configured_episode(cfg, doc, skipped):
+    """D-THUMB1-13: episodes before the playlist's start were already published — no KT thumbnails / zip entries."""
+    atomic_write_json(cfg.packaging.asset_dir / "khaithi_from.json", doc)
+    summary = episode.build_playlist(cfg, PID)
+    ident = IDS[0] + ".kt"
+    if skipped:
+        assert summary["khaithi"]["built"] == 0
+        assert summary["khaithi"]["skipped"] == [dict(episode=ident, reason="trước tập 102 (khai thị đã đăng)")]
+        assert kt.valid_files(cfg, ident) == {}
+    else:
+        assert summary["khaithi"] == dict(built=4, reused=0, skipped=[])
+        assert set(kt.valid_files(cfg, ident)) == {"k01", "k02"}
+
+
+def test_kt_start_hides_already_built_files(cfg):
+    episode.build_playlist(cfg, PID)
+    ident = IDS[0] + ".kt"
+    assert kt.valid_files(cfg, ident)
+    atomic_write_json(cfg.packaging.asset_dir / "khaithi_from.json", {"schema_version": 1, "playlists": {PID: 102}})
+    assert kt.valid_files(cfg, ident) == {}
+    atomic_write_json(cfg.packaging.asset_dir / "khaithi_from.json", {"schema_version": 1, "playlists": {}})
+    assert set(kt.valid_files(cfg, ident)) == {"k01", "k02"}

@@ -162,6 +162,24 @@ def _read_portraits(folder):
 EPISODES_PER_PORTRAIT = 20  # HUMAN LEAD 2026-10-29: every clip of episodes 1-20 shares portrait 1, 21-40 portrait 2, ...
 
 
+def start_episode(config, pid):
+    """First episode that gets KT thumbnails (`khaithi_from.json`); earlier ones were already published."""
+    try:
+        doc = read_json_dict(episode._no_symlinks(Path(config.packaging.asset_dir) / "khaithi_from.json"))
+    except (PackageError, OSError, ValueError):
+        return None
+    start = (doc or {}).get("playlists", {}).get(pid) if (doc or {}).get("schema_version") == 1 else None
+    return start if type(start) is int and start > 1 else None
+
+
+def before_start(config, pid, number):
+    start = start_episode(config, pid)
+    try:
+        return start is not None and int(number) < start
+    except (TypeError, ValueError):
+        return False
+
+
 def choose_portrait(items, number):
     return items[(int(number) - 1) // EPISODES_PER_PORTRAIT % len(items)] if items else (None, None, "front")
 
@@ -357,6 +375,8 @@ def valid_files(config, ident, *, pid=None):
         pid = pid or doc["playlist_id"]
         covers = cover.current(config, pid)
         fields = display_fields(config, pid, episode.header(config, ident[:-3]))
+        if before_start(config, pid, fields["episode"]):
+            return {}
         items = portraits(config)
         result = {}
         current_titles = titles(config, ident, include_hidden=True)
@@ -393,6 +413,8 @@ def build_episode(config, ident, *, pid, run=None):
     if not selected:
         return dict(built=0, reused=0, skipped_reason="chưa có tiêu đề clip khai thị")
     fields = display_fields(config, pid, episode.header(config, ident[:-3]))
+    if before_start(config, pid, fields["episode"]):
+        return dict(built=0, reused=0, skipped_reason=f"trước tập {start_episode(config, pid)} (khai thị đã đăng)")
     items = portraits(config)
     old = read(config, ident) or {}
     doc = dict(schema_version=1, video_id=ident, playlist_id=pid, header=fields, clips={},
