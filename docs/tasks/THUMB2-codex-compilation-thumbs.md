@@ -31,6 +31,7 @@ S2 vì: đổi sản phẩm đóng gói PKG (quyết định PKG: gỡ trang Đ�
 - D-THUMB2-7 (HUMAN LEAD 2026-10-29, chọn "Chỉ dạng KT"): thumbnail video ghép = **dạng khai thị THUMB1**: bìa KT đã cài của bộ (`kt_vertical` / `kt_landscape`) + chân dung tách nền + toàn bộ chữ do code viết (cùng `layout` / font / vị trí chân dung / lật `facing` của KT clip). **Không gọi Codex cho từng video**; bỏ "2 mẫu / Gợi ý thêm / chọn / vẽ khổ thứ hai" của bản contract 2026-10-28 (D-THUMB2-2, D-THUMB2-3 cũ bị thay). Dựng luôn **2 khổ** (dọc 1080×1920, ngang 1280×720 `EPISODE_SIZES`) cho mỗi video ghép, bất kể khổ video.
 - D-THUMB2-8 (HUMAN LEAD 2026-10-29, chọn "Theo tập của đoạn đầu"): chân dung = `choose_portrait(portraits, N)` với N = số tập của **đoạn đầu tiên** trong video ghép ((a) thứ tự đoạn trong `<cid>.json`; (b) `approved["clips"][0]`), cùng quy tắc xoay vòng 20 tập của KT clip; ổn định khi dựng lại. Không có chân dung → dựng không chân dung (như KT clip).
 - D-THUMB2-9 (HUMAN LEAD 2026-10-29): nhãn nhỏ trên tiêu đề = **"TUYỂN TẬP KHAI THỊ"** (KT clip giữ "TRÍCH ĐOẠN KHAI THỊ").
+- D-THUMB2-10 (ORCHESTRATOR 2026-10-29 sau xem mẫu thật VLT, HUMAN LEAD cho phép không hỏi lại; HUMAN LEAD có thể bỏ khi duyệt manual): tiêu đề tuyển tập dạng "Hòa Thượng Tịnh Không - <chủ đề>" lặp dòng chủ giảng → trên thumbnail bỏ tiền tố trước " - " khi tiền tố là tên chủ giảng (bỏ danh xưng HT. / Hòa Thượng / Pháp Sư); tiêu đề video / mô tả tải về giữ nguyên. Test `test_thumb_title_drops_leading_speaker`.
 - Chữ: tiêu đề = (a) `title` trong `<cid>.json`, (b) tiêu đề plan đã duyệt; chủ giảng + tên bộ kinh = `khaithi_thumbs.display_fields` của tập đoạn đầu (tên bộ kinh của playlist thắng). Không có ô sửa chữ trên thẻ: đổi tiêu đề ở chỗ hiện có → thumbnail "cũ" → dựng lại. Mốc `khaithi_from.json` (D-THUMB1-13) **không** áp dụng cho video ghép.
 
 ## Goal
@@ -126,4 +127,5 @@ Không chạm database / security model; thêm route có auth + gỡ trang → m
   - `P -q tests/test_web_compilation.py tests/test_web_packaging.py tests/test_compilation_thumbs.py tests/test_packaging_thumbnail.py -n 8` (TestClient): **102 passed**.
   - `P -q -n auto` (full suite): **3449 passed, 1 skipped**, 197.79 s.
   - Dữ liệu thật 8080: chưa có video ghép yêu thích nào đã dựng (chỉ `favorites.json`); tuyển tập chủ đề: VLT 4, Cảm Ứng Thiên 8 (CƯT chưa có bìa KT). Chạy thật: tuyển tập VLT; loại (a) chỉ có test tự động.
+  - Mẫu thật (code nhánh, config thật, chưa restart 8080 vì làn render bận bản dọc Địa Tạng): 4 tuyển tập VLT `0281de6b6e0f`, `667178c6583f`, `d2d95528d136`, `e7809c5c400a` → 2 khổ mỗi video, chân dung theo tập đoạn đầu 17 / 18 / 23 / 19; sau D-THUMB2-10 `P -q tests/test_compilation_thumbs.py`: **54 passed**.
   - Còn: chạy thật 8080 (khi làn render rảnh) + manual checklist HUMAN LEAD.

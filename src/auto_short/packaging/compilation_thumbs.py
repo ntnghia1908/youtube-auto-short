@@ -28,6 +28,25 @@ class Source:
     fields: dict
 
 
+_HONORIFICS = ("hòa thượng", "hoà thượng", "ht.", "ht", "pháp sư", "lão pháp sư")
+
+
+def _name(text):
+    text = " ".join(nfc(text).casefold().replace(".", ". ").split())
+    for honorific in sorted(_HONORIFICS, key=len, reverse=True):
+        if text.startswith(honorific + " "):
+            return text[len(honorific) + 1:].strip()
+    return text
+
+
+def thumb_title(title, speaker):
+    """Drop a leading "<speaker> - " (e.g. "Hòa Thượng Tịnh Không - …"): the speaker line already shows it."""
+    head, sep, rest = nfc(title).partition(" - ")
+    if sep and rest.strip() and _name(head) and _name(head) == _name(speaker):
+        return rest.strip()
+    return title
+
+
 def _source(config, pid, identity, folder, title, clips):
     if not isinstance(clips, list) or not clips or not isinstance(clips[0], dict):
         raise PackageError("video ghép không có đoạn đầu hợp lệ")
@@ -37,7 +56,7 @@ def _source(config, pid, identity, folder, title, clips):
     fields = kt.display_fields(config, pid, episode.header(config, ident.removesuffix(".kt")))
     if title is not None and not isinstance(title, str):
         raise PackageError("tiêu đề video ghép không hợp lệ")
-    return Source(pid, identity, episode._no_symlinks(folder), nfc(title or ""), fields)
+    return Source(pid, identity, episode._no_symlinks(folder), nfc(thumb_title(title or "", fields["speaker"])), fields)
 
 
 def favorite(config, pid, cid):

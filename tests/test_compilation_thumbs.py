@@ -269,3 +269,15 @@ def test_thumb1_episode_bytes_and_key_unchanged(cfg, tmp_path, shape, box, size,
     old_key = config_hash(dict(cover_sha256=entry["sha256"], box=box, episode="23", layout_version=3,
                               font_sha256=sha256_file(thumbnail.EPISODE_FONTS[cover.FONT_NAME]), shape=shape))
     assert episode.cache_key(fields, episode.read_settings(cfg, PID), shape, cover_entry=entry) == old_key
+
+
+@pytest.mark.parametrize("title, expected", [
+    ("Hòa Thượng Tịnh Không - Chuyển hóa tâm niệm", "Chuyển hóa tâm niệm"),
+    ("HT. Tịnh Không - Phước đức và công đức", "Phước đức và công đức"),
+    (unicodedata.normalize("NFD", "Hòa Thượng Tịnh Không - Niệm Phật"), "Niệm Phật"),
+    ("Tịnh độ - Niệm Phật vãng sanh", "Tịnh độ - Niệm Phật vãng sanh"),  # not the speaker: kept
+    ("Hòa Thượng Tịnh Không - ", "Hòa Thượng Tịnh Không - "),  # nothing after the dash: kept (empty-title rule applies)
+    ("Buông bỏ để được an vui", "Buông bỏ để được an vui"),
+])
+def test_thumb_title_drops_leading_speaker(title, expected):
+    assert unicodedata.normalize("NFC", ct.thumb_title(title, "HT.Tịnh Không")) == unicodedata.normalize("NFC", expected)
