@@ -445,6 +445,8 @@ class PlaylistStore:
                 st = combine_status(self._kind_status(vid, job), kst)
             st["group"] = group_of(st["state"], bool(st.get("complete")))
             st["action"] = ACTIONS.get(st["state"]) if usable else None
+            if usable and st.get("archived") and st["state"] in _DONE_STATES:
+                st["action"] = "process" if st.get("khaithi_state") is None else "reprocess"
             st["resume_kinds"] = resume_kinds(st) if usable else None  # A1.2 "Chạy tiếp"
             st["job"] = job
             st["khaithi_job"] = jobs.get(kid) if kid is not None else None
@@ -497,6 +499,7 @@ def combine_status(short: dict, kt: dict | None) -> dict:
     out = dict(short, short_state=short["state"], khaithi_state=None, khaithi_videos=None, khaithi_published=None)
     if kt is None:
         return out
+    out["archived"] = short.get("archived") or kt.get("archived")
     out.update(khaithi_state=kt["state"], khaithi_videos=kt["shorts"], khaithi_published=kt["published"])
     pair = (("Short", short), ("khai thị", kt))
     for state in (PROCESSING, QUEUED):
