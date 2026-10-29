@@ -131,11 +131,14 @@ def context(config, video_id, settings, *, pid=None, covers=None):
     return fields, formats, idents, images
 
 
-def cache_key(fields, settings, shape, *, cover_entry=None):
+def cache_key(fields, settings, shape, *, cover_entry=None, portrait_sha256=None):
     if cover_entry is not None:
-        return config_hash(dict(cover_sha256=cover_entry["sha256"], box=cover_entry["box"],
-                                episode=fields["episode"], layout_version=cover.COVER_LAYOUT_VERSION,
-                                font_sha256=sha256_file(thumbnail.EPISODE_FONTS[cover.FONT_NAME]), shape=shape))
+        values = dict(cover_sha256=cover_entry["sha256"], box=cover_entry["box"],
+                      episode=fields["episode"], layout_version=cover.COVER_LAYOUT_VERSION_NO_PORTRAIT,
+                      font_sha256=sha256_file(thumbnail.EPISODE_FONTS[cover.FONT_NAME]), shape=shape)
+        if portrait_sha256 is not None:
+            values.update(layout_version=cover.COVER_LAYOUT_VERSION, portrait_sha256=portrait_sha256)
+        return config_hash(values)
     look = effective(settings, shape)
     return config_hash(dict(header=fields, settings=look, layout_version=thumbnail.EPISODE_LAYOUT_VERSION,
                             font_sha256=thumbnail.font_hashes(look["style"]), shape=shape))
@@ -147,6 +150,7 @@ def recorded_asset(doc, shape):
 
 def valid_files(config, video_id, doc=None, *, pid=None, settings=None):
     """Only current, complete, hash-verified artifacts may be previewed or downloaded."""
+    from . import khaithi_thumbs
     try:
         folder = directory(config, video_id)
         doc = read(config, video_id) if doc is None else doc
@@ -157,13 +161,15 @@ def valid_files(config, video_id, doc=None, *, pid=None, settings=None):
             return {}
         settings = read_settings(config, pid) if settings is None else settings
         covers = cover.current(config, pid)
+        _, portrait_sha = khaithi_thumbs.episode_portrait(config, pid) if covers else (None, None)
         fields, formats, idents, _ = context(config, video_id, settings, pid=pid, covers=covers)
         if doc["header"] != fields:
             return {}
         return {shape: entry for shape, entry in doc["files"].items() if shape in formats
                 and recorded_asset(doc, shape) == idents[shape]
                 and thumbnail.reusable(folder, entry, cache_key(fields, settings, shape,
-                                                               cover_entry=covers.get(shape)), file_pattern=FILE_NAME)}
+                                                               cover_entry=covers.get(shape),
+                                                               portrait_sha256=portrait_sha), file_pattern=FILE_NAME)}
     except (PackageError, TitlingError, OSError, ValueError, KeyError, TypeError):
         return {}
 
@@ -271,10 +277,12 @@ def write_settings(config, pid, settings):
 
 def build_episode(config, video_id, *, pid, settings=None, run=None):
     """Stage every format before publishing any of them; count episodes, not individual JPEGs."""
+    from . import khaithi_thumbs
     folder = directory(config, video_id)
     previous = read(config, video_id) or _new(video_id)
     settings = read_settings(config, pid) if settings is None else settings
     covers = cover.current(config, pid)
+    portrait, portrait_sha = khaithi_thumbs.episode_portrait(config, pid) if covers else (None, None)
     fields, formats, idents, images = context(config, video_id, settings, pid=pid, covers=covers)
     doc = dict(_new(video_id), playlist_id=pid, header=fields, asset_id=idents["landscape"],
                asset_ids={shape: idents[shape] for shape in formats})
@@ -282,7 +290,7 @@ def build_episode(config, video_id, *, pid, settings=None, run=None):
     staged = []
     with tempfile.TemporaryDirectory(prefix=".episode-thumbs-", dir=folder) as tmpname:
         for shape in formats:
-            expected = cache_key(fields, settings, shape, cover_entry=covers.get(shape))
+            expected = cache_key(fields, settings, shape, cover_entry=covers.get(shape), portrait_sha256=portrait_sha)
             old = previous["files"].get(shape)
             if thumbnail.reusable(folder, old, expected, file_pattern=FILE_NAME):
                 doc["files"][shape] = old
@@ -291,7 +299,8 @@ def build_episode(config, video_id, *, pid, settings=None, run=None):
             work.mkdir()
             name = f"{shape}-{expected}.jpg"
             if shape in covers:
-                output = cover.build_episode(work, fields, shape, images[shape], name, entry=covers[shape], run=run)
+                output = cover.build_episode(work, fields, shape, images[shape], name, entry=covers[shape],
+                                             portrait=portrait, run=run)
             else:
                 output = thumbnail.build_episode(work, fields, shape, images[shape], name,
                                                  settings=effective(settings, shape), run=run)
@@ -316,6 +325,7 @@ def build_playlist(config, pid, *, run=None, progress=None):
     entries = playlist(config, pid)["entries"]
     settings = read_settings(config, pid)
     summary = dict(built=0, reused=0, skipped=[])
+    from . import khaithi_thumbs
     seen = set()
     for entry in entries:
         ident = entry.get("video_id") if isinstance(entry, dict) else None
@@ -335,6 +345,20 @@ def build_playlist(config, pid, *, run=None, progress=None):
                 atomic_write_json(folder / "thumbs.json", doc)
             except (PackageError, OSError):
                 pass  # invalid paths / records must never be overwritten
+        try:
+            if isinstance(ident, str) and not ident.endswith(".kt"):
+                kt_id = ident + ".kt"
+                khaithi_thumbs.directory(config, kt_id)  # validate before entering workspace paths
+                if _no_symlinks(Path(config.workspace.dir) / kt_id / "khaithi.json").is_file():
+                    summary.setdefault("khaithi", dict(built=0, reused=0, skipped=[]))
+                    kt = khaithi_thumbs.build_episode(config, kt_id, pid=pid, run=run)
+                    for kind in ("built", "reused"):
+                        summary["khaithi"][kind] += kt[kind]
+                    if kt["skipped_reason"]:
+                        summary["khaithi"]["skipped"].append(dict(episode=kt_id, reason=kt["skipped_reason"]))
+        except (PackageError, TitlingError, TextError, RenderError, OSError, ValueError, KeyError, TypeError) as exc:
+            summary.setdefault("khaithi", dict(built=0, reused=0, skipped=[]))["skipped"].append(
+                dict(episode=ident, reason=str(exc)))
         if progress is not None:
             progress(summary)
     return summary
@@ -342,8 +366,10 @@ def build_playlist(config, pid, *, run=None, progress=None):
 
 def preview(config, pid, *, settings=None, run=None):
     """Both shapes of the first eligible episode, returned as bytes; never publish into episode output."""
+    from . import khaithi_thumbs
     settings = read_settings(config, pid) if settings is None else validate_settings(config, settings)
     covers = cover.current(config, pid)
+    portrait, _ = khaithi_thumbs.episode_portrait(config, pid) if covers else (None, None)
     for entry in playlist(config, pid)["entries"]:
         try:
             fields, _, _, images = context(config, entry["video_id"], settings, pid=pid, covers=covers)
@@ -359,7 +385,7 @@ def preview(config, pid, *, settings=None, run=None):
             work.mkdir()
             if shape in covers:
                 path = cover.build_episode(work, fields, shape, images[shape], "preview.jpg",
-                                           entry=covers[shape], run=run)
+                                           entry=covers[shape], portrait=portrait, run=run)
             else:
                 path = thumbnail.build_episode(work, fields, shape, images[shape], "preview.jpg",
                                                settings=effective(settings, shape), run=run)

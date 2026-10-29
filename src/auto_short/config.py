@@ -331,6 +331,15 @@ class PostConfig:
 
 
 @dataclass(frozen=True)
+class ThumbsConfig:
+    enabled: bool = True
+    codex_bin: str = "codex"
+    codex_model: str = "gpt-6.1-sol"
+    codex_effort: str = "medium"
+    codex_timeout_minutes: int = 30
+
+
+@dataclass(frozen=True)
 class PackagingConfig:
     asset_dir: Path = field(default_factory=lambda: Path("~/.local/share/auto-short/packaging").expanduser())
 
@@ -367,6 +376,7 @@ class Config:
     compilation: CompilationConfig = field(default_factory=CompilationConfig)
     packaging: PackagingConfig = field(default_factory=PackagingConfig)
     store: StoreConfig = field(default_factory=StoreConfig)
+    thumbs: ThumbsConfig = field(default_factory=ThumbsConfig)
 
 
 def _section(data: dict, name: str) -> dict:
@@ -848,8 +858,24 @@ def from_dict(data: dict) -> Config:
         enhance=_enhance(data),
         compilation=_compilation(data),
         store=_store(data),
+        thumbs=_thumbs(data),
         packaging=PackagingConfig(asset_dir=Path(_str(_section(data, "packaging"), "asset_dir",
             str(PackagingConfig().asset_dir), "packaging")).expanduser()),
+    )
+
+
+def _thumbs(data):
+    section = _section(data, "thumbs")
+    defaults = ThumbsConfig()
+    effort = _str(section, "codex_effort", defaults.codex_effort, "thumbs")
+    if effort not in ("low", "medium", "high", "xhigh"):
+        raise ConfigError("thumbs.codex_effort must be low, medium, high or xhigh")
+    return ThumbsConfig(
+        enabled=_bool(section, "enabled", True, "thumbs"),
+        codex_bin=_str(section, "codex_bin", defaults.codex_bin, "thumbs"),
+        codex_model=_str(section, "codex_model", defaults.codex_model, "thumbs"),
+        codex_effort=effort,
+        codex_timeout_minutes=_int(section, "codex_timeout_minutes", 30, "thumbs", lo=1, hi=240),
     )
 
 

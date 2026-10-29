@@ -1,7 +1,6 @@
 """PKG2: socket-free service tests plus authenticated HTTP coverage for ORCHESTRATOR."""
 import io
 import json
-import re
 import shutil
 import zipfile
 from types import SimpleNamespace
@@ -10,13 +9,13 @@ from urllib.parse import unquote
 import pytest
 from fastapi.testclient import TestClient
 
-from auto_short.packaging import PackageError, assets, episode
+from auto_short.packaging import PackageError, episode
 from auto_short.web import episode_thumbs as web
 from auto_short.web.auth import COOKIE_NAME
 from auto_short.web.jobs import RENDER
 from auto_short.workspace import atomic_write_json
 
-from test_packaging_episode import IDS, PID, SERIES, add_images, episode_media, seed_episodes
+from test_packaging_episode import IDS, PID, SERIES, episode_media, seed_episodes
 from test_web_theme_index import fx
 
 BASE = f"/api/playlists/{PID}/thumbs"
@@ -46,57 +45,24 @@ def client(service, monkeypatch):
     return s
 
 
-def test_service_gallery_labels_and_numeric_tag_order(service, tmp_path):
+def test_service_job_lane_dedup_cache_and_grid(service):
     s = service
-    expected = {}
-    for label in ("67", "2", "portrait", None):
-        path = tmp_path / f"{label}.jpg"
-        path.write_bytes(str(label).encode())
-        asset = assets.add(s.cfg.packaging.asset_dir, path, kind="image", source="local:test", license="CC0",
-                           tags=[label] if label else [], run=episode_media)
-        assets.approve(s.cfg.packaging.asset_dir, asset["id"])
-        expected[label] = asset["id"]
-    images = s.service.view(PID)["assets"]
-    assert [asset["id"] for asset in images[:2]] == [expected["2"], expected["67"]]
-    assert [asset["number"] for asset in images[:2]] == ["2", "67"]
-    assert [asset["id"] for asset in images[2:]] == sorted([expected["portrait"], expected[None]])
-    for position, asset in enumerate(images, 1):
-        assert asset["number"] == (asset["tags"][0] if asset["tags"] else position)
-        assert asset["preview_url"].startswith("/files/playlists/")
-
-
-def test_service_job_lane_dedup_cache_and_playlist_settings(service):
-    s = service
-    settings = episode.read_settings(s.cfg, PID)
     first, created = s.service.render(PID)
     duplicate, again = s.service.render(PID)
     assert created and not again and first.id == duplicate.id
-    assert first.kind == "episode_thumbs" and first.episode_id == f"episode_thumbs:{PID}"
     assert [step.lane for step in first.steps] == [RENDER]
     with pytest.raises(web.Unavailable):
-        s.service.save_settings(PID, settings)
-    with pytest.raises(web.Unavailable):
-        s.service.preview(PID)
+        s.service.mutable(PID)
     s.runner.start()
     try:
-        assert s.runner.wait_idle(5)
-        assert first.status == "done", first.error
-        assert len(s.calls) == 4
+        assert s.runner.wait_idle(5) and first.status == "done", first.error
         view = s.service.view(PID)
         assert view["series"] == SERIES and all(row["files"] for row in view["episodes"])
-        for row in view["episodes"]:
-            assert not row["skipped_reason"]
-            for entry in row["files"].values():
-                assert entry["preview_url"].startswith("/files/episodes/")
+        assert "settings" not in view and "assets" not in view
+        assert not view["covers"] and view["suggestion"] is None
         s.calls.clear()
         job, _ = s.service.render(PID)
-        assert s.runner.wait_idle(5) and job.status == "done"
-        assert not s.calls
-        s.service.save_settings(PID, dict(settings, style="B"))
-        assert all(not row["files"] for row in s.service.view(PID)["episodes"])
-        job, _ = s.service.render(PID)
-        assert s.runner.wait_idle(5) and job.status == "done", job.error
-        assert len(s.calls) == 4
+        assert s.runner.wait_idle(5) and job.status == "done" and not s.calls
     finally:
         s.runner.stop()
 
@@ -187,7 +153,6 @@ def test_http_build_grid_download_zip_and_tamper(client):
     assert before == {str(p): p.stat().st_mtime_ns for p in s.cfg.workspace.dir.rglob("*")}
     assert s.c.post(BASE).status_code == 202
     assert s.c.post(BASE).status_code == 200
-    assert s.c.put(BASE + "/settings", json={"title_lines": ["Kinh"]}).status_code == 409
     s.runner.start()
     try:
         assert s.runner.wait_idle(5)
@@ -211,39 +176,6 @@ def test_http_build_grid_download_zip_and_tamper(client):
         s.runner.stop()
 
 
-def test_http_settings_validation_preview_and_rebuild(client, tmp_path):
-    s = client
-    pool = add_images(s.cfg, tmp_path)
-    settings = s.c.get(BASE + "/settings").json()
-    assert settings["style"] == "A" and settings["asset_id"] is None
-    for patch in ({"style": "D"}, {"focus_x": -1}, {"title_lines": [" "]}, {"title_lines": ["x"*41]},
-                  {"credit": "x"*61}, {"asset_id": "x"*64}):
-        assert s.c.put(BASE + "/settings", json={**settings, **patch}).status_code in (400, 422)
-    before = {str(p): p.read_bytes() for p in s.cfg.render.output_dir.rglob("*") if p.is_file()}
-    preview = s.c.post(BASE + "/preview", json={**settings, "style": "C"})
-    assert preview.status_code == 200
-    assert set(preview.json()["files"]) == {"landscape", "vertical"}
-    assert all(file["preview_url"].startswith("data:image/jpeg;base64,") for file in preview.json()["files"].values())
-    assert before == {str(p): p.read_bytes() for p in s.cfg.render.output_dir.rglob("*") if p.is_file()}
-    assert not episode.settings_path(s.cfg, PID).exists()
-    view = s.c.get(BASE).json()
-    assert s.c.get(view["assets"][0]["preview_url"]).status_code == 200
-    episode.build_playlist(s.cfg, PID, run=episode_media)
-    s.calls.clear()
-    assert s.c.put(BASE + "/settings", json={**settings, "asset_id": pool[0], "style": "B"}).status_code == 200
-    assert s.c.post(BASE).status_code == 202
-    assert s.c.post(BASE + "/preview").status_code == 409
-    s.runner.start()
-    try:
-        assert s.runner.wait_idle(5)
-        assert len([cmd for cmd in s.calls if "mjpeg" in cmd]) == 4
-        view = s.c.get(BASE).json()
-        assert view["settings"]["asset_id"] == pool[0]
-        assert all(row["asset_id"] == pool[0] for row in view["episodes"])
-    finally:
-        s.runner.stop()
-
-
 def test_service_progress_counts_per_shape_and_reasons(service):
     s = service
     progress = s.service.view(PID)["progress"]
@@ -263,67 +195,18 @@ def test_service_progress_counts_per_shape_and_reasons(service):
     assert str(s.cfg.workspace.dir) not in json.dumps(progress)
 
 
-def test_http_vertical_override_validation_preview_and_save(client, tmp_path):
-    s = client
-    pool = add_images(s.cfg, tmp_path)
-    settings = s.c.get(BASE + "/settings").json()
-    assert settings["vertical"] is None
-    good = dict(style="B", asset_id=pool[0], focus_x=0.25)
-    for bad in (dict(good, style="D"), dict(good, focus_x=1.5), dict(good, focus_x=-0.1), dict(good, asset_id="x" * 64),
-                dict(good, asset_id="a" * 64), {"style": "A", "focus_x": 0.5}, "A"):
-        for method, url in (("PUT", BASE + "/settings"), ("POST", BASE + "/preview")):
-            assert s.c.request(method, url, json={**settings, "vertical": bad}).status_code in (400, 422), (method, bad)
-    assert not s.calls and not episode.settings_path(s.cfg, PID).exists()
-    preview = s.c.post(BASE + "/preview", json={**settings, "vertical": good})
-    assert preview.status_code == 200 and set(preview.json()["files"]) == {"landscape", "vertical"}
-    assert not episode.settings_path(s.cfg, PID).exists()
-    saved = s.c.put(BASE + "/settings", json={**settings, "vertical": good})
-    assert saved.status_code == 200 and saved.json()["vertical"] == good
-    assert s.c.get(BASE).json()["settings"]["vertical"] == good
-    # null (or no field) goes back to the shared look
-    assert s.c.put(BASE + "/settings", json={**settings, "vertical": None}).json()["vertical"] is None
-    assert s.c.put(BASE + "/settings", json={k: v for k, v in settings.items() if k != "vertical"}).json()["vertical"] is None
-
-
-def test_http_vertical_override_only_rebuilds_vertical(client, tmp_path):
-    s = client
-    pool = add_images(s.cfg, tmp_path)
-    episode.build_playlist(s.cfg, PID, run=episode_media)
-    settings = s.c.get(BASE + "/settings").json()
-    s.calls.clear()
-    assert s.c.put(BASE + "/settings", json={**settings, "vertical": dict(style="C", asset_id=pool[1], focus_x=0.4)}).status_code == 200
-    progress = s.c.get(BASE).json()["progress"]
-    assert (progress["landscape"], progress["vertical"]) == (2, 0)
-    assert s.c.post(BASE).status_code == 202
-    s.runner.start()
-    try:
-        assert s.runner.wait_idle(5)
-        assert len([cmd for cmd in s.calls if "mjpeg" in cmd]) == 2  # the 9:16 file of each episode
-        progress = s.c.get(BASE).json()["progress"]
-        assert (progress["landscape"], progress["vertical"], progress["with_any"]) == (2, 2, 2)
-    finally:
-        s.runner.stop()
-
-
-def test_page_has_sticky_action_bar_and_collapsed_lists(client):
+def test_page_has_suggestion_flow_and_no_legacy_form(client):
     html = client.c.get(f"/playlists/{PID}/thumbs").text
-    parse = re.compile(r"<details\b([^>]*)>")
+    for text in ("Gợi ý 4 mẫu", "Dùng bộ ảnh này", "Vẽ lại 3 ảnh", "Dựng cả bộ", "Tải zip", "Xem từng tập"):
+        assert text in html
+    for old in ("thumbs-style", "thumbs-vstyle", "thumbs-settings", "thumbs-assets", "thumbs-preview", "thumbs-focus"):
+        assert f'id="{old}"' not in html
+    assert 'id="thumbs-zoom"' in html and 'maxlength="200"' in html
     assert "position: sticky" in html and "bottom: 0" in html
-    bar = html[html.index('class="th-bar"'):]
-    for control in ("thumbs-preview", "thumbs-build", "thumbs-zip"):
-        assert control in bar
-    assert bar.index("thumbs-build") < bar.index("</form>")  # the bar lives inside the form, after all settings
-    details = {m.group(1) for m in parse.finditer(html)}
-    assert all("open" not in attrs.split() for attrs in details)
-    for ident in ("thumbs-details", "thumbs-vdetails", "thumbs-episodes"):
-        assert f'id="{ident}"' in html
-    assert re.search(r'id="thumbs-assets"[^>]*>', html) and "max-height: 50vh" in html and "overflow: auto" in html
-    # the grid of episodes sits inside its closed <details>, the preview sits above the action bar
-    assert html.index('id="thumbs-episodes"') < html.index('id="thumbs-grid"') < html.index('class="th-bar"')
-    assert html.index('id="thumbs-preview-images"') < html.index('class="th-bar"')
-    assert 'id="thumbs-vsep"' in html and 'id="thumbs-vgroup"' in html
     script = client.c.get("/static/thumbs.js").text
-    assert "vertical:" in script and '"toggle"' in script and "view.progress" in script
+    assert "/suggest" in script and "view.progress" in script and "setTimeout(load" in script
+    for route in ("/settings", "/preview"):
+        assert client.c.post(BASE + route).status_code == 404
 
 
 def test_http_episode_without_video_has_both_shapes_and_zip_names(client):  # G8 / AC4
@@ -341,3 +224,272 @@ def test_http_episode_without_video_has_both_shapes_and_zip_names(client):  # G8
         assert s.c.get(entry["preview_url"]).status_code == 200
     with zipfile.ZipFile(io.BytesIO(s.c.get(view["zip_url"]).content)) as archive:
         assert {"T101_ngang.jpg", "T101_doc.jpg"} <= set(archive.namelist())
+
+
+def test_service_suggestion_paths_and_symlinks(service, tmp_path):
+    from auto_short.packaging import cover_suggest
+    s = service
+    doc = cover_suggest.create(s.cfg, PID)
+    folder = cover_suggest.directory(s.cfg, PID, doc["run_id"])
+    doc["options"] = {"option-1.png": dict(shape="vertical", box=[100, 700, 300, 100], preview="option-1-preview.jpg")}
+    cover_suggest.save(folder, doc)
+    (folder / "option-1.png").write_bytes(b"test")
+    assert s.service.suggestion_image(PID, doc["run_id"], "option-1.png") == folder / "option-1.png"
+    for name in ("../secret", "state.json", "option-2.png", "ref.png", "boxes.json"):
+        with pytest.raises(PackageError):
+            s.service.suggestion_image(PID, doc["run_id"], name)
+    (folder / "option-1.png").unlink()
+    (folder / "option-1.png").symlink_to(tmp_path / "outside.png")
+    with pytest.raises(PackageError, match="symlink"):
+        s.service.suggestion_image(PID, doc["run_id"], "option-1.png")
+
+
+def test_http_suggest_auth_missing_binary_and_bad_ids(client):
+    from dataclasses import replace
+    from auto_short.config import ThumbsConfig
+    from auto_short.packaging import cover_suggest
+    s = client
+    anon = TestClient(s.app, follow_redirects=False)
+    ident = "a" * 32
+    paths = [("POST", "/suggest", {}), ("GET", f"/suggest/{ident}", None),
+             ("POST", f"/suggest/{ident}/select", dict(name="option-1.png")),
+             ("POST", f"/suggest/{ident}/install", None), ("POST", f"/suggest/{ident}/cancel", None),
+             ("GET", f"/suggest/{ident}/images/option-1.png", None), ("GET", "/covers/vertical", None)]
+    for method, suffix, body in paths:
+        assert anon.request(method, BASE + suffix, json=body).status_code == 401
+    s.service.config = replace(s.cfg, thumbs=ThumbsConfig(codex_bin="/no/codex-here"))
+    missing = s.c.post(BASE + "/suggest", json={})
+    assert missing.status_code == 503 and "chưa cài Codex" in missing.json()["detail"]
+    assert s.c.post(BASE + "/suggest", json=dict(notes="x" * 201)).status_code == 422
+    for run_id in ("bad!", "..%5Csecret", "b" * 32):
+        assert s.c.get(BASE + f"/suggest/{run_id}").status_code == 400
+    assert s.c.get(BASE + f"/suggest/{ident}/images/state.json").status_code == 400
+
+
+def test_http_suggest_choose_install_build_zip_and_kt_links(client, tmp_path, monkeypatch):
+    import threading
+    from auto_short.packaging import cover, cover_suggest, khaithi_thumbs
+    from test_cover_suggest import fake_codex
+    from test_khaithi_thumbs import seed_kt
+    from test_packaging_cover import source_image
+    s = client
+    seed_kt(s.cfg)
+    artwork = {"vertical": source_image(tmp_path, (540, 960)), "landscape": source_image(tmp_path, (640, 360))}
+    monkeypatch.setattr(cover_suggest, "available", lambda _: None)
+    s.service.codex_runner = fake_codex(artwork)
+    s.service.media_runner = None
+    entered, release = threading.Event(), threading.Event()
+    actual = s.service.codex_runner
+    def hold(*args, **kwargs):
+        entered.set()
+        assert release.wait(5)
+        return actual(*args, **kwargs)
+    s.service.codex_runner = hold
+    try:
+        result = s.c.post(BASE + "/suggest", json=dict(notes="Hoa sen"))
+        assert result.status_code == 202
+        ident = result.json()["run_id"]
+        assert entered.wait(2)
+        assert s.c.post(BASE + "/suggest", json={}).status_code == 409
+    finally:
+        release.set()
+    s.service.suggest_thread.join(30)
+    assert not s.service.suggest_thread.is_alive()
+    options = s.c.get(BASE + f"/suggest/{ident}").json()
+    assert options["status"] == "done", options.get("error")
+    assert s.c.get(options["options"]["option-1.png"]["preview_url"]).status_code == 200
+    assert s.c.post(BASE + f"/suggest/{ident}/select", json=dict(name="../../bad.png")).status_code == 400
+    s.service.codex_runner = actual
+    assert s.c.post(BASE + f"/suggest/{ident}/select", json=dict(name="option-1.png")).status_code == 202
+    s.service.suggest_thread.join(30)
+    doc = s.c.get(BASE + f"/suggest/{ident}").json()
+    assert doc["status"] == "done", doc.get("error")
+    assert len(doc["previews"]) == 6  # first, last, one actual KT title; both shapes
+    assert s.c.post(BASE + f"/suggest/{ident}/install").status_code == 200
+    assert set(cover.current(s.cfg, PID)) == set(cover.SIZES)
+    summary = episode.build_playlist(s.cfg, PID)
+    assert summary["khaithi"]["built"] == 4
+    zipped = s.c.get(f"/files/playlists/{PID}/thumbs.zip")
+    with zipfile.ZipFile(io.BytesIO(zipped.content)) as archive:
+        assert {f"khai-thi/T101_KT{n:02d}_{shape}.jpg" for n in (1, 2) for shape in ("vertical", "landscape")} <= set(archive.namelist())
+    files = khaithi_thumbs.valid_files(s.cfg, IDS[0] + ".kt")
+    for shape, entry in files["k01"].items():
+        url = f"/files/episodes/{IDS[0]}.kt/thumbs/{entry['file']}"
+        assert s.c.get(url).status_code == 200
+        assert s.c.get(f"/files/episodes/{IDS[0]}.kt/thumbs/k01-{shape}.jpg").status_code == 200
+    path = khaithi_thumbs.directory(s.cfg, IDS[0] + ".kt") / files["k01"]["vertical"]["file"]
+    path.write_bytes(b"tampered")
+    assert s.c.get(f"/files/episodes/{IDS[0]}.kt/thumbs/k01-vertical.jpg").status_code == 404
+    assert "Thumbnail dọc" in s.c.get("/static/app.js").text
+
+
+def feedback_endpoint(app):
+    return next(route.endpoint for route in app.routes if getattr(route, "path", None) ==
+                "/api/playlists/{pid}/thumbs/suggest/{run_id}/feedback")
+
+
+@pytest.mark.parametrize("status", ["done", "failed", "cancelled"])
+def test_feedback_api_creates_child_and_exposes_metadata_without_socket(service, monkeypatch, status):
+    from auto_short.packaging import cover_suggest
+    s = service
+    monkeypatch.setattr(cover_suggest, "available", lambda _: None)
+    parent = cover_suggest.create(s.cfg, PID, "hoa sen")
+    parent.update(status=status, feedback=["Đổi màu"])
+    cover_suggest.save(cover_suggest.directory(s.cfg, PID, parent["run_id"]), parent)
+    executed = []
+    monkeypatch.setattr(cover_suggest, "execute", lambda *args, **kwargs: executed.append(args[2]))
+    result = feedback_endpoint(s.app)(pid=PID, run_id=parent["run_id"],
+                                      body=dict(feedback="  Khung nhỏ hơn  ", mode="options"))
+    assert result.status_code == 202
+    child = json.loads(result.body)
+    s.service.suggest_thread.join(3)
+    assert executed == [child["run_id"]] and child["run_id"] != parent["run_id"]
+    view = s.service.suggestion_view(PID, child["run_id"])
+    assert view["parent_run"] == parent["run_id"] and view["reference"] is None
+    assert view["feedback"] == ["Đổi màu", "Khung nhỏ hơn"] and view["notes"] == "hoa sen"
+
+
+@pytest.mark.parametrize("body", [
+    None, [], "text", {}, {"feedback": "", "mode": "options"},
+    {"feedback": "  ", "mode": "options"}, {"feedback": "x" * 301, "mode": "options"},
+    {"feedback": 1, "mode": "options"}, {"feedback": "x", "mode": "bad"},
+    {"feedback": "x", "mode": "revise", "reference": "../option-1.png"},
+    {"feedback": "x", "mode": "revise", "reference": "option-2.png"},
+    {"feedback": "x", "mode": "variants"},
+])
+def test_feedback_api_invalid_input_is_400_without_socket(service, monkeypatch, body):
+    from auto_short.packaging import cover_suggest
+    monkeypatch.setattr(cover_suggest, "available", lambda _: None)
+    doc = cover_suggest.create(service.cfg, PID)
+    doc["status"] = "done"
+    cover_suggest.save(cover_suggest.directory(service.cfg, PID, doc["run_id"]), doc)
+    result = feedback_endpoint(service.app)(pid=PID, run_id=doc["run_id"], body=body)
+    assert result.status_code == 400
+    assert len(list(cover_suggest.directory(service.cfg, PID).iterdir())) == 1
+
+
+def test_feedback_api_busy_parent_and_global_lock_without_socket(service, monkeypatch):
+    import threading
+    from auto_short.packaging import cover_suggest
+    s = service
+    monkeypatch.setattr(cover_suggest, "available", lambda _: None)
+    parent = cover_suggest.create(s.cfg, PID)
+    endpoint = feedback_endpoint(s.app)
+    body = dict(feedback="Thu nhỏ khung", mode="options")
+    assert endpoint(pid=PID, run_id=parent["run_id"], body=body).status_code == 409
+    parent["status"] = "done"
+    cover_suggest.save(cover_suggest.directory(s.cfg, PID, parent["run_id"]), parent)
+    entered, release = threading.Event(), threading.Event()
+    def hold(*args, **kwargs):
+        entered.set()
+        assert release.wait(5)
+    monkeypatch.setattr(cover_suggest, "execute", hold)
+    try:
+        s.service.suggest(PID)
+        assert entered.wait(2)
+        assert endpoint(pid=PID, run_id=parent["run_id"], body=body).status_code == 409
+        other = web.EpisodeThumbs(s.service.plans)
+        with pytest.raises(web.Unavailable):
+            other.suggest(PID, parent_run=parent["run_id"], feedback="Màu xanh", mode="options")
+    finally:
+        release.set()
+        s.service.suggest_thread.join(3)
+    assert endpoint(pid=PID, run_id=parent["run_id"], body=body).status_code == 202
+    s.service.suggest_thread.join(3)
+
+
+def test_feedback_ui_controls_without_socket():
+    from pathlib import Path
+    static = Path(web.__file__).parent / "static"
+    html = (static / "thumbs.html").read_text()
+    script = (static / "thumbs.js").read_text()
+    assert 'id="thumbs-feedback" maxlength="300"' in html
+    for text in ("Góp ý cho Codex", "Vẽ lại 4 mẫu theo góp ý", "Vẽ lại 3 ảnh theo góp ý", "Góp ý đã áp dụng"):
+        assert text in html
+    assert "Sửa mẫu này theo góp ý" in script
+    assert 'feedback("options")' in script and 'feedback("variants")' in script and 'feedback("revise", name)' in script
+    assert "feedbackDisabled" in script and "view.codex_unavailable" in script
+    assert '$("thumbs-feedback-panel").hidden = !s || running' in script
+
+
+def test_http_feedback_auth_and_input_status(client, monkeypatch):
+    from auto_short.packaging import cover_suggest
+    s = client
+    monkeypatch.setattr(cover_suggest, "available", lambda _: None)
+    parent = cover_suggest.create(s.cfg, PID)
+    url = BASE + f"/suggest/{parent['run_id']}/feedback"
+    body = dict(feedback="Thu nhỏ khung", mode="options")
+    anon = TestClient(s.app, follow_redirects=False)
+    assert anon.post(url, json=body).status_code == 401
+    assert s.c.post(url, json=body).status_code == 409
+    parent["status"] = "done"
+    cover_suggest.save(cover_suggest.directory(s.cfg, PID, parent["run_id"]), parent)
+    for invalid in ({}, [], dict(feedback=" ", mode="options"), dict(feedback="x" * 301, mode="options"),
+                    dict(feedback="x", mode="revise", reference="../option-1.png")):
+        assert s.c.post(url, json=invalid).status_code == 400
+    monkeypatch.setattr(cover_suggest, "execute", lambda *args, **kwargs: None)
+    result = s.c.post(url, json=body)
+    assert result.status_code == 202 and result.json()["parent_run"] == parent["run_id"]
+    s.service.suggest_thread.join(3)
+
+
+def test_http_kt_current_cover_flow_auth_busy_ids_feedback_and_install(client, tmp_path, monkeypatch):
+    """AC10: ORCHESTRATOR runs TestClient coverage outside the socket-restricted sandbox."""
+    import threading
+    from auto_short.packaging import cover, cover_suggest
+    from test_cover_suggest import fake_codex
+    from test_khaithi_thumbs import seed_kt, portrait_manifest
+    from test_packaging_cover import source_image
+    s = client
+    seed_kt(s.cfg)
+    portrait_manifest(s.cfg)
+    monkeypatch.setattr(cover_suggest, "available", lambda _: None)
+    anon = TestClient(s.app, follow_redirects=False)
+    url = BASE + "/suggest-kt"
+    assert anon.post(url, json={}).status_code == 401
+    assert s.c.post("/api/playlists/bad!/thumbs/suggest-kt", json={}).status_code == 404
+    monkeypatch.setattr(cover_suggest, "available", lambda _: "chưa cài Codex trên máy chủ")
+    assert s.c.post(url, json={}).status_code == 503
+    monkeypatch.setattr(cover_suggest, "available", lambda _: None)
+    assert s.c.post(url, json={}).status_code == 400  # no installed vertical cover
+    artwork = {"vertical": source_image(tmp_path, (540, 960)), "landscape": source_image(tmp_path, (640, 360))}
+    for shape in ("vertical", "landscape"):
+        cover.install(s.cfg, PID, shape, artwork[shape], [100, 700, 300, 100] if shape == "vertical" else [100, 240, 300, 50])
+    original = cover.current(s.cfg, PID)
+    reference = (cover.directory(s.cfg, PID) / original["vertical"]["file"]).read_bytes()
+    s.service.media_runner = None
+    entered, release = threading.Event(), threading.Event()
+    def runner(cmd, **kwargs):
+        from pathlib import Path
+        assert Path(cmd[cmd.index("-i") + 1]).read_bytes() == reference
+        entered.set()
+        assert release.wait(10)
+        return fake_codex(artwork)(cmd, **kwargs)
+    s.service.codex_runner = runner
+    try:
+        result = s.c.post(url, json=dict(notes="Nền dịu"))
+        assert result.status_code == 202
+        run_id = result.json()["run_id"]
+        assert entered.wait(3)
+        assert s.c.post(url, json={}).status_code == 409
+    finally:
+        release.set()
+        s.service.suggest_thread.join(30)
+    assert not s.service.suggest_thread.is_alive()
+    run_url = BASE + f"/suggest/{run_id}"
+    done = s.c.get(run_url).json()
+    assert done["phase"] == "kt" and done["status"] == "done", done.get("error")
+    assert len(done["previews"]) == 2
+    for preview in done["previews"]:
+        assert s.c.get(preview["preview_url"]).status_code == 200
+    assert s.c.get(run_url + "/images/ref.png").status_code == 400
+    assert s.c.post(run_url + "/install").status_code == 200
+    assert {shape: cover.current(s.cfg, PID)[shape] for shape in original} == original
+    assert s.c.post(run_url + "/feedback", json=dict(mode="kt", feedback="Màu xanh dịu")).status_code == 202
+    s.service.suggest_thread.join(30)
+    assert not s.service.suggest_thread.is_alive()
+    html = s.c.get(f"/playlists/{PID}/thumbs").text
+    script = s.c.get("/static/thumbs.js").text
+    assert "Vẽ ảnh khai thị theo bìa hiện tại" in html
+    assert "Dùng 2 ảnh này" in script and "Vẽ lại 2 ảnh theo góp ý" in script
+    assert '"/suggest-kt"' in script and 'feedback("kt")' in script

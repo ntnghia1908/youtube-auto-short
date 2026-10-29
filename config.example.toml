@@ -271,3 +271,11 @@ max_minutes = 720            # longest compilation, 1-720 (YouTube's limit is 12
 [packaging]
 # PKG1: local image / loop / music library, imported and approved manually by CLI.
 asset_dir = "~/.local/share/auto-short/packaging"
+
+# Thumbnail cả bộ: Codex vẽ ảnh mẫu sau khi người dùng bấm Gợi ý 4 mẫu.
+[thumbs]
+enabled = true
+codex_bin = "codex"
+codex_model = "gpt-6.1-sol"
+codex_effort = "medium"
+codex_timeout_minutes = 30
