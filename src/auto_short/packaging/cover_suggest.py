@@ -241,7 +241,7 @@ Khổ tập dọc: chủ thể tranh ở nửa trên, chừa giữa nửa trên 
 Khổ tập ngang: tên kinh + chủ giảng + khung TẬP ở nửa trái; nửa phải là tranh để chân dung thật ghép đè lên.
 Khổ kt_: không vẽ chữ, không vẽ người / khuôn mặt; toàn bộ chữ và chân dung thật sẽ do code ghép sau.
 Ảnh kt_ chỉ giữ cùng phong cách, bảng màu, họa tiết bìa tham chiếu; không sao chép chữ tên kinh hay chủ giảng.
-kt_landscape: một khung bên trái rộng 50–62% ảnh, cao ≥ 70%; nửa phải là nền dịu ít chi tiết để ghép chân dung.
+kt_landscape: một khung bên phải rộng 50–62% ảnh, cao ≥ 70%; nửa trái là nền dịu ít chi tiết để ghép chân dung.
 kt_vertical: một khung phía trên rộng ≥ 80% ảnh, cao 30–45%; đáy khung ≤ 52% chiều cao; nửa dưới nền dịu ít chi tiết.
 Trong khung kt_ là nền phẳng tối đồng màu, đủ nhãn TRÍCH ĐOẠN KHAI THỊ, tiêu đề ≤ 3 dòng, chủ giảng và tên kinh · tập (code viết sau).
 Ghi đúng các PNG sau (tỉ lệ phải gần đúng; ưu tiên kích thước yêu cầu):
@@ -328,7 +328,7 @@ def validate(work, names, *, run=None):
             if shape in ("vertical", "landscape") and (bw / sw > (.7 if shape == "vertical" else .55) or
                                                         bh / sh > (.11 if shape == "vertical" else .18)):
                 raise PackageError("khung TẬP quá lớn")
-            if shape == "kt_landscape" and not (.45 <= bw / sw <= .66 and bh / sh >= .65 and (x + bw) / sw <= .68) \
+            if shape == "kt_landscape" and not (.45 <= bw / sw <= .66 and bh / sh >= .65 and x / sw >= .32) \
                     or shape == "kt_vertical" and not (bw / sw >= .70 and .28 <= bh / sh <= .48 and (y + bh) / sh <= .55):
                 raise PackageError("khung khai thị sai vị trí / cỡ")
             if not shape.startswith("kt_") and (bw / sw < (.28 if shape == "landscape" else .4) or bh / sh < .05):
@@ -385,7 +385,7 @@ def execute(config, pid, run_id, *, runner=None, media_runner=None, cancel=None)
                 raise PackageError("không đủ ảnh hợp lệ: " + "; ".join(f"{k}: {v}" for k, v in errors.items()))
             staging = replace(config, render=replace(config.render, output_dir=work / "normalized"))
             output = {}
-            portrait, _ = khaithi_thumbs.episode_portrait(config)
+            portrait, _ = khaithi_thumbs.episode_portrait(config, pid)
             for name, entry in good.items():
                 if cancel.is_set():
                     raise Cancelled("đã hủy gợi ý")
@@ -432,7 +432,7 @@ def previews(config, pid, folder, doc, *, run=None):
         cases.append(("last", last[1]))
     kt = None
     portraits = khaithi_thumbs.portraits(config)
-    portrait, _ = khaithi_thumbs.episode_portrait(config)
+    portrait, _ = khaithi_thumbs.episode_portrait(config, pid)
     for item in entries:
         try:
             clips = khaithi_thumbs.titles(config, item["video_id"] + ".kt", include_hidden=True)
@@ -448,7 +448,7 @@ def previews(config, pid, folder, doc, *, run=None):
                 except TextError:
                     continue
                 kt = (khaithi_thumbs.display_fields(config, pid, fields), clip.title,
-                      khaithi_thumbs.choose_portrait(portraits, fields["episode"])[0])
+                      khaithi_thumbs.choose_portrait(portraits, fields["episode"]))
                 break
         except (PackageError, TitlingError, OSError, ValueError, KeyError, TypeError):
             continue
@@ -465,7 +465,7 @@ def previews(config, pid, folder, doc, *, run=None):
                 filename = f"preview-{case}-{shape}.jpg"
                 if case == "kt":
                     image = khaithi_thumbs.draw(work, kt[1], fields, entry, shape, folder / name,
-                                                filename, portrait=kt[2], run=run)
+                                                filename, portrait=kt[2][0], facing=kt[2][2], run=run)
                 else:
                     image = cover.build_episode(work, fields, shape, folder / name, filename, entry=entry,
                                                 portrait=portrait, run=run)

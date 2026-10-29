@@ -133,10 +133,12 @@ def context(config, video_id, settings, *, pid=None, covers=None):
 
 def cache_key(fields, settings, shape, *, cover_entry=None, portrait_sha256=None):
     if cover_entry is not None:
-        return config_hash(dict(cover_sha256=cover_entry["sha256"], box=cover_entry["box"],
-                                episode=fields["episode"], layout_version=cover.COVER_LAYOUT_VERSION,
-                                portrait_sha256=portrait_sha256,
-                                font_sha256=sha256_file(thumbnail.EPISODE_FONTS[cover.FONT_NAME]), shape=shape))
+        values = dict(cover_sha256=cover_entry["sha256"], box=cover_entry["box"],
+                      episode=fields["episode"], layout_version=cover.COVER_LAYOUT_VERSION_NO_PORTRAIT,
+                      font_sha256=sha256_file(thumbnail.EPISODE_FONTS[cover.FONT_NAME]), shape=shape)
+        if portrait_sha256 is not None:
+            values.update(layout_version=cover.COVER_LAYOUT_VERSION, portrait_sha256=portrait_sha256)
+        return config_hash(values)
     look = effective(settings, shape)
     return config_hash(dict(header=fields, settings=look, layout_version=thumbnail.EPISODE_LAYOUT_VERSION,
                             font_sha256=thumbnail.font_hashes(look["style"]), shape=shape))
@@ -159,7 +161,7 @@ def valid_files(config, video_id, doc=None, *, pid=None, settings=None):
             return {}
         settings = read_settings(config, pid) if settings is None else settings
         covers = cover.current(config, pid)
-        _, portrait_sha = khaithi_thumbs.episode_portrait(config) if covers else (None, None)
+        _, portrait_sha = khaithi_thumbs.episode_portrait(config, pid) if covers else (None, None)
         fields, formats, idents, _ = context(config, video_id, settings, pid=pid, covers=covers)
         if doc["header"] != fields:
             return {}
@@ -280,7 +282,7 @@ def build_episode(config, video_id, *, pid, settings=None, run=None):
     previous = read(config, video_id) or _new(video_id)
     settings = read_settings(config, pid) if settings is None else settings
     covers = cover.current(config, pid)
-    portrait, portrait_sha = khaithi_thumbs.episode_portrait(config) if covers else (None, None)
+    portrait, portrait_sha = khaithi_thumbs.episode_portrait(config, pid) if covers else (None, None)
     fields, formats, idents, images = context(config, video_id, settings, pid=pid, covers=covers)
     doc = dict(_new(video_id), playlist_id=pid, header=fields, asset_id=idents["landscape"],
                asset_ids={shape: idents[shape] for shape in formats})
@@ -367,7 +369,7 @@ def preview(config, pid, *, settings=None, run=None):
     from . import khaithi_thumbs
     settings = read_settings(config, pid) if settings is None else validate_settings(config, settings)
     covers = cover.current(config, pid)
-    portrait, _ = khaithi_thumbs.episode_portrait(config) if covers else (None, None)
+    portrait, _ = khaithi_thumbs.episode_portrait(config, pid) if covers else (None, None)
     for entry in playlist(config, pid)["entries"]:
         try:
             fields, _, _, images = context(config, entry["video_id"], settings, pid=pid, covers=covers)

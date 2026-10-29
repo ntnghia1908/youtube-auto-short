@@ -45,7 +45,7 @@ def fake_codex(artwork, calls=None, damage=None):
         for name, shape in names.items():
             vertical = shape.endswith("vertical")
             shutil.copyfile(artwork["vertical" if vertical else "landscape"], folder / name)
-            boxes[name] = ([50, 130, 440, 380] if vertical else [30, 125, 360, 235]) if shape.startswith("kt_") else (
+            boxes[name] = ([50, 130, 440, 380] if vertical else [220, 60, 360, 260]) if shape.startswith("kt_") else (
                 [100, 700, 300, 100] if vertical else [100, 240, 300, 50])
         atomic_write_json(folder / "boxes.json", boxes)
         if damage:
@@ -354,7 +354,7 @@ def test_suggestion_response_keeps_preview_urls_and_redacts_paths(cfg, phase):
     ("landscape", [40, 240, 300, 65], True),
     ("landscape", [40, 240, 180, 50], False),
     ("kt_vertical", [50, 130, 440, 380], False),
-    ("kt_landscape", [30, 125, 360, 235], False),
+    ("kt_landscape", [220, 60, 360, 260], False),
 ])
 def test_box_limits_use_original_image_dimensions(artwork, tmp_path, shape, box, oversized):
     work = tmp_path / "validate"
@@ -494,12 +494,13 @@ def test_feedback_state_schema_rejects_invalid_fields(cfg, field, value):
 
 
 @pytest.mark.parametrize("shape,box,valid", [
-    ("kt_landscape", [30, 30, 320, 260], True),
-    ("kt_landscape", [0, 0, 288, 234], True),
-    ("kt_landscape", [10, 20, 287, 260], False),
-    ("kt_landscape", [0, 20, 423, 260], False),
-    ("kt_landscape", [10, 20, 320, 233], False),
-    ("kt_landscape", [120, 20, 320, 260], False),
+    ("kt_landscape", [220, 30, 320, 260], True),
+    ("kt_landscape", [205, 0, 288, 234], True),
+    ("kt_landscape", [220, 20, 287, 260], False),
+    ("kt_landscape", [210, 20, 423, 260], False),
+    ("kt_landscape", [220, 20, 320, 233], False),
+    ("kt_landscape", [204, 20, 320, 260], False),
+    ("kt_landscape", [30, 30, 320, 260], False),
     ("kt_vertical", [50, 130, 440, 380], True),
     ("kt_vertical", [0, 0, 378, 269], True),  # 70 %: real VLT box was 74,7 % after Codex inner margin
     ("kt_vertical", [50, 80, 377, 380], False),
@@ -518,7 +519,7 @@ def test_kt_frame_new_size_and_position_limits(artwork, tmp_path, shape, box, va
 
 def test_kt_prompt_and_only_two_output_specs():
     text = suggest.prompt(dict(series="Kinh", speaker="HT. Tịnh Không"), "", "kt")
-    for rule in ("không vẽ chữ", "không vẽ người", "50–62%", "70%", "80%", "30–45%", "52%", "nửa phải", "nửa dưới", "phẳng tối"):
+    for rule in ("không vẽ chữ", "không vẽ người", "50–62%", "70%", "80%", "30–45%", "52%", "kt_landscape: một khung bên phải", "nửa trái là nền dịu", "nửa dưới", "phẳng tối"):
         assert rule in text
     spec = json.loads(text.split("ưu tiên kích thước yêu cầu):\n")[1].split("\nTự dùng")[0])
     assert set(spec) == set(suggest.KT)
@@ -534,10 +535,11 @@ def test_episode_prompt_reserves_portrait_regions(phase):
         assert rule in text
 
 
-def test_options_and_variants_previews_use_fixed_episode_portrait(cfg, artwork, monkeypatch):
+@pytest.mark.parametrize("enabled", [False, True])
+def test_options_and_variants_previews_use_fixed_episode_portrait(cfg, artwork, monkeypatch, enabled):
     from test_khaithi_thumbs import portrait_manifest
-    folder, entries = portrait_manifest(cfg, episode_index=1)
-    expected = folder / entries[1]["file"]
+    folder, entries = portrait_manifest(cfg, episode_index=1, episode_playlists=[PID] if enabled else ["other"])
+    expected = folder / entries[1]["file"] if enabled else None
     calls = []
     real = cover.build_episode
     def build(*args, **kwargs):
@@ -560,8 +562,18 @@ def test_kt_run_uses_installed_reference_previews_install_and_feedback(cfg, artw
     from test_khaithi_thumbs import seed_kt, portrait_manifest
     from test_packaging_episode import IDS
     from auto_short.hashing import sha256_file
+    from auto_short.packaging import khaithi_thumbs as kt
     seed_kt(cfg)
-    portrait_manifest(cfg)
+    portrait_folder, portraits = portrait_manifest(cfg)
+    for entry in portraits:
+        entry["facing"] = "left"
+    atomic_write_json(portrait_folder / "portraits.json", dict(schema_version=1, portraits=portraits))
+    rendered = []
+    real_draw = kt.draw
+    def draw(*args, **kwargs):
+        rendered.append((args[4], kwargs["facing"]))
+        return real_draw(*args, **kwargs)
+    monkeypatch.setattr(kt, "draw", draw)
     for shape in ("vertical", "landscape"):
         cover.install(cfg, PID, shape, artwork[shape], [100, 700, 300, 100] if shape == "vertical" else [100, 240, 300, 50])
     original = cover.current(cfg, PID)
@@ -581,6 +593,7 @@ def test_kt_run_uses_installed_reference_previews_install_and_feedback(cfg, artw
     assert done["status"] == "done", done.get("error")
     assert set(done["variants"]) == set(suggest.KT) and not done["options"]
     assert [p["file"] for p in done["previews"]] == ["preview-kt-vertical.jpg", "preview-kt-landscape.jpg"]
+    assert rendered == [("vertical", "left"), ("landscape", "left")]
     assert not list(folder.glob("option-*.png")) and not (folder / "landscape.png").exists()
     entries = suggest.install(cfg, PID, doc["run_id"])
     assert {s: entries[s] for s in original} == original

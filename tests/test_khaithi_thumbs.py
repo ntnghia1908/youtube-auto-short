@@ -17,7 +17,7 @@ from test_packaging_episode import IDS, PID, seed_episodes
 TITLE = "Giữ tâm thanh tịnh trong cuộc sống để được an lạc mỗi ngày"
 
 
-def portrait_manifest(cfg, *, count=2, color="red@0.8", episode_index=None):
+def portrait_manifest(cfg, *, count=2, color="red@0.8", episode_index=None, episode_playlists=None):
     folder = cfg.packaging.asset_dir / "portraits"
     folder.mkdir(parents=True, exist_ok=True)
     entries = []
@@ -30,6 +30,8 @@ def portrait_manifest(cfg, *, count=2, color="red@0.8", episode_index=None):
     doc = dict(schema_version=1, portraits=entries)
     if episode_index is not None:
         doc["episode"] = entries[episode_index]["file"]
+    if episode_playlists is not None:
+        doc["episode_playlists"] = episode_playlists
     atomic_write_json(folder / "portraits.json", doc)
     return folder, entries
 
@@ -117,7 +119,7 @@ def test_cover_box_image_layout_font_and_number_invalidate(cfg, tmp_path, monkey
     kt.build_episode(cfg, ident, pid=PID)
     monkeypatch.setattr(kt, "LAYOUT_VERSION", 999)
     assert not kt.valid_files(cfg, ident)
-    monkeypatch.setattr(kt, "LAYOUT_VERSION", 2)
+    monkeypatch.setattr(kt, "LAYOUT_VERSION", 3)
     assert kt.valid_files(cfg, ident)
     monkeypatch.setitem(thumbnail.EPISODE_FONTS, cover.FONT_NAME, thumbnail.EPISODE_FONTS["sans"])
     assert not kt.valid_files(cfg, ident)
@@ -241,18 +243,18 @@ def test_portraits_reject_bad_records_without_losing_good_ones(cfg, tmp_path, da
             folder.symlink_to(target, target_is_directory=True)
         else:
             atomic_write_json(manifest, dict(schema_version=2 if damage == "schema" else 1, portraits=[]))
-    assert kt.portraits(cfg) == [(folder / e["file"], e["sha256"]) for e in expected]
+    assert kt.portraits(cfg) == [(folder / e["file"], e["sha256"], "front") for e in expected]
 
 
 def test_portrait_rotation_twenty_episodes_per_portrait(cfg):
     assert kt.portraits(cfg) == []
     folder, entries = portrait_manifest(cfg, count=3)
     items = kt.portraits(cfg)
-    assert items == [(folder / e["file"], e["sha256"]) for e in entries]
+    assert items == [(folder / e["file"], e["sha256"], "front") for e in entries]
     expected = {1: 0, 20: 0, 21: 1, 40: 1, 41: 2, 60: 2, 61: 0, 101: 2, 374: 0}
     for number, index in expected.items():
         assert kt.choose_portrait(items, str(number)) == items[index]
-    assert kt.choose_portrait([], 101) == (None, None)
+    assert kt.choose_portrait([], 101) == (None, None, "front")
 
 
 def test_portraits_cached_until_folder_changes(cfg, monkeypatch):
@@ -266,13 +268,13 @@ def test_portraits_cached_until_folder_changes(cfg, monkeypatch):
     data = path.read_bytes()
     path.unlink()
     path.write_bytes(data[:-16])  # new inode / size: the damaged portrait is dropped
-    assert kt.portraits(cfg) == [(folder / entries[1]["file"], entries[1]["sha256"])] and len(calls) == 1
+    assert kt.portraits(cfg) == [(folder / entries[1]["file"], entries[1]["sha256"], "front")] and len(calls) == 1
 
 
 @pytest.mark.parametrize("damage", [None, "missing_key", "not_listed", "sha", "corrupt", "symlink", "bad_key", "missing_manifest"])
 def test_episode_portrait_uses_only_verified_manifest_member(cfg, tmp_path, monkeypatch, damage):
     folder, entries = portrait_manifest(cfg, episode_index=1)
-    doc = dict(schema_version=1, portraits=entries, episode=entries[1]["file"])
+    doc = dict(schema_version=1, portraits=entries, episode=entries[1]["file"], episode_playlists=[PID])
     selected = folder / entries[1]["file"]
     if damage == "missing_key":
         doc.pop("episode")
@@ -294,9 +296,9 @@ def test_episode_portrait_uses_only_verified_manifest_member(cfg, tmp_path, monk
     expected = (selected, entries[1]["sha256"]) if damage is None else (None, None)
     items = kt.portraits(cfg)  # primes the shared cache, including the episode selection
     monkeypatch.setattr(kt, "_read_portraits", lambda _: pytest.fail("catalog read twice"))
-    assert kt.episode_portrait(cfg) == expected
+    assert kt.episode_portrait(cfg, PID) == expected
     if damage is None:
-        assert kt.episode_portrait(cfg) == items[1]
+        assert kt.episode_portrait(cfg, PID) == items[1][:2]
 
 
 @pytest.mark.parametrize("box", [[50, 80, 900, 730], [40, 50, 740, 570]])
@@ -305,7 +307,7 @@ def test_four_text_groups_fit_measured_ink_and_shadow(box):
     lines, styles = kt.layout(TITLE, fields, box)
     assert lines[0].text == "TRÍCH ĐOẠN KHAI THỊ" and lines[-2].text == "HT. TỊNH KHÔNG"
     assert lines[-1].text == "Kinh Vô Lượng Thọ · Tập 374"
-    assert len(lines[1:-2]) == 3
+    assert 1 <= len(lines[1:-2]) <= 3
     assert " ".join(l.text for l in lines[1:-2]) == TITLE
     assert not styles[0]["shadow"] and styles[1]["shadow"]
     heights = []
@@ -353,8 +355,9 @@ def test_kt_cache_tracks_speaker_series_and_sans(cfg, monkeypatch):
     assert key != kt.cache_key(*args, speaker="HT. Tịnh Không", series="Kinh")
 
 
-@pytest.mark.parametrize("shape,box", [("landscape", [40, 50, 740, 570]), ("vertical", [60, 120, 960, 740])])
-def test_portrait_pixels_overlay_before_text(cfg, tmp_path, shape, box):
+@pytest.mark.parametrize("facing", ["left", "right", "front"])
+@pytest.mark.parametrize("shape,box", [("landscape", [450, 50, 740, 570]), ("vertical", [60, 120, 960, 740])])
+def test_portrait_pixels_overlay_before_text(cfg, tmp_path, shape, box, facing):
     folder, entries = portrait_manifest(cfg, count=1)
     portrait = folder / entries[0]["file"]
     image = source_image(tmp_path, thumbnail.EPISODE_SIZES[shape])
@@ -363,11 +366,12 @@ def test_portrait_pixels_overlay_before_text(cfg, tmp_path, shape, box):
     for index, cutout in enumerate((None, portrait)):
         work = tmp_path / f"pixel-{index}"
         work.mkdir()
-        output = kt.draw(work, TITLE, fields, dict(box=box), shape, image, "test.jpg", portrait=cutout)
+        output = kt.draw(work, TITLE, fields, dict(box=box), shape, image, "test.jpg", portrait=cutout, facing=facing)
         outputs.append(output)
     graph = (tmp_path / "pixel-1" / "graph.txt").read_text()
     assert graph.index("overlay=") < graph.index("drawtext=")
     assert "format=rgba" in graph and "shadowx=2" in graph and "cover-sans.ttf" in graph
+    assert (",hflip" in graph) == (shape == "landscape" and facing == "left")
     def pixels(path):
         return subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-frames:v", "1", "-threads", "1",
                                "-pix_fmt", "rgb24", "-f", "rawvideo", "pipe:1"],
@@ -416,3 +420,71 @@ def test_playlist_series_name_wins_over_metadata_header(cfg):
     doc.pop("series")
     atomic_write_json(path, doc)
     assert kt.display_fields(cfg, PID, header)["series"] == header["series"]  # no Tên bộ kinh: header as before
+
+
+@pytest.mark.parametrize("playlists,enabled", [
+    (None, False), ([], False), (["other"], False), ([PID], True),
+    (PID, False), ([PID, 1], False), ([PID, ""], False),
+])
+def test_episode_portrait_requires_explicit_playlist(cfg, monkeypatch, playlists, enabled):
+    folder, entries = portrait_manifest(cfg, count=1, episode_index=0, episode_playlists=playlists)
+    kt.portraits(cfg)
+    monkeypatch.setattr(kt, "_read_portraits", lambda _: pytest.fail("catalog read twice"))
+    expected = (folder / entries[0]["file"], entries[0]["sha256"]) if enabled else (None, None)
+    assert kt.episode_portrait(cfg, PID) == expected
+    assert kt.episode_portrait(cfg, "another-playlist") == (None, None)
+
+
+@pytest.mark.parametrize("facing,expected", [
+    ("left", "left"), ("right", "right"), ("front", "front"),
+    (None, "front"), ("unknown", "front"), (["left"], "front"),
+])
+def test_portrait_catalog_normalizes_facing(cfg, facing, expected):
+    folder, entries = portrait_manifest(cfg, count=1)
+    if facing is not None:
+        entries[0]["facing"] = facing
+        atomic_write_json(folder / "portraits.json", dict(schema_version=1, portraits=entries))
+    assert kt.choose_portrait(kt.portraits(cfg), "1") == (folder / entries[0]["file"], entries[0]["sha256"], expected)
+
+
+@pytest.mark.parametrize("title,expected,width", [  # 960 / 1190 = 50 % / 62 % of 1920, the widths the prompt asks for
+    ("Học kinh không chỉ hiểu mà phải thực hành", ["Học kinh không chỉ hiểu", "mà phải thực hành"], 960),
+    ("Học kinh không chỉ hiểu mà phải thực hành", ["Học kinh không chỉ hiểu", "mà phải thực hành"], 1190),
+    ("Tâm thanh tịnh thì cõi nước thanh tịnh", ["Tâm thanh tịnh", "thì cõi nước thanh tịnh"], 1190),
+    ("Niệm Phật là để buông xả vọng tưởng", ["Niệm Phật", "là để buông xả vọng tưởng"], 1190),
+    ("Buông bỏ", ["Buông bỏ"], 960),
+])
+def test_layout_prefers_fewer_lines_and_breaks_before_connector(title, expected, width):
+    # Right-hand box on a 1920x1080 KT cover, 70.4 % high.
+    fields = dict(speaker="HT. Tịnh Không", series="Kinh Vô Lượng Thọ", episode="1")
+    lines, _ = kt.layout(title, fields, [1860 - width, 160, width, 760])
+    assert [line.text for line in lines[1:-2]] == expected
+
+
+@pytest.mark.parametrize("connector", ["MÀ", "thi\u0300", "VÀ", "nhưng"])
+def test_title_wrap_keeps_connector_at_start(connector):
+    from auto_short.render.text import nfc
+    font = Font(thumbnail.EPISODE_FONTS[cover.FONT_NAME])
+    lines = kt._wrap_title(font, f"Học kinh {connector} thực hành", 60, 800, 2)
+    assert lines == ["Học kinh", f"{nfc(connector)} thực hành"]
+
+
+def test_facing_change_invalidates_only_landscape_and_reaches_renderer(cfg, monkeypatch):
+    ident = IDS[0] + ".kt"
+    folder, entries = portrait_manifest(cfg, count=1)
+    assert kt.build_episode(cfg, ident, pid=PID)["built"] == 4
+    before = kt.read(cfg, ident)
+    entries[0]["facing"] = "left"
+    atomic_write_json(folder / "portraits.json", dict(schema_version=1, portraits=entries))
+    assert all(set(files) == {"vertical"} for files in kt.valid_files(cfg, ident).values())
+    calls = []
+    real = cover.draw_lines
+    def draw(*args, **kwargs):
+        calls.append((kwargs["shape"], kwargs["hflip"]))
+        return real(*args, **kwargs)
+    monkeypatch.setattr(cover, "draw_lines", draw)
+    assert kt.build_episode(cfg, ident, pid=PID) == dict(built=2, reused=2, skipped_reason=None)
+    assert calls == [("landscape", True)] * 2
+    after = kt.read(cfg, ident)
+    assert all(before["clips"][cid]["vertical"] == files["vertical"] for cid, files in after["clips"].items())
+    assert kt.build_episode(cfg, ident, pid=PID, run=lambda _: pytest.fail("cache ran ffmpeg"))["reused"] == 4

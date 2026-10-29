@@ -4,7 +4,7 @@ import subprocess
 
 import pytest
 
-from auto_short.hashing import sha256_file
+from auto_short.hashing import config_hash, sha256_file
 from auto_short.packaging import PackageError, cover, episode, thumbnail
 from auto_short.packaging.__main__ import main
 from auto_short.render import full
@@ -26,6 +26,11 @@ def source_image(tmp_path, size=(1080, 1920), color="0x145b58"):
                     f"color=c={color}:s={size[0]}x{size[1]},drawbox=x=40:y=40:w=160:h=80:color=0xe8bf62:t=5",
                     "-frames:v", "1", "-threads", "1", str(path)], check=True, timeout=30)
     return path
+
+
+def pre_d9_key(fields, entry, shape):
+    return config_hash(dict(cover_sha256=entry["sha256"], box=entry["box"], episode=fields["episode"],
+                            layout_version=3, font_sha256=sha256_file(thumbnail.EPISODE_FONTS[cover.FONT_NAME]), shape=shape))
 
 
 def gray(path):
@@ -183,7 +188,7 @@ def test_cache_invalidates_cover_only(cfg, tmp_path, monkeypatch, change):
         fields = dict(episode.header(cfg, IDS[0]), episode="102")
         atomic_write_json(cfg.workspace.dir / IDS[0] / "titles.json", dict(header=dict(fields=fields)))
     elif change == "layout":
-        monkeypatch.setattr(cover, "COVER_LAYOUT_VERSION", cover.COVER_LAYOUT_VERSION + 1)
+        monkeypatch.setattr(cover, "COVER_LAYOUT_VERSION_NO_PORTRAIT", cover.COVER_LAYOUT_VERSION_NO_PORTRAIT + 1)
     else:
         font = tmp_path / "font.ttf"
         font.write_bytes(thumbnail.EPISODE_FONTS[cover.FONT_NAME].read_bytes() + b"changed")
@@ -320,14 +325,12 @@ def test_episode_portrait_geometry(shape, source_size):
     ("landscape", [107, 503, 444, 76]),
 ])
 def test_approved_covers_episode_portrait_pixels_and_v3_cache_migration(cfg, tmp_path, monkeypatch, shape, box):
-    from auto_short.hashing import config_hash
     from test_khaithi_thumbs import portrait_manifest
     # Seed the exact pre-D-THUMB1-9 cache format: no portrait SHA field and version 3.
     entry = cover.install(cfg, PID, shape, source_image(tmp_path, cover.SIZES[shape], color="0x101020"), box)
     settings = episode.read_settings(cfg, PID)
     fields = episode.header(cfg, IDS[0])
-    old_key = config_hash(dict(cover_sha256=entry["sha256"], box=box, episode=fields["episode"],
-                               layout_version=3, font_sha256=sha256_file(thumbnail.EPISODE_FONTS[cover.FONT_NAME]), shape=shape))
+    old_key = pre_d9_key(fields, entry, shape)
     real_key = episode.cache_key
     with monkeypatch.context() as patch:
         patch.setattr(episode, "cache_key", lambda f, s, sh, **kw: old_key if sh == shape else real_key(f, s, sh, **kw))
@@ -335,10 +338,10 @@ def test_approved_covers_episode_portrait_pixels_and_v3_cache_migration(cfg, tmp
     folder = episode.directory(cfg, IDS[0])
     old = episode.read(cfg, IDS[0])
     plain = gray(folder / old["files"][shape]["file"])
-    # Even without an episode portrait, layout version 4 invalidates the old entry.
-    assert shape not in episode.valid_files(cfg, IDS[0])
-    assert episode.cache_key(fields, settings, shape, cover_entry=entry) != old_key
-    _, entries = portrait_manifest(cfg, count=1, episode_index=0)
+    # Without an enabled portrait, pre-D9 artifacts are valid again.
+    assert shape in episode.valid_files(cfg, IDS[0])
+    assert episode.cache_key(fields, settings, shape, cover_entry=entry) == old_key
+    _, entries = portrait_manifest(cfg, count=1, episode_index=0, episode_playlists=[PID])
     graphs = []
     def runner(cmd):
         if "-filter_complex_script" in cmd:
@@ -376,7 +379,7 @@ def test_episode_portrait_cache_changes_only_with_selected_sha(cfg, tmp_path, mo
     for shape in thumbnail.EPISODE_SIZES:
         cover.install(cfg, PID, shape, source_image(tmp_path, cover.SIZES[shape]),
                       [200, cover.SIZES[shape][1] - 300, 600, 150])
-    folder, entries = portrait_manifest(cfg, episode_index=1)
+    folder, entries = portrait_manifest(cfg, episode_index=1, episode_playlists=[PID])
     assert episode.build_episode(cfg, IDS[0], pid=PID, run=episode_media) == "built"
     before = episode.read(cfg, IDS[0])
     with monkeypatch.context() as patch:
@@ -384,12 +387,12 @@ def test_episode_portrait_cache_changes_only_with_selected_sha(cfg, tmp_path, mo
         assert len(episode.valid_files(cfg, IDS[0])) == 2
         assert episode.build_episode(cfg, IDS[0], pid=PID, run=lambda _: pytest.fail("cache ran ffmpeg")) == "reused"
     # An unrelated manifest change must preserve the episode cache.
-    atomic_write_json(folder / "portraits.json", dict(schema_version=1, portraits=entries, episode=entries[1]["file"], note="updated"))
+    atomic_write_json(folder / "portraits.json", dict(schema_version=1, portraits=entries, episode=entries[1]["file"], episode_playlists=[PID], note="updated"))
     assert episode.build_episode(cfg, IDS[0], pid=PID, run=lambda _: pytest.fail("metadata invalidated cache")) == "reused"
     if change == "bytes":
-        portrait_manifest(cfg, color="blue@0.8", episode_index=1)
+        portrait_manifest(cfg, color="blue@0.8", episode_index=1, episode_playlists=[PID])
     else:
-        doc = dict(schema_version=1, portraits=entries)
+        doc = dict(schema_version=1, portraits=entries, episode_playlists=[PID])
         if change == "selection":
             doc["episode"] = entries[0]["file"]
         atomic_write_json(folder / "portraits.json", doc)
@@ -414,8 +417,8 @@ def test_number_height_capped_in_large_box(shape, box, ratio):
 
 
 @pytest.mark.parametrize("shape,box,size", [
-    ("landscape", [40, 50, 740, 570], (769, 879)),
-    ("landscape", [40, 50, 740, 570], (1600, 300)),
+    ("landscape", [450, 50, 740, 570], (769, 879)),
+    ("landscape", [450, 50, 740, 570], (1600, 300)),
     ("vertical", [60, 120, 960, 740], (769, 879)),
     ("vertical", [60, 120, 960, 740], (1600, 300)),
 ])
@@ -425,8 +428,8 @@ def test_kt_portrait_geometry_bottom_and_clear_text_box(shape, box, size):
     assert py + ph == h and pw > 0 and ph > 0
     assert pw / ph == pytest.approx(size[0] / size[1], abs=.02)
     if shape == "landscape":
-        assert px + pw == w
-        assert box[0] + box[2] - px <= w * .04 + 1
+        assert px == 0
+        assert pw - box[0] <= w * .04 + 1
         assert ph <= h * .92 + 1
     else:
         assert py >= box[1] + box[3]
@@ -458,3 +461,34 @@ def test_install_kt_schema_one_preserves_episode_entries_and_atomic_failure(cfg,
     assert cover.current(cfg, PID) == entries
     with pytest.raises(PackageError, match="hai khổ"):
         cover.install_kt(cfg, PID, {"kt_vertical": images["kt_vertical"]})
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_episode_playlist_gate_preserves_pre_d9_keys_and_files(cfg, tmp_path, monkeypatch, enabled):
+    from test_khaithi_thumbs import portrait_manifest
+    for shape, box in (("vertical", [248, 1632, 584, 146]), ("landscape", [107, 503, 444, 76])):
+        cover.install(cfg, PID, shape, source_image(tmp_path, cover.SIZES[shape]), box)
+    covers = cover.current(cfg, PID)
+    fields = episode.header(cfg, IDS[0])
+    settings = episode.read_settings(cfg, PID)
+    keys = {shape: pre_d9_key(fields, entry, shape) for shape, entry in covers.items()}
+    # Write a thumbs.json fixture with the independent pre-D9 formula, as on disk before migration.
+    with monkeypatch.context() as patch:
+        patch.setattr(episode, "cache_key", lambda f, s, shape, **kw: keys[shape])
+        episode.build_episode(cfg, IDS[0], pid=PID, run=episode_media)
+    old = episode.read(cfg, IDS[0])
+    _, entries = portrait_manifest(cfg, count=1, episode_index=0, episode_playlists=[PID] if enabled else ["other"])
+    if enabled:
+        assert not episode.valid_files(cfg, IDS[0])
+        for shape, entry in covers.items():
+            expected = config_hash(dict(cover_sha256=entry["sha256"], box=entry["box"], episode=fields["episode"],
+                                        layout_version=4, portrait_sha256=entries[0]["sha256"],
+                                        font_sha256=sha256_file(thumbnail.EPISODE_FONTS[cover.FONT_NAME]), shape=shape))
+            assert episode.cache_key(fields, settings, shape, cover_entry=entry,
+                                     portrait_sha256=entries[0]["sha256"]) == expected != keys[shape]
+    else:
+        assert set(episode.valid_files(cfg, IDS[0])) == {"vertical", "landscape"}
+        for shape, entry in covers.items():
+            assert episode.cache_key(fields, settings, shape, cover_entry=entry) == keys[shape]
+        assert episode.build_episode(cfg, IDS[0], pid=PID, run=lambda _: pytest.fail("old cache rebuilt")) == "reused"
+        assert episode.read(cfg, IDS[0]) == old

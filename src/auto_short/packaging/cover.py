@@ -16,6 +16,7 @@ from ..workspace import atomic_write_json, read_json_dict
 from . import PackageError, assets, thumbnail
 
 COVER_LAYOUT_VERSION = 4
+COVER_LAYOUT_VERSION_NO_PORTRAIT = 3  # Preserve old keys for playlists without episode portraits.
 FIT_WIDTH, FIT_HEIGHT = 0.8, 0.85  # share of the box the number ink (with diacritics) may fill
 SIZES = dict(thumbnail.EPISODE_SIZES, kt_vertical=thumbnail.EPISODE_SIZES["vertical"],
              kt_landscape=thumbnail.EPISODE_SIZES["landscape"])
@@ -194,11 +195,11 @@ def portrait_box(shape, box, source_size):
     if shape == "landscape":
         ph = round(height * .92)
         pw = round(ph * sw / sh)
-        # Keep the right edge flush; shrink wide portraits to at most 4% overlap.
-        pw = min(pw, max(1, round(width - box[0] - box[2] + width * .04)))
+        # Keep the left edge flush; shrink wide portraits to at most 4% overlap.
+        pw = min(pw, max(1, round(box[0] + width * .04)))
         ph = min(ph, round(pw * sh / sw))
         pw = max(1, round(ph * sw / sh))
-        return pw, ph, width - pw, height - ph
+        return pw, ph, 0, height - ph
     ph = min(round(height * .48), height - box[1] - box[3])
     ph = max(1, min(ph, round(width * .84 * sh / sw)))
     pw = max(1, round(ph * sw / sh))
@@ -206,7 +207,7 @@ def portrait_box(shape, box, source_size):
 
 
 def draw_lines(work, lines, image, filename, *, run=None, styles=None, portrait=None, shape=None, box=None,
-               portrait_layout="kt"):
+               portrait_layout="kt", hflip=False):
     """Shared COV1 encoder, with optional fonts, colors and portrait before text."""
     font = work / "cover.ttf"
     shutil.copyfile(thumbnail.EPISODE_FONTS[FONT_NAME], font)
@@ -222,7 +223,8 @@ def draw_lines(work, lines, image, filename, *, run=None, styles=None, portrait=
                 if portrait_layout == "episode" and shape == "vertical" else "")
         local = work / "portrait.png"
         shutil.copyfile(portrait, local)
-        graph = (f"[0:v]setsar=1[background];[1:v]scale={pw}:{ph},setsar=1,format=rgba{fade}[portrait];"
+        flip = ",hflip" if hflip else ""
+        graph = (f"[0:v]setsar=1[background];[1:v]scale={pw}:{ph},setsar=1,format=rgba{fade}{flip}[portrait];"
                  f"[background][portrait]overlay={px}:{py}:format=auto[base]")
         def encode_runner(cmd):
             index = cmd.index("-filter_complex_script")
