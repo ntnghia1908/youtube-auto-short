@@ -433,7 +433,7 @@ def test_kt_portrait_geometry_bottom_and_clear_text_box(shape, box, size):
         assert ph <= h * .92 + 1
     else:
         assert py >= box[1] + box[3]
-        assert px + pw / 2 == pytest.approx(w * .42, abs=1)
+        assert px + pw / 2 == pytest.approx(w / 2, abs=1)
         assert ph <= h * .48 + 1
 
 
