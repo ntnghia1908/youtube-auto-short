@@ -1,6 +1,7 @@
 """Per-clip khai thị thumbnails using approved covers and the video's resolved titles."""
 from __future__ import annotations
 
+import functools
 import itertools
 import os
 import re
@@ -17,7 +18,7 @@ from ..titling.playlist import stored_series
 from ..workspace import atomic_write_json, read_json_dict, utc_now
 from . import PackageError, cover, episode, thumbnail
 
-LAYOUT_VERSION = 4
+LAYOUT_VERSION = 6
 PORTRAIT_NAME = re.compile(r"[0-9]{2}-[0-9a-f]{12}\.png")
 CLIP_ID = re.compile(r"[km][0-9]{2,}")
 FILE_NAME = re.compile(r"([km][0-9]{2,}-(?:vertical|landscape))-([a-f0-9]{64})\.jpg")
@@ -161,6 +162,24 @@ def _read_portraits(folder):
 EPISODES_PER_PORTRAIT = 20  # HUMAN LEAD 2026-10-29: every clip of episodes 1-20 shares portrait 1, 21-40 portrait 2, ...
 
 
+def start_episode(config, pid):
+    """First episode that gets KT thumbnails (`khaithi_from.json`); earlier ones were already published."""
+    try:
+        doc = read_json_dict(episode._no_symlinks(Path(config.packaging.asset_dir) / "khaithi_from.json"))
+    except (PackageError, OSError, ValueError):
+        return None
+    start = (doc or {}).get("playlists", {}).get(pid) if (doc or {}).get("schema_version") == 1 else None
+    return start if type(start) is int and start > 1 else None
+
+
+def before_start(config, pid, number):
+    start = start_episode(config, pid)
+    try:
+        return start is not None and int(number) < start
+    except (TypeError, ValueError):
+        return False
+
+
 def choose_portrait(items, number):
     return items[(int(number) - 1) // EPISODES_PER_PORTRAIT % len(items)] if items else (None, None, "front")
 
@@ -179,11 +198,39 @@ def display_fields(config, pid, fields):
 FIT_WIDTH = .92
 LABEL_SCALE, SERIES_SCALE, SPEAKER_INK = .44, .42, .62
 _CONNECTORS = frozenset("mà thì là nhưng để và nên vì khi cho của với hay hoặc".split())
+# D-THUMB1-11: never split a two-syllable compound ("kỷ / niệm") unless keeping it costs > 15 % of the title size.
+COMPOUNDS = Path(__file__).with_name("compounds_vi.txt")
+COMPOUND_MIN_SIZE = .85
 
 
-def _wrap_title(font, title, size, width, line_count):
-    """Fit exactly this many lines; prefer breaks before connectors, then balanced widths."""
+@functools.lru_cache(maxsize=1)
+def _compounds():
+    pairs = set()
+    for line in COMPOUNDS.read_text(encoding="utf-8").splitlines():
+        if line.strip() and not line.startswith("#"):
+            first, second = line.split()
+            pairs.add((nfc(first), nfc(second)))
+    return frozenset(pairs)
+
+
+def _compound_cuts(words):
+    """Cut positions that would split a compound or a capitalised name ("Phật Đản"); punctuation ends either."""
+    marks = "\"'“”‘’()[]«»"
+    bare = [nfc(word).casefold() for word in words]
+    pairs = _compounds()
+    names = " ".join(words) != " ".join(words).upper()  # an all-caps title says nothing about names
+    return {i for i in range(1, len(words))
+            if (bare[i - 1].lstrip(marks), bare[i].strip(marks + ".,;:!?…")) in pairs
+            or names and words[i - 1][-1:].isalpha() and words[i - 1].lstrip(marks)[:1].isupper() and words[i][:1].isupper()}
+
+
+def _wrap_title(font, title, size, width, line_count, *, strict=False):
+    """Fit exactly this many lines; prefer breaks before connectors, then whole compounds, then balanced widths.
+
+    ``strict`` forbids any break inside a compound instead of only preferring fewer of them.
+    """
     words = nfc(title).split()
+    compound_cuts = _compound_cuts(words)
     limit = _limit_units(font, size, width)
     space = font.width_units(" ")
     advances = [0]
@@ -198,12 +245,15 @@ def _wrap_title(font, title, size, width, line_count):
             continue
         if sum(cut in connector_cuts for cut in cuts) < preferred:
             continue
+        split = sum(cut in compound_cuts for cut in cuts)
+        if strict and split:
+            continue
         bounds = (0, *cuts, len(words))
         widths = [advances[b] - advances[a] - space for a, b in zip(bounds, bounds[1:])]
         longest = max(widths)
         if longest > limit:
             continue
-        key = (longest, sum((limit - w) ** 2 for w in widths))
+        key = (split, longest, sum((limit - w) ** 2 for w in widths))
         if best is None or key < best[0]:
             best = key, bounds
     if best is not None:
@@ -224,12 +274,24 @@ def layout(title, fields, box):
     fonts = {name: Font(thumbnail.EPISODE_FONTS[name]) for name in ("old", "sans")}
     check_glyphs(fonts["old"], [title])
     check_glyphs(fonts["sans"], [label, speaker, series])
-    x, y, w, h = box
+    _, _, w, h = box
     width, height = int(w * FIT_WIDTH), int(h * cover.FIT_HEIGHT)
+    strict = _fit(title, label, speaker, series, fonts, box, width, height, strict=True)
+    free = _fit(title, label, speaker, series, fonts, box, width, height, strict=False)
+    if strict and (not free or strict[0] >= free[0] * COMPOUND_MIN_SIZE):
+        return strict[1:]
+    if free:
+        return free[1:]
+    raise TextError("chữ khai thị không vừa tối đa 3 dòng tiêu đề trong khung")
+
+
+def _fit(title, label, speaker, series, fonts, box, width, height, *, strict):
+    """Largest (size, lines, styles) over 1–3 title lines, or None."""
+    x, y, w, h = box
     candidates = []
     for line_count in range(1, min(3, len(title.split())) + 1):
         for size in range(min(180, height // 2), 12, -1):
-            wrapped = _wrap_title(fonts["old"], title, size, width, line_count)
+            wrapped = _wrap_title(fonts["old"], title, size, width, line_count, strict=strict)
             if not wrapped:
                 continue
             # Set speaker size from actual ink, not nominal font size (fonts have different metrics).
@@ -265,10 +327,7 @@ def layout(title, fields, box):
                 break
             except TextError:
                 continue
-    if candidates:
-        _, lines, styles = max(candidates, key=lambda c: c[0])  # first (fewest lines) of the largest size
-        return lines, styles
-    raise TextError("chữ khai thị không vừa tối đa 3 dòng tiêu đề trong khung")
+    return max(candidates, key=lambda c: c[0]) if candidates else None  # first (fewest lines) of the largest size
 
 
 def draw(work, title, fields, entry, shape, image, filename, *, portrait=None, facing="front", run=None):
@@ -282,6 +341,7 @@ def cache_key(title, number, entry, shape, *, portrait_sha256=None, speaker="", 
                             layout_version=LAYOUT_VERSION, font_sha256=sha256_file(thumbnail.EPISODE_FONTS[cover.FONT_NAME]),
                             sans_sha256=sha256_file(thumbnail.EPISODE_FONTS["sans"]), speaker=nfc(speaker), series=nfc(series),
                             portrait_sha256=portrait_sha256, portrait_library=portrait_library,
+                            compounds_sha256=sha256_file(COMPOUNDS),
                             shape=shape, hflip=hflip))
 
 
@@ -315,6 +375,8 @@ def valid_files(config, ident, *, pid=None):
         pid = pid or doc["playlist_id"]
         covers = cover.current(config, pid)
         fields = display_fields(config, pid, episode.header(config, ident[:-3]))
+        if before_start(config, pid, fields["episode"]):
+            return {}
         items = portraits(config)
         result = {}
         current_titles = titles(config, ident, include_hidden=True)
@@ -351,6 +413,8 @@ def build_episode(config, ident, *, pid, run=None):
     if not selected:
         return dict(built=0, reused=0, skipped_reason="chưa có tiêu đề clip khai thị")
     fields = display_fields(config, pid, episode.header(config, ident[:-3]))
+    if before_start(config, pid, fields["episode"]):
+        return dict(built=0, reused=0, skipped_reason=f"trước tập {start_episode(config, pid)} (khai thị đã đăng)")
     items = portraits(config)
     old = read(config, ident) or {}
     doc = dict(schema_version=1, video_id=ident, playlist_id=pid, header=fields, clips={},

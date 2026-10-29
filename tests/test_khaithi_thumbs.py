@@ -117,9 +117,10 @@ def test_cover_box_image_layout_font_and_number_invalidate(cfg, tmp_path, monkey
     cover.install(cfg, PID, "kt_vertical", source_image(tmp_path, color="0x311d50"), box)
     assert all(set(files) == {"landscape"} for files in kt.valid_files(cfg, ident).values())
     kt.build_episode(cfg, ident, pid=PID)
+    layout_version = kt.LAYOUT_VERSION
     monkeypatch.setattr(kt, "LAYOUT_VERSION", 999)
     assert not kt.valid_files(cfg, ident)
-    monkeypatch.setattr(kt, "LAYOUT_VERSION", 4)
+    monkeypatch.setattr(kt, "LAYOUT_VERSION", layout_version)
     assert kt.valid_files(cfg, ident)
     monkeypatch.setitem(thumbnail.EPISODE_FONTS, cover.FONT_NAME, thumbnail.EPISODE_FONTS["sans"])
     assert not kt.valid_files(cfg, ident)
@@ -463,7 +464,7 @@ def test_layout_largest_title_wins_and_breaks_before_connector(title, expected, 
     for count in range(1, 4):
         if count == len(expected):
             continue
-        kt._wrap_title = lambda f, text, size, w, n, count=count: original(f, text, size, w, n) if n == count else None
+        kt._wrap_title = lambda f, text, size, w, n, count=count, **kw: original(f, text, size, w, n, **kw) if n == count else None
         try:
             other, _ = kt.layout(title, fields, box)
         except TextError:
@@ -489,6 +490,58 @@ def test_title_wrap_keeps_connector_at_start(connector):
     assert lines == ["Học kinh", f"{nfc(connector)} thực hành"]
 
 
+def test_compound_list_is_lowercase_pairs_without_connectors():
+    from auto_short.render.text import nfc
+    pairs = kt._compounds()
+    assert len(pairs) > 3000 and {("kỷ", "niệm"), ("có", "thể"), ("vô", "lượng")} <= pairs
+    assert all(a == nfc(a).lower() and b == nfc(b).lower() for a, b in pairs)
+    assert not any(a in kt._CONNECTORS or b in kt._CONNECTORS for a, b in pairs)
+
+
+@pytest.mark.parametrize("words,expected", [
+    ("Làm sao kỷ niệm", {1, 3}),         # mined compounds
+    ("ngày Phật Đản", {2}),              # capitalised name
+    ("hiểu kỷ, niệm", set()),            # punctuation ends a compound
+    ("đọc chưa? Vì Sao", {3}),           # ... and a name: a new sentence is not one
+    ("LÀM SAO KỶ NIỆM", {1, 3}),         # all caps: only mined compounds
+])
+def test_compound_cuts(words, expected):
+    assert kt._compound_cuts(words.split()) == expected
+
+
+@pytest.mark.parametrize("box", [[560, 112, 623, 475], [107, 129, 865, 597], [900, 160, 960, 760]])  # VLT KT frames
+def test_layout_never_splits_compound_when_it_costs_little(box):
+    # D-THUMB1-11: VLT "Làm sao kỷ / niệm Phật Đản" split a compound.
+    fields = dict(speaker="HT. Tịnh Không", series="Kinh Vô Lượng Thọ", episode="1")
+    lines, _ = kt.layout("Làm sao kỷ niệm Phật Đản đúng cách?", fields, box)
+    body = [line.text for line in lines[1:-2]]
+    assert not any(line.endswith(("kỷ", "Phật")) for line in body[:-1]), body
+
+
+def test_layout_falls_back_when_keeping_compounds_shrinks_title(monkeypatch):
+    fields = dict(speaker="HT. Tịnh Không", series="Kinh Vô Lượng Thọ", episode="1")
+    box = [900, 160, 960, 760]
+    title = "Học kinh không chỉ hiểu mà phải thực hành"
+    plain, _ = kt.layout(title, fields, box)
+    words = title.casefold().split()
+    monkeypatch.setattr(kt, "_compounds", lambda: frozenset(zip(words, words[1:])))  # every break splits one
+    lines, _ = kt.layout(title, fields, box)
+    assert [line.text for line in lines[1:-2]] == [line.text for line in plain[1:-2]]
+    monkeypatch.setattr(kt, "COMPOUND_MIN_SIZE", 0)  # any strict fit wins: one line
+    lines, _ = kt.layout(title, fields, box)
+    assert [line.text for line in lines[1:-2]] == [title]
+
+
+def test_kt_cache_tracks_compound_list(cfg, monkeypatch, tmp_path):
+    entry = cover.current(cfg, PID)["kt_vertical"]
+    args = (TITLE, "1", entry, "vertical")
+    key = kt.cache_key(*args, speaker="HT. Tịnh Không", series="Kinh")
+    other = tmp_path / "compounds_vi.txt"
+    other.write_text("kỷ niệm\n", encoding="utf-8")
+    monkeypatch.setattr(kt, "COMPOUNDS", other)
+    assert key != kt.cache_key(*args, speaker="HT. Tịnh Không", series="Kinh")
+
+
 def test_facing_change_invalidates_only_landscape_and_reaches_renderer(cfg, monkeypatch):
     ident = IDS[0] + ".kt"
     folder, entries = portrait_manifest(cfg, count=1)
@@ -508,3 +561,34 @@ def test_facing_change_invalidates_only_landscape_and_reaches_renderer(cfg, monk
     after = kt.read(cfg, ident)
     assert all(before["clips"][cid]["vertical"] == files["vertical"] for cid, files in after["clips"].items())
     assert kt.build_episode(cfg, ident, pid=PID, run=lambda _: pytest.fail("cache ran ffmpeg"))["reused"] == 4
+
+
+@pytest.mark.parametrize("doc, skipped", [
+    ({"schema_version": 1, "playlists": {PID: 102}}, True),
+    ({"schema_version": 1, "playlists": {PID: 101}}, False),
+    ({"schema_version": 1, "playlists": {"PLother": 200}}, False),
+    ({"schema_version": 2, "playlists": {PID: 102}}, False),
+    ({"schema_version": 1, "playlists": {PID: "102"}}, False),
+])
+def test_kt_thumbs_start_from_configured_episode(cfg, doc, skipped):
+    """D-THUMB1-13: episodes before the playlist's start were already published — no KT thumbnails / zip entries."""
+    atomic_write_json(cfg.packaging.asset_dir / "khaithi_from.json", doc)
+    summary = episode.build_playlist(cfg, PID)
+    ident = IDS[0] + ".kt"
+    if skipped:
+        assert summary["khaithi"]["built"] == 0
+        assert summary["khaithi"]["skipped"] == [dict(episode=ident, reason="trước tập 102 (khai thị đã đăng)")]
+        assert kt.valid_files(cfg, ident) == {}
+    else:
+        assert summary["khaithi"] == dict(built=4, reused=0, skipped=[])
+        assert set(kt.valid_files(cfg, ident)) == {"k01", "k02"}
+
+
+def test_kt_start_hides_already_built_files(cfg):
+    episode.build_playlist(cfg, PID)
+    ident = IDS[0] + ".kt"
+    assert kt.valid_files(cfg, ident)
+    atomic_write_json(cfg.packaging.asset_dir / "khaithi_from.json", {"schema_version": 1, "playlists": {PID: 102}})
+    assert kt.valid_files(cfg, ident) == {}
+    atomic_write_json(cfg.packaging.asset_dir / "khaithi_from.json", {"schema_version": 1, "playlists": {}})
+    assert set(kt.valid_files(cfg, ident)) == {"k01", "k02"}

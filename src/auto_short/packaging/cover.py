@@ -203,7 +203,7 @@ def portrait_box(shape, box, source_size):
     ph = min(round(height * .48), height - box[1] - box[3])
     ph = max(1, min(ph, round(width * .84 * sh / sw)))
     pw = max(1, round(ph * sw / sh))
-    return pw, ph, round(width * .42 - pw / 2), height - ph
+    return pw, ph, round((width - pw) / 2), height - ph
 
 
 def draw_lines(work, lines, image, filename, *, run=None, styles=None, portrait=None, shape=None, box=None,
