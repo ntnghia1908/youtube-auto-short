@@ -31,6 +31,7 @@ S2 vì: thêm nguồn thumbnail AI cho sản phẩm đóng gói PKG (quyết đ�
 - D-THUMB2-3: chữ trong ảnh do Codex vẽ: tiêu đề video (đã lưu: (a) `title` trong `<cid>.json`, (b) tiêu đề plan), tên bộ kinh, chủ giảng; có thể sửa chữ trước khi vẽ (ô văn bản, ≤ 3 dòng × 40 ký tự). Ảnh bìa bộ kinh đã cài (nếu có) chỉ là tham chiếu phong cách tùy chọn, không bắt buộc.
 
 - D-THUMB2-5 (HUMAN LEAD 2026-10-28, chọn "Bỏ, gộp vào thẻ video"): **bỏ trang Đóng gói** (`/playlists/{pid}/theme-plans/{plan_id}/package`). Mỗi video ghép (cả (a) và (b)) trên trang Yêu thích là một thẻ với: Xem · Tải video · Copy tiêu đề · Copy mô tả · khối thumbnail Codex. Bỏ bước "Duyệt bản đăng", hình ambient (VIS1) và nhạc nền (AUD1) khỏi UI + API; video đã dựng có nhạc / hình trên đĩa: để nguyên, không xóa. Tiêu đề / mô tả tải về: lấy từ sidecar render hiện có (không cần duyệt).
+- D-THUMB2-6 (HUMAN LEAD 2026-10-29, sau xem mẫu thumbnail khai thị THUMB1: "với video ghép là ghép từ nhiều tập nên không có số tập trong thumbnail với dạng này"): khi thumbnail video ghép dùng dạng khai thị THUMB1 (bìa KT + chân dung + nhãn + tiêu đề + chủ giảng), dòng cuối chỉ có **tên bộ kinh**, **không** có "· Tập N" (video ghép gồm nhiều tập). Chưa amend phần còn lại của contract (Codex vẽ trọn ảnh vs dạng KT, chọn chân dung cho video ghép): ORCHESTRATOR đề xuất khi bắt đầu THUMB2 sau THUMB1 merge.
 
 ## Goal
 
