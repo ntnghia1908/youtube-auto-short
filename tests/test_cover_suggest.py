@@ -11,7 +11,8 @@ from pathlib import Path
 import pytest
 
 from auto_short.config import ConfigError, ThumbsConfig, from_dict
-from auto_short.packaging import PackageError, cover, cover_suggest as suggest
+from auto_short.packaging import PackageError, cover, cover_suggest as suggest, episode
+from auto_short.titling.logic import TitlingError
 from auto_short.workspace import atomic_write_json
 from test_packaging_cover import source_image
 from test_packaging_episode import PID, seed_episodes
@@ -123,17 +124,24 @@ def test_invalid_candidates_removed_individually(cfg, artwork, tmp_path, damage,
         assert "tên file" in result["errors"]["wrong.png"]
 
 
-def test_previews_skip_last_episode_without_header(cfg, artwork):
+@pytest.mark.parametrize("broken", [TitlingError, PackageError])
+def test_previews_skip_last_episode_without_header(cfg, artwork, monkeypatch, broken):
     """Real CUT run: the newest episode had no header yet and failed a run with 3 valid images."""
     from test_khaithi_thumbs import seed_kt
     seed_kt(cfg)
     ident = "lecture0003"
     (cfg.workspace.dir / ident).mkdir()
-    atomic_write_json(cfg.workspace.dir / ident / "titles.json", dict(header=dict(fields=dict(series="", episode=""))))
     path = cfg.workspace.dir / "_playlists" / f"{PID}.json"
     doc = json.loads(path.read_text())
     doc["entries"].append(dict(video_id=ident, episode="103", index=103))
     atomic_write_json(path, doc)
+    resolve = episode.header
+
+    def header(config, video_id):
+        if video_id == ident:
+            raise broken("header field(s) not resolved")
+        return resolve(config, video_id)
+    monkeypatch.setattr(episode, "header", header)
     runner = fake_codex(artwork)
     run_id = suggest.create(cfg, PID)["run_id"]
     assert suggest.execute(cfg, PID, run_id, runner=runner)["status"] == "done"

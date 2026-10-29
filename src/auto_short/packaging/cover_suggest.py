@@ -17,6 +17,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from ..render.stage import RenderError, _run, probe_media
+from ..titling.logic import TitlingError
 from ..workspace import atomic_write_json, read_json_dict, utc_now
 from . import PackageError, cover, episode
 
@@ -376,7 +377,7 @@ def previews(config, pid, folder, doc, *, run=None):
         # transcribed) is skipped instead of failing a run whose images are valid.
         try:
             return episode.header(config, item["video_id"])
-        except PackageError:
+        except (PackageError, TitlingError):
             return None
 
     first = next(((item, fields) for item in entries if (fields := header(item))), None)
