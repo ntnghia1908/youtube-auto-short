@@ -36,13 +36,51 @@ def image(tmp_path):
     return path
 
 
-def media(path, codec, size):
+def media(path, codec, size, *, silence=0, duration=4):
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
                     f"testsrc2=size={size}:rate=30000/1001", "-f", "lavfi", "-i",
-                    "sine=frequency=440:sample_rate=48000", "-t", "4", "-c:v", "libx264", "-profile:v", "high",
+                    "sine=frequency=440:sample_rate=48000", "-af", f"adelay={silence * 1000}:all=1",
+                    "-t", str(duration), "-c:v", "libx264", "-profile:v", "high",
                     "-pix_fmt", "yuv420p", "-threads", "2", "-c:a", "libopus" if codec == "opus" else "aac",
                     "-ac", "2", "-video_track_timescale", "30000", str(path)], check=True, timeout=30)
     return path
+
+
+@pytest.mark.parametrize("codec", ["opus", "aac"])
+@pytest.mark.parametrize("silence", [2, 57])
+def test_silent_audio_prefix_boundary_and_shifted_join(tmp_path, image, codec, silence):
+    source = media(tmp_path / "source.mp4", codec, "160x90", silence=silence, duration=silence + 6)
+    output = tmp_path / "joined.mp4"
+    spec = hd.render(source, image, output)
+    original = probe_media(source, _run)
+    first = hd.packets(source, "a:0", "%+#4", _run)
+    joined = hd.packets(output, "a:0", "%+6", _run)
+    # Reproduce the former single-hash lookup: it selects intro silence, not the lecture.
+    p, q = next((p, q) for p in first for q in joined if p["data_hash"] == q["data_hash"])
+    old_pts = float(q["pts_time"]) - float(p["pts_time"]) + float(first[0]["pts_time"])
+    assert old_pts < 0.1
+    with pytest.raises(RenderError, match="20 ms"):
+        hd.check_timing(original, probe_media(output, _run), spec,
+                        {"video": spec["offset"], "audio": old_pts})
+    # Shift actual audio packets by 100 ms while keeping the video's total duration.
+    shifted = tmp_path / "shifted.mp4"
+    hd.checked(["ffmpeg", "-v", "error", "-y", "-i", str(output), "-itsoffset", "0.1", "-i", str(output),
+                "-map", "0:v:0", "-map", "1:a:0", "-c", "copy", "-t",
+                str(probe_media(output, _run)["duration"]), str(shifted)], _run)
+    with pytest.raises(RenderError, match="20 ms"):
+        hd.verify(source, shifted, original, spec, _run)
+
+
+@pytest.mark.parametrize("joined_hashes", [["a", "c", "b", "d"], ["a"] * 8])
+def test_audio_boundary_rejects_changed_order_or_ambiguous_silence(tmp_path, monkeypatch, joined_hashes):
+    source, output = tmp_path / "source.mp4", tmp_path / "joined.mp4"
+    source_hashes = ["a"] * 4 if len(joined_hashes) == 8 else ["a", "b", "c", "d"]
+    def packets(path, selector, interval, run):
+        hashes = source_hashes if path == source else joined_hashes
+        return [{"data_hash": h, "pts_time": str(i * 0.02)} for i, h in enumerate(hashes)]
+    monkeypatch.setattr(hd, "packets", packets)
+    with pytest.raises(RenderError, match="đã đổi|duy nhất"):
+        hd.boundary_pts(source, output, "a:0", "audio", {"duration": 4}, {"offset": 3.003}, _run)
 
 
 @pytest.mark.parametrize("codec,size", [("aac", "160x90"), ("aac", "160x120"),

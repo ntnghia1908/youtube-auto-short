@@ -89,6 +89,31 @@ Prefix: `env PYTHONPATH=<worktree>/src /home/ntnghia/miniconda3/envs/auto-short/
 
 ## Result
 
+### Fix round sau chạy thật — 2026-10-29, HEAD nền `df562e6`
+
+- **READY trong phạm vi fix được giao** (`hd_intro.py`, `test_hd_intro*.py`, Result); chưa chạy lại media thật / kho. Chẩn đoán được xác nhận bằng media tổng hợp: trước sửa, regression Opus / AAC cùng thất bại, audio lần lượt `-0.006` / `-0.021`, video `3.003`. Hash của packet im lặng nguồn trùng intro khiến lookup một hash lấy nhầm packet đầu intro.
+- Thay lookup bằng helper `boundary_pts`: khớp toàn bộ chuỗi packet liên tiếp, chỉ nhận vị trí duy nhất; nếu audio còn nhiều vị trí trùng thì mở rộng prefix nguồn từ 4 packet lên 6 s, 60 s, ... tối đa hết nguồn. Suy ra PTS đầu nguồn từ vị trí chuỗi; không chọn candidate theo độ gần offset. Nếu hết nguồn vẫn mơ hồ thì từ chối. Video bỏ payload packet đầu do concat có thể thêm SPS/PPS, kiểm 3 packet tiếp theo liên tiếp. Giữ nguyên tolerance 20 ms, duration ±1 khung, frame hash, stream copy và priming / offset.
+- Tìm helper: `rg -n 'packet.*(sequence|hash)|def .*boundary|def packets|def check_timing' src/auto_short/render tests/test_hd_intro*.py`; không có helper dò chuỗi phù hợp. Helper mới `boundary_pts` tái dùng `packets`; `verify` tiếp tục dùng `probe_media`, `check_timing`, `frame_hash`. Test mở rộng helper `media` hiện có bằng tham số silence / duration; không dependency mới.
+
+| AC trong fix round | Test | Kết quả |
+|---|---|---|
+| AC1: nguồn bắt đầu im lặng vẫn xác định đúng boundary; lệch thật bị chặn | `test_silent_audio_prefix_boundary_and_shifted_join` (Opus / AAC × 2 s / 57 s silence; remux audio lệch +100 ms, giữ duration video) | PASS cả 4 ca; code cũ thất bại ở 2 ca silence 2 s trước sửa |
+| AC1: chuỗi phải đúng thứ tự và xác định duy nhất | `test_audio_boundary_rejects_changed_order_or_ambiguous_silence` | PASS 2 ca; mơ hồ bị từ chối |
+| AC1: giữ timing / frame / stream copy cũ; các ca HD intro hiện có | `test_stream_copy_timing_padding_and_offset_frames` và toàn bộ `test_hd_intro*.py` | PASS; tổng 23 tests |
+
+Lệnh test duy nhất, chạy từ root worktree theo delegation (không socket / mạng):
+
+```sh
+PYTHONPATH=/home/ntnghia/projects/youtube-auto-short/.claude/worktrees/hdi1-hd-intro/src /home/ntnghia/miniconda3/envs/auto-short/bin/python -m pytest -q tests/test_hd_intro*.py
+# Trước sửa, thêm regression silence 2 s: 2 failed, 17 passed in 24.00s.
+# Sau sửa, silence 2 s: 19 passed in 25.88s.
+# Cuối cùng, thêm silence 57 s + thứ tự / mơ hồ: 23 passed in 35.59s.
+```
+
+- Diff fix round: ứng dụng `+30 / −10`; tests `+40 / −2` (`git diff --numstat`; không tính Result). Đã review diff trong owned paths; không commit / push / PR / gọi agent khác / mạng thật. Full suite / framework-check không chạy lại theo giới hạn test của fix round; kết quả cũ bên dưới thuộc vòng trước.
+
+### Kết quả triển khai và review trước fix round
+
 - **READY — phần IMPLEMENTER theo delegation (code + verification không socket), bàn giao ORCHESTRATOR review.** Không còn blocker phạm vi: ORCHESTRATOR đã xác nhận `theme_render/__init__.py` + test tương ứng trong Owned paths. Auth / full suite / media thật vẫn giao ORCHESTRATOR; **không claim AC6 hoặc các kiểm tra chưa chạy là PASS**.
 - Không commit / push / PR, không gọi agent khác, không gọi mạng / kho thật. HEAD làm việc `a0a164c`; chỉ có `AGENTS.md` ở root, đã đọc trước khi sửa.
 

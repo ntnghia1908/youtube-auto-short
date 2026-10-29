@@ -152,20 +152,40 @@ def frame_hash(path: Path, seconds: float, run: Runner) -> str:
     return lines[0].split(",")[-1].strip()
 
 
+def boundary_pts(source: Path, output: Path, selector: str, kind: str,
+                 original: dict, spec: dict, run: Runner) -> float:
+    first = packets(source, selector, "%+#4", run)
+    joined = packets(output, selector, "%+6", run)
+    window = 0.0
+    limit = float(original["duration"]) + 1
+    while True:
+        if not first:
+            raise RenderError(f"HD intro: thiếu gói {kind}")
+        # Concat may attach H.264 SPS/PPS to the first key packet; skip only that payload.
+        sequence = first[1:] if kind == "video" else first
+        hashes = [p["data_hash"] for p in sequence]
+        joined_hashes = [p["data_hash"] for p in joined]
+        matches = [i for i in range(len(joined) - len(hashes) + 1)
+                   if hashes and joined_hashes[i:i + len(hashes)] == hashes]
+        if not matches:
+            raise RenderError(f"HD intro: gói {kind} đã đổi")
+        if len(matches) == 1:
+            return (float(joined[matches[0]]["pts_time"]) - float(sequence[0]["pts_time"])
+                    + float(first[0]["pts_time"]))
+        if kind == "video" or window >= limit:
+            raise RenderError(f"HD intro: không xác định được mốc gói {kind} duy nhất")
+        # Digital silence can repeat for minutes. Extend the consecutive prefix until
+        # it identifies one position; never choose a candidate just because its PTS fits.
+        window = min(6 if not window else window * 10, limit)
+        first = packets(source, selector, f"%+{window}", run)
+        joined = packets(output, selector, f"%+{window + spec['offset'] + 1}", run)
+
+
 def verify(source: Path, output: Path, original: dict, spec: dict, run: Runner) -> None:
     stored = probe_media(output, run)
     pts = {}
     for kind, selector in (("video", "v:0"), ("audio", "a:0")):
-        first = packets(source, selector, "%+#4", run)
-        joined = packets(output, selector, "%+6", run)
-        if not first:
-            raise RenderError(f"HD intro: thiếu gói {kind}")
-        # Concat may attach H.264 SPS/PPS to the first key packet; following payloads stay byte-identical.
-        matches = [(p, q) for p in first for q in joined if p.get("data_hash") == q.get("data_hash")]
-        if not matches:
-            raise RenderError(f"HD intro: gói {kind} đã đổi")
-        p, q = matches[0]
-        pts[kind] = float(q["pts_time"]) - float(p["pts_time"]) + float(first[0]["pts_time"])
+        pts[kind] = boundary_pts(source, output, selector, kind, original, spec, run)
     check_timing(original, stored, spec, pts)
     duration = float(original["video"].get("duration") or original["duration"])
     count = max(1, round(duration * spec["fps"]))
