@@ -17,7 +17,7 @@ from ..titling.playlist import stored_series
 from ..workspace import atomic_write_json, read_json_dict, utc_now
 from . import PackageError, cover, episode, thumbnail
 
-LAYOUT_VERSION = 3
+LAYOUT_VERSION = 4
 PORTRAIT_NAME = re.compile(r"[0-9]{2}-[0-9a-f]{12}\.png")
 CLIP_ID = re.compile(r"[km][0-9]{2,}")
 FILE_NAME = re.compile(r"([km][0-9]{2,}-(?:vertical|landscape))-([a-f0-9]{64})\.jpg")
@@ -174,9 +174,10 @@ def display_fields(config, pid, fields):
     return dict(fields, series=series or fields["series"])
 
 
-# D-THUMB1-10: fewer lines win unless the type shrinks below this share of the next option; in the tall KT
-# landscape box 2 lines measure 69-80 % of 3 lines, so 85 % always picked 3 lines.
-FEWER_LINES_MIN_SIZE = .70
+# HUMAN LEAD 2026-10-29 (option B): the largest title wins (fewer lines only on a tie), filling 92 % of the
+# frame width; the small lines grow with it so a thumbnail stays readable at feed size.
+FIT_WIDTH = .92
+LABEL_SCALE, SERIES_SCALE, SPEAKER_INK = .44, .42, .62
 _CONNECTORS = frozenset("mà thì là nhưng để và nên vì khi cho của với hay hoặc".split())
 
 
@@ -224,7 +225,7 @@ def layout(title, fields, box):
     check_glyphs(fonts["old"], [title])
     check_glyphs(fonts["sans"], [label, speaker, series])
     x, y, w, h = box
-    width, height = int(w * cover.FIT_WIDTH), int(h * cover.FIT_HEIGHT)
+    width, height = int(w * FIT_WIDTH), int(h * cover.FIT_HEIGHT)
     candidates = []
     for line_count in range(1, min(3, len(title.split())) + 1):
         for size in range(min(180, height // 2), 12, -1):
@@ -236,15 +237,15 @@ def layout(title, fields, box):
             speaker_size = max(12, round(size * .65))
             while speaker_size < size:
                 speaker_top, speaker_bottom = fonts["sans"].ink_bounds(speaker, speaker_size)
-                if speaker_bottom - speaker_top >= title_ink * .55:
+                if speaker_bottom - speaker_top >= title_ink * SPEAKER_INK:
                     break
                 speaker_size += 1
             if speaker_size >= size:
                 continue
-            texts = [(label, "sans", max(12, round(size * .36)), "0xf2c66d", False)]
+            texts = [(label, "sans", max(12, round(size * LABEL_SCALE)), "0xf2c66d", False)]
             texts += [(t, "old", size, "0xe8bf62", True) for t in wrapped]
             texts += [(speaker, "sans", speaker_size, "0xfff3d6", True),
-                      (series, "sans", max(12, round(size * .32)), "0xe9d9b0", False)]
+                      (series, "sans", max(12, round(size * SERIES_SCALE)), "0xe9d9b0", False)]
             bounds = [fonts[f].ink_bounds(t, s) for t, f, s, _, _ in texts]
             gap = max(6, round(size * .2))
             total = sum(b - a + (8 if shadow else 6) for (_, _, _, _, shadow), (a, b) in zip(texts, bounds)) + gap * (len(texts) - 1)
@@ -264,9 +265,9 @@ def layout(title, fields, box):
                 break
             except TextError:
                 continue
-    for index, (size, lines, styles) in enumerate(candidates):
-        if size >= FEWER_LINES_MIN_SIZE * max((s for s, _, _ in candidates[index + 1:]), default=0):
-            return lines, styles
+    if candidates:
+        _, lines, styles = max(candidates, key=lambda c: c[0])  # first (fewest lines) of the largest size
+        return lines, styles
     raise TextError("chữ khai thị không vừa tối đa 3 dòng tiêu đề trong khung")
 
 

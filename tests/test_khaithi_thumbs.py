@@ -119,7 +119,7 @@ def test_cover_box_image_layout_font_and_number_invalidate(cfg, tmp_path, monkey
     kt.build_episode(cfg, ident, pid=PID)
     monkeypatch.setattr(kt, "LAYOUT_VERSION", 999)
     assert not kt.valid_files(cfg, ident)
-    monkeypatch.setattr(kt, "LAYOUT_VERSION", 3)
+    monkeypatch.setattr(kt, "LAYOUT_VERSION", 4)
     assert kt.valid_files(cfg, ident)
     monkeypatch.setitem(thumbnail.EPISODE_FONTS, cover.FONT_NAME, thumbnail.EPISODE_FONTS["sans"])
     assert not kt.valid_files(cfg, ident)
@@ -315,7 +315,7 @@ def test_four_text_groups_fit_measured_ink_and_shadow(box):
         font = Font(thumbnail.EPISODE_FONTS[line.font])
         top, bottom = font.ink_bounds(line.text, line.size)
         heights.append(bottom - top)
-        assert font.width(line.text, line.size) <= box[2] * cover.FIT_WIDTH
+        assert font.width(line.text, line.size) <= box[2] * kt.FIT_WIDTH
         assert box[1] <= line.y + top - 2
         assert line.y + bottom + (4 if style["shadow"] else 2) <= box[1] + box[3]
     assert heights[-2] >= max(heights[1:-2]) * .55
@@ -448,17 +448,37 @@ def test_portrait_catalog_normalizes_facing(cfg, facing, expected):
 
 
 @pytest.mark.parametrize("title,expected,width", [  # 960 / 1190 = 50 % / 62 % of 1920, the widths the prompt asks for
-    ("Học kinh không chỉ hiểu mà phải thực hành", ["Học kinh không chỉ hiểu", "mà phải thực hành"], 960),
-    ("Học kinh không chỉ hiểu mà phải thực hành", ["Học kinh không chỉ hiểu", "mà phải thực hành"], 1190),
-    ("Tâm thanh tịnh thì cõi nước thanh tịnh", ["Tâm thanh tịnh", "thì cõi nước thanh tịnh"], 1190),
-    ("Niệm Phật là để buông xả vọng tưởng", ["Niệm Phật", "là để buông xả vọng tưởng"], 1190),
+    ("Học kinh không chỉ hiểu mà phải thực hành", ["Học kinh", "không chỉ hiểu", "mà phải thực hành"], 960),
+    ("Học kinh không chỉ hiểu mà phải thực hành", ["Học kinh", "không chỉ hiểu", "mà phải thực hành"], 1190),
+    ("Ý nghĩa của việc niệm Phật", ["Ý nghĩa", "của việc niệm Phật"], 1190),
     ("Buông bỏ", ["Buông bỏ"], 960),
 ])
-def test_layout_prefers_fewer_lines_and_breaks_before_connector(title, expected, width):
-    # Right-hand box on a 1920x1080 KT cover, 70.4 % high.
+def test_layout_largest_title_wins_and_breaks_before_connector(title, expected, width):
+    # HUMAN LEAD option B: the line count giving the largest title wins; breaks still go before connectors.
     fields = dict(speaker="HT. Tịnh Không", series="Kinh Vô Lượng Thọ", episode="1")
-    lines, _ = kt.layout(title, fields, [1860 - width, 160, width, 760])
+    box = [1860 - width, 160, width, 760]
+    lines, _ = kt.layout(title, fields, box)
     assert [line.text for line in lines[1:-2]] == expected
+    original = kt._wrap_title
+    for count in range(1, 4):
+        if count == len(expected):
+            continue
+        kt._wrap_title = lambda f, text, size, w, n, count=count: original(f, text, size, w, n) if n == count else None
+        try:
+            other, _ = kt.layout(title, fields, box)
+        except TextError:
+            continue
+        finally:
+            kt._wrap_title = original
+        assert other[1].size <= lines[1].size
+
+
+def test_layout_fills_ninety_two_percent_of_frame_width():
+    fields = dict(speaker="HT. Tịnh Không", series="Kinh Vô Lượng Thọ", episode="1")
+    font = Font(thumbnail.EPISODE_FONTS["old"])
+    lines, _ = kt.layout("Học kinh không chỉ hiểu mà phải thực hành", fields, [900, 160, 960, 760])
+    widest = max(font.width(line.text, line.size) for line in lines[1:-2])
+    assert .80 * 960 < widest <= kt.FIT_WIDTH * 960
 
 
 @pytest.mark.parametrize("connector", ["MÀ", "thi\u0300", "VÀ", "nhưng"])
