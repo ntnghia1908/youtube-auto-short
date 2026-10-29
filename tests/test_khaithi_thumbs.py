@@ -367,3 +367,19 @@ def test_build_rotation_uses_clip_numbers_even_when_first_clip_hidden(cfg, monke
     assert rendered == [expected, expected]
     assert kt.read(cfg, ident)["clip_numbers"] == {"k01": 1, "k02": 2}
     assert set(kt.valid_files(cfg, ident)) == {"k02"}
+
+
+def test_playlist_series_name_wins_over_metadata_header(cfg):
+    """Real VLT: titles.json header says "[HD] Kinh Vô Lượng Thọ"; the playlist's Tên bộ kinh is what viewers see."""
+    folder = cfg.workspace.dir / IDS[0]
+    header = dict(series="[HD] " + episode.playlist(cfg, PID)["series"], episode="101", speaker="HT. Tịnh Không")
+    atomic_write_json(folder / "titles.json", dict(header=dict(fields=header)))
+    ident = IDS[0] + ".kt"
+    kt.build_episode(cfg, ident, pid=PID)
+    assert kt.read(cfg, ident)["header"]["series"] == episode.playlist(cfg, PID)["series"]
+    assert kt.valid_files(cfg, ident, pid=PID)
+    path = cfg.workspace.dir / "_playlists" / f"{PID}.json"
+    doc = episode.playlist(cfg, PID)
+    doc.pop("series")
+    atomic_write_json(path, doc)
+    assert kt.display_fields(cfg, PID, header)["series"] == header["series"]  # no Tên bộ kinh: header as before

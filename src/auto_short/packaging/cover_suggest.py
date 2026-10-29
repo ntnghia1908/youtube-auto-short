@@ -441,7 +441,8 @@ def previews(config, pid, folder, doc, *, run=None):
                         khaithi_thumbs.layout(clip.title, fields, doc["variants"]["kt_" + shape + ".png"]["box"])
                 except TextError:
                     continue
-                kt = (fields, clip.title, khaithi_thumbs.choose_portrait(portraits, fields["episode"])[0])
+                kt = (khaithi_thumbs.display_fields(config, pid, fields), clip.title,
+                      khaithi_thumbs.choose_portrait(portraits, fields["episode"])[0])
                 break
         except (PackageError, TitlingError, OSError, ValueError, KeyError, TypeError):
             continue

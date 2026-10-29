@@ -12,6 +12,7 @@ from ..render.stage import RenderError, _run, probe_media
 from ..render.text import Font, TextError, check_glyphs, nfc, wrap_balanced
 from ..review.logic import ReviewError, added_entries, read_review, resolve_titles
 from ..titling.logic import TitlingError
+from ..titling.playlist import stored_series
 from ..workspace import atomic_write_json, read_json_dict, utc_now
 from . import PackageError, cover, episode, thumbnail
 
@@ -146,6 +147,15 @@ def choose_portrait(items, number):
     return items[(int(number) - 1) // EPISODES_PER_PORTRAIT % len(items)] if items else (None, None)
 
 
+def display_fields(config, pid, fields):
+    """The playlist's "Tên bộ kinh" wins over the per-video metadata header (e.g. "[HD] Kinh …"), as in PKG2."""
+    try:
+        series = stored_series(episode.playlist(config, pid))
+    except PackageError:
+        series = None
+    return dict(fields, series=series or fields["series"])
+
+
 def layout(title, fields, box):
     """Fit four text groups as one scaled block, including Vietnamese ink and shadow."""
     title = " ".join(nfc(title).split())
@@ -243,7 +253,7 @@ def valid_files(config, ident, *, pid=None):
             return {}
         pid = pid or doc["playlist_id"]
         covers = cover.current(config, pid)
-        fields = episode.header(config, ident[:-3])
+        fields = display_fields(config, pid, episode.header(config, ident[:-3]))
         items = portraits(config)
         result = {}
         current_titles = titles(config, ident, include_hidden=True)
@@ -278,7 +288,7 @@ def build_episode(config, ident, *, pid, run=None):
     selected = [t for t in all_titles if t.title and not t.rejected]
     if not selected:
         return dict(built=0, reused=0, skipped_reason="chưa có tiêu đề clip khai thị")
-    fields = episode.header(config, ident[:-3])
+    fields = display_fields(config, pid, episode.header(config, ident[:-3]))
     items = portraits(config)
     old = read(config, ident) or {}
     doc = dict(schema_version=1, video_id=ident, playlist_id=pid, header=fields, clips={},
