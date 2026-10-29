@@ -1,86 +1,91 @@
-# Task: HDI1-hd-thumbnail-intro — Bản HD ngang có 3 giây thumbnail đầu video
+# Task: HDI1-hd-thumbnail-intro — Bản HD trên kho 3090 có 3 giây thumbnail đầu video (thay bản HD)
 
 ## Status / Approval
 
 - Status: APPROVED
 - Type: FEATURE
-- Change class: S1
+- Change class: S2
 - Owner: HUMAN LEAD
 - Execution profile: dual-agent
 - Orchestrator: claude-code
-- Implementer: codex — `codex exec` (gpt-6.1-sol, effort `high`, route + ffmpeg mới); dự phòng subagent `implementer` (Sonnet)
+- Implementer: codex — `codex exec` (gpt-6.1-sol, effort `high`, nhiều module đọc HD + giao thức kho); dự phòng subagent `implementer` (Sonnet)
 - Authorization mode: task
-- Authorization source: HUMAN LEAD 2026-10-29: "Tạo thêm 1 bản địa tạng hd để tôi test trước" → xem bản thử `output/_samples/dt-hd-intro/DiaTang_Tap1_HD_intro.mp4` → "Ok viết task riêng" → "G1 a. G2 b nhưng chỉ dùng cho địa tạng làm 1 bản test trước. Hiện tại địa tạng hd đã có trên 3090"
+- Authorization source: HUMAN LEAD 2026-10-29: "Tạo thêm 1 bản địa tạng hd để tôi test trước" → xem bản thử `output/_samples/dt-hd-intro/DiaTang_Tap1_HD_intro.mp4` → "Ok viết task riêng" → "G1 a. G2 b nhưng chỉ dùng cho địa tạng làm 1 bản test trước. Hiện tại địa tạng hd đã có trên 3090" → "Bản HD intro đè luôn bản HD" → chọn "Đè + ghi độ lệch"
 - Parallel group: —
-- Owned paths: `src/auto_short/render/hd_intro.py` (mới), `src/auto_short/web/routes/episodes.py` (route tải / tạo HD có intro), `src/auto_short/web/context.py` + `src/auto_short/web/jobs.py` hoặc nơi khai báo kind job (chỉ thêm kind `hd_intro`), `src/auto_short/web/static/` (chỉ nút "Tạo / Tải HD có intro" cạnh link HD hiện có), `src/auto_short/store/client.py` (thêm kind `hd_intro`), `tools/store/store.py` (thêm loại `HDIntro` = `hd_intro`), `src/auto_short/config.py` + `config.example.toml` (mục `[hd_intro]`), `tests/test_hd_intro.py` (mới), test kho hiện có của `client.py` / `store.py` (chỉ thêm ca kind mới), contract này
-- Dependencies: THUMB1 (#182, thumbnail tập khổ ngang hợp lệ qua `episode.valid_files`), VERT2 (`render/full.intro_image` — cách tìm playlist + dựng thumbnail), HD2a (mượn HD từ kho 3090)
+- Owned paths: `src/auto_short/render/hd_intro.py` (mới), `src/auto_short/enhance/state.py` (`EffectiveSource` thêm độ lệch + sha lưu kho; đọc `hd_intro.json`), mọi chỗ đọc file HD để render: `src/auto_short/render/full.py`, `src/auto_short/render/stage.py`, `src/auto_short/theme_index/__init__.py`, `src/auto_short/store/borrow.py`, `src/auto_short/review/backup.py` (chỉ sha HD đã giải phóng), `src/auto_short/store/client.py` (thao tác thay thế), `tools/store/store.py` (thay thế có kiểm sha cũ), `src/auto_short/web/routes/episodes.py` + `src/auto_short/web/app.py` / `src/auto_short/web/jobs.py` (route + kind job `hd_intro`), `src/auto_short/web/static/` (chỉ nút trên trang tập), `src/auto_short/config.py` + `config.example.toml` (mục `[hd_intro]`), `tests/test_hd_intro.py` (mới) + test hiện có của các module trên (chỉ thêm ca độ lệch / thay thế), contract này
+- Dependencies: THUMB1 (#182, thumbnail tập khổ ngang qua `episode.valid_files`), VERT2 (`render/full.intro_image`), HD1 / HD2a / HD2b (HD đã giải phóng, mượn HD từ kho)
 - Base commit / branch: `721fb7f` (xếp chồng trên THUMB1 #182, chưa merge) / `feature/hdi1-hd-intro`; PR base đổi sang `main` sau khi THUMB1 merge
-- Human Lead approval: APPROVED 2026-10-29 (G1 a, G2 b, chỉ Địa Tạng, 1 bản test trước)
+- Human Lead approval: APPROVED 2026-10-29 (G1 a, G2 = đè bản HD trên kho + ghi độ lệch, chỉ Địa Tạng, 1 bản test trước)
 - Implementation authorized: YES
 
 Lifecycle: `DRAFT → APPROVED → IN_PROGRESS → READY`. DONE suy ra từ Git sau khi merge.
 
-S1: thêm một module ffmpeg, một kind job, một loại file trên kho 3090 (giao thức kho không đổi, chỉ thêm giá trị loại); không đổi file HD gốc, Short, bản dọc hay security model (route dùng auth / kiểm id hiện có). `tools/store/store.py` mới phải được HUMAN LEAD chép lên 3090 trước khi đẩy bản đầu tiên.
+S2 vì: (1) thay **dữ liệu gốc** trên kho 3090 (bản HD) — bản cũ mất sau khi thay; (2) mọi đường đọc HD (bản dọc, Short, video ghép chủ đề, mượn HD) phải bù độ lệch; (3) giao thức kho thêm thao tác thay thế (HUMAN LEAD chép `tools/store/store.py` lên 3090).
 
 ## Goal
 
-Với bộ kinh được bật trong config (hiện chỉ Địa Tạng `PLOynZc0cJJfDMY5-Fd0su_Ea3TGdZ2wk4`), trang tập có nút "Tạo HD có intro" → job dựng file HD ngang giống hệt bản HD (đang ở kho 3090) nhưng 3 giây đầu là thumbnail tập khổ ngang (Bồ Tát + "TẬP N"), không encode lại phần bài giảng → đẩy lên kho 3090 (loại `hd_intro`), xóa bản cục bộ; sau đó nút "Tải HD có intro" tải từ kho. Làm **1 tập test trước** (Địa Tạng tập 1), HUMAN LEAD duyệt rồi mới làm cả bộ.
+Với bộ kinh bật trong config (hiện chỉ Địa Tạng `PLOynZc0cJJfDMY5-Fd0su_Ea3TGdZ2wk4`), trang tập có nút "Tạo HD có intro": job dựng bản HD ngang có 3 giây đầu là thumbnail tập khổ ngang (Bồ Tát + "TẬP N"), phần bài giảng giữ nguyên gói (không encode lại), rồi **thay bản HD trên kho 3090**. Sau đó "Tải HD" trả bản có intro; bản dọc / Short / video ghép vẫn dựng đúng mốc thời gian (bỏ phần intro). Làm **1 tập test trước** (Địa Tạng tập 1), HUMAN LEAD duyệt rồi mới làm cả bộ.
 
 ## Scope
 
 - In scope:
-  - `render/hd_intro.py`: từ HD hiệu lực (`source_hd.mp4` cục bộ, hoặc mượn từ kho như HD2a khi đã giải phóng) + thumbnail ngang hợp lệ (`episode.valid_files`, dựng nếu thiếu như `full.intro_image`) → encode intro đúng **90 khung** (3,003 s ở 30000/1001; tổng quát: `round(3 × fps)` khung) cùng codec / profile / kích thước / pix_fmt / timescale với HD, âm thanh im lặng cùng codec (aac / opus) / sample rate / số kênh, cắt cùng độ dài khung hình; ghép bằng concat demuxer `-c copy` + `+faststart`. Codec HD ngoài h264 + aac/opus → báo lỗi rõ, không tạo file sai.
-  - Khung ảnh: HD khác 16:9 (vd. 1440×1080 của Địa Tạng) xử lý theo **G1**.
-  - Lưu theo **G2 = b**: dựng một lần → `client.put(owner, "hd_intro", series, <tên HD>_intro.mp4, …)` như `offload.push_vertical` → kiểm `head` khớp sha / size → xóa file cục bộ. Kho: `tools/store/store.py` thêm loại `HDIntro` (cột `loai` trong `danh-sach.csv`), cùng thư mục bộ kinh. Tên tải `ep.hd_download_name` thêm hậu tố `_intro`.
-  - Config `[hd_intro] playlists = [...]` (mặc định rỗng = tắt; config 8080 đặt Địa Tạng). Bộ không bật → không có nút, route 404.
-  - Cache key intro (ghi trong record cục bộ nhỏ `hd_intro.json` của workspace owner): sha HD + sha thumbnail ngang + phiên bản thuật toán; khác → nút "Tạo lại" (không tự dựng lại).
-  - Kiểm sau ghép: thời lượng = HD + intro (±1 khung), mốc bắt đầu hình và tiếng của phần HD lệch ≤ 20 ms (đo pts gói đầu sau mốc ghép); sai → xóa file, báo lỗi.
-  - Route `POST /api/episodes/{id}/hd-intro` (tạo job làn `render`, kind `hd_intro`; mượn HD từ kho như HD2a, xóa bản mượn khi xong) và `GET /api/episodes/{id}/source-hd-intro` (tải từ kho qua `_store_download(…, "hd_intro", …)`, auth như `source-hd`, Range, không tick "Đã đăng"). Tái dùng polling job trên trang tập.
+  - **`render/hd_intro.py`**: HD hiệu lực (mượn từ kho như HD2a) + thumbnail ngang hợp lệ (`episode.valid_files`, dựng nếu thiếu như `full.intro_image`) → intro đúng `round(3 × fps)` khung (90 khung = 3,003 s ở 30000/1001) cùng codec / profile / kích thước / pix_fmt / timescale với HD; âm im lặng cùng codec (aac / opus) / sample rate / số kênh, cắt đúng độ dài khung; ghép concat demuxer `-c copy` + `+faststart`. **G1 = a**: HD khác 16:9 (Địa Tạng 1440×1080) → thu thumbnail vừa khung, viền đen. Codec ngoài h264 + aac/opus → lỗi rõ.
+  - Kiểm trước khi thay: tổng thời lượng = HD + intro (±1 khung); pts gói đầu của phần HD (hình và tiếng) lệch ≤ 20 ms so với mốc intro; sau khi bỏ `offset` (giải mã thử vài khung đầu / giữa / cuối) khung hình giống HD gốc (`framemd5` hoặc so pixel) — sai → xóa, báo lỗi, không đụng kho.
+  - **Ghi nhận độ lệch**: `hd_intro.json` trong workspace owner (cùng chỗ `enhance.json` / `backup.json`): `original` {sha256, size}, `stored` {sha256, size}, `frames`, `fps`, `offset_seconds` (chính xác = frames / fps), `thumb_sha256`, `version`, `replaced_at`. Ghi **trước** khi thay trên kho (trạng thái `pending`), cập nhật `done` sau khi `head` kho khớp sha / size mới; lỗi giữa chừng → lần sau đối chiếu `head` để biết bản nào đang ở kho.
+  - **`EffectiveSource`**: thêm `offset` (giây, mặc định 0) và `stored_sha256` (sha bytes trên kho / file); `sha256` (danh tính nội dung) **giữ sha gốc** → cache key bản dọc / Short / video ghép không đổi, 64 bản dọc Địa Tạng không bị coi là cũ.
+  - **Mọi đường đọc file HD** áp `offset`: input `-ss <offset>` (giải mã chính xác khung) + trừ khỏi thời lượng probe: `render/full.py` (bản dọc), `render/stage.py` (render / sửa Short, khai thị từ HD), `theme_index` (video ghép chủ đề), bất kỳ chỗ nào probe thời lượng HD. Mượn HD (`store/borrow.py`) kiểm theo `stored_sha256`; `review/backup.py` sha HD đã giải phóng = `stored`.
+  - **Kho**: `tools/store/store.py` thêm thay thế có điều kiện: `PUT` loại `hd` kèm header `X-Replace-Sha256: <sha hiện có>` → chỉ thay khi sha hiện có khớp (ghi file tạm rồi `os.replace`, cập nhật `danh-sach.csv`), không khớp → 409; không có header → hành vi cũ (409 khi khác sha). `client.replace(...)`. Server cũ (chưa chép) trả 409 → job báo "cần cập nhật store.py trên 3090", không đổi gì.
+  - **Điều kiện chạy**: chỉ tập có HD đã giải phóng lên kho (không có `source_hd.mp4` cục bộ); từ chối khi có job bản dọc / Short / khai thị đang chờ hoặc chạy cho video đó; bộ không bật → 404.
+  - **Web**: `POST /api/episodes/{id}/hd-intro` (job làn `render`, kind `hd_intro`), trạng thái trong view HD của trang tập ("HD có intro ✓" / "cần tạo lại" khi thumbnail ngang đổi); nút "Tạo HD có intro". "Tải HD" giữ route `source-hd` (giờ trả bản có intro).
+  - **Bản test**: trước khi thay ở tập test đầu tiên, giữ bản HD gốc cục bộ tại `output/_samples/hdi1-original/<id>.mp4` (ngoài cơ chế tự động; ORCHESTRATOR xóa sau khi HUMAN LEAD duyệt).
 - Out of scope:
-  - Tự đăng lên YouTube; sửa / thay HD gốc trên kho; bản dọc (VERT2 đã có intro); Short.
-  - Nút "cả bộ" (thêm sau khi HUMAN LEAD duyệt bản test; có thể chỉ là gọi route từng tập).
+  - Nút "cả bộ" (thêm sau khi HUMAN LEAD duyệt bản test; có thể chỉ gọi route từng tập).
+  - Gỡ intro / khôi phục bản gốc tự động; bộ kinh có `source_hd.mp4` cục bộ chưa giải phóng; tự đăng YouTube.
 
 ## Authority / key decisions
 
-- VERT2 (intro 3 giây = thumbnail tập), HD2a / HD2b (mượn HD từ kho, xóa bản mượn sau khi dùng), CP8.3 (auth / phục vụ file), HUMAN LEAD 2026-10-29 duyệt bản thử Địa Tạng tập 1.
-- **G1 = a** (HUMAN LEAD 2026-10-29): HD khác 16:9 → thu thumbnail vừa khung, viền đen (như bản thử).
-- **G2 = b** (HUMAN LEAD 2026-10-29): dựng một lần, lưu lâu dài trên kho 3090 cạnh HD (~2 GB / tập trên kho, không giữ cục bộ); chỉ Địa Tạng, 1 bản test trước.
+- VERT2 (intro 3 giây = thumbnail tập), HD1 / HD2a / HD2b (giải phóng / mượn HD), CP8.3 (auth / job / file), HUMAN LEAD 2026-10-29 duyệt bản thử + G1 a + "đè luôn bản HD" + "đè + ghi độ lệch".
+- Danh tính nội dung (sha gốc) tách khỏi sha bytes lưu kho: bản dọc / Short đã dựng vẫn hiện hành; độ lệch chỉ ảnh hưởng cách đọc file.
+- Thứ tự vận hành: 63 bản dọc Địa Tạng đang chờ (2026-10-29) phải xong trước khi thay HD các tập đó (điều kiện chạy chặn sẵn).
 
 ## Implementation approach
 
-- Tách hàm thuần (dựng lệnh ffmpeg từ kết quả probe, kiểm thời lượng / pts) khỏi subprocess; test bằng video nhỏ do ffmpeg tạo trong `tmp_path` (h264 + aac và h264 + opus, 16:9 và 4:3) — không mạng, không kho thật.
-- Tái dùng: `render.full.intro_image` (tách phần tìm playlist / dựng thumbnail thành hàm chung nếu cần, cả hai caller dùng), `store.borrow` (mượn HD), `ep.hd_source`, `ep.hd_download_name`, `probe_media`.
-- Quy trình đã chứng minh bằng bản thử: `/home/ntnghia/.claude/jobs/1c1feb65/tmp/hd_sample.py` (ops, ngoài repo) — encode intro `-frames:v 90`, `atrim=0:3.003`, `-video_track_timescale <HD>`, concat `-c copy`.
+- Tách hàm thuần (lệnh ffmpeg từ probe, kiểm thời lượng / pts, `hd_intro.json`) khỏi subprocess; test bằng video nhỏ ffmpeg tạo trong `tmp_path` (h264 + aac và h264 + opus; 16:9 và 4:3); kho giả lập bằng server test hiện có / client giả — không mạng thật.
+- Tái dùng: `full.intro_image`, `store.borrow`, `offload.push_vertical` (mẫu đẩy + `head`), `ep.hd_source`, `probe_media`. Quy trình đã chứng minh: `/home/ntnghia/.claude/jobs/1c1feb65/tmp/hd_sample.py` (ops, ngoài repo).
+- Một helper chung cho "input HD có offset" (vd. trả `["-ss", str(offset), "-i", path]` và thời lượng đã trừ) để mọi caller dùng, không rải `-ss` thủ công.
 
 ## Phải giữ nguyên
 
-- Route `source-hd` và file HD gốc (byte-identical), kho 3090, bản dọc, thumbnail.
-- HD mượn từ kho bị xóa sau khi dùng như HD2a.
+- Cache key / tính hiện hành của bản dọc, Short, video ghép chủ đề (danh tính = sha gốc).
+- HD chưa có intro: mọi đường đọc byte-identical như trước (offset 0, không thêm `-ss`).
+- Giao thức kho cũ (không header thay thế → hành vi cũ); loại / định danh khác không đổi.
 
 ## Code bị thay / xóa
 
-- Không có (tính năng mới). Nếu tách `intro_image` thì `render/full.py` gọi hàm chung, không giữ bản sao.
+- Các chỗ mở file HD trực tiếp trong `render/full.py`, `render/stage.py`, `theme_index` chuyển sang helper input HD có offset (không giữ đường cũ song song).
 
 ## Acceptance Criteria
 
-1. HD h264 + aac và h264 + opus (16:9 và 4:3) → file có intro: 3 giây đầu là thumbnail ngang hiện hành (G1), phần sau byte-identical về gói hình / tiếng với HD (so sha gói hoặc `framemd5` vài đoạn), tổng thời lượng đúng ±1 khung, lệch mốc hình / tiếng ≤ 20 ms.
-2. Codec không hỗ trợ / thiếu thumbnail ngang / thiếu HD → lỗi rõ, không để file dở.
-3. HD đã giải phóng → mượn từ kho, xóa bản mượn và bản intro cục bộ sau khi `head` kho khớp sha / size; đẩy lỗi → giữ file cục bộ để thử lại, không báo xong. Kho nhận / liệt kê / tải loại `hd_intro` (CSV `loai = HDIntro`), loại lạ vẫn 400.
-4. Route yêu cầu đăng nhập, id lạ / bộ không bật → 404, tải hỗ trợ Range, tên tải có `_intro`; đổi thumbnail / HD → trạng thái "cần tạo lại".
-5. Full suite PASS; `framework-check`, `git diff --check` PASS.
+1. HD h264 + aac / opus (16:9, 4:3) → bản có intro: 3 giây đầu là thumbnail ngang (4:3 có viền đen), phần sau giữ nguyên gói, thời lượng đúng ±1 khung, lệch mốc hình / tiếng ≤ 20 ms; codec lạ / thiếu thumbnail / thiếu HD → lỗi rõ, không file dở, không đụng kho.
+2. `hd_intro.json` ghi `pending` trước khi thay, `done` sau khi `head` kho khớp; thay lỗi → kho giữ bản cũ hoặc bản mới đúng sha, lần sau tự đối chiếu; bản mượn / tạm bị xóa.
+3. Sau khi thay: `EffectiveSource.sha256` = sha gốc, `offset` = frames / fps, `stored_sha256` = sha mới; bản dọc / Short / video ghép dựng từ HD có intro cho **khung hình giống** khi dựng từ HD gốc (test so khung); bản dọc hiện có vẫn "hiện hành"; mượn HD kiểm theo sha mới.
+4. Kho: `PUT` `hd` + `X-Replace-Sha256` đúng → thay + CSV cập nhật; sai sha → 409, không đổi; không header → hành vi cũ; client báo rõ khi server chưa hỗ trợ.
+5. Route / job: cần đăng nhập; bộ không bật / id lạ → 404; HD chưa giải phóng → 409; đang có job bản dọc / Short / khai thị của video → 409; đổi thumbnail ngang → "cần tạo lại".
+6. Full suite PASS; `framework-check`, `git diff --check` PASS.
 
 ## Required verification
 
 Prefix: `env PYTHONPATH=<worktree>/src /home/ntnghia/miniconda3/envs/auto-short/bin/python -m pytest -q`.
 
-- `<prefix> tests/test_hd_intro.py` + test kho (`client.py` / `tools/store/store.py`) — AC 1–4.
-- `<prefix> -n auto`; `node scripts/framework-check.mjs`; `git diff --check` — AC 5.
-- Chạy thật (ORCHESTRATOR, 8080 ghim commit nhánh, sau khi HUMAN LEAD chép `store.py` lên 3090): Địa Tạng tập 1 "Tạo HD có intro" → bản trên kho khớp sha → tải về so với bản thử đã duyệt; HUMAN LEAD xem 10 giây đầu.
+- `<prefix> tests/test_hd_intro.py` + test kho / borrow / full / stage / theme_index liên quan — AC 1–5 (test socket / web: ORCHESTRATOR chạy ngoài sandbox).
+- `<prefix> -n auto`; `node scripts/framework-check.mjs`; `git diff --check` — AC 6.
+- Chạy thật (ORCHESTRATOR, 8080 ghim commit nhánh, sau khi HUMAN LEAD chép `tools/store/store.py` lên 3090 và 63 bản dọc Địa Tạng xong): Địa Tạng tập 1 "Tạo HD có intro" → `head` kho khớp sha mới → tải "Tải HD" so với bản thử đã duyệt; dựng thử 1 Short / đoạn bản dọc từ HD mới so khung với bản cũ; HUMAN LEAD xem 10 giây đầu.
 
 ## Manual test checklist (Tech Lead)
 
-- [ ] Trang tập có "Tải HD có intro"; tải về xem 3 giây đầu là thumbnail, tiếng khớp môi sau intro.
-- [ ] Tua giữa video không lỗi (Range / faststart).
+- [ ] Trang tập Địa Tạng có "Tạo HD có intro"; sau khi xong "Tải HD" có 3 giây thumbnail, tiếng khớp môi.
+- [ ] Bộ khác không có nút.
+- [ ] Bản dọc / Short Địa Tạng vẫn hiện "đã có", không đòi dựng lại.
 
 ## Result
 
