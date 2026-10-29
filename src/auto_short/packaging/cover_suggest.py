@@ -370,13 +370,28 @@ def execute(config, pid, run_id, *, runner=None, media_runner=None, cancel=None)
 def previews(config, pid, folder, doc, *, run=None):
     from . import khaithi_thumbs
     entries = episode.playlist(config, pid)["entries"]
-    cases = [("first", episode.header(config, entries[0]["video_id"])),
-             ("last", episode.header(config, entries[-1]["video_id"]))]
+
+    def header(item):
+        # Previews are a review aid: an episode without a resolvable header (e.g. not yet
+        # transcribed) is skipped instead of failing a run whose images are valid.
+        try:
+            return episode.header(config, item["video_id"])
+        except PackageError:
+            return None
+
+    first = next(((item, fields) for item in entries if (fields := header(item))), None)
+    last = next(((item, fields) for item in reversed(entries) if (fields := header(item))), None)
+    cases = [("first", first[1])] if first else []
+    if last and last[0] is not first[0]:
+        cases.append(("last", last[1]))
     kt = None
     for item in entries:
-        clips = khaithi_thumbs.titles(config, item["video_id"] + ".kt")
-        if clips:
-            kt = (episode.header(config, item["video_id"]), clips[0].title)
+        try:
+            clips = khaithi_thumbs.titles(config, item["video_id"] + ".kt")
+        except PackageError:
+            continue
+        if clips and (fields := header(item)):
+            kt = (fields, clips[0].title)
             break
     result = []
     with tempfile.TemporaryDirectory(prefix="thumbs-preview-") as tmp:

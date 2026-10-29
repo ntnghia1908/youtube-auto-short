@@ -123,6 +123,28 @@ def test_invalid_candidates_removed_individually(cfg, artwork, tmp_path, damage,
         assert "tên file" in result["errors"]["wrong.png"]
 
 
+def test_previews_skip_last_episode_without_header(cfg, artwork):
+    """Real CUT run: the newest episode had no header yet and failed a run with 3 valid images."""
+    from test_khaithi_thumbs import seed_kt
+    seed_kt(cfg)
+    ident = "lecture0003"
+    (cfg.workspace.dir / ident).mkdir()
+    atomic_write_json(cfg.workspace.dir / ident / "titles.json", dict(header=dict(fields=dict(series="", episode=""))))
+    path = cfg.workspace.dir / "_playlists" / f"{PID}.json"
+    doc = json.loads(path.read_text())
+    doc["entries"].append(dict(video_id=ident, episode="103", index=103))
+    atomic_write_json(path, doc)
+    runner = fake_codex(artwork)
+    run_id = suggest.create(cfg, PID)["run_id"]
+    assert suggest.execute(cfg, PID, run_id, runner=runner)["status"] == "done"
+    suggest.select(cfg, PID, run_id, "option-1.png")
+    variants = suggest.execute(cfg, PID, run_id, runner=runner)
+    assert variants["status"] == "done", variants.get("error")
+    labels = [entry["label"] for entry in variants["previews"]]
+    assert labels == ["Tập 101 · dọc", "Tập 101 · ngang", "Tập 102 · dọc", "Tập 102 · ngang",
+                      "Khai thị 101 · dọc", "Khai thị 101 · ngang"]
+
+
 def test_zero_valid_and_variants_require_all_three(cfg, artwork):
     def none(folder, boxes):
         for name in boxes:
