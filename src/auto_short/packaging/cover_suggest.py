@@ -40,6 +40,12 @@ class Busy(PackageError):
     pass
 
 
+class CodexFailed(PackageError):
+    def __init__(self, message, log):
+        super().__init__(message)
+        self.log = log
+
+
 def available(config):
     if not config.thumbs.enabled:
         return "gợi ý Codex đang tắt trong cấu hình"
@@ -245,7 +251,10 @@ def run_codex(config, work, text, *, reference=None, runner=None, cancel=None):
     if cancel.is_set():
         raise Cancelled("đã hủy gợi ý")
     if proc.returncode:
-        raise PackageError(f"Codex thất bại (exit {proc.returncode})")
+        log = (proc.stdout or "") + "\n" + (proc.stderr or "")
+        if "at capacity" in log or "server_overloaded" in log:
+            raise CodexFailed("Codex đang quá tải (model at capacity); thử lại sau ít phút", log)
+        raise CodexFailed(f"Codex thất bại (exit {proc.returncode})", log)
     return proc
 
 
@@ -315,7 +324,12 @@ def execute(config, pid, run_id, *, runner=None, media_runner=None, cancel=None)
             work = Path(tmp)
             name = doc["selected"] if doc["phase"] == "variants" else doc["reference"]
             ref = episode._no_symlinks(folder / name) if name else None
-            proc = run_codex(config, work, text, reference=ref, runner=runner, cancel=cancel)
+            try:
+                proc = run_codex(config, work, text, reference=ref, runner=runner, cancel=cancel)
+            except CodexFailed as exc:
+                # Keep the log of a failed run: it is the only place the Codex error is visible.
+                episode._no_symlinks(folder / "codex.log").write_text(exc.log, encoding="utf-8")
+                raise
             log = (proc.stdout or "") + "\n" + (proc.stderr or "")
             episode._no_symlinks(folder / "codex.log").write_text(log, encoding="utf-8")
             tokens = re.search(r"tokens used\s*([\d,]+)", log)

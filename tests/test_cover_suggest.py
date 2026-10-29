@@ -156,6 +156,15 @@ def test_job_terminal_failure_state(cfg, kind):
     assert suggest.state(cfg, PID, doc["run_id"])["status"] == result["status"]
 
 
+def test_codex_failure_keeps_log_and_names_capacity(cfg):
+    doc = suggest.create(cfg, PID)
+    stderr = "ERROR: Selected model is at capacity. Please try a different model."
+    runner = lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 1, "", stderr)
+    result = suggest.execute(cfg, PID, doc["run_id"], runner=runner)
+    assert result["status"] == "failed" and "quá tải" in result["error"]
+    assert stderr in (suggest.directory(cfg, PID, doc["run_id"]) / "codex.log").read_text(encoding="utf-8")
+
+
 @pytest.mark.parametrize("kind", ["timeout", "cancel"])
 def test_real_process_group_killed(tmp_path, kind):
     script = tmp_path / "sleeper.py"
