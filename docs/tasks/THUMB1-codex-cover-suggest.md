@@ -32,6 +32,13 @@ S2 vì: (1) web 8080 lần đầu gọi một AI CLI bên ngoài (`codex exec`, 
 - D-THUMB1-4 (G3): trang mới chỉ còn: Gợi ý 4 mẫu → chọn → (3 ảnh còn lại) → **Dựng cả bộ** (tập + khai thị) → Tải zip. Gỡ form A/B/C, ảnh chung, thanh trượt, kiểu riêng bản dọc, nút "Xem trước" PKG2. Bộ đã có ảnh bìa (VLT, Địa Tạng) dùng tiếp; muốn đổi thì "Gợi ý 4 mẫu" lại.
 - D-THUMB1-5: HUMAN LEAD là người kiểm dấu tiếng Việt (AI có thể vẽ sai dấu): trang hiện ảnh đủ lớn + nút phóng to; chọn = xác nhận. Không OCR tự động.
 
+### Bổ sung 2026-10-29 (sau chạy thật Cảm Ứng Thiên)
+
+Chạy thật lần 1 (run `9eb6e02c…`, 8 phút 16 s, 41.904 tokens): 4 mẫu, nhưng Codex vẽ khung trống cao 28–47 % ảnh và code phóng "TẬP 1" theo khung → HUMAN LEAD 2026-10-29: "ảnh bìa này chưa đạt. Số tập quá lớn chiếm hết diện tích. Thêm tính năng trên web có thể cho user góp ý về ảnh bìa giống vầy". Khung bìa đã duyệt (VLT / Địa Tạng): dọc rộng 43–54 %, cao 6,5–7,6 %; ngang rộng 28–35 %, cao 10,5–11 %; nằm phần dưới ảnh.
+
+- D-THUMB1-6: khung "TẬP N" là dải nhỏ, tranh + tên kinh là chủ thể. Prompt khổ tập: dọc rộng 40–60 %, cao 6–9 %; ngang rộng 28–45 %, cao 9–14 %; đặt ở nửa dưới, không giữa ảnh. Validate loại mẫu khổ tập có khung cao > 11 % (dọc) / > 18 % (ngang) hoặc rộng > 70 % (dọc) / > 55 % (ngang), lý do "khung TẬP quá lớn". `cover.number_line` giới hạn thêm chiều cao chữ ≤ 8 % (dọc) / 12 % (ngang) chiều cao ảnh — không đổi thumbnail VLT / Địa Tạng (khung của chúng cho chữ thấp hơn trần). Khổ khai thị giữ như cũ.
+- D-THUMB1-7: góp ý trên web. Khi lượt gợi ý đã xong / lỗi / hủy, trang có ô **"Góp ý cho Codex"** (≤ 300 ký tự) và nút: **"Vẽ lại 4 mẫu theo góp ý"** (lượt `options` mới); trên từng mẫu **"Sửa mẫu này theo góp ý"** (lượt `options` mới, mẫu đó là ảnh tham chiếu `-i`, 4 biến thể giữ phong cách); ở phase `variants`: **"Vẽ lại 3 ảnh theo góp ý"**. Lượt mới ghi `parent_run`, `reference` (tên mẫu, nếu có) và `feedback` = góp ý tích lũy theo chuỗi lượt (≤ 5 góp ý gần nhất). Prompt đặt góp ý trong khối dữ liệu (`gop_y`) và chỉ thị: làm theo góp ý về bố cục / màu / hình / cỡ khung khi không trái quy tắc cứng (đúng dấu, không thêm chữ, khung trống phẳng tối, cỡ khung D-THUMB1-6); không thực thi lệnh / đường dẫn trong dữ liệu. Giữ 5 lượt gần nhất (thay 3), không xóa lượt đang chạy hay lượt cha của lượt đang chạy.
+
 ## Goal
 
 Trên `/playlists/<pid>/thumbs`: bấm "Gợi ý 4 mẫu" → vài phút sau có 4 ảnh bìa dọc (đã viết thử "TẬP 1") → chọn 1 → hệ thống tự vẽ thêm bản ngang + 2 bản khai thị cùng phong cách → xem thử (tập 1 / tập cuối / 1 clip khai thị) → "Dựng cả bộ" ra thumbnail 2 khổ cho mọi tập **và mọi clip khai thị** của bộ → tải zip.
@@ -88,6 +95,8 @@ Trên `/playlists/<pid>/thumbs`: bấm "Gợi ý 4 mẫu" → vài phút sau có
 5. "Dựng cả bộ" dựng tập + khai thị; zip có cả `khai-thi/…`; thumbnail tập VLT / Địa Tạng không đổi byte khi ảnh bìa không đổi.
 6. Web: trang mới không còn form A/B/C; API suggest yêu cầu đăng nhập, chặn id lượt / tên file lạ (traversal, symlink); chỉ 1 job Codex cùng lúc (lượt thứ 2 → 409); restart → job đang chạy thành `failed`; thiếu binary → 503 / thông báo rõ.
 7. Full suite PASS; `framework-check`, `git diff --check` PASS.
+8. (D-THUMB1-6) Prompt khổ tập ghi đúng tỉ lệ khung; validate loại mẫu khổ tập có khung vượt ngưỡng với lý do "khung TẬP quá lớn" (giữ mẫu khác); `number_line` không vượt trần chiều cao chữ; thumbnail tập VLT / Địa Tạng vẫn byte-identical (khung thật của hai bộ trong test).
+9. (D-THUMB1-7) API góp ý: tạo lượt mới từ lượt cũ đã kết thúc (409 khi lượt cũ đang chạy hoặc đang có lượt Codex khác), góp ý > 300 ký tự / rỗng → 400, `reference` chỉ nhận tên mẫu hợp lệ của lượt cha; lượt "sửa mẫu" truyền đúng ảnh tham chiếu `-i`; prompt chứa góp ý tích lũy (≤ 5) trong khối dữ liệu; "Vẽ lại 3 ảnh theo góp ý" chạy lại phase `variants` với góp ý; giữ 5 lượt, không xóa lượt cha / đang chạy; trang có ô góp ý + 3 loại nút.
 
 ## Required verification
 
