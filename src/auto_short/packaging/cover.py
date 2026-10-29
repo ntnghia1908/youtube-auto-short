@@ -15,7 +15,7 @@ from ..render.text import Font, check_glyphs
 from ..workspace import atomic_write_json, read_json_dict
 from . import PackageError, assets, thumbnail
 
-COVER_LAYOUT_VERSION = 3
+COVER_LAYOUT_VERSION = 4
 FIT_WIDTH, FIT_HEIGHT = 0.8, 0.85  # share of the box the number ink (with diacritics) may fill
 SIZES = dict(thumbnail.EPISODE_SIZES, kt_vertical=thumbnail.EPISODE_SIZES["vertical"],
              kt_landscape=thumbnail.EPISODE_SIZES["landscape"])
@@ -167,10 +167,24 @@ def number_line(number, box, shape="vertical"):
     return thumbnail.EpisodeLine(text, FONT_NAME, size, x, baseline, w, centered=True)
 
 
-def build_episode(work, fields, shape, image, filename, *, entry, run=None):
+def build_episode(work, fields, shape, image, filename, *, entry, portrait=None, run=None):
     _box(entry["box"], *SIZES[shape])
     line = number_line(fields["episode"], entry["box"], shape)
-    return draw_lines(work, [line], image, filename, run=run)
+    return draw_lines(work, [line], image, filename, portrait=portrait, shape=shape,
+                      portrait_layout="episode", run=run)
+
+
+def episode_portrait_box(shape, source_size):
+    """Preserve aspect ratio; place episode cutouts above the vertical title or at the right."""
+    width, height = SIZES[shape]
+    sw, sh = source_size
+    landscape = shape == "landscape"
+    scale = min(height * (.92 if landscape else .46) / sh,
+                width * (.50 if landscape else .84) / sw)
+    pw, ph = max(1, round(sw * scale)), max(1, round(sh * scale))
+    if landscape:
+        return pw, ph, width - round(width * .015) - pw, height - ph
+    return pw, ph, round((width - pw) / 2), round(height * .525) - ph
 
 
 def portrait_box(shape, box, source_size):
@@ -191,18 +205,24 @@ def portrait_box(shape, box, source_size):
     return pw, ph, round(width * .42 - pw / 2), height - ph
 
 
-def draw_lines(work, lines, image, filename, *, run=None, styles=None, portrait=None, shape=None, box=None):
-    """Shared COV1 encoder, with optional KT fonts, colors and portrait before text."""
+def draw_lines(work, lines, image, filename, *, run=None, styles=None, portrait=None, shape=None, box=None,
+               portrait_layout="kt"):
+    """Shared COV1 encoder, with optional fonts, colors and portrait before text."""
     font = work / "cover.ttf"
     shutil.copyfile(thumbnail.EPISODE_FONTS[FONT_NAME], font)
     graph = "[0:v]setsar=1[base]"
     runner = run or _run
     if portrait is not None:
         stream = probe_media(portrait, runner)["video"]
-        pw, ph, px, py = portrait_box(shape, box, (int(stream["width"]), int(stream["height"])))
+        source_size = int(stream["width"]), int(stream["height"])
+        pw, ph, px, py = (episode_portrait_box(shape, source_size) if portrait_layout == "episode"
+                          else portrait_box(shape, box, source_size))
+        fade = (",geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
+                "a='alpha(X,Y)*min(1,(H-1-Y)/(H*0.18))'"
+                if portrait_layout == "episode" and shape == "vertical" else "")
         local = work / "portrait.png"
         shutil.copyfile(portrait, local)
-        graph = (f"[0:v]setsar=1[background];[1:v]scale={pw}:{ph},setsar=1,format=rgba[portrait];"
+        graph = (f"[0:v]setsar=1[background];[1:v]scale={pw}:{ph},setsar=1,format=rgba{fade}[portrait];"
                  f"[background][portrait]overlay={px}:{py}:format=auto[base]")
         def encode_runner(cmd):
             index = cmd.index("-filter_complex_script")

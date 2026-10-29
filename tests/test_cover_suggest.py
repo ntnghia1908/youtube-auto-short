@@ -501,8 +501,8 @@ def test_feedback_state_schema_rejects_invalid_fields(cfg, field, value):
     ("kt_landscape", [10, 20, 320, 233], False),
     ("kt_landscape", [120, 20, 320, 260], False),
     ("kt_vertical", [50, 130, 440, 380], True),
-    ("kt_vertical", [0, 0, 405, 269], True),
-    ("kt_vertical", [50, 80, 404, 380], False),
+    ("kt_vertical", [0, 0, 378, 269], True),  # 70 %: real VLT box was 74,7 % after Codex inner margin
+    ("kt_vertical", [50, 80, 377, 380], False),
     ("kt_vertical", [50, 80, 440, 268], False),
     ("kt_vertical", [50, 20, 440, 461], False),
     ("kt_vertical", [50, 200, 440, 380], False),
@@ -522,6 +522,38 @@ def test_kt_prompt_and_only_two_output_specs():
         assert rule in text
     spec = json.loads(text.split("ưu tiên kích thước yêu cầu):\n")[1].split("\nTự dùng")[0])
     assert set(spec) == set(suggest.KT)
+
+
+@pytest.mark.parametrize("phase", ["options", "variants"])
+def test_episode_prompt_reserves_portrait_regions(phase):
+    text = suggest.prompt(dict(series="Kinh", speaker="HT. Tịnh Không"), "", phase)
+    for rule in ("Khổ tập: không vẽ người", "chừa giữa nửa trên cho chân dung thật",
+                 "tên kinh + chủ giảng + khung TẬP nằm dưới 52% chiều cao",
+                 "tên kinh + chủ giảng + khung TẬP ở nửa trái", "nửa phải là tranh",
+                 "40–60%", "6–9%", "28–45%", "9–14%", "phẳng tối"):
+        assert rule in text
+
+
+def test_options_and_variants_previews_use_fixed_episode_portrait(cfg, artwork, monkeypatch):
+    from test_khaithi_thumbs import portrait_manifest
+    folder, entries = portrait_manifest(cfg, episode_index=1)
+    expected = folder / entries[1]["file"]
+    calls = []
+    real = cover.build_episode
+    def build(*args, **kwargs):
+        calls.append((args[2], kwargs.get("portrait")))
+        return real(*args, **kwargs)
+    monkeypatch.setattr(cover, "build_episode", build)
+    initial = suggest.create(cfg, PID)
+    ident = initial["run_id"]
+    result = suggest.execute(cfg, PID, ident, runner=fake_codex(artwork))
+    assert result["status"] == "done", result.get("error")
+    assert calls == [("vertical", expected)] * 4
+    calls.clear()
+    suggest.select(cfg, PID, ident, "option-1.png")
+    result = suggest.execute(cfg, PID, ident, runner=fake_codex(artwork))
+    assert result["status"] == "done", result.get("error")
+    assert calls == [("vertical", expected), ("landscape", expected)] * 2
 
 
 def test_kt_run_uses_installed_reference_previews_install_and_feedback(cfg, artwork, monkeypatch):

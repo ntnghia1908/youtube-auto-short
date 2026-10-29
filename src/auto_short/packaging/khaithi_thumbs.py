@@ -86,7 +86,7 @@ def title_lines(title, number, box):
     raise TextError("tiêu đề khai thị không vừa tối đa 3 dòng trong khung")
 
 
-_PORTRAITS = {}  # folder -> (stat signature, result): valid_files runs per episode, decoding 8 PNGs each time is slow
+_PORTRAITS = {}  # folder -> (stat signature, (verified portraits, episode filename))
 
 
 def _signature(folder):
@@ -99,14 +99,24 @@ def _signature(folder):
 
 def portraits(config):
     """Read only verified, decodable local RGBA PNGs, retaining manifest order."""
+    return list(_portrait_catalog(config)[0])
+
+
+def episode_portrait(config):
+    """Select the fixed episode cutout from the same cached, verified portrait catalog."""
+    items, name = _portrait_catalog(config)
+    return next((item for item in items if item[0].name == name), (None, None))
+
+
+def _portrait_catalog(config):
     folder = Path(config.packaging.asset_dir) / "portraits"
     signature = _signature(folder)
     cached = _PORTRAITS.get(folder)
     if signature is not None and cached and cached[0] == signature:
-        return list(cached[1])
+        return cached[1]
     result = _read_portraits(folder)
     if signature is not None:
-        _PORTRAITS[folder] = (signature, tuple(result))
+        _PORTRAITS[folder] = (signature, result)
     return result
 
 
@@ -116,9 +126,9 @@ def _read_portraits(folder):
         doc = read_json_dict(episode._no_symlinks(folder / "portraits.json"))
         if not doc or type(doc.get("schema_version")) is not int or doc["schema_version"] != 1 \
                 or not isinstance(doc.get("portraits"), list):
-            return []
+            return (), None
     except (PackageError, OSError, ValueError):
-        return []
+        return (), None
     result = []
     for entry in doc["portraits"]:
         try:
@@ -137,7 +147,8 @@ def _read_portraits(folder):
                 result.append((path, entry["sha256"]))
         except (PackageError, RenderError, OSError, ValueError, KeyError, TypeError):
             continue
-    return result
+    name = doc.get("episode")
+    return tuple(result), name if isinstance(name, str) else None
 
 
 EPISODES_PER_PORTRAIT = 20  # HUMAN LEAD 2026-10-29: every clip of episodes 1-20 shares portrait 1, 21-40 portrait 2, ...

@@ -17,7 +17,7 @@ from test_packaging_episode import IDS, PID, seed_episodes
 TITLE = "Giữ tâm thanh tịnh trong cuộc sống để được an lạc mỗi ngày"
 
 
-def portrait_manifest(cfg, *, count=2, color="red@0.8"):
+def portrait_manifest(cfg, *, count=2, color="red@0.8", episode_index=None):
     folder = cfg.packaging.asset_dir / "portraits"
     folder.mkdir(parents=True, exist_ok=True)
     entries = []
@@ -27,7 +27,10 @@ def portrait_manifest(cfg, *, count=2, color="red@0.8"):
                         f"color=c={color}:s={64 + n * 2}x100,format=rgba", "-frames:v", "1", "-threads", "1", str(path)],
                        check=True, timeout=30)
         entries.append(dict(file=path.name, sha256=sha256_file(path)))
-    atomic_write_json(folder / "portraits.json", dict(schema_version=1, portraits=entries))
+    doc = dict(schema_version=1, portraits=entries)
+    if episode_index is not None:
+        doc["episode"] = entries[episode_index]["file"]
+    atomic_write_json(folder / "portraits.json", doc)
     return folder, entries
 
 
@@ -264,6 +267,36 @@ def test_portraits_cached_until_folder_changes(cfg, monkeypatch):
     path.unlink()
     path.write_bytes(data[:-16])  # new inode / size: the damaged portrait is dropped
     assert kt.portraits(cfg) == [(folder / entries[1]["file"], entries[1]["sha256"])] and len(calls) == 1
+
+
+@pytest.mark.parametrize("damage", [None, "missing_key", "not_listed", "sha", "corrupt", "symlink", "bad_key", "missing_manifest"])
+def test_episode_portrait_uses_only_verified_manifest_member(cfg, tmp_path, monkeypatch, damage):
+    folder, entries = portrait_manifest(cfg, episode_index=1)
+    doc = dict(schema_version=1, portraits=entries, episode=entries[1]["file"])
+    selected = folder / entries[1]["file"]
+    if damage == "missing_key":
+        doc.pop("episode")
+    elif damage == "not_listed":
+        doc["portraits"] = entries[:1]  # selected PNG exists but is not an authorized member
+    elif damage == "sha":
+        entries[1]["sha256"] = "f" * 64
+    elif damage == "corrupt":
+        selected.write_bytes(b"broken PNG")
+    elif damage == "symlink":
+        target = tmp_path / "external.png"
+        selected.rename(target)
+        selected.symlink_to(target)
+    elif damage == "bad_key":
+        doc["episode"] = [entries[1]["file"]]
+    atomic_write_json(folder / "portraits.json", doc)
+    if damage == "missing_manifest":
+        (folder / "portraits.json").unlink()
+    expected = (selected, entries[1]["sha256"]) if damage is None else (None, None)
+    items = kt.portraits(cfg)  # primes the shared cache, including the episode selection
+    monkeypatch.setattr(kt, "_read_portraits", lambda _: pytest.fail("catalog read twice"))
+    assert kt.episode_portrait(cfg) == expected
+    if damage is None:
+        assert kt.episode_portrait(cfg) == items[1]
 
 
 @pytest.mark.parametrize("box", [[50, 80, 900, 730], [40, 50, 740, 570]])

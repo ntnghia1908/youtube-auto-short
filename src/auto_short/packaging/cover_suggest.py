@@ -236,6 +236,9 @@ Chừa đúng MỘT khung trang trí TRỐNG với nền phẳng tối đồng m
 Khổ tập: khung TẬP N là dải nhỏ ở nửa dưới, không giữa ảnh; tranh và tên kinh là chủ thể.
 Khổ tập dọc (vertical): khung rộng 40–60% ảnh, cao 6–9% ảnh; không vượt 70% rộng / 11% cao.
 Khổ tập ngang (landscape): khung rộng 28–45% ảnh, cao 9–14% ảnh; không vượt 55% rộng / 18% cao.
+Khổ tập: không vẽ người; chân dung thật được code ghép sau, trước chữ TẬP N.
+Khổ tập dọc: chủ thể tranh ở nửa trên, chừa giữa nửa trên cho chân dung thật; tên kinh + chủ giảng + khung TẬP nằm dưới 52% chiều cao.
+Khổ tập ngang: tên kinh + chủ giảng + khung TẬP ở nửa trái; nửa phải là tranh để chân dung thật ghép đè lên.
 Khổ kt_: không vẽ chữ, không vẽ người / khuôn mặt; toàn bộ chữ và chân dung thật sẽ do code ghép sau.
 Ảnh kt_ chỉ giữ cùng phong cách, bảng màu, họa tiết bìa tham chiếu; không sao chép chữ tên kinh hay chủ giảng.
 kt_landscape: một khung bên trái rộng 50–62% ảnh, cao ≥ 70%; nửa phải là nền dịu ít chi tiết để ghép chân dung.
@@ -326,7 +329,7 @@ def validate(work, names, *, run=None):
                                                         bh / sh > (.11 if shape == "vertical" else .18)):
                 raise PackageError("khung TẬP quá lớn")
             if shape == "kt_landscape" and not (.45 <= bw / sw <= .66 and bh / sh >= .65 and (x + bw) / sw <= .68) \
-                    or shape == "kt_vertical" and not (bw / sw >= .75 and .28 <= bh / sh <= .48 and (y + bh) / sh <= .55):
+                    or shape == "kt_vertical" and not (bw / sw >= .70 and .28 <= bh / sh <= .48 and (y + bh) / sh <= .55):
                 raise PackageError("khung khai thị sai vị trí / cỡ")
             if not shape.startswith("kt_") and (bw / sw < (.28 if shape == "landscape" else .4) or bh / sh < .05):
                 raise PackageError("khung trống quá nhỏ")
@@ -354,6 +357,7 @@ def validate(work, names, *, run=None):
 
 def execute(config, pid, run_id, *, runner=None, media_runner=None, cancel=None):
     """Run a persisted phase; every terminal path leaves a reviewable state."""
+    from . import khaithi_thumbs
     cancel = cancel or threading.Event()
     folder = directory(config, pid, run_id)
     doc = state(config, pid, run_id)
@@ -381,6 +385,7 @@ def execute(config, pid, run_id, *, runner=None, media_runner=None, cancel=None)
                 raise PackageError("không đủ ảnh hợp lệ: " + "; ".join(f"{k}: {v}" for k, v in errors.items()))
             staging = replace(config, render=replace(config.render, output_dir=work / "normalized"))
             output = {}
+            portrait, _ = khaithi_thumbs.episode_portrait(config)
             for name, entry in good.items():
                 if cancel.is_set():
                     raise Cancelled("đã hủy gợi ý")
@@ -392,7 +397,7 @@ def execute(config, pid, run_id, *, runner=None, media_runner=None, cancel=None)
                     render_dir = work / name.removesuffix(".png")
                     render_dir.mkdir()
                     image = cover.build_episode(render_dir, dict(episode="1"), "vertical", folder / name,
-                                                preview, entry=installed, run=media_runner)
+                                                preview, entry=installed, portrait=portrait, run=media_runner)
                     shutil.copyfile(image, episode._no_symlinks(folder / preview))
                     output[name]["preview"] = preview
             doc["options" if doc["phase"] == "options" else "variants"] = output
@@ -427,6 +432,7 @@ def previews(config, pid, folder, doc, *, run=None):
         cases.append(("last", last[1]))
     kt = None
     portraits = khaithi_thumbs.portraits(config)
+    portrait, _ = khaithi_thumbs.episode_portrait(config)
     for item in entries:
         try:
             clips = khaithi_thumbs.titles(config, item["video_id"] + ".kt", include_hidden=True)
@@ -461,7 +467,8 @@ def previews(config, pid, folder, doc, *, run=None):
                     image = khaithi_thumbs.draw(work, kt[1], fields, entry, shape, folder / name,
                                                 filename, portrait=kt[2], run=run)
                 else:
-                    image = cover.build_episode(work, fields, shape, folder / name, filename, entry=entry, run=run)
+                    image = cover.build_episode(work, fields, shape, folder / name, filename, entry=entry,
+                                                portrait=portrait, run=run)
                 shutil.copyfile(image, episode._no_symlinks(folder / filename))
                 result.append(dict(file=filename, label=f"{'Khai thị' if case == 'kt' else 'Tập'} {fields['episode']} · {'dọc' if shape == 'vertical' else 'ngang'}"))
     return result
