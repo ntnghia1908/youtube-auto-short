@@ -245,7 +245,7 @@ def enqueue_intro_rebuild(config, runner, pid, first, last, *, prioritize_first_
     Existing current clips, active jobs and episodes without rendered clips are left alone.
     """
     from ..render.stage import font_path, used_config, episode_render_config
-    from ..render.intro import INTRO_SECONDS
+    from ..render.intro import metadata as intro_metadata
     from .. import hashing
     from ..enhance import state as enhance_state
     from ..web.jobs import KIND_RENDER, render_target
@@ -293,11 +293,11 @@ def enqueue_intro_rebuild(config, runner, pid, first, last, *, prioritize_first_
                 else:
                     current = current and path.resolve() in source_paths and inp["sha256"] == source_sha
         for clip in clips:
-            if not current or not clip.get("intro") or clip["intro"].get("seconds") != INTRO_SECONDS:
+            if not current or not clip.get("intro") or "transition" not in clip["intro"]:
                 current = False
                 break
             image = vertical_clip(config, ident, clip["clip_id"], pid=pid, fields=fields)
-            current = current and clip["intro"].get("sha256") == sha256_file(image)
+            current = current and clip["intro"] == intro_metadata(image)
             local = directory(config, ident).parent / clip["file"]
             release = (read_json_dict(local.parent.parent / "store.json") or {}).get("released", {}).get(clip["clip_id"], {})
             current = current and (sha256_file(local) == clip["sha256"] if local.is_file()

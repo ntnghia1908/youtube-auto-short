@@ -27,6 +27,7 @@ S2 vì: đổi sản phẩm video khai thị đã đăng / trên kho (bản `(rN
 - D-KTI1-5 (HUMAN LEAD 2026-10-29, thứ tự ưu tiên khi thiếu CPU / GPU): (1) video khai thị ghép có thumbnail (THUMB2); (2) clip khai thị có intro — **mỗi bộ chạy trước 10 tập** (VLT 31–40, Cảm Ứng Thiên 21–30, Thập Thiện 21–30), đánh dấu "Ưu tiên" (CP8.26 `priority.mark`) để vượt các job bản dọc Địa Tạng còn chờ; phần còn lại xếp sau, không ưu tiên; (3) Kinh Địa Tạng: thumbnail bản dọc (VERT2, đang render) và bản ngang (HDI1).
 - D-KTI1-3 (G3, HUMAN LEAD: "báo chưa có bìa và chuyển qua trang thiết kế bìa"): bộ trong phạm vi chưa có bìa KT → **không render clip thiếu intro**; job khai thị dừng với lý do "Bộ kinh chưa có ảnh bìa khai thị", web hiện thông báo + link sang trang Thumbnail của bộ (THUMB1). Cài bìa xong → chạy lại job.
 - D-KTI1-4 (HUMAN LEAD 2026-10-29: "video khai thị ghép không ghép phần 3s này vào. Ghép như hiện tại"): video ghép yêu thích (CP8.33) và tuyển tập chủ đề (TC3) **bỏ 3 s intro** của từng clip: nội dung ghép giống hiện tại. Sidecar clip ghi độ lệch intro + sha nội dung (mẫu HDI1); fingerprint index / plan đã duyệt dựa trên nội dung → plan **không** stale chỉ vì thêm intro.
+- D-KTI1-6 (HUMAN LEAD 2026-10-29 sau xem 5 mẫu GIF: "Mẫu 1 và hiệu ứng 1s thay vì 0.7"): **hòa tan** (`xfade=transition=fade`) **1 s** cuối của 3 s intro, từ thumbnail sang **khung hình đầu tiên của nội dung** (ảnh tĩnh); nội dung clip vẫn giữ nguyên byte (concat copy), độ lệch intro không đổi; video ghép vẫn cắt sạch theo độ lệch.
 - Thumbnail đổi (sửa tiêu đề, đổi bìa / chân dung) → key render đổi → clip cũ không còn hiện hành, dựng lại như sửa tiêu đề hiện nay.
 
 ## Goal
@@ -131,3 +132,30 @@ Mọi lệnh pytest dưới đây dùng `timeout 290s env PYTHONPATH=/home/ntngh
   - Full suite `-n auto`: **3469 passed, 2 failed, 1 skipped** — `test_ollama_wait_runner.py::test_posts_compose_202_while_down`, `test_theme_render.py::test_description_refresh_on_cache_hit_without_encoding[...]`; chạy riêng (`tests/test_theme_render.py` + test Ollama) 3 lần: **42 passed** mỗi lần (test theme_render cũng chập chờn trên nhánh FIX không đụng file này).
   - Media thật (bản sao, không đụng output): VLT tập 31 `RmhVpxr-U_I.kt/k01` + thumbnail KT THUMB1 → `intro.prepend`: 29,97 fps, offset 3,003 s; 243,376 → 246,379 s; `ffmpeg -f null` không lỗi; 7294 khung nội dung framemd5 trùng bản gốc, 90 khung intro; khung 1,5 s = thumbnail đúng clip, 3,2 s = nội dung.
   - Còn: chạy thật trên 8080 (job render 1 tập VLT ≥ 31, ghép 1 video yêu thích có clip đó), đợt dựng lại theo D-KTI1-5 sau khi Cảm Ứng Thiên / Thập Thiện cài bìa KT (HUMAN LEAD chọn 2026-10-29: CƯT mẫu 3, TT mẫu 4), manual checklist.
+
+### Vòng sửa 2 — D-KTI1-6 (2026-10-29)
+
+IMPLEMENTER READY cho ORCHESTRATOR review; giữ nguyên D-KTI1-6 và ghi nhận review/chạy thật của vòng trước. Không commit / push / PR, agent khác, mạng thật, TestClient hoặc full suite.
+
+- File đổi vòng này: `src/auto_short/render/intro.py`, `src/auto_short/render/stage.py`, `src/auto_short/packaging/khaithi_thumbs.py`; thêm ca/assertion vào `tests/test_khaithi_intro.py`, `tests/test_vertical_silence_intro.py`; Result contract. **Không sửa `render/full.py`**.
+- KTI1 freeze khung 0 của content bằng `trim=end_frame=1` + `tpad` ngay trong graph, rồi `xfade=transition=fade:duration=1:offset=<số giây intro thực − 1>`. Prefix vẫn đúng số khung cũ (75 @ 25 fps, 90 @ 29,97), audio chỉ lấy `anullsrc`; nội dung concat copy bắt đầu lại từ khung 0. VERT2 giữ nhánh filter mặc định cũ, command / key không thêm transition.
+- `intro.transition={"type":"fade","seconds":1}` nằm trong key render và stage inputs. Selector không bỏ qua intro legacy thiếu transition. Cả render mới (`_encode_one`) và clip có sẵn (`_intro_from_existing`) dùng cùng `prepend`; thay intro cũ bằng cách tách content `-c copy`, giữ `content_sha256`, `content_render_key`, offset và fingerprint nội dung. **Cập nhật giới hạn vòng trước:** thay intro đã có giờ cũng dùng được khi nguồn đã dọn, miễn content hiện hành được xác minh; sửa title/cut/config vẫn đi đường render hiện hành.
+- Helper mới: `intro.metadata` gom identity hiệu ứng dùng chung cho render/selector, thay dict lặp; `intro.extract_content` tách theo offset hiện có bằng stream copy bắt buộc. Đã tra `rg -n 'def .*extract|def normalize_command|inpoint|def assemble' src/auto_short/render src/auto_short/compilation src/auto_short/theme_render`: `assemble` có fallback encode nên không phù hợp yêu cầu bắt buộc giữ packet khi thay intro; tiếp tục dùng `offset`, `content_record`, `prepend`, concat command cũ. Không thêm dependency / ảnh tĩnh trung gian.
+
+| AC / yêu cầu vòng 2 | Test |
+|---|---|
+| D6, AC1/5: đầu là thumbnail, giữa hòa trộn, cuối gần khung 0, im lặng đủ 3 s, cache/key/title | `test_intro_pixels_silence_content_sha_cache_and_title` (fresh / existing), helper test `assert_fade` |
+| D6, AC4/6: intro legacy → thay, selector nhận cũ, không cần nguồn, giữ content SHA/key/offset/framemd5 | `test_legacy_intro_replaced_with_fade_without_source_or_content_encode` (25 fps B-frame / NTSC; gồm stage inputs định dạng cũ), regression `test_compilation_copy_and_reencode_skip_intro` |
+| VERT2 giữ nguyên, TC3 không stale | `test_kti1_fade_keeps_vert2_graph_and_command_bytes` (golden SHA graph/command lấy từ HEAD `a1f9914`, 2 fps); các ca render thật/cache VERT2 hiện có; 3 ca KTI1 của `test_theme_render.py` |
+
+Diff **so HEAD a1f9914, chỉ vòng sửa này**: ứng dụng **+50 / −19**, test **+100 / −0** (`git diff --numstat`, không tính contract / dòng D6 HUMAN LEAD đã thêm).
+
+Verification đã chạy (mọi pytest có `timeout 290s`, không socket):
+
+- `env PYTHONPATH=/home/ntnghia/projects/youtube-auto-short/.claude/worktrees/kti1/src /home/ntnghia/miniconda3/envs/auto-short/bin/python -m pytest -q -x --tb=short -n 2 tests/test_khaithi_intro.py tests/test_khaithi_thumbs.py tests/test_vertical_silence_intro.py`: **114 PASS**, 129.73 s.
+- Cùng prefix Python, không `-n 2`, `tests/test_khaithi_intro.py -k legacy_intro` sau bổ sung stage inputs legacy chính xác: **2 PASS, 12 deselected**, 20.30 s.
+- Cùng prefix Python, không `-n 2`, `tests/test_theme_render.py -k kti1`: **3 PASS, 38 deselected**, 16.20 s; kiểm approval / reference / dựng TC3 thực và framemd5.
+- `node scripts/framework-check.mjs`: **PASS**; `git diff --check`: **PASS**.
+
+Chưa chạy vòng này: full suite / TestClient (theo ràng buộc); dữ liệu thật 8080/3090 và xem hiệu ứng thực để HUMAN LEAD duyệt. Trạng thái task vẫn `IN_PROGRESS` chờ ORCHESTRATOR xác nhận các gate đó; kết quả full suite/chạy thật vòng trước giữ nguyên ở trên, không suy ra PASS cho vòng này.
+- ORCHESTRATOR vòng sửa 2 (D-KTI1-6, Codex resume 471.570 tokens tích lũy): review `render/intro.py` (khung 0 nội dung đóng băng trong graph, `xfade=fade` 1 s, intro cũ được thay bằng stream copy, VERT2 giữ graph / key). Full suite `-n auto`: **3475 passed, 1 skipped**. Media thật (bản sao VLT 31 k01): giải mã không lỗi, 90 khung intro, 7294 khung nội dung trùng framemd5, offset 3,003 s; mẫu GIF / 7 s gửi HUMAN LEAD.

@@ -10,15 +10,34 @@ from ..workspace import read_json_dict
 from . import plan
 
 INTRO_SECONDS = 3
+FADE_SECONDS = 1
+
+
+def metadata(image: Path) -> dict:
+    """KTI1 intro identity; VERT2 retains its existing thumbnail-only identity."""
+    return {"sha256": hashing.sha256_file(image), "seconds": INTRO_SECONDS,
+            "transition": {"type": "fade", "seconds": FADE_SECONDS}}
 
 
 def inputs(image: Path, fps: Fraction, seconds=INTRO_SECONDS) -> list[str]:
+    """Inputs 1/2 (thumbnail/silence); KTI1 freezes frame zero of content input 0 inside the graph."""
     return ["-loop", "1", "-framerate", plan.fps_text(fps), "-t", str(seconds), "-i", str(image),
             "-f", "lavfi", "-t", str(seconds), "-i", f"anullsrc=r={plan.SAMPLE_RATE}:cl=stereo"]
 
 
-def filters(fps: Fraction, *, color_correct=False) -> list[str]:
+def filters(fps: Fraction, *, color_correct=False, fade=False, seconds=INTRO_SECONDS) -> list[str]:
     color = "scale=out_color_matrix=bt709:out_range=tv," if color_correct else ""
+    if fade:
+        scale = (f"scale={plan.WIDTH}:{plan.HEIGHT}:force_original_aspect_ratio=decrease,"
+                 f"pad={plan.WIDTH}:{plan.HEIGHT}:(ow-iw)/2:(oh-ih)/2,setsar=1")
+        return [
+            f"[1:v]fps={plan.fps_text(fps)},{scale},{color}format=yuv444p,settb=AVTB,setpts=PTS-STARTPTS[thumb]",
+            f"[0:v]trim=end_frame=1,setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration={FADE_SECONDS},"
+            f"fps={plan.fps_text(fps)},{scale},format=yuv444p,settb=AVTB[first]",
+            f"[thumb][first]xfade=transition=fade:duration={FADE_SECONDS}:offset={seconds - FADE_SECONDS},"
+            f"format={plan.PIX_FMT}[vout]",
+            "[2:a]aformat=sample_fmts=fltp:channel_layouts=stereo,asetpts=N/SR/TB[aout]",
+        ]
     return [
         f"[1:v]fps={plan.fps_text(fps)},scale={plan.WIDTH}:{plan.HEIGHT}:force_original_aspect_ratio=decrease,"
         f"pad={plan.WIDTH}:{plan.HEIGHT}:(ow-iw)/2:(oh-ih)/2,setsar=1,{color}format={plan.PIX_FMT},"
@@ -75,11 +94,24 @@ def clip_record(path: Path) -> dict:
     return record
 
 
+def extract_content(source: Path, output: Path, record: dict, run) -> Path:
+    """Remove a previous intro at its IDR boundary without encoding any content packets."""
+    from .stage import RenderError, _last_line
+
+    proc = run(["ffmpeg", "-nostdin", "-hide_banner", "-v", "error", "-y", "-ss", str(offset(record)),
+                "-i", str(source), "-map", "0:v:0", "-map", "0:a:0", "-c", "copy",
+                "-map_metadata", "-1", "-map_chapters", "-1", "-avoid_negative_ts", "disabled",
+                "-f", "mp4", str(output)])
+    if proc.returncode or not output.is_file():
+        raise RenderError(f"ffmpeg intro extract: {_last_line(proc.stderr)}")
+    return output
+
+
 def prepend(content: Path, output: Path, image: Path, fps: Fraction, cfg, work: Path, run) -> float:
     """Encode only the picture, then mux it before the untouched content (whose first frame is an IDR).
 
     Using a second full encode would change content bytes, invalidate approved TC3 plans and cost CPU on
-    every minute of every clip. The prefix uses VERT2's concat filter, bounded to its first three seconds.
+    every minute of every clip. The prefix fades to the frozen first content frame during its last second.
     """
     from .stage import RenderError, _last_line
     from ..compilation.assemble import concat_command, list_line
@@ -87,7 +119,7 @@ def prepend(content: Path, output: Path, image: Path, fps: Fraction, cfg, work: 
     frames = round(INTRO_SECONDS * fps)
     seconds = frames / float(fps)
     graph, prefix, listing = work / "intro.filter", work / "intro.mp4", work / "intro.txt"
-    graph.write_text(";".join(["[0:v]null[contentv]", "[0:a]anull[contenta]", *filters(fps, color_correct=True)]), encoding="utf-8")
+    graph.write_text(";".join(filters(fps, color_correct=True, fade=True, seconds=seconds)), encoding="utf-8")
     cmd = ["ffmpeg", "-nostdin", "-hide_banner", "-v", "error", "-y", "-i", str(content),
            *inputs(image, fps, seconds), "-filter_complex_script", str(graph),
            "-map", "[vout]", "-map", "[aout]", "-t", str(seconds),

@@ -528,10 +528,10 @@ def _encode_all(tasks: list[_Encode], run: Runner, fps: Fraction, jobs: int) -> 
 
 def _intro_from_existing(ws: Workspace, manifest: dict, config: Config, cfg: RenderConfig,
                          images: dict[str, Path], run: Runner) -> RenderResult | None:
-    """Add the first intro to unchanged clips, including archived sources and SHO1 releases.
+    """Add/replace the intro of unchanged clips, including archived sources and SHO1 releases.
 
     Verify the complete old stage input chain and config before trusting its encoded content. A title / cut /
-    config change or a changed existing intro takes the normal render path instead.
+    config change takes the normal render path instead.
     """
     out_dir = (cfg.output_dir / ws.episode_id).resolve()
     path = out_dir / RENDER_MANIFEST_NAME
@@ -596,11 +596,7 @@ def _intro_from_existing(ws: Workspace, manifest: dict, config: Config, cfg: Ren
         return None
     pending = []
     for s in records:
-        image_sha = hashing.sha256_file(images[s["clip_id"]])
-        if s.get("intro"):
-            if s["intro"] != {"sha256": image_sha, "seconds": clip_intro.INTRO_SECONDS}:
-                return None
-        else:
+        if s.get("intro") != clip_intro.metadata(images[s["clip_id"]]):
             pending.append(s["clip_id"])
         if s.get("file") != f"{SHORTS_DIR}/{s['clip_id']}.mp4":
             return None
@@ -619,7 +615,7 @@ def _intro_from_existing(ws: Workspace, manifest: dict, config: Config, cfg: Ren
         restore_released(config, ws.episode_id)
     workspace_sha = hashing.sha256_file(ws.manifest_path)
     for cid, image in sorted(images.items()):
-        inputs.append({"clip_intro": cid, "sha256": hashing.sha256_file(image), "seconds": clip_intro.INTRO_SECONDS})
+        inputs.append({"clip_intro": cid, **clip_intro.metadata(image)})
     fps = Fraction(old["encode"]["fps"])
 
     def action():
@@ -632,10 +628,13 @@ def _intro_from_existing(ws: Workspace, manifest: dict, config: Config, cfg: Ren
                 source = out_dir / s["file"]
                 part = source.with_name(f".{source.name}.part")
                 staged[part] = source
+                base = clip_intro.content_record(s)
                 with tempfile.TemporaryDirectory(prefix=".clip-intro-", dir=source.parent) as tmp:
-                    s["content_offset"] = clip_intro.prepend(source, part, images[s["clip_id"]], fps, cfg, Path(tmp), run)
-                s.update(content_sha256=s["sha256"], content_render_key=s["render_key"],
-                         intro={"sha256": hashing.sha256_file(images[s["clip_id"]]), "seconds": clip_intro.INTRO_SECONDS})
+                    work = Path(tmp)
+                    content = clip_intro.extract_content(source, work / "content.mp4", s, run) if s.get("intro") else source
+                    s["content_offset"] = clip_intro.prepend(content, part, images[s["clip_id"]], fps, cfg, work, run)
+                s.update(content_sha256=base["sha256"], content_render_key=base["render_key"],
+                         intro=clip_intro.metadata(images[s["clip_id"]]))
                 s["render_key"] = _sha({"content_render_key": s["content_render_key"], "intro": s["intro"]})
                 s["sha256"] = hashing.sha256_file(part)
                 frames = plan.planned_frames([(round(a * 1000), round(b * 1000)) for a, b in s["segments"]], fps)
@@ -745,7 +744,7 @@ def run_render(episode_id: str, config: Config, *, force: bool = False, run: Run
     inputs = [{"path": ws.relpath(p), "sha256": hashing.sha256_file(p)} for p in input_paths]
     inputs.append({"path": ws.relpath(media), "sha256": media_fp.sha256})
     for cid, image in sorted(images.items()):
-        inputs.append({"clip_intro": cid, "sha256": hashing.sha256_file(image), "seconds": clip_intro.INTRO_SECONDS})
+        inputs.append({"clip_intro": cid, **clip_intro.metadata(image)})
     cfg_hash = hashing.config_hash(used_config(cfg, font_sha, kt))
     workspace_manifest_sha = hashing.sha256_file(ws.manifest_path)
     outcome: dict = {}
@@ -867,7 +866,7 @@ def _render_all(ws: Workspace, cfg: RenderConfig, fpath: Path, font_sha: str, me
             image = intro_images.get(clip["id"])
             if image is not None:
                 record.update(content_render_key=key,
-                              intro={"sha256": hashing.sha256_file(image), "seconds": clip_intro.INTRO_SECONDS})
+                              intro=clip_intro.metadata(image))
                 key = _sha({"content_render_key": key, "intro": record["intro"]})
             rel = f"{SHORTS_DIR}/{clip['id']}.mp4"
             record.update(status=RENDERED, file=rel, title_display_lines=fit.lines, title_font_size=fit.font_size,

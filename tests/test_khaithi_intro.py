@@ -2,6 +2,7 @@
 import shutil
 import subprocess
 from dataclasses import replace
+from fractions import Fraction
 from types import SimpleNamespace
 
 import pytest
@@ -59,6 +60,26 @@ def frame_hashes(path):
     return [line.split(',')[-1].strip() for line in text.splitlines() if not line.startswith('#')]
 
 
+def assert_fade(video, fps):
+    pixels = ffmpeg('-i', video, '-map', '0:v', '-vf', 'scale=36:64', '-pix_fmt', 'rgb24', '-f', 'rawvideo', '-')
+    size = 36 * 64 * 3
+    count = round(3 * fps)
+    first = pixels[:size]
+    last = pixels[(count-1)*size:count*size]
+    content = pixels[count*size:(count+1)*size]
+    middle_at = round((count / float(fps) - .5) * fps)
+    middle = pixels[middle_at*size:(middle_at+1)*size]
+    def distance(a, b):
+        return sum(abs(x-y) for x, y in zip(a, b)) / size
+    contrast = distance(first, content)
+    assert contrast > 20  # distinct synthetic thumbnail and video; blending must be observable
+    assert distance(last, content) < contrast * .1
+    assert contrast * .2 < distance(middle, first) < contrast * .8
+    assert contrast * .2 < distance(middle, content) < contrast * .8
+    assert distance(middle, bytes((a+b)//2 for a, b in zip(first, content))) < 5
+    return first
+
+
 @pytest.mark.parametrize("fresh", [False, True])
 def test_intro_pixels_silence_content_sha_cache_and_title(rendered, tmp_path, fresh):
     cfg, ws, folder, baseline = rendered
@@ -75,6 +96,7 @@ def test_intro_pixels_silence_content_sha_cache_and_title(rendered, tmp_path, fr
     doc = read_json_dict(result.path)
     record = doc['shorts'][0]
     assert record['intro']['seconds'] == 3 and record['content_offset'] == 3
+    assert record['intro']['transition'] == dict(type='fade', seconds=1)
     assert record['content_sha256'] == hashing.sha256_file(baseline)
     assert intro.content_manifest(doc) == before
     if not fresh:
@@ -88,6 +110,7 @@ def test_intro_pixels_silence_content_sha_cache_and_title(rendered, tmp_path, fr
     pixel_args = ('-frames:v', '1', '-vf', 'scale=36:64', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-')
     got, expected = ffmpeg('-i', video, *pixel_args), ffmpeg('-i', image, *pixel_args)
     assert sum(abs(a-b) for a, b in zip(got, expected)) / len(got) < 5
+    assert_fade(video, Fraction(25))
     pcm = ffmpeg('-i', video, '-t', '3', '-map', '0:a', '-f', 's16le', '-')
     assert max(abs(int.from_bytes(pcm[i:i+2], 'little', signed=True)) for i in range(0, len(pcm), 2)) == 0
     keys = subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'v', '-skip_frame', 'nokey',
@@ -288,3 +311,57 @@ def test_existing_content_gets_intro_after_source_cleanup(rendered, memory_store
     assert not stage.run_render(ws.episode_id, cfg, run=runner).ran
     queue = SimpleNamespace(priority=Priority(), submit=lambda *args: pytest.fail('current archived clip was queued'))
     assert kt.enqueue_intro_rebuild(cfg, queue, PID, 31, 31)['skipped'] == [ws.episode_id]
+
+
+@pytest.mark.parametrize('rendered', [('25', 'medium'), ('30000/1001', 'ultrafast')], indirect=True)
+def test_legacy_intro_replaced_with_fade_without_source_or_content_encode(rendered, monkeypatch, tmp_path):
+    cfg, ws, folder, baseline = rendered
+    video = folder / 'shorts/k01.mp4'
+    doc = read_json_dict(folder / 'render_manifest.json')
+    record = doc['shorts'][0]
+    fps = Fraction(doc['encode']['fps'])
+    image = kt.vertical_clip(cfg, ws.episode_id, 'k01', pid=PID, fields=kt.intro_context(cfg, ws.episode_id)[1])
+    old_intro = dict(sha256=hashing.sha256_file(image), seconds=3)
+    original_filters = intro.filters
+    def legacy_filters(rate, **kwargs):
+        return ['[0:v]null[contentv]', '[0:a]anull[contenta]',
+                *original_filters(rate, color_correct=kwargs['color_correct'])]
+    work = tmp_path / 'old-intro'
+    work.mkdir()
+    with monkeypatch.context() as old:
+        old.setattr(intro, 'filters', legacy_filters)
+        offset = intro.prepend(baseline, video, image, fps, cfg.render, work, stage._run)
+    record.update(content_sha256=record['sha256'], content_render_key=record['render_key'], content_offset=offset,
+                  intro=old_intro, sha256=hashing.sha256_file(video))
+    record['render_key'] = hashing.config_hash(dict(content_render_key=record['content_render_key'], intro=old_intro))
+    old_key = record['render_key']
+    atomic_write_json(folder / 'render_manifest.json', doc)
+    manifest = ws.load_manifest()
+    manifest['stages']['render']['inputs'].append(dict(clip_intro='k01', **old_intro))
+    ws.save_manifest(manifest)
+    # The selector must not skip a clip merely because its image and intro length still match.
+    queued = []
+    runner = SimpleNamespace(priority=Priority(), submit=lambda eid, *args: (queued.append(eid), True))
+    assert kt.enqueue_intro_rebuild(cfg, runner, PID, 31, 31)['queued'] == [ws.episode_id]
+    (ws.dir / 'source.mp4').unlink()
+    atomic_write_json(ws.dir / 'archive.json', dict(schema_version=1, removed=['source.mp4']))
+    calls = []
+    def run(cmd):
+        calls.append(cmd)
+        return stage._run(cmd)
+    result = stage.run_render(ws.episode_id, cfg, run=run)
+    changed_doc = read_json_dict(result.path)
+    changed = changed_doc['shorts'][0]
+    assert result.encoded == 1 and changed['intro'] == intro.metadata(image)
+    assert changed['render_key'] != old_key and changed['content_offset'] == offset
+    assert changed['content_sha256'] == record['content_sha256'] == hashing.sha256_file(baseline)
+    assert changed['content_render_key'] == record['content_render_key']
+    assert intro.content_manifest(changed_doc) == intro.content_manifest(doc)
+    assert all(str(ws.dir / 'source.mp4') not in cmd for cmd in calls)
+    assert len([cmd for cmd in calls if '-c:v' in cmd and 'libx264' in cmd]) == 1  # only the intro encodes
+    assert_fade(video, fps)
+    content = tmp_path / 'new-content.mp4'
+    intro.extract_content(video, content, changed, stage._run)
+    assert frame_hashes(content) == frame_hashes(baseline)
+    assert not stage.run_render(ws.episode_id, cfg).ran
+    assert kt.enqueue_intro_rebuild(cfg, runner, PID, 31, 31)['skipped'] == [ws.episode_id]
