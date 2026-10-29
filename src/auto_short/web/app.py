@@ -1043,7 +1043,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     theme_index_web.register(app, config, playlists, STATIC_DIR)  # TC-WEB1: GET-only TC1 preview
     theme_plan_web.register(app, theme_plans)  # TC2 phase C: planner and TC3 landscape jobs
 
-    packaging_web.register(app, packages)  # PKG1: offline thumbnails and manual approval
+    packaging_web.register(app, packages)  # THUMB2: compilation thumbnails on video cards
     episode_thumbs_web.register(app, episode_thumbs)
 
     app.include_router(files_catchall.build(ctx))  # D4: catch-all is always registered last.
