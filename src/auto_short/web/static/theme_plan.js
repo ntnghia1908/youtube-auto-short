@@ -162,7 +162,8 @@ const ThemePlan = (() => {
       }
     });
     actions.append(watch);
-    actions.append(el("a", { class: "btn small", href: output.download_url, download: output.download_name || "", text: "Tải về" }),
+    actions.append(el("a", { class: "btn small", href: output.download_url, download: output.download_name || "", text: "Tải video" }),
+      button("Copy tiêu đề", async () => say(await copyText((output.download_name || "").replace(/\.mp4$/, "")) ? "Đã copy tiêu đề." : "Không copy được.")),
       button("Copy mô tả", async () => say(await copyText(output.description || "") ? "Đã copy mô tả." : "Không copy được.")), player);
   }
   function planRow(plan) {
@@ -170,6 +171,7 @@ const ThemePlan = (() => {
     const busy = active(plan.render_job), broken = ["stale", "invalid"].includes(check.state);
     const path = "/theme-plans/" + encodeURIComponent(plan.plan_id);
     const box = el("article", { class: "tp-plan" }, el("h4", { text: plan.title || plan.plan_id }));
+    let thumbnailEndpoint = null;
     const status = broken ? "Nội dung clip đã đổi hoặc không dùng được — hãy Gợi ý lại."
       : jobText(plan.render_job) || (plan.output ? "xong" : "Chưa ghép — bấm Ghép lại để tiếp tục.");
     box.append(el("p", { class: "small" + (broken || (plan.render_job && plan.render_job.error) ? " error" : ""), role: "status", text: status }));
@@ -227,8 +229,7 @@ const ThemePlan = (() => {
       actions.append(retry);
       if (plan.output && plan.output.download_url) {
         appendOutput(actions, plan.output);
-        actions.append(el("a", { class: "btn small", text: "Đóng gói",
-          href: location.pathname.replace(/\/favorites\/?$/, "") + "/theme-plans/" + encodeURIComponent(plan.plan_id) + "/package" }));
+        thumbnailEndpoint = base + path + "/thumbs";
       }
       drawClips();
     }
@@ -237,6 +238,7 @@ const ThemePlan = (() => {
       return perform(async (at) => { at("Xóa video"); await request(path, "DELETE"); drafts.delete(plan.plan_id); say("Đã xóa."); });
     }, busy));
     box.append(actions);
+    if (thumbnailEndpoint && Favorites.thumbnailBlock) box.append(Favorites.thumbnailBlock(thumbnailEndpoint));
     return box;
   }
   function renderData() {

@@ -261,16 +261,18 @@ def _wrap_title(font, title, size, width, line_count, *, strict=False):
     return None
 
 
-def layout(title, fields, box):
+DEFAULT_LABEL = "TRÍCH ĐOẠN KHAI THỊ"
+
+
+def layout(title, fields, box, *, label=DEFAULT_LABEL, series_line=None):
     """Fit four text groups as one scaled block, including Vietnamese ink and shadow."""
     title = " ".join(nfc(title).split())
     if not title:
         raise TextError("tiêu đề khai thị rỗng")
-    label = "TRÍCH ĐOẠN KHAI THỊ"
     speaker = " ".join(nfc(fields["speaker"]).upper().split())
     if not speaker:
         raise TextError("tên chủ giảng khai thị rỗng")
-    series = nfc(f"{fields['series']} · Tập {fields['episode']}")
+    series = nfc(f"{fields['series']} · Tập {fields['episode']}" if series_line is None else series_line)
     fonts = {name: Font(thumbnail.EPISODE_FONTS[name]) for name in ("old", "sans")}
     check_glyphs(fonts["old"], [title])
     check_glyphs(fonts["sans"], [label, speaker, series])
@@ -330,19 +332,26 @@ def _fit(title, label, speaker, series, fonts, box, width, height, *, strict):
     return max(candidates, key=lambda c: c[0]) if candidates else None  # first (fewest lines) of the largest size
 
 
-def draw(work, title, fields, entry, shape, image, filename, *, portrait=None, facing="front", run=None):
-    lines, styles = layout(title, fields, entry["box"])
+def draw(work, title, fields, entry, shape, image, filename, *, portrait=None, facing="front", run=None,
+         label=DEFAULT_LABEL, series_line=None):
+    lines, styles = layout(title, fields, entry["box"], label=label, series_line=series_line)
     return cover.draw_lines(work, lines, image, filename, styles=styles, portrait=portrait,
                             shape=shape, box=entry["box"], hflip=shape == "landscape" and facing == "left", run=run)
 
 
-def cache_key(title, number, entry, shape, *, portrait_sha256=None, speaker="", series="", portrait_library=(), hflip=False):
+def cache_key(title, number, entry, shape, *, portrait_sha256=None, speaker="", series="", portrait_library=(), hflip=False,
+              label=DEFAULT_LABEL, series_line=None):
+    extra = {}
+    if nfc(label) != DEFAULT_LABEL:
+        extra["label"] = nfc(label)
+    if series_line is not None and nfc(series_line) != nfc(f"{series} · Tập {number}"):
+        extra["series_line"] = nfc(series_line)
     return config_hash(dict(title=nfc(title), episode=number, cover_sha256=entry["sha256"], box=entry["box"],
                             layout_version=LAYOUT_VERSION, font_sha256=sha256_file(thumbnail.EPISODE_FONTS[cover.FONT_NAME]),
                             sans_sha256=sha256_file(thumbnail.EPISODE_FONTS["sans"]), speaker=nfc(speaker), series=nfc(series),
                             portrait_sha256=portrait_sha256, portrait_library=portrait_library,
                             compounds_sha256=sha256_file(COMPOUNDS),
-                            shape=shape, hflip=hflip))
+                            shape=shape, hflip=hflip, **extra))
 
 
 def read(config, ident):

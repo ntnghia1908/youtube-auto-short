@@ -143,13 +143,14 @@ def test_submit_duplicate_and_archived(tcfg):
     (root / KT / "archive.json").write_text("{}", encoding="utf-8")
     with client(tcfg) as c:
         _login(c)
+        # FIX-process-archived-restore: an archived part defers every kind through the source restore; this
+        # stub archive.json has no restorable record, so both kinds fail before any job is queued.
         r = c.post("/api/episodes", json={"url": f"https://youtu.be/{EID}"})
-        assert r.status_code == 202  # the Short still runs
-        short, kt = r.json()["episodes"]
-        assert short["created"] is True and kt["status"] == 409 and "đã dọn video nguồn" in kt["error"]
+        assert r.status_code == 422
+        assert [e["status"] for e in r.json()["episodes"]] == [422, 422]
         assert c.app.state.runner.wait_idle(10)
         r = c.post("/api/episodes", json={"url": f"https://youtu.be/{EID}", "kinds": ["khaithi"]})
-        assert r.status_code == 409 and "đã dọn video nguồn" in r.json()["detail"]
+        assert r.status_code == 422
 
 
 def test_submit_preflight_and_disk(tcfg):

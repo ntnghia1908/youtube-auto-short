@@ -1,14 +1,8 @@
-"""Single-frame ffmpeg thumbnails in styles A/B/C: episodes (PKG2) and theme compilations (PKG3).
-
-Both share one drawing path (``_render``); the theme extras (badge text, two credit lines, palette, blurred
-background) default to the episode behaviour, so episode filtergraphs stay byte-identical. No image dependencies."""
+"""PKG2 single-frame ffmpeg episode thumbnails in styles A/B/C. No image dependencies."""
 from __future__ import annotations
 
-import os
 import math
 import shutil
-import tempfile
-from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -16,13 +10,12 @@ from ..hashing import sha256_file
 from ..render.plan import escape_option
 from ..render.stage import RenderError, _last_line, _run
 from ..render.text import Font, TextError, check_glyphs, nfc
-from . import PackageError, assets, record
 
 FONT = Path(__file__).resolve().parents[1] / "render" / "fonts" / "BeVietnamPro-ExtraBold.ttf"
 MAX_BYTES = 2 * 1024 * 1024
 
 
-def reusable(folder, entry, expected, *, file_pattern=record.FILE_NAME):
+def reusable(folder, entry, expected, *, file_pattern):
     if not isinstance(entry, dict):
         return False
     match = file_pattern.fullmatch(entry.get("file") or "")
@@ -64,7 +57,6 @@ def _encode(work, graph, image, filename, runner):
 
 
 EPISODE_LAYOUT_VERSION = 4  # baseline/ink-height fitting and preservation of portrait alpha
-THEME_LAYOUT_VERSION = 1  # PKG3: badge text, two credit lines, palettes, blurred background
 EPISODE_SIZES = {"landscape": (1280, 720), "vertical": (1080, 1920)}
 EPISODE_FONTS = {
     "serif": FONT.parent / "PlayfairDisplaySC-Bold.ttf",
@@ -74,14 +66,8 @@ EPISODE_FONTS = {
 }
 STYLE_FONTS = {"A": ("serif", "old", "sans"), "B": ("anton", "old"), "C": ("old",)}
 
-DEFAULT_PALETTE = "nau-vang"
-# Style A only: base rgb, glow rgb, gold gradient c0 / c1, badge fill. "nau-vang" is the episode look.
-PALETTES = {
-    "nau-vang": dict(base=(22, 16, 11), glow=(70, 45, 18), gold=("0xfff3b0", "0xb8862b"), badge="0xb3261e"),
-    "xanh-ngoc": dict(base=(6, 22, 24), glow=(18, 70, 66), gold=("0xfff3b0", "0xb8862b"), badge="0x8a1c14"),
-    "do-son": dict(base=(34, 6, 6), glow=(110, 28, 18), gold=("0xfff6c8", "0xd09a3a"), badge="0x5a0d0a"),
-    "xanh-dem": dict(base=(8, 12, 30), glow=(28, 46, 104), gold=("0xfff3b0", "0xb8862b"), badge="0xb3261e"),
-}
+# The fixed PKG2 style A palette. Theme presets were retired by THUMB2.
+EPISODE_PALETTE = dict(base=(22, 16, 11), glow=(70, 45, 18), gold=("0xfff3b0", "0xb8862b"), badge="0xb3261e")
 
 
 def font_hashes(style):
@@ -272,11 +258,10 @@ def _portrait(graph, shape, style, focus, white):
     return graph.add(crop + mask, "0:v"), x, y
 
 
-def _render(work, shape, image, filename, *, style, lines, focus_x, badge, palette=DEFAULT_PALETTE,
-            background="plain", run=None):
-    """Compose and encode one JPEG. ``palette`` / ``background`` apply to style A only."""
+def _render(work, shape, image, filename, *, style, lines, focus_x, badge, run=None):
+    """Compose and encode one episode JPEG."""
     width, height = EPISODE_SIZES[shape]
-    palette = PALETTES[palette if style == "A" else DEFAULT_PALETTE]
+    palette = EPISODE_PALETTE
     for name in STYLE_FONTS[style]:
         shutil.copyfile(EPISODE_FONTS[name], work / (name + ".ttf"))
     g = _EpisodeGraph(work, width, height, palette["gold"])
@@ -285,12 +270,6 @@ def _render(work, shape, image, filename, *, style, lines, focus_x, badge, palet
         glow = f"exp(-((X-{width * .28})^2+(Y-{height * .46})^2)/90000)"
         base = g.add(f"color=c=0x{r0:02x}{g0:02x}{b0:02x}:s={width}x{height},format=rgb24,"
                      f"geq=r='{r0}+{r1}*{glow}':g='{g0}+{g1}*{glow}':b='{b0}+{b1}*{glow}'")
-        if background == "blur":
-            if image is None:
-                raise PackageError("nền mờ cần chọn một ảnh")
-            photo = g.add(f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},"
-                          "boxblur=30:3,eq=brightness=-0.32:saturation=0.6,format=rgb24", "0:v")
-            base = g.add("blend=all_mode=normal:all_opacity=0.75", photo, base)
     elif style == "B":
         base = g.add(f"color=c=0x0c0a08:s={width}x{height}")
         for y in (0, height - 80):
@@ -330,90 +309,3 @@ def build_episode(work, header, shape, image, filename, *, settings, run=None):
     lines = episode_text(header, shape, settings)  # validate glyphs / fit before ffmpeg
     return _render(work, shape, image, filename, style=style, lines=lines, focus_x=settings["focus_x"],
                    badge=episode_badge(style, shape), run=run)
-
-
-# --- PKG3: theme compilations -------------------------------------------------------------------------
-
-def theme_badge(style, shape):
-    """Episode badge, except B landscape: moved down so two credit lines end above it."""
-    return (64, 504, 320, 92) if (style, shape) == ("B", "landscape") else episode_badge(style, shape)
-
-
-def theme_look(doc, entry):
-    """The drawing parameters of one style entry: shared settings + its style."""
-    return dict(doc["settings"], style=entry["style"])
-
-
-def theme_text(shape, look):
-    """Lines of one style / shape: 1-3 titles, series + speaker credits, "N PHÚT" duration badge."""
-    style = look["style"]
-    cased = (lambda text: nfc(text).upper()) if style in ("A", "B") else nfc
-    credits = [cased(t) for t in (look["series"], look["speaker"]) if t.strip()]
-    badge_text = f"{look['minutes']} " + ("phút" if style == "C" else "PHÚT")
-    floors = (34, 28, 44) if shape == "vertical" else (22, 16, 26)  # below these the text is unreadable: reject
-    return _text(style, shape, look["title_lines"], credits, badge_text, theme_badge(style, shape), floors)
-
-
-def check(doc, asset_dir=None):
-    """Everything that can be rejected before ffmpeg: fit, glyphs, palette, blur without an image."""
-    record.validate(doc)
-    for entry in doc["thumbnails"]:
-        look = theme_look(doc, entry)
-        if look["style"] == "A" and look["background"] == "blur" and not entry["asset_ids"]:
-            raise PackageError("nền mờ cần chọn một ảnh cho kiểu A")
-        for ident in entry["asset_ids"]:
-            if asset_dir is not None:
-                assets.usable(asset_dir, ident, kind="image")
-        for shape in record.SHAPES:
-            theme_text(shape, look)
-
-
-def build_theme(work, shape, image, filename, *, look, run=None):
-    return _render(work, shape, image, filename, style=look["style"], lines=theme_text(shape, look),
-                   focus_x=look["focus_x"], badge=theme_badge(look["style"], shape),
-                   palette=look["palette"], background=look["background"], run=run)
-
-
-def key(doc, entry, shape):
-    style = entry["style"]
-    return record.cache_key(doc, entry, shape, [THEME_LAYOUT_VERSION, EPISODE_LAYOUT_VERSION], font_hashes(style))
-
-
-def build(folder: Path, doc: dict, asset_dir: Path, *, run=None) -> dict:
-    """Stage every style x shape before publication. A failed encode leaves the previous record/files intact."""
-    check(doc, asset_dir)
-    runner = run or _run
-    result = deepcopy(doc)
-    folder.mkdir(parents=True, exist_ok=True)
-    staged = []
-    with tempfile.TemporaryDirectory(prefix=".thumbnail-", dir=folder) as tmpname:
-        tmp = Path(tmpname)
-        for entry in result["thumbnails"]:
-            entry["layout_version"] = THEME_LAYOUT_VERSION
-            look = theme_look(result, entry)
-            image = None
-            for ident in entry["asset_ids"]:
-                _, image = assets.usable(asset_dir, ident, kind="image")
-            for shape in record.SHAPES:
-                expected = key(result, entry, shape)
-                if reusable(folder, entry["files"][shape], expected):
-                    continue
-                work = tmp / f"{entry['style']}-{shape}"
-                work.mkdir()
-                filename = f"{entry['style']}-{shape}-{expected}.jpg"
-                output = build_theme(work, shape, image, filename, look=look, run=runner)
-                entry["files"][shape] = dict(file=filename, key=expected, sha256=sha256_file(output))
-                staged.append((output, folder / filename))
-        for source, dest in staged:
-            os.replace(source, dest)
-    return result
-
-
-def ready(folder, doc, asset_dir):
-    """The selected style entry, once every one of its shapes is built, current and hash-verified."""
-    selected = next(t for t in doc["thumbnails"] if t["style"] == doc["selected"])
-    for ident in selected["asset_ids"]:
-        assets.usable(asset_dir, ident, kind="image")
-    if not all(reusable(folder, selected["files"][shape], key(doc, selected, shape)) for shape in record.SHAPES):
-        raise PackageError("thumbnail chưa dựng hoặc đã đổi; hãy dựng lại")
-    return selected

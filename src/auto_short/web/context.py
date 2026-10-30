@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,7 +22,8 @@ from ..post import source as post_source
 from ..post import stage as post_stage
 from ..post import store as post_store
 from ..post import validate as post_validate
-from ..review import ArchivedError, ReviewError, is_archived, mark_downloaded, list_titles
+from ..review import ReviewError, is_archived, mark_downloaded, list_titles
+from ..review.archive import restore_parts
 from ..review.names import hashtags as review_hashtags
 from ..review.names import posts_docx_name
 from ..titling.playlist import stored_series as playlist_series
@@ -295,43 +297,69 @@ class WebContext:
         return out
 
     def queue_video(self, video_id: str, kinds: list[str], lo, hi, series: str | None, episode: str | None, *,
-                     prepare_only: bool = False, vertical_wish: bool | None = None) -> list[dict]:
+                     prepare_only: bool = False, vertical_wish: bool | None = None,
+                     _restored_job=None) -> list[dict]:
         """Queue the pipeline job of each of ``kinds`` for a video (W4 per kind on its own episode: duplicate job,
-        archived, low disk) and return one item per kind: ``{kind, episode_id, created, job}`` or
-        ``{kind, episode_id, error, status}``. ``prepare_only`` (CP13.2 H1, Short only): the "Chuẩn bị + HD" job."""
+        restore reservation, low disk) and return one item per kind: ``{kind, episode_id, created, job}`` or
+        ``{kind, episode_id, error, status}``. Archived parts defer through the owner's restore job.
+        ``_restored_job`` is only for its final handoff with both locks held.
+        ``prepare_only`` (CP13.2 H1, Short only): the "Chuẩn bị + HD" job."""
         url = canonical_url(video_id)
-
-        # W4 per kind on its own episode (A1.1): duplicate job, archived (CP8.6 S3), low disk (CP8.6 S4)
         items: list[dict] = []
-        for kind in kinds:
-            try:  # FIX-youtube-id-dash I4: a bad id is a 4xx, never a 500
-                eid = validate_episode_id(video_id) if kind == "short" else khaithi.episode_id_for(video_id)
-            except WorkspaceError:
-                items.append({"kind": kind, "episode_id": video_id, "status": 422,
-                              "error": f"id video không hợp lệ: {video_id!r}"})
-                continue
-            except khaithi.KhaithiError as exc:
-                items.append({"kind": kind, "episode_id": video_id, "status": 422, "error": exc.vi})
-                continue
-            item: dict = {"kind": kind, "episode_id": eid}
-            current = self.runner.latest(eid)
-            if current is not None and current.active:
-                item.update(created=False, job=current)
-            elif is_archived(Path(self.config.workspace.dir) / eid):
-                item.update(error=str(ArchivedError(eid)), status=409)
-            elif self.storage.status()["block"]:
-                item.update(error=BLOCK_MESSAGE, status=507)
-            items.append(item)
-        todo = [i for i in items if "job" not in i and "error" not in i]
-        previous = self.auto_vertical.wanted(video_id)
-        if vertical_wish is not None and any("error" not in i for i in items):
-            self.auto_vertical.set(video_id, vertical_wish)  # CP8.35 D3: before the jobs, so a fast job still sees it
-        # FIX-ollama-wait O4: no Ollama preflight here - the ai lane checks it and waits for the GPU
-        with self.submit_lock:
-            for i in todo:  # Short first, then khai thị (K5 reuses the Short's source + transcript)
-                current = self.runner.latest(i["episode_id"])
-                if current is not None and current.active:
+        # Restore dispatch already holds both locks, in this order (like SRC3 edit admission).
+        with nullcontext() if _restored_job is not None else self.submit_lock:
+            for kind in kinds:
+                try:
+                    eid = validate_episode_id(video_id) if kind == "short" else khaithi.episode_id_for(video_id)
+                except WorkspaceError:
+                    items.append({"kind": kind, "episode_id": video_id, "status": 422,
+                                  "error": f"id video không hợp lệ: {video_id!r}"})
+                    continue
+                except khaithi.KhaithiError as exc:
+                    items.append({"kind": kind, "episode_id": video_id, "status": 422, "error": exc.vi})
+                    continue
+                i: dict = {"kind": kind, "episode_id": eid}
+                items.append(i)
+                restore = self.restore_job(video_id)
+                restoring = restore is not None and restore.active and restore is not _restored_job
+                archived = next((part for part in (video_id, video_id + khaithi.SUFFIX)
+                                 if is_archived(Path(self.config.workspace.dir) / part)), None)
+                if _restored_job is None and (restoring or archived):
+                    if restoring and any(kind in r["kinds"] for r in restore.target.pipelines):
+                        i.update(created=False, job=restore, queued="restore")
+                        continue
+                    busy = next((j for j in self.runner.jobs() if j.active
+                                 and ep.hd_owner(j.episode_id) == video_id and j is not restore), None)
+                    if busy is not None or (restoring and not restore.target.accepting_edits):
+                        i.update(error="video đang có job chạy/đợi; thử lại sau khi xong", status=409)
+                        continue
+                    if self.storage.status()["block"]:
+                        i.update(error=BLOCK_MESSAGE, status=507)
+                        continue
+                    request = dict(video_id=video_id, kinds=[kind], lo=lo, hi=hi, series=series, episode=episode,
+                                   prepare_only=prepare_only, vertical_wish=vertical_wish)
+                    if restoring:
+                        with self.runner._lock:
+                            restore.target.pipelines.append(request)
+                            self.runner._save_locked()
+                        job, created = restore, True
+                    else:
+                        try:
+                            restore_parts(archived, self.config)
+                        except (ReviewError, OSError) as exc:
+                            i.update(error=str(exc), status=422)
+                            continue
+                        target = self.restore_target(archived, pipelines=[request])
+                        job, created = self.runner.submit(video_id, KIND_RESTORE_SOURCE, target)
+                    job.summary = "Đang lấy lại nguồn từ kho rồi xử lý"
+                    i.update(created=created, job=job, queued="restore")
+                    continue
+                current = self.runner.latest(eid)
+                if current is not None and current.active and current is not _restored_job:
                     i.update(created=False, job=current)
+                    continue
+                if self.storage.status()["block"]:
+                    i.update(error=BLOCK_MESSAGE, status=507)
                     continue
                 if i["kind"] == khaithi.KIND:
                     try:  # written just before its job is queued; changed minutes -> re-run from analysis
@@ -341,16 +369,23 @@ class WebContext:
                         continue
                     log.info("web: khai thi %s %d-%d minutes (%s)", i["episode_id"], lo, hi,
                              "parameters changed" if changed else "parameters unchanged")
-                job, created = self.runner.submit(
-                    i["episode_id"], KIND_PIPELINE,
-                    pipeline_target(url, self.config, series=series, episode=episode, pipeline=self.pipeline,
+                if vertical_wish is not None:
+                    self.auto_vertical.set(video_id, vertical_wish)
+                target = pipeline_target(url, self.config, series=series, episode=episode, pipeline=self.pipeline,
                                     preflight=self.preflight,
                                     episode_id=i["episode_id"] if i["kind"] == khaithi.KIND else None,
                                     disk_blocked=self.storage.block_message, enhance=self.svc,
-                                    prepare_only=prepare_only))
+                                    prepare_only=prepare_only)
+                if current is _restored_job and current is not None:
+                    # The restore still owns this key until this final handoff finishes. Keep it active
+                    # in the saved queue: after a restart it recreates any same-key child skipped by dedup.
+                    job = self.runner._enqueue_locked(i["episode_id"], KIND_PIPELINE, target, None)
+                    created = True
+                else:
+                    job, created = self.runner.submit(i["episode_id"], KIND_PIPELINE, target)
                 i.update(created=created, job=job)
-        if vertical_wish and all("error" in i for i in items):
-            self.auto_vertical.set(video_id, previous)  # nothing was queued: keep the earlier wish
+            if vertical_wish is not None and any("error" not in i for i in items):
+                self.auto_vertical.set(video_id, vertical_wish)
         self.playlists.invalidate(video_id)
         self.storage.invalidate()
         return items

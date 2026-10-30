@@ -2868,7 +2868,10 @@ const AutoShort = (() => {
       $("#pl-kt-minutes").hidden = !o.kinds.includes("khaithi");
       $("#pl-kinds-note").hidden = o.kinds.length > 0;
       document.querySelectorAll("#pl-entries button[data-action='process'], #pl-entries button[data-action='reprocess']")
-        .forEach((b) => { b.disabled = !o.kinds.length; });
+        .forEach((b) => {
+          b.disabled = !o.kinds.length;
+          if (b.dataset.archived === "true") b.textContent = o.kinds.includes("short") ? "Xử lý lại" : "Xử lý";
+        });
     };
     document.querySelectorAll("#pl-kinds input").forEach((i) => i.addEventListener("change", changed));
     changed();
@@ -3247,7 +3250,9 @@ const AutoShort = (() => {
   }
 
   async function processEntry(e, btn) {
-    if (e.action === "reprocess" && !confirm(`Xử lý lại "${e.title || e.video_id}"?\n\n` +
+    if (e.archived && !confirm(`Xử lý "${e.title || e.video_id}"?\n\n` +
+      "Sẽ lấy lại video nguồn từ kho (YouTube dự phòng) rồi chạy các loại đã chọn.")) return;
+    if (!e.archived && e.action === "reprocess" && !confirm(`Xử lý lại "${e.title || e.video_id}"?\n\n` +
       "Dữ liệu tập này đã bị xóa: sẽ tải lại video (≈ 700 MB) và chạy lại từ đầu (≈ 25 phút); " +
       "AI có thể chọn đoạn / tiêu đề khác lần trước.")) return;
     // CP8.9 A2.2: "Xử lý" / "Xử lý lại" follow the kind bar; A1.2: "Chạy tiếp" -> only the unfinished ones
@@ -3377,7 +3382,8 @@ const AutoShort = (() => {
       const actions = el("div", { class: "rec-actions" });
       if (e.action) {
         const b = el("button", { class: "btn small" + (e.action === "process" ? " primary" : ""), type: "button",
-          "data-action": e.action, text: { process: "Xử lý", resume: "Chạy tiếp", reprocess: "Xử lý lại" }[e.action] });
+          "data-action": e.action, "data-archived": String(!!e.archived), text: e.archived && e.action !== "resume"
+            ? (plKinds().kinds.includes("short") ? "Xử lý lại" : "Xử lý") : { process: "Xử lý", resume: "Chạy tiếp", reprocess: "Xử lý lại" }[e.action] });
         if (e.action !== "resume" && !plKinds().kinds.length) b.disabled = true;
         b.addEventListener("click", () => processEntry(e, b));
         actions.append(b);

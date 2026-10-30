@@ -253,7 +253,7 @@ class Compilations:
         elif state == store.DONE and not store.video_path(self.folder(pid), cid).is_file():
             state, error = store.FAILED, "file video không còn"
         done = state == store.DONE
-        return {"cid": cid, "mode": d.get("mode"), "segments": len(d.get("items") or []),
+        return {"cid": cid, "title": d.get("title"), "mode": d.get("mode"), "segments": len(d.get("items") or []),
                 "repeat": d.get("repeat"), "duration": d.get("duration") if done else d.get("duration_estimate"),
                 "state": state, "error": error, "created_at": d.get("created_at"), "size": d.get("size"),
                 "download_name": d.get("download_name"),

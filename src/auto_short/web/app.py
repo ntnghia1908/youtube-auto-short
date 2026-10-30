@@ -123,11 +123,14 @@ class RestoreSourceTarget:
     """SRC3: restore privately, then apply validated edits in order and render on the existing lanes."""
 
     def __init__(self, config, episode_id, *, downloader=None, lock=None, disk_blocked=None,
-                 clock=time.time, after=None, edits=None, apply_edit=None, restored=False, render=run_render):
+                 clock=time.time, after=None, edits=None, apply_edit=None, restored=False, render=run_render,
+                 pipelines=None, queue_pipelines=None):
         self.config, self.episode_id = config, episode_id
         self.downloader, self.lock, self.disk_blocked = downloader, lock, disk_blocked
         self.clock, self.after = clock, after
         self.edits = list(edits or [])
+        self.pipelines = list(pipelines or [])
+        self.queue_pipelines = queue_pipelines
         self.apply_edit = apply_edit
         self.accepting_edits = not restored
         self.restored = restored
@@ -168,8 +171,12 @@ class RestoreSourceTarget:
             self.restored = True
             self.accepting_edits = False
             # A request may have joined a manual restore after its prepare-only steps were created.
-            if self.edits and len(job.steps) == 1 and job.steps[0].lane == PREPARE:
-                job.steps.extend([Step(AI, self.edit), Step(RENDER, self.render_edits)])
+            if job.steps and job.steps[0].lane == PREPARE:
+                job.steps = job.steps[:1]
+                if self.edits:
+                    job.steps.extend([Step(AI, self.edit), Step(RENDER, self.render_edits)])
+                if self.pipelines:
+                    job.steps.append(Step(PREPARE, self.dispatch))
 
     def edit(self, job):
         with self.lock if self.lock is not None else nullcontext():
@@ -205,17 +212,24 @@ class RestoreSourceTarget:
             raise JobFailed("; ".join(errors) + " — Short đã thêm nhưng chưa có tiêu đề: gõ tiêu đề tay")
         job.stage = None
 
+    def dispatch(self, job):
+        if self.pipelines and not job.cancel_requested:
+            self.queue_pipelines(job, self.pipelines)
+
     def __call__(self, job):
         self.prepare(job)
         self.edit(job)
         self.render_edits(job)
+        self.dispatch(job)
 
     def lane_steps(self):
         return [Step(PREPARE, self.prepare)] + ([Step(AI, self.edit), Step(RENDER, self.render_edits)]
-                                                if self.edits else [])
+                                                if self.edits else []) + (
+                    [Step(PREPARE, self.dispatch)] if self.pipelines else [])
 
     def spec(self):
-        return {"episode_id": self.episode_id, "edits": list(self.edits), "restored": self.restored}
+        return {"episode_id": self.episode_id, "edits": list(self.edits), "restored": self.restored,
+                "pipelines": list(self.pipelines)}
 
 STATIC_DIR = Path(__file__).parent / "static"
 # Reachable without a session: the login page and its stylesheet only.
@@ -731,10 +745,22 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         for eid in episodes:
             playlists.invalidate(eid)
 
-    def _restore_target(eid: str, *, edits=None, restored=False):
+    def _queue_restored(job, requests):
+        # Keep admission, child submission and the persisted restore reservation together. The runner's
+        # condition is reentrant; queue_video skips only the submit lock already held here.
+        with submit_lock, runner._lock:
+            if job.cancel_requested:
+                return
+            for request in requests:
+                items = ctx.queue_video(**request, _restored_job=job)
+                errors = [i["error"] for i in items if "error" in i]
+                if errors:
+                    raise JobFailed("xử lý sau khôi phục: " + "; ".join(errors))
+
+    def _restore_target(eid: str, *, edits=None, restored=False, pipelines=None):
         return RestoreSourceTarget(config, eid, downloader=restore_downloader, lock=submit_lock,
                                    disk_blocked=storage.block_message, clock=clock, after=_restored,
-                                   edits=edits, restored=restored,
+                                   edits=edits, restored=restored, pipelines=pipelines, queue_pipelines=_queue_restored,
                                    render=render,
                                    apply_edit=lambda edit: episode_edit.apply_restore_edit(ctx, edit))
 
@@ -796,15 +822,24 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                     if ep.hd_owner(edit["episode_id"]) != eid:
                         return None
                     episode_edit.validate_restore_edit(config, edit)
+                pipelines = spec.get("pipelines", [])
+                if not isinstance(pipelines, list):
+                    return None
+                for request in pipelines:
+                    if not isinstance(request, dict) or request.get("video_id") != eid \
+                            or request.get("kinds") not in (["short"], [khaithi.KIND]):
+                        return None
+                    if request["kinds"] == [khaithi.KIND]:
+                        khaithi.check_minutes(request["lo"], request["hi"], config.khaithi.max_minutes_limit)
                 restored = spec.get("restored") is True
                 if restored:
                     if any(is_archived(ws / part) for part in (eid, eid + khaithi.SUFFIX)):
                         return None
                 else:
                     restore_parts(target_id, config)
-            except (ReviewError, OSError, ValueError, KeyError, TypeError):
+            except (ReviewError, OSError, ValueError, KeyError, TypeError, khaithi.KhaithiError):
                 return None
-            return _restore_target(target_id, edits=edits, restored=restored)
+            return _restore_target(target_id, edits=edits, restored=restored, pipelines=pipelines)
         if kind == KIND_HD_INTRO:
             return HDIntroTarget(config, keep_original=spec.get("keep_original") is True)
         if is_archived(ws / eid) and kind != KIND_VERTICAL:
@@ -1047,7 +1082,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     theme_index_web.register(app, config, playlists, STATIC_DIR)  # TC-WEB1: GET-only TC1 preview
     theme_plan_web.register(app, theme_plans)  # TC2 phase C: planner and TC3 landscape jobs
 
-    packaging_web.register(app, packages)  # PKG1: offline thumbnails and manual approval
+    packaging_web.register(app, packages)  # THUMB2: compilation thumbnails on video cards
     episode_thumbs_web.register(app, episode_thumbs)
 
     app.include_router(files_catchall.build(ctx))  # D4: catch-all is always registered last.

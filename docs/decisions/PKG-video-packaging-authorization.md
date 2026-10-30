@@ -8,6 +8,8 @@
 | Scope | PKG1 thumbnail + tiêu đề → VIS1 hình ambient → AUD1 nhạc nền, đều sau kết quả TC3 |
 | Integration | Push / PR / merge / restart 8080 vẫn cần HUMAN LEAD duyệt riêng |
 
+> THUMB2 (HUMAN LEAD 2026-10-28, amendment 2026-10-29): trang Đóng gói, API `…/package/*`, job `theme_package`, PKG3 / PKG3.1 A/B/C + preset, VIS1, AUD1 và bước duyệt bản đăng đã bị gỡ. Video / ảnh / nhạc / hồ sơ cũ trên đĩa được giữ. Thẻ video trên Yêu thích dùng sidecar render để tải / copy và thumbnail dạng KT hai khổ, không cần duyệt. Phần quyết định cũ bên dưới liên quan các chức năng này được thay bởi [contract THUMB2](../tasks/THUMB2-codex-compilation-thumbs.md); PKG2 thumbnail tập vẫn giữ nguyên.
+
 Task nằm hoàn toàn trong boundary này ghi `Authorization mode: boundary`, `Authorization source: docs/decisions/PKG-video-packaging-authorization.md` và `Implementation authorized: YES` khi có base commit; không cần APPROVE TASK riêng.
 
 ## 1. Mục tiêu
