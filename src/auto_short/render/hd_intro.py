@@ -152,6 +152,11 @@ def frame_hash(path: Path, seconds: float, run: Runner) -> str:
     return lines[0].split(",")[-1].strip()
 
 
+def frame_midpoint(n: int, fps: Fraction) -> float:
+    # Stay away from frame boundaries when adding the intro's floating-point offset.
+    return float((n + Fraction(1, 2)) / fps)
+
+
 def boundary_pts(source: Path, output: Path, selector: str, kind: str,
                  original: dict, spec: dict, run: Runner) -> float:
     first = packets(source, selector, "%+#4", run)
@@ -190,7 +195,7 @@ def verify(source: Path, output: Path, original: dict, spec: dict, run: Runner) 
     duration = float(original["video"].get("duration") or original["duration"])
     count = max(1, round(duration * spec["fps"]))
     for n in sorted({0, count // 2, max(0, count - 2)}):
-        seconds = float(n / spec["fps"])
+        seconds = frame_midpoint(n, spec["fps"])
         if frame_hash(source, seconds, run) != frame_hash(output, seconds + spec["offset"], run):
             raise RenderError(f"HD intro: khung hình sau offset khác bản gốc tại {seconds:.3f} s")
 
@@ -277,7 +282,7 @@ def run_intro(episode_id: str, config: Config, *, keep_original: bool = False, c
                 duration = probe_media(source, run)["duration"]
                 count = max(1, round(duration * spec["fps"]))
                 for n in sorted({0, count // 2, max(0, count - 2)}):
-                    seconds = float(n / spec["fps"])
+                    seconds = frame_midpoint(n, spec["fps"])
                     if frame_hash(stored_source, seconds + completed["offset_seconds"], run) != frame_hash(source, seconds, run):
                         raise RenderError("HD intro: không tách được bài giảng từ bản có intro")
             if keep_original and completed is None:

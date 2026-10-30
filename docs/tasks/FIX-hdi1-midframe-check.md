@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: BUG
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -60,4 +60,39 @@ Bước kiểm khung của HD intro (`verify` và nhánh tách bài giảng từ
 
 ## Result
 
-(chưa chạy)
+IMPLEMENTER READY — 2026-10-30; chờ ORCHESTRATOR review và verification được giao riêng bên dưới.
+
+- `src/auto_short/render/hd_intro.py`: thêm `frame_midpoint(n, fps)`, tính `(n + 1/2) / fps` bằng `Fraction` trước khi đổi sang float; dùng chung trong `verify` và vòng kiểm tách bài giảng của `run_intro`. Giữ nguyên chỉ số khung đầu / giữa / cuối, so hash và định dạng sidecar.
+- `tests/test_hd_intro.py`: thêm 2 hàm test (3 ca), giữ nguyên toàn bộ assertion cũ; tái dùng `media`, `seed`, `MemoryStore`, fixture `config` / `image`.
+- Contract này: cập nhật status và Result; không commit / push / PR, không gọi agent khác hoặc mạng thật.
+
+| AC | Test / bằng chứng | Kết quả IMPLEMENTER |
+|---|---|---|
+| AC1 | `test_verify_ntsc_midpoint_seeks_and_changed_frame[False/True]`: fps 30000/1001, 102186 khung, n=51093; runner giả mô phỏng hash khác phía khi tua đúng biên, xác nhận toàn bộ giây `-ss` bằng giữa khung + offset tương ứng. Nội dung đúng PASS; hash khung giữa bị thay vẫn `RenderError`. | PASS (runner giả) |
+| AC1, vòng `run_intro` | `test_ntsc_rebuild_seeks_midpoints`: media NTSC thật từ helper `media`, ghép rồi rebuild; runner ghi `-ss` và chạy ffmpeg thật, xác nhận cả 6 lần tua của vòng tách và 6 lần tua của `verify`. | PASS |
+| AC2 | Toàn bộ `tests/test_hd_intro.py`, gồm test cũ không sửa assertion. | 26 passed |
+| AC3 | `git diff --check`; `node scripts/framework-check.mjs`. Full suite thuộc ORCHESTRATOR. | Hai checker PASS; full suite chưa chạy |
+
+Giới hạn AC1: không có bản sao tập 85 trong input của task; media tổng hợp ngắn không bảo đảm tái hiện cùng sai số chọn phía tại 1704.8031 s của hai timeline thực tế. Dùng phương án runner giả được ORCHESTRATOR cho phép trong prompt để mô phỏng lỗi biên và khung giữa có hash khác; đây không phải bằng chứng đã sửa byte của một khung trong media thật. Media thật bổ sung chứng minh ghép / tách và thời điểm tua, không tuyên bố tái hiện lỗi biên của tập 85.
+
+Lệnh đã chạy trong worktree hiện tại:
+
+```text
+timeout 290s env PYTHONPATH=/home/ntnghia/projects/youtube-auto-short/.claude/worktrees/hdi1-hd-intro/.claude/worktrees/fix-hdi1-midframe/src /home/ntnghia/miniconda3/envs/auto-short/bin/python -m pytest -q -x --tb=short -n 2 tests/test_hd_intro.py
+=> exit 0; 26 passed in 31.49s
+git diff --check
+=> exit 0; không có lỗi whitespace
+node scripts/framework-check.mjs
+=> exit 0; PASS framework structure và các kiểm tra contract / authority / adapter
+```
+
+Dòng thêm / xóa (`git diff --numstat`): ứng dụng **+7 / −2**; test **+60 / −0**. Helper mới: `frame_midpoint`; đã tìm bằng `rg -n 'midpoint|mid_frame|frame_time|0\.5.*fps|frame_hash' src/auto_short/render tests/test_hd_intro.py`, không có helper giữa khung tương đương để tái dùng.
+
+Còn giao ORCHESTRATOR: full suite `-n auto`, render lại bản sao tập 85; sau merge / restart mới xếp lại HD intro tập 85. Chưa chạy hoặc claim PASS các bước này trong phiên IMPLEMENTER.
+
+### ORCHESTRATOR (2026-10-30)
+
+- Review diff: `frame_midpoint` dùng cho `verify` và vòng tách của `run_intro`; inventory ⊆ Owned paths. Codex 47.618 tokens, 1 vòng.
+- Chạy thật trên bản sao HD tập 85 mượn từ kho (2.177.529.013 byte): code cũ `render` → lỗi "khác bản gốc tại 1704.803 s"; code mới → **render OK**. Kho không bị ghi.
+- Full suite `-n auto`: **3538 passed, 1 failed, 1 skipped**. Lỗi `tests/test_web_stop_fix.py::test_ac2_orphaned_grandchild_and_children_started_after_the_interrupt` có sẵn trên `origin/main` (chạy riêng bằng `-k` trên main cũng lỗi: tiến trình cháu chưa thoát kịp khi máy đang chạy job 8080); chạy cả file trên nhánh này: 9 passed. Không liên quan `hd_intro`.
+- Còn: sau merge + restart 8080 (làn rảnh) → xếp lại HD intro tập 85.
