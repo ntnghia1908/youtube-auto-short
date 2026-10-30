@@ -20,6 +20,7 @@ from ..compilation.spec import item_from_json
 from ..config import Config
 from ..ingest.youtube import DownloadError, YoutubeBlocked, ytdlp_download
 from ..render import plan
+from ..render.intro import clip_record, content_record, offset
 from ..render.full import SourceBlocked
 from ..render.stage import RenderError, _last_line, _run, episode_render_config, probe_media
 from ..review.names import clean_part, truncate_utf8
@@ -63,18 +64,20 @@ def _reference(config: Config, pid: str, record: dict) -> tuple[Path | object, s
     short = next((s for s in shorts if s.get("clip_id") == ident["clip"]), None)
     if short is None:
         raise RenderError("không có Short tham chiếu trong render manifest")
+    if content_record(short)["sha256"] != record["inputs"]["render_sha256"]:
+        raise RenderError("nội dung Short tham chiếu đã thay đổi")
     path = (folder / short["file"]).resolve()
     if not path.is_relative_to(folder.resolve()):
         raise RenderError("đường dẫn Short nằm ngoài output của tập")
     if not path.is_file():
-        released = theme_index.stored_short(config, ident["episode_id"], ident["clip"], record["inputs"]["render_sha256"])
+        released = theme_index.stored_short(config, ident["episode_id"], ident["clip"], short["sha256"])
         if released is not None:
             path = released  # SHO1: borrowed from the store at compare time; fetch verifies the sha256
         else:
             item = item_from_json(record["inputs"]["favorite"])
             path = store.kept_path(store.directory(config.render.output_dir, pid), item)
     if path is None or (isinstance(path, Path) and (
-            not path.is_file() or hashing.sha256_file(path) != record["inputs"]["render_sha256"])):
+            not path.is_file() or hashing.sha256_file(path) not in (short["sha256"], record["inputs"]["render_sha256"]))):
         raise RenderError("Short tham chiếu bị thiếu hoặc sha256 không khớp (kể cả bản kept)")
     number = next(i for i, s in enumerate(shorts, 1) if s is short)
     titles = _read(Path(config.workspace.dir) / ident["episode_id"] / "titles.json")
@@ -248,6 +251,10 @@ def render_landscape(config: Config, playlist_id: str, plan_id: str, *, hashtags
                     _verify(clip, seconds, 1 / float(fps), runner, fps=fps, frames=plan.planned_frames(segments, fps))
                     try:
                         with borrow_short(config, reference, tmp) as ref_path:
+                            if offset(clip_record(ref_path)):
+                                trimmed = tmp / f"reference-{n}.mp4"
+                                assemble([ref_path], trimmed, runner=runner)
+                                ref_path = trimmed
                             match = audio.compare(clip, ref_path, tmp, runner)
                     except StoreError as exc:  # store off the air: clear failure, borrowed copy already removed
                         raise RenderError(str(exc)) from exc

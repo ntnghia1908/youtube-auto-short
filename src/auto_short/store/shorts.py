@@ -78,6 +78,12 @@ def borrow_short(config: Config, location: Path | ep.StoredShort, folder: Path, 
             except StoreError as exc:
                 raise StoreUnavailable(f"Short {location.episode_id}/{location.clip} đang ở kho 3090, "
                                        "3090 không trả lời — bấm Ghép lại sau") from exc
+            doc = ep.render_manifest(config, location.episode_id) or {}
+            record = next((s for s in doc.get("shorts", []) if f"{s.get('clip_id')}.mp4" == location.clip), None)
+            if record and record.get("intro"):
+                if record.get("sha256") != location.sha256:
+                    raise StoreMismatch("clip mượn từ kho lệch sha256 sidecar intro")
+                atomic_write_json(dest.with_suffix(".intro.json"), record)
             yield dest
         finally:
             with _LOCK:

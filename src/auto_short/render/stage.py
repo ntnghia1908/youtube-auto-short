@@ -29,6 +29,7 @@ from ..workspace import (
     Workspace,
     WorkspaceError,
     atomic_write_json,
+    read_json_dict,
     read_stage_json,
     record_failure,
     run_stage,
@@ -39,6 +40,7 @@ from ..review import archive as review_archive
 from ..review import cuts as review_cuts
 from ..review import logic as review_logic
 from . import plan
+from . import intro as clip_intro
 from .text import MAX_LINES, Font, TextError, TextFit, baselines, fit_header, fit_title, nfc
 
 log = logging.getLogger("auto_short")
@@ -465,6 +467,8 @@ class _Encode:
     dissolves: list[dict]
     part: Path
     cmd: list[str]
+    intro_image: Path | None
+    cfg: RenderConfig
 
 
 def _encode_one(task: _Encode, run: Runner, fps: Fraction) -> None:
@@ -475,6 +479,14 @@ def _encode_one(task: _Encode, run: Runner, fps: Fraction) -> None:
         raise RenderError(f"clip {clip['id']}: ffmpeg failed: "
                           f"{_last_line(proc.stderr) or f'exit {proc.returncode}'}")
     verify_output(part, fps, plan.planned_frames(cp.segments, fps), run)
+    if task.intro_image is not None:
+        task.record["content_sha256"] = hashing.sha256_file(part)
+        with tempfile.TemporaryDirectory(prefix=".clip-intro-", dir=part.parent) as name:
+            work = Path(name)
+            content = work / "content.mp4"
+            os.replace(part, content)
+            task.record["content_offset"] = clip_intro.prepend(content, part, task.intro_image, fps, task.cfg, work, run)
+        verify_output(part, fps, plan.planned_frames(cp.segments, fps) + round(clip_intro.INTRO_SECONDS * fps), run)
     task.record["sha256"] = hashing.sha256_file(part)
     log.info("%s: clip %s: %s (%d px, panel %d px, %s), %d segment(s), %d dissolve(s), %.3f s, "
              "rendered in %.1f s", STAGE, clip["id"], " / ".join(fit.lines), fit.font_size,
@@ -514,6 +526,140 @@ def _encode_all(tasks: list[_Encode], run: Runner, fps: Fraction, jobs: int) -> 
 
 # --- stage -------------------------------------------------------------------------------------------------------
 
+def _intro_from_existing(ws: Workspace, manifest: dict, config: Config, cfg: RenderConfig,
+                         images: dict[str, Path], run: Runner) -> RenderResult | None:
+    """Add/replace the intro of unchanged clips, including archived sources and SHO1 releases.
+
+    Verify the complete old stage input chain and config before trusting its encoded content. A title / cut /
+    config change takes the normal render path instead.
+    """
+    out_dir = (cfg.output_dir / ws.episode_id).resolve()
+    path = out_dir / RENDER_MANIFEST_NAME
+    old = read_json_dict(path)
+    entry = manifest["stages"].get(STAGE) or {}
+    if not old or old.get("episode_id") != ws.episode_id or entry.get("status") not in (DONE, "failed"):
+        return None
+    if not font_path(cfg).is_file():
+        return None
+    cfg_hash = hashing.config_hash(used_config(cfg, hashing.sha256_file(font_path(cfg)), True))
+    if old.get("render_config_hash") != cfg_hash or entry.get("config_hash") != cfg_hash:
+        return None
+    docs = {n: read_json_dict(ws.dir / n) for n in (CLIPS_NAME, TITLES_NAME, CANDIDATES_NAME)}
+    if any(not d or _sha(d) != old.get(key) for key, d in (
+            ("clips_sha256", docs[CLIPS_NAME]), ("titles_sha256", docs[TITLES_NAME]),
+            ("candidates_sha256", docs[CANDIDATES_NAME]))):
+        return None
+    try:
+        review = review_logic.read_review(ws.dir / REVIEW_NAME, ws.episode_id)
+        resolved, _ = review_logic.resolve_titles(docs[TITLES_NAME]["titles"] + review_logic.added_entries(review), review)
+        targets, _ = render_targets(docs[CLIPS_NAME], review, docs[CANDIDATES_NAME],
+                                    lambda: load_silences(ws, docs[CANDIDATES_NAME]))
+    except (review_logic.ReviewError, RenderError):
+        return None
+    if len(targets) != len(old["shorts"]) or len(resolved) != len(targets):
+        return None
+    for s, target, title in zip(old["shorts"], targets, resolved):
+        fields = ("candidate_id", "source_start", "source_end", "duration", "origin", "cut")
+        if s["clip_id"] != target["id"] or any(s.get(k) != target[k] for k in fields) \
+                or s["segments"] != plan.segments_seconds(target["segments"]) \
+                or s.get("title") != title.title or s.get("title_origin") != title.origin \
+                or (s.get("status") == RENDERED) != bool(title.title and not title.rejected):
+            return None
+    inputs = [i for i in entry.get("inputs", []) if "clip_intro" not in i]
+    expected = {ws.relpath(ws.dir / n) for n in (CLIPS_NAME, TITLES_NAME, CANDIDATES_NAME, METADATA_NAME)}
+    if (ws.dir / REVIEW_NAME).is_file():
+        expected.add(ws.relpath(ws.dir / REVIEW_NAME))
+    source_paths = {ws.resolve(manifest["source"]["path"]).resolve(), enhance_state.hd_path(ws.dir).resolve()}
+    cached = ws.source_fingerprint(manifest)
+    hd_fp = enhance_state.hd_fingerprint(ws.dir)
+    if hd_fp is not None:
+        cached.append(hd_fp)
+    actual = set()
+    for inp in inputs:
+        p = ws.resolve(inp["path"])
+        if p.resolve() not in source_paths:
+            actual.add(inp["path"])
+        if p.is_file():
+            sha = hashing.fingerprint(p, cached).sha256 if p.resolve() in source_paths else hashing.sha256_file(p)
+            if sha != inp["sha256"]:
+                return None
+        elif p.resolve() not in source_paths or inp["sha256"] != old.get("source_sha256"):
+            return None
+    if actual != expected:
+        return None
+    hd = enhance_state.read(ws.dir) or {}
+    source_sha = hd.get("source_hd_sha256") if enhance_state._hd_usable(hd) else manifest["source"]["sha256"]
+    if source_sha != old.get("source_sha256"):
+        return None
+    records = [s for s in old["shorts"] if s.get("status") == RENDERED]
+    if {s["clip_id"] for s in records} != set(images):
+        return None
+    pending = []
+    for s in records:
+        if s.get("intro") != clip_intro.metadata(images[s["clip_id"]]):
+            pending.append(s["clip_id"])
+        if s.get("file") != f"{SHORTS_DIR}/{s['clip_id']}.mp4":
+            return None
+    released = (read_json_dict(out_dir / "store.json") or {}).get("released", {})
+    for s in records:
+        p = out_dir / s["file"]
+        if p.is_file():
+            if hashing.sha256_file(p) != s["sha256"]:
+                return None
+        elif released.get(s["clip_id"], {}).get("sha256") != s["sha256"]:
+            return None
+    if not pending and entry.get("status") == DONE:
+        return RenderResult(ws.episode_id, path, False)
+    from ..store.shorts import restore_released
+    if pending:
+        restore_released(config, ws.episode_id)
+    workspace_sha = hashing.sha256_file(ws.manifest_path)
+    for cid, image in sorted(images.items()):
+        inputs.append({"clip_intro": cid, **clip_intro.metadata(image)})
+    fps = Fraction(old["encode"]["fps"])
+
+    def action():
+        doc = read_json_dict(path)
+        staged, committed = {}, []
+        try:
+            for s in doc["shorts"]:
+                if s["clip_id"] not in pending:
+                    continue
+                source = out_dir / s["file"]
+                part = source.with_name(f".{source.name}.part")
+                staged[part] = source
+                base = clip_intro.content_record(s)
+                with tempfile.TemporaryDirectory(prefix=".clip-intro-", dir=source.parent) as tmp:
+                    work = Path(tmp)
+                    content = clip_intro.extract_content(source, work / "content.mp4", s, run) if s.get("intro") else source
+                    s["content_offset"] = clip_intro.prepend(content, part, images[s["clip_id"]], fps, cfg, work, run)
+                s.update(content_sha256=base["sha256"], content_render_key=base["render_key"],
+                         intro=clip_intro.metadata(images[s["clip_id"]]))
+                s["render_key"] = _sha({"content_render_key": s["content_render_key"], "intro": s["intro"]})
+                s["sha256"] = hashing.sha256_file(part)
+                frames = plan.planned_frames([(round(a * 1000), round(b * 1000)) for a, b in s["segments"]], fps)
+                verify_output(part, fps, frames + round(clip_intro.INTRO_SECONDS * fps), run)
+            doc["content_workspace_manifest_sha256"] = old.get("content_workspace_manifest_sha256") or workspace_sha
+            for part, destination in staged.items():
+                os.replace(part, destination)
+                committed.append(destination)
+            atomic_write_json(path, doc)
+        except BaseException:
+            if committed:
+                _remove(committed + [path])
+            raise
+        finally:
+            _remove(list(staged))
+        return [str(path)] + [str(out_dir / s["file"]) for s in records]
+
+    try:
+        ran = run_stage(ws, manifest, STAGE, inputs=inputs, cfg_hash=cfg_hash, force=False, action=action)
+    except StageError as exc:
+        raise RenderError(str(exc)) from exc
+    return RenderResult(ws.episode_id, path, ran, old["stats"]["rendered"], old["stats"]["clips"],
+                        len(pending), len(records) - len(pending))
+
+
 def run_render(episode_id: str, config: Config, *, force: bool = False, run: Runner | None = None,
                _hd_borrowed: bool = False) -> RenderResult:
     """Render the episode's Shorts (CP7), applying ``review.json`` title overrides and reusing every Short whose
@@ -527,6 +673,25 @@ def run_render(episode_id: str, config: Config, *, force: bool = False, run: Run
     cfg, kt = episode_render_config(config, ws.dir)
     if manifest is None:
         raise RenderError(f"no manifest for episode {episode_id!r} in {ws.dir}; run 'auto-short ingest' first")
+    images = {}
+    if kt:
+        from ..packaging import PackageError, khaithi_thumbs
+        try:
+            context = khaithi_thumbs.intro_context(config, ws.episode_id)
+            if context is not None:
+                pid, fields = context
+                if "kt_vertical" not in khaithi_thumbs.cover.current(config, pid):
+                    raise PackageError(f"Bộ kinh chưa có ảnh bìa khai thị — /playlists/{pid}/thumbs")
+                for title in khaithi_thumbs.titles(config, ws.episode_id):
+                    images[title.clip_id] = khaithi_thumbs.vertical_clip(
+                        config, ws.episode_id, title.clip_id, pid=pid, fields=fields, run=runner)
+        except (PackageError, TextError, OSError, ValueError) as exc:
+            record_failure(ws, manifest, STAGE, str(exc))
+            raise RenderError(str(exc)) from exc
+    if images and not force:
+        existing = _intro_from_existing(ws, manifest, config, cfg, images, runner)
+        if existing is not None:
+            return existing
     if review_archive.is_archived(ws.dir):
         # CP8.6 S3: the source video was cleaned up; the last render stays as it is (manifest untouched).
         raise RenderError(f"episode {ws.episode_id!r} is archived (source video cleaned up); its Shorts are kept "
@@ -578,7 +743,10 @@ def run_render(episode_id: str, config: Config, *, force: bool = False, run: Run
     input_paths = list(paths.values()) + ([review_path] if review_path.is_file() else [])
     inputs = [{"path": ws.relpath(p), "sha256": hashing.sha256_file(p)} for p in input_paths]
     inputs.append({"path": ws.relpath(media), "sha256": media_fp.sha256})
+    for cid, image in sorted(images.items()):
+        inputs.append({"clip_intro": cid, **clip_intro.metadata(image)})
     cfg_hash = hashing.config_hash(used_config(cfg, font_sha, kt))
+    workspace_manifest_sha = hashing.sha256_file(ws.manifest_path)
     outcome: dict = {}
 
     def action() -> list[str]:
@@ -586,7 +754,7 @@ def run_render(episode_id: str, config: Config, *, force: bool = False, run: Run
         try:
             doc = _render_all(ws, cfg, fpath, font_sha, media, media_fp.sha256, cfg_hash, paths, review_path,
                               out_dir, runner, force=force, old_outputs=previous_outputs(out_dir, prior),
-                              files=files)
+                              files=files, intro_images=images, workspace_manifest_sha=workspace_manifest_sha)
         except BaseException:
             # Only files of this run; once the commit has started the previous manifest no longer
             # describes the files on disk, so it goes too.
@@ -609,7 +777,9 @@ def run_render(episode_id: str, config: Config, *, force: bool = False, run: Run
 
 def _render_all(ws: Workspace, cfg: RenderConfig, fpath: Path, font_sha: str, media: Path, source_sha: str,
                 cfg_hash: str, paths: dict[str, Path], review_path: Path, out_dir: Path, run: Runner, *,
-                force: bool, old_outputs: list[Path], files: _RunFiles) -> dict:
+                force: bool, old_outputs: list[Path], files: _RunFiles,
+                intro_images: dict[str, Path] | None = None, workspace_manifest_sha: str | None = None) -> dict:
+    intro_images = intro_images or {}
     clips_doc = read_stage_json(paths[CLIPS_NAME], "selection", RenderError)
     titles_doc = read_stage_json(paths[TITLES_NAME], "titling", RenderError)
     cand_doc = read_stage_json(paths[CANDIDATES_NAME], "analysis", RenderError)
@@ -693,12 +863,20 @@ def _render_all(ws: Workspace, cfg: RenderConfig, fpath: Path, font_sha: str, me
             key = render_key(cfg_hash=cfg_hash, font_sha=font_sha, source_sha=source_sha, fps=fps,
                              segments=record["segments"], dissolves=dissolves, layout=lay.as_dict(), header=header,
                              title=fit)
+            image = intro_images.get(clip["id"])
+            if image is not None:
+                record.update(content_render_key=key,
+                              intro=clip_intro.metadata(image))
+                key = _sha({"content_render_key": key, "intro": record["intro"]})
             rel = f"{SHORTS_DIR}/{clip['id']}.mp4"
             record.update(status=RENDERED, file=rel, title_display_lines=fit.lines, title_font_size=fit.font_size,
                           layout=lay.as_dict(), dissolves=dissolves, render_key=key)
             shorts.append(record)
             if reusable(previous.get(clip["id"]), key, rel, out_dir):
                 record["sha256"] = previous[clip["id"]]["sha256"]
+                if image is not None:
+                    for field in ("content_sha256", "content_offset"):
+                        record[field] = previous[clip["id"]][field]
                 log.info("%s: clip %s: reuse (render_key unchanged): %s (%s)", STAGE, clip["id"],
                          " / ".join(fit.lines), cp.origin)
                 continue
@@ -720,7 +898,7 @@ def _render_all(ws: Workspace, cfg: RenderConfig, fpath: Path, font_sha: str, me
             cmd = plan.ffmpeg_command(ffmpeg="ffmpeg", source=media, output=part, graph_script=script,
                                       segments=cp.segments, fps=fps, crf=cfg.crf, preset=cfg.preset,
                                       audio_bitrate=cfg.audio_bitrate, threads=cfg.threads)
-            tasks.append(_Encode(clip, cp, record, fit, dissolves, part, cmd))
+            tasks.append(_Encode(clip, cp, record, fit, dissolves, part, cmd, image, cfg))
         _encode_all(tasks, run, fps, cfg.jobs)
 
     rendered = [s for s in shorts if s["status"] == RENDERED]
@@ -743,6 +921,10 @@ def _render_all(ws: Workspace, cfg: RenderConfig, fpath: Path, font_sha: str, me
     }
     # T5 cleanup: previous files that are neither reused nor replaced by this run's Shorts.
     manifest_path = out_dir / RENDER_MANIFEST_NAME
+    if intro_images:
+        old = read_json_dict(manifest_path)
+        if old and clip_intro.content_manifest(old) == clip_intro.content_manifest(doc):
+            doc["content_workspace_manifest_sha256"] = old.get("content_workspace_manifest_sha256") or workspace_manifest_sha
     keep = {(out_dir / s["file"]).resolve() for s in rendered} | {manifest_path.resolve()}
     removing = [p for p in old_outputs if p.resolve() not in keep]
     validate_render(doc, targets, out_dir, staged=files.staged,
