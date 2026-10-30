@@ -10,7 +10,7 @@ from .. import theme_plan
 from ..compilation import store
 from ..compilation.spec import CID_RE
 from ..hashing import sha256_file
-from ..render.text import nfc
+from ..render.text import TextError, nfc
 from ..workspace import atomic_write_json, read_json_dict, utc_now
 from . import PackageError, cover, episode, khaithi_thumbs as kt, record, thumbnail
 
@@ -59,17 +59,109 @@ def _source(config, pid, identity, folder, title, clips):
     return Source(pid, identity, episode._no_symlinks(folder), nfc(thumb_title(title or "", fields["speaker"])), fields)
 
 
-def favorite(config, pid, cid):
+def favorite(config, pid, cid, *, pending=False):
     episode.playlist(config, pid)
     if not isinstance(cid, str) or not CID_RE.fullmatch(cid):
         raise PackageError("id video ghép không hợp lệ")
     folder = episode._no_symlinks(store.directory(config.render.output_dir, pid))
     episode._no_symlinks(folder / f"{cid}.json")
     doc = store.read_doc(folder, cid)
-    if not doc or doc.get("playlist_id") != pid or doc.get("status") != store.DONE \
-            or not episode._no_symlinks(store.video_path(folder, cid)).is_file():
+    if not doc or doc.get("playlist_id") != pid or not pending and (doc.get("status") != store.DONE
+            or not episode._no_symlinks(store.video_path(folder, cid)).is_file()):
         raise PackageError("video ghép chưa sẵn sàng")
     return _source(config, pid, cid, folder / "thumbs" / cid, doc.get("title"), doc.get("items"))
+
+
+def intro_image(config, source, shape, *, run=None, current=None):
+    """Build the very same THUMB2 images at assembly time, with its usual identity/cache."""
+    try:
+        build(config, source, run=run, current=current)
+        return source.folder / read(source)["files"][shape]["file"]
+    except PackageError as exc:
+        if MISSING_COVER in str(exc):
+            raise PackageError(f"{exc} — /playlists/{source.playlist_id}/thumbs") from exc
+        raise
+
+
+def intro_current(config, source, shape, doc, path, *, verify=True):
+    """A video is current only while the image used for its prefix is still the current THUMB2 image."""
+    from ..render.intro import metadata
+
+    try:
+        files = valid_files(config, source)
+        image = source.folder / files[shape]["file"]
+        return doc.get("intro") == metadata(image) and path.is_file() \
+            and (not verify or doc.get("sha256") == sha256_file(path))
+    except (PackageError, OSError, ValueError, KeyError, TypeError, TextError):
+        return False
+
+
+def enqueue_intro_rebuild(config, runner, playlist_ids, *, compilations, theme_plans):
+    """D-KTI2-5/6 on the live runner: VLT, Cảm Ứng Thiên, Thập Thiện, then optional Địa Tạng.
+
+    Existing KTI1 marks/jobs retain precedence. Queue existing videos first (both shapes), then Shorts;
+    the first ten Short episodes per configured start are marked by the shared KTI1 selector.
+    This selects rendered artifacts only; it neither creates plans nor calls AI/downloaders.
+    """
+    from ..web.jobs import KIND_COMPILATION, compilation_key
+    from ..web.theme_plan import render_key
+
+    pids = list(dict.fromkeys(playlist_ids))
+    for pid in pids:
+        episode.playlist(config, pid)
+    pending_kt = [j.episode_id for j in runner.jobs() if j.active and j.episode_id.endswith(".kt")
+                  and kt.intro_context(config, j.episode_id) is not None]
+    runner.priority.mark(pending_kt)
+    queued, skipped = [], []
+
+    def videos(pid, *, prioritize):
+        if kt.start_episode(config, pid) is None:
+            return
+        folder = store.directory(config.render.output_dir, pid)
+        for doc in sorted(store.list_docs(folder), key=lambda d: d["cid"]):
+            cid = doc["cid"]
+            if not store.video_path(folder, cid).is_file():
+                continue
+            key = compilation_key(pid, cid)
+            if compilations.intro_current(pid, doc):
+                skipped.append(key)
+                continue
+            target = compilations.rebuild(key, doc)
+            if target is None:
+                skipped.append(key)
+                continue
+            if prioritize:
+                runner.priority.mark([key])
+            _, created = runner.submit(key, KIND_COMPILATION, target)
+            (queued if created else skipped).append(key)
+        for plan in theme_plans.plans(pid):
+            if plan.get("check", {}).get("state") != "approved":
+                continue
+            ident = plan["plan_id"]
+            path = folder / "theme" / f"{ident}-r{plan['revision']}.mp4"
+            if not path.is_file():
+                continue
+            key = render_key(pid, ident)
+            doc = read_json_dict(path.with_suffix(".json")) or {}
+            if intro_current(config, theme(config, pid, ident), "landscape", doc, path):
+                skipped.append(key)
+                continue
+            if prioritize:
+                runner.priority.mark([key])
+            _, created = theme_plans.render(pid, ident)
+            (queued if created else skipped).append(key)
+
+    for pid in pids[:3]:
+        videos(pid, prioritize=True)
+    shorts, khaithi = {}, {}
+    for pid in pids[:3]:
+        shorts[pid] = kt.enqueue_intro_rebuild(config, runner, pid, 1, 999999999,
+                                               prioritize_first_ten=True, short=True)
+    for pid in pids[3:]:
+        videos(pid, prioritize=False)
+        shorts[pid] = kt.enqueue_intro_rebuild(config, runner, pid, 1, 999999999, short=True)
+        khaithi[pid] = kt.enqueue_intro_rebuild(config, runner, pid, 1, 999999999)
+    return dict(queued=queued, skipped=skipped, shorts=shorts, khaithi=khaithi)
 
 
 def theme(config, pid, plan_id):

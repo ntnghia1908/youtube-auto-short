@@ -13,11 +13,11 @@ def timecode(seconds: float) -> str:
     return f"{h}:{m:02d}:{sec:02d}" if h else f"{m:02d}:{sec:02d}"
 
 
-def chapters(titles: list[str], durations: list[float] | tuple[float, ...]) -> list[dict]:
+def chapters(titles: list[str], durations: list[float] | tuple[float, ...], *, content_offset=0) -> list[dict]:
     """One chapter per part: ``start`` = sum of the lengths of the parts before it (the first at 0)."""
     out, at = [], 0.0
     for title, d in zip(titles, durations):
-        out.append({"start": round(at, 3), "title": title})
+        out.append({"start": round(at + (content_offset if out else 0), 3), "title": title})
         at += d
     return out
 

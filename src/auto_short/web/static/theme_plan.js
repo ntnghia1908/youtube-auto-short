@@ -175,6 +175,8 @@ const ThemePlan = (() => {
     const status = broken ? "Nội dung clip đã đổi hoặc không dùng được — hãy Gợi ý lại."
       : jobText(plan.render_job) || (plan.output ? "xong" : "Chưa ghép — bấm Ghép lại để tiếp tục.");
     box.append(el("p", { class: "small" + (broken || (plan.render_job && plan.render_job.error) ? " error" : ""), role: "status", text: status }));
+    if (String(plan.render_job?.error || "").includes("Bộ kinh chưa có ảnh bìa khai thị")) box.append(
+      el("a", { href: base.replace(/^\/api/, "") + "/thumbs", text: "Thiết kế bìa khai thị" }));
     box.append(sourceStatus(plan));
     for (const why of check.problems || []) box.append(el("p", { class: "error small", text: why }));
     const actions = el("div", { class: "actions" });
@@ -238,7 +240,8 @@ const ThemePlan = (() => {
       return perform(async (at) => { at("Xóa video"); await request(path, "DELETE"); drafts.delete(plan.plan_id); say("Đã xóa."); });
     }, busy));
     box.append(actions);
-    if (thumbnailEndpoint && Favorites.thumbnailBlock) box.append(Favorites.thumbnailBlock(thumbnailEndpoint));
+    if (thumbnailEndpoint && Favorites.thumbnailBlock) box.append(Favorites.thumbnailBlock(thumbnailEndpoint,
+      plan.output?.intro ? { shape: "landscape", intro: plan.output.intro } : null));
     return box;
   }
   function renderData() {

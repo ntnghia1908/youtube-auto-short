@@ -20,10 +20,12 @@ from ..compilation.spec import item_from_json
 from ..config import Config
 from ..enhance import state as enhance
 from ..ingest.youtube import DownloadError, YoutubeBlocked, ytdlp_download
+from ..packaging import PackageError, compilation_thumbs, khaithi_thumbs
 from ..render import plan
-from ..render.intro import clip_record, content_record, offset
+from ..render.intro import clip_record, content_record, offset, metadata as intro_metadata
 from ..render.full import SourceBlocked
 from ..render.stage import RenderError, _last_line, _run, episode_render_config, probe_media
+from ..render.text import TextError
 from ..review.names import clean_part, truncate_utf8
 from ..selection.client import ChatError
 from ..store.client import StoreError
@@ -214,6 +216,14 @@ def render_landscape(config: Config, playlist_id: str, plan_id: str, *, hashtags
             raise RenderError(f"{snap['id']}: fingerprint clip đã thay đổi; cần duyệt lại plan")
         records.append(rec)
     fingerprint, key = theme_plan.plan_fingerprint(approved), _encode_key(config, records)
+    image = None
+    if khaithi_thumbs.start_episode(config, playlist_id) is not None:
+        try:
+            current = lambda: compilation_thumbs.theme(config, playlist_id, plan_id)
+            image = compilation_thumbs.intro_image(config, current(), "landscape", run=runner, current=current)
+        except (PackageError, TextError) as exc:
+            raise RenderError(str(exc)) from exc
+        key = hashing.config_hash(dict(content_encode_key=key, intro=intro_metadata(image)))
     folder = store.directory(config.render.output_dir, playlist_id) / "theme"
     out = folder / f"{plan_id}-r{approved['revision']}.mp4"
     metadata_path = out.with_suffix(".json")
@@ -283,15 +293,19 @@ def render_landscape(config: Config, playlist_id: str, plan_id: str, *, hashtags
                 tolerances.append(1 / float(fps))
                 clips.append({"id": snap["id"], "source": status, "warning": warning, "audio_match": match})
             joined = tmp / "compilation.mp4"
-            result = assemble(paths, joined, Encode(cfg.crf, cfg.preset, cfg.audio_bitrate, cfg.threads), runner=runner)
-            _verify(joined, sum(s["duration"] for s in approved["clips"]), sum(tolerances), runner,
+            result = assemble(paths, joined, Encode(cfg.crf, cfg.preset, cfg.audio_bitrate, cfg.threads), runner=runner,
+                              **({"intro_image": image} if image else {}))
+            _verify(joined, sum(s["duration"] for s in approved["clips"]) + result.content_offset, sum(tolerances), runner,
                     audio_tolerance=sum(tolerances))
-            chapters = meta.chapters([title for _, title in references], result.parts)
+            chapters = meta.chapters([title for _, title in references], result.parts, content_offset=result.content_offset)
             doc = {"schema_version": SCHEMA_VERSION, "plan_id": plan_id, "revision": approved["revision"],
                    "plan_fingerprint": fingerprint, "encode_key": key, "clips": clips, "duration": result.duration,
                    "chapters": chapters, "description": _description(config, approved, chapters, hashtags),
                    "download_name": (truncate_utf8(clean_part(approved["title"])) or plan_id) + ".mp4",
                    "created_at": utc_now(), "sha256": hashing.sha256_file(joined)}
+            if image:
+                doc.update(intro=intro_metadata(image), content_offset=result.content_offset,
+                           content_sha256=result.content_sha256)
             atomic_write_json(tmp / "metadata.json", doc)
             os.replace(joined, out)
             os.replace(tmp / "metadata.json", metadata_path)

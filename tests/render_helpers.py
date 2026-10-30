@@ -90,3 +90,32 @@ def make_render_episode(root: Path, template: Path, **docs) -> Workspace:
                                      "started_at": None, "finished_at": None, "error": None}
     ws.save_manifest(manifest)
     return ws
+
+
+def ffmpeg(*args):
+    return subprocess.run(['ffmpeg', '-v', 'error', *map(str, args)], capture_output=True, check=True, timeout=60).stdout
+
+
+def frame_hashes(path):
+    text = ffmpeg('-i', path, '-map', '0:v', '-f', 'framemd5', '-').decode()
+    return [line.split(',')[-1].strip() for line in text.splitlines() if not line.startswith('#')]
+
+
+def assert_fade(video, fps):
+    pixels = ffmpeg('-i', video, '-map', '0:v', '-vf', 'scale=36:64', '-pix_fmt', 'rgb24', '-f', 'rawvideo', '-')
+    size = 36 * 64 * 3
+    count = round(3 * fps)
+    first = pixels[:size]
+    last = pixels[(count-1)*size:count*size]
+    content = pixels[count*size:(count+1)*size]
+    middle_at = round((count / float(fps) - .5) * fps)
+    middle = pixels[middle_at*size:(middle_at+1)*size]
+    def distance(a, b):
+        return sum(abs(x-y) for x, y in zip(a, b)) / size
+    contrast = distance(first, content)
+    assert contrast > 20  # distinct synthetic thumbnail and video; blending must be observable
+    assert distance(last, content) < contrast * .1
+    assert contrast * .2 < distance(middle, first) < contrast * .8
+    assert contrast * .2 < distance(middle, content) < contrast * .8
+    assert distance(middle, bytes((a+b)//2 for a, b in zip(first, content))) < 5
+    return first

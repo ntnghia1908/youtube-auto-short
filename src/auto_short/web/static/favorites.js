@@ -156,12 +156,14 @@ const Favorites = (() => {
         el("span", { class: "muted small", text: info }),
         c.error ? el("div", { class: "error small", text: c.error }) : null),
       actions);
+    if (String(c.error || "").includes("Bộ kinh chưa có ảnh bìa khai thị")) card.append(
+      el("a", { href: `/playlists/${encodeURIComponent(pid)}/thumbs`, text: "Thiết kế bìa khai thị" }));
     if (c.download_url) card.append(thumbnailBlock(`/api/playlists/${encodeURIComponent(pid)}/compilations/${c.cid}/thumbs`));
     return card;
   }
 
   // Both types of video card share the same server-audited two-shape thumbnail controls.
-  function thumbnailBlock(endpoint) {
+  function thumbnailBlock(endpoint, introState = null) {
     const block = el("div", { class: "fv-thumbnails", "aria-label": "Thumbnail video ghép" });
     async function refresh() {
       if (!block.isConnected) return;
@@ -178,6 +180,8 @@ const Favorites = (() => {
           catch (e) { status.textContent = e.message; build.disabled = false; }
         });
         block.replaceChildren(status, build);
+        if (introState && view.files?.[introState.shape]?.sha256 !== introState.intro.sha256) block.append(
+          el("p", { class: "small error", role: "status", text: "Thumbnail intro đã đổi — bấm Ghép lại video." }));
         if (view.job && view.job.error && !busy) block.append(el("p", { class: "small error", text: view.job.error }));
         if (view.reason && view.reason.includes("chưa có ảnh bìa khai thị")) {
           build.disabled = true;

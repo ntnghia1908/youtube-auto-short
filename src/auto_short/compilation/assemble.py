@@ -12,10 +12,12 @@ import os
 import shutil
 import tempfile
 from dataclasses import dataclass
+from fractions import Fraction
 from pathlib import Path
 
 from ..render.plan import ACODEC, CHANNELS, PIX_FMT, SAMPLE_RATE, VCODEC
-from ..render.intro import clip_record, offset
+from ..render.intro import clip_record, offset, prepend
+from ..hashing import sha256_file
 from .probe import MediaInfo, Runner, compatible, last_line, probe, run
 from .spec import CompilationError
 
@@ -38,6 +40,8 @@ class Assembled:
     parts: tuple[float, ...]  # length of each input, in playback order (chapters)
     reencoded: bool
     size: int
+    content_offset: float = 0
+    content_sha256: str | None = None
 
 
 def list_line(path: Path) -> str:
@@ -104,7 +108,8 @@ def _reencode(paths: list[Path], infos: dict[Path, MediaInfo], tmp: Path, enc: E
     return out, _infos(out, runner)
 
 
-def assemble(paths: list[Path], out: Path, enc: Encode = Encode(), *, runner: Runner = run) -> Assembled:
+def assemble(paths: list[Path], out: Path, enc: Encode = Encode(), *, runner: Runner = run,
+             intro_image: Path | None = None) -> Assembled:
     """Write ``out`` (``.mp4``) from ``paths`` in order (a path may repeat). Raises :class:`CompilationError`."""
     if not paths:
         raise CompilationError("không có đoạn nào để ghép")
@@ -146,7 +151,23 @@ def assemble(paths: list[Path], out: Path, enc: Encode = Encode(), *, runner: Ru
         result = probe(joined, runner)
         if not result.complete or result.duration < DURATION_FLOOR * sum(parts):
             raise CompilationError(f"video ghép không hợp lệ ({result.duration:.1f} s, mong đợi {sum(parts):.1f} s)")
+        content_offset, content_sha = 0, None
+        if intro_image is not None:
+            from ..render.stage import RenderError
+
+            content_sha = sha256_file(joined)
+            prefixed = tmp / "prefixed.mp4"
+            try:
+                content_offset = prepend(joined, prefixed, intro_image, Fraction(result.fps), enc, tmp, runner,
+                                         size=(result.width, result.height))
+            except RenderError as exc:
+                raise CompilationError(str(exc)) from exc
+            joined = prefixed
+            result = probe(joined, runner)
+            if not result.complete or result.duration < DURATION_FLOOR * (sum(parts) + content_offset):
+                raise CompilationError("video ghép có intro không hợp lệ")
         os.replace(joined, out)
-        return Assembled(duration=result.duration, parts=parts, reencoded=reencoded, size=out.stat().st_size)
+        return Assembled(duration=result.duration, parts=parts, reencoded=reencoded, size=out.stat().st_size,
+                         content_offset=content_offset, content_sha256=content_sha)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

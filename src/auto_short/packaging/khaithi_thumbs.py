@@ -1,4 +1,4 @@
-"""Per-clip khai thị thumbnails using approved covers and the video's resolved titles."""
+"""Per-clip KT thumbnails and Short intro images using approved covers and resolved titles."""
 from __future__ import annotations
 
 import functools
@@ -22,6 +22,7 @@ LAYOUT_VERSION = 6
 PORTRAIT_NAME = re.compile(r"[0-9]{2}-[0-9a-f]{12}\.png")
 CLIP_ID = re.compile(r"[km][0-9]{2,}")
 FILE_NAME = re.compile(r"([km][0-9]{2,}-(?:vertical|landscape))-([a-f0-9]{64})\.jpg")
+SHORT_LABEL = "TRÍCH ĐOẠN"
 
 
 def directory(config, ident):
@@ -30,7 +31,10 @@ def directory(config, ident):
     return episode.directory(config, ident)
 
 
-def titles(config, ident, *, include_hidden=False):
+def titles(config, ident, *, include_hidden=False, short=False):
+    if short:
+        episode.directory(config, ident)  # validate Short identity without requiring khaithi.json
+        return _resolved_titles(config, ident, include_hidden=include_hidden)
     directory(config, ident)
     folder = episode._no_symlinks(Path(config.workspace.dir) / ident)
     episode._no_symlinks(folder / "khaithi.json")
@@ -42,6 +46,12 @@ def titles(config, ident, *, include_hidden=False):
         return []
     if kind.base_episode_id != ident[:-3]:
         raise PackageError("tập gốc khai thị không khớp id")
+    return _resolved_titles(config, ident, include_hidden=include_hidden)
+
+
+def _resolved_titles(config, ident, *, include_hidden):
+    """Both products resolve titles.json and manual/added/rejected review entries identically."""
+    folder = episode._no_symlinks(Path(config.workspace.dir) / ident)
     doc = read_json_dict(episode._no_symlinks(folder / "titles.json"))
     if doc is None:
         return []
@@ -162,56 +172,60 @@ def _read_portraits(folder):
 EPISODES_PER_PORTRAIT = 20  # HUMAN LEAD 2026-10-29: every clip of episodes 1-20 shares portrait 1, 21-40 portrait 2, ...
 
 
-def start_episode(config, pid):
-    """First episode that gets KT thumbnails (`khaithi_from.json`); earlier ones were already published."""
+def start_episode(config, pid, *, filename="khaithi_from.json"):
+    """First included episode; KTI1 and KTI2 use separate runtime scope files (integers >= 1)."""
     try:
-        doc = read_json_dict(episode._no_symlinks(Path(config.packaging.asset_dir) / "khaithi_from.json"))
+        doc = read_json_dict(episode._no_symlinks(Path(config.packaging.asset_dir) / filename))
     except (PackageError, OSError, ValueError):
         return None
-    start = (doc or {}).get("playlists", {}).get(pid) if (doc or {}).get("schema_version") == 1 else None
-    return start if type(start) is int and start > 1 else None
+    playlists = (doc or {}).get("playlists")
+    start = playlists.get(pid) if isinstance(playlists, dict) and type((doc or {}).get("schema_version")) is int \
+        and doc["schema_version"] == 1 else None
+    return start if type(start) is int and start >= 1 else None
 
 
-def before_start(config, pid, number):
-    start = start_episode(config, pid)
+def before_start(config, pid, number, *, filename="khaithi_from.json"):
+    start = start_episode(config, pid, filename=filename)
     try:
         return start is not None and int(number) < start
     except (TypeError, ValueError):
         return False
 
 
-def intro_context(config, ident):
-    """Containing configured playlist and header, or None for a Short / an episode outside KTI1."""
-    if not (Path(config.workspace.dir) / ident / "khaithi.json").is_file():
+def intro_context(config, ident, *, short=False):
+    """Containing playlist/header for the selected product, or None outside its configured scope."""
+    if (Path(config.workspace.dir) / ident / "khaithi.json").is_file() == short:
         return None
+    filename = "short_intro_from.json" if short else "khaithi_from.json"
     base = ident.removesuffix(khaithi.SUFFIX)
     for path in sorted((Path(config.workspace.dir) / "_playlists").glob("*.json")):
         doc = read_json_dict(episode._no_symlinks(path)) or {}
         pid = path.stem
-        if doc.get("playlist_id") != pid or start_episode(config, pid) is None:
+        if doc.get("playlist_id") != pid or start_episode(config, pid, filename=filename) is None:
             continue
         if any(isinstance(e, dict) and e.get("video_id") == base for e in doc.get("entries", [])):
             fields = display_fields(config, pid, episode.header(config, base))
-            if not before_start(config, pid, fields["episode"]):
+            if not before_start(config, pid, fields["episode"], filename=filename):
                 return pid, fields
     return None
 
 
-def vertical_clip(config, ident, clip_id, *, pid, fields, run=None):
-    """Build/reuse precisely THUMB1's vertical image without building the other clips or orientations."""
+def vertical_clip(config, ident, clip_id, *, pid, fields, run=None, short=False):
+    """Reuse THUMB1 for KT; Shorts use its layout with a separate label, folder and sidecar."""
     entry = cover.current(config, pid).get("kt_vertical")
     if entry is None:
         raise PackageError(f"Bộ kinh chưa có ảnh bìa khai thị — /playlists/{pid}/thumbs")
-    all_titles = titles(config, ident, include_hidden=True)
+    all_titles = titles(config, ident, include_hidden=True, short=short)
     title = next((t for t in all_titles if t.clip_id == clip_id and t.title and not t.rejected), None)
     if title is None:
         raise PackageError("chưa có tiêu đề clip khai thị")
-    folder = directory(config, ident)
+    folder = _clip_directory(config, ident, short=short)
+    label = SHORT_LABEL if short else DEFAULT_LABEL
     items = portraits(config)
     portrait, portrait_sha, facing = choose_portrait(items, fields["episode"])
     key = cache_key(title.title, fields["episode"], entry, "vertical", portrait_sha256=portrait_sha,
-                    speaker=fields["speaker"], series=fields["series"], portrait_library=[sha for _, sha, _ in items])
-    old = read(config, ident) or {}
+                    speaker=fields["speaker"], series=fields["series"], portrait_library=[sha for _, sha, _ in items], label=label)
+    old = read(config, ident, short=short) or {}
     previous = old.get("clips", {}).get(clip_id, {}).get("vertical")
     numbers = {t.clip_id: n for n, t in enumerate(all_titles, 1)}
     if thumbnail.reusable(folder, previous, key, file_pattern=FILE_NAME):
@@ -224,7 +238,7 @@ def vertical_clip(config, ident, clip_id, *, pid, fields, run=None):
         name = f"{clip_id}-vertical-{key}.jpg"
         with tempfile.TemporaryDirectory(prefix=".kt-intro-", dir=folder) as tmp:
             image = draw(Path(tmp), title.title, fields, entry, "vertical", cover.directory(config, pid) / entry["file"],
-                         name, portrait=portrait, facing=facing, run=run)
+                         name, portrait=portrait, facing=facing, run=run, label=label)
             destination = episode._no_symlinks(folder / name)
             os.replace(image, destination)
         result = dict(file=name, key=key, sha256=sha256_file(destination))
@@ -237,8 +251,8 @@ def vertical_clip(config, ident, clip_id, *, pid, fields, run=None):
     return destination
 
 
-def enqueue_intro_rebuild(config, runner, pid, first, last, *, prioritize_first_ten=False):
-    """Queue D-KTI1-2 on the live web runner (no HTTP needed, including already published clips).
+def enqueue_intro_rebuild(config, runner, pid, first, last, *, prioritize_first_ten=False, short=False):
+    """Queue KTI1 or KTI2 Shorts on the live runner, including already published clips.
 
     Example: ``enqueue_intro_rebuild(config, runner, pid, 31, 500, prioritize_first_ten=True)``.
     The first ten means the configured start..start+9, independently of the requested range.
@@ -253,20 +267,23 @@ def enqueue_intro_rebuild(config, runner, pid, first, last, *, prioritize_first_
 
     if type(first) is not int or type(last) is not int or first < 1 or last < first:
         raise PackageError("khoảng tập không hợp lệ")
-    start = start_episode(config, pid)
+    filename = "short_intro_from.json" if short else "khaithi_from.json"
+    start = start_episode(config, pid, filename=filename)
     selected, skipped = [], []
     for entry in episode.playlist(config, pid)["entries"]:
         base = entry.get("video_id")
         if not isinstance(base, str):
             continue
-        ident = base + khaithi.SUFFIX
-        if not (Path(config.workspace.dir) / ident / "khaithi.json").is_file() or start is None:
+        ident = base if short else base + khaithi.SUFFIX
+        if not (Path(config.workspace.dir) / ident).is_dir() or start is None \
+                or (Path(config.workspace.dir) / ident / "khaithi.json").is_file() == short:
             continue
         fields = display_fields(config, pid, episode.header(config, base))
         number = int(fields["episode"])
-        if not first <= number <= last or before_start(config, pid, number):
+        if not first <= number <= last or before_start(config, pid, number, filename=filename):
             continue
-        doc = read_json_dict(directory(config, ident).parent / "render_manifest.json") or {}
+        out_dir = episode.directory(config, ident).parent
+        doc = read_json_dict(out_dir / "render_manifest.json") or {}
         clips = [s for s in doc.get("shorts", []) if s.get("status") == "rendered"]
         if not clips:
             continue
@@ -296,9 +313,9 @@ def enqueue_intro_rebuild(config, runner, pid, first, last, *, prioritize_first_
             if not current or not clip.get("intro") or "transition" not in clip["intro"]:
                 current = False
                 break
-            image = vertical_clip(config, ident, clip["clip_id"], pid=pid, fields=fields)
+            image = vertical_clip(config, ident, clip["clip_id"], pid=pid, fields=fields, short=short)
             current = current and clip["intro"] == intro_metadata(image)
-            local = directory(config, ident).parent / clip["file"]
+            local = out_dir / clip["file"]
             release = (read_json_dict(local.parent.parent / "store.json") or {}).get("released", {}).get(clip["clip_id"], {})
             current = current and (sha256_file(local) == clip["sha256"] if local.is_file()
                                    else release.get("sha256") == clip["sha256"])
@@ -490,8 +507,12 @@ def cache_key(title, number, entry, shape, *, portrait_sha256=None, speaker="", 
                             shape=shape, hflip=hflip, **extra))
 
 
-def read(config, ident):
-    path = episode._no_symlinks(directory(config, ident) / "thumbs.json")
+def _clip_directory(config, ident, *, short=False):
+    return episode._no_symlinks(episode.directory(config, ident).parent / "short_intro_thumbs") if short else directory(config, ident)
+
+
+def read(config, ident, *, short=False):
+    path = episode._no_symlinks(_clip_directory(config, ident, short=short) / "thumbs.json")
     doc = read_json_dict(path)
     if doc is None:
         return None
