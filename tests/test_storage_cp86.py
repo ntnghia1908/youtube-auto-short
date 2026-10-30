@@ -334,11 +334,8 @@ def test_archive_route_and_archived_episode_rules(tcfg, episode):
         assert c.post(f"{BASE}/k01/title", json={"set": ""}).status_code == 422
         assert c.post(f"{BASE}/k99/restore").status_code == 422
         assert c.app.state.runner.jobs() == []
-        # Resubmitting the URL remains refused by ingest (SRC4).
-        msg = "đã dọn video nguồn; bấm Khôi phục nguồn để sửa"
-        resp = c.post("/api/episodes", json={"url": f"https://youtu.be/{EID}", "kinds": ["short"]})
-        assert resp.status_code == 409 and msg in resp.json()["detail"]
-        assert c.app.state.runner.jobs() == []
+        # Resubmitting the URL now defers through a source restore (FIX-process-archived-restore):
+        # covered by tests/test_web_process_restore.py.
         # delete a Short: applied directly, no render job
         r = c.post(f"{BASE}/k01/delete")
         assert r.status_code == 200 and r.json() == {"changed": True, "job": None}
