@@ -46,6 +46,43 @@ def media(path, codec, size, *, silence=0, duration=4):
     return path
 
 
+@pytest.mark.parametrize("changed", [False, True])
+def test_verify_ntsc_midpoint_seeks_and_changed_frame(tmp_path, monkeypatch, changed):
+    fps = Fraction(30000, 1001)
+    count = 102186
+    source, output = tmp_path / "source.mp4", tmp_path / "joined.mp4"
+    original = {"duration": float(count / fps), "video": {}}
+    spec = {"fps": fps, "offset": 3.003}
+    monkeypatch.setattr(hd, "probe_media", lambda *a: {"duration": original["duration"] + spec["offset"]})
+    monkeypatch.setattr(hd, "boundary_pts", lambda *a: spec["offset"])
+    seeks = []
+
+    def runner(cmd):
+        seconds = float(cmd[cmd.index("-ss") + 1])
+        joined = cmd[cmd.index("-i") + 1] == str(output)
+        seeks.append((joined, seconds))
+        lecture_seconds = seconds - (spec["offset"] if joined else 0)
+        n = round(lecture_seconds * fps - 0.5)
+        # Model the observed opposite-side selection at the lecture's middle boundary.
+        boundary = abs(lecture_seconds - float(51093 / fps)) < 1e-8
+        digest = "changed" if joined and (boundary or (changed and n == 51093)) else str(n)
+        return subprocess.CompletedProcess(cmd, 0, f"0, 0, 0, 1, 1, {digest}\n", "")
+
+    # The former boundary seek reproduces the false mismatch in this runner.
+    boundary = float(51093 / fps)
+    assert hd.frame_hash(source, boundary, runner) != hd.frame_hash(output, boundary + spec["offset"], runner)
+    seeks.clear()
+    if changed:
+        with pytest.raises(RenderError, match="khung hình sau offset khác bản gốc"):
+            hd.verify(source, output, original, spec, runner)
+    else:
+        hd.verify(source, output, original, spec, runner)
+    indices = [0, count // 2] if changed else [0, count // 2, count - 2]
+    expected = [(joined, float((n + Fraction(1, 2)) / fps) + (spec["offset"] if joined else 0))
+                for n in indices for joined in (False, True)]
+    assert seeks == expected
+
+
 @pytest.mark.parametrize("codec", ["opus", "aac"])
 @pytest.mark.parametrize("silence", [2, 57])
 def test_silent_audio_prefix_boundary_and_shifted_join(tmp_path, image, codec, silence):
@@ -245,6 +282,29 @@ def test_real_job_rebuild_replaces_intro_without_stacking(config, image, tmp_pat
     stored.write_bytes(client.data)
     assert probe_media(stored, _run)["duration"] == pytest.approx(7.007, abs=0.034)
     assert not (d / "source_hd.mp4").exists()
+
+
+def test_ntsc_rebuild_seeks_midpoints(config, image, tmp_path, monkeypatch):
+    source = media(tmp_path / "source.mp4", "aac", "160x90")
+    fps = Fraction(30000, 1001)
+    count = round(probe_media(source, _run)["duration"] * fps)
+    _, client = seed(config, source.read_bytes())
+    monkeypatch.setattr(hd, "thumbnail", lambda *a, **kw: image)
+    hd.run_intro(VID, config, client=client)
+    image.write_bytes(b"P6\n320 180\n255\n" + bytes([0, 255, 0]) * 320 * 180)
+    seeks = []
+
+    def runner(cmd):
+        if "framemd5" in cmd:
+            seeks.append(float(cmd[cmd.index("-ss") + 1]))
+        return _run(cmd)
+
+    doc = hd.run_intro(VID, config, client=client, run=runner)
+    times = [float((n + Fraction(1, 2)) / fps) for n in (0, count // 2, count - 2)]
+    offset = doc["offset_seconds"]
+    # Extraction compares stored then original; verification compares original then stored.
+    assert seeks == [s for t in times for s in (t + offset, t)] + [s for t in times for s in (t, t + offset)]
+    assert doc["status"] == "done" and client.replaced == 2
 
 
 @pytest.mark.parametrize("kind", ["vertical", "pipeline", "render", "add"])
