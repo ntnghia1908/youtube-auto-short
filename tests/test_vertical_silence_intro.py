@@ -202,6 +202,29 @@ def test_store_revision_roundtrip(memory_store, tmp_path, kind):
     assert restarted.lookup(VIDEO, kind)[0]["file"] == row["file"]
 
 
+@pytest.mark.parametrize('fps,graph_sha,command_sha', [
+    (Fraction(25), '0a9be02af02ac319a4b6b53ce6830db83b666baf1192cd146c0a64a420cd59e3',
+     '17dfa464953c966c611190d36c6e81ac17bae10c613ac38d8218c482e68bf4de'),
+    (Fraction(30000, 1001), '718c095116fc0d469c72bae3b64c31b2c12eb4958f045ae89b872de01dc717b4',
+     'e55f49a3a980d3b0afb57056a7a2b5d7c228f518fd08e9336248485f6f8658bc'),
+])
+def test_kti1_fade_keeps_vert2_graph_and_command_bytes(fps, graph_sha, command_sha):
+    """Golden SHA from pre-D-KTI1-6 HEAD a1f9914; full.py's key derivation remains unchanged."""
+    from pathlib import Path
+    from auto_short.config import Config
+    from auto_short.hashing import config_hash
+
+    graph = full.filter_graph(frames=[(0, 25)], fps=fps,
+        lay=full.full_layout(plan.geometry(Config().render), 320, 180), font_file=Path('font.ttf'),
+        top_lines=[], top_size=32, bottom_lines=[], bottom_size=32, intro=True)
+    command = full.ffmpeg_command(ffmpeg='ffmpeg', source=Path('content.mp4'), output=Path('vertical.mp4'),
+        graph_script=Path('vertical.filter'), fps=fps, crf=22, preset='ultrafast', audio_bitrate='192k',
+        threads=2, intro=Path('thumb.jpg'))
+    assert hashlib.sha256(graph.encode()).hexdigest() == graph_sha
+    assert config_hash(command) == command_sha
+    assert 'xfade=' not in graph
+
+
 def test_hd_intro_offset_keeps_full_key_and_original_duration(tcfg, media_runner):
     from auto_short import hashing
     from auto_short.enhance import state as enh

@@ -112,6 +112,7 @@ def remove_kept(folder: Path, item: Item) -> None:
     if path is None:
         return
     path.unlink(missing_ok=True)
+    path.with_suffix(".intro.json").unlink(missing_ok=True)
     for d in (path.parent, folder / KEPT_DIR):
         try:
             d.rmdir()

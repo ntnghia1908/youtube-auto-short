@@ -21,6 +21,8 @@ from .. import khaithi
 from ..compilation import CompilationError, Item, store
 from ..config import Config
 from ..review.names import short_code
+from ..render.intro import clip_record, offset
+from ..workspace import atomic_write_json
 from ..store.shorts import borrow_short, fetch_released
 from ..store.client import StoreError
 from . import episodes as ep
@@ -156,7 +158,10 @@ class Compilations:
         info = self._info(clip.path)
         if not info.complete:
             raise CompilationError(f"{clip.code}: file thiếu video / audio")
-        return info.duration
+        try:
+            return info.duration - offset(clip_record(clip.path))
+        except ValueError as exc:
+            raise CompilationError(str(exc)) from exc
 
     def owns(self, doc: dict, episode_id: str) -> bool:
         """Does the Short / khai thị episode ``episode_id`` belong to a (available) entry of the bộ kinh?"""
@@ -504,9 +509,13 @@ class Compilations:
                             moved.append((location, dst))
                         first[fav.clip] = dst
                     try:
-                        duration = self._info(dst).duration
+                        duration = self._info(dst).duration - offset(s)
                     except CompilationError:
                         duration = float(s.get("duration") or 0)
+                    if s.get("intro"):
+                        sidecar = dst.with_suffix(".intro.json")
+                        fetched.append(sidecar)
+                        atomic_write_json(sidecar, s)
                     snap = {"path": f"{store.KEPT_DIR}/{episode_id}/{fav.clip}.mp4",
                             "title": s.get("title") if isinstance(s.get("title"), str) else None,
                             "duration": round(duration, 3), "episode_number": label, "clip_number": n,

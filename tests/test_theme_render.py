@@ -556,6 +556,79 @@ def test_real_aspect_ratio_padding_and_square_pixels(tmp_path, sar, bars):
     assert (max(pixel(5)) < 20) if bars else (pixel(5)[0] > 200)
 
 
+@pytest.mark.parametrize('released', [False, True])
+def test_kti1_intro_preserves_approval_and_content_reference(episode, released):
+    """Existing approved plan and index survive an intro-only replacement, on disk or on the store."""
+    from auto_short.render.intro import content_manifest
+    from auto_short.web.episodes import StoredShort
+
+    cfg, ws, folder, out = episode
+    # Real render entries always have a key; seed it before the approval snapshot.
+    change(out / 'render_manifest.json', lambda d: d['shorts'][0].update(render_key='c' * 64))
+    make_plan(cfg)
+    before = theme_index.build_index(cfg, 'PLtest', client=Fake(), write=False)['records'][0]
+    manifest = json.loads((out / 'render_manifest.json').read_text())
+    old = json.loads(json.dumps(manifest))
+    video = out / 'shorts/k01.mp4'
+    video.write_bytes(b'intro-and-original-content')
+    record = manifest['shorts'][0]
+    record.update(intro=dict(sha256='a' * 64, seconds=3), content_offset=3,
+                  content_sha256=record['sha256'], content_render_key=record['render_key'],
+                  sha256=hashing.sha256_file(video), render_key='b' * 64)
+    manifest['content_workspace_manifest_sha256'] = hashing.sha256_file(ws.dir / 'manifest.json')
+    # The render-stage timing changes after replacing the file.
+    change(ws.dir / 'manifest.json', lambda d: d['stages'].update(render=dict(status='done', finished_at='later')))
+    atomic_write_json(out / 'render_manifest.json', manifest)
+    assert content_manifest(manifest) == old
+    if released:
+        offload_shorts(out)
+    after = theme_index.build_index(cfg, 'PLtest', client=Fake(), write=False)['records'][0]
+    assert after['input_fingerprint'] == before['input_fingerprint']
+    assert after['inputs']['render_sha256'] == before['inputs']['render_sha256']
+    assert tp.list_plans(cfg, 'PLtest')[0]['check'] == {'state': 'approved', 'problems': []}
+    path, _ = tr._reference(cfg, 'PLtest', after)
+    if released:
+        assert isinstance(path, StoredShort) and path.sha256 == record['sha256']
+    else:
+        assert path == video.resolve()
+
+
+def test_kti1_real_theme_rebuild_strips_reference_intro(media, monkeypatch, tmp_path):
+    from auto_short.render import intro
+    from test_packaging_cover import source_image
+
+    cfg, ws, folder, out, _ = media
+    change(out / 'render_manifest.json', lambda d: [s.update(render_key=str(i) * 64)
+                                                  for i, s in enumerate(d['shorts'], 1)])
+    doc = make_plan(cfg)
+    baseline = tr.render_landscape(cfg, 'PLtest', doc['plan_id'], runner=checked, downloader=no_call)
+    expected = tmp_path / 'expected.mp4'
+    shutil.copyfile(baseline.path, expected)
+    manifest = json.loads((out / 'render_manifest.json').read_text())
+    image = source_image(tmp_path)
+    for i, record in enumerate(manifest['shorts']):
+        video = out / record['file']
+        work = tmp_path / f'prefix-{i}'
+        work.mkdir()
+        content = work / 'content.mp4'
+        video.rename(content)
+        # TC3 fixtures use small portrait references; production clips use 1080x1920.
+        with monkeypatch.context() as small:
+            small.setattr(tr.plan, 'WIDTH', 108)
+            small.setattr(tr.plan, 'HEIGHT', 192)
+            offset = intro.prepend(content, video, image, Fraction(25), cfg.render, work, checked)
+        record.update(content_sha256=record['sha256'], content_render_key=record['render_key'],
+                      content_offset=offset, intro=dict(sha256=hashing.sha256_file(image), seconds=3),
+                      sha256=hashing.sha256_file(video), render_key='x' * 64)
+    atomic_write_json(out / 'render_manifest.json', manifest)
+    baseline.path.unlink()  # exercise reconstruction and the audio gate rather than the landscape cache
+    result = tr.render_landscape(cfg, 'PLtest', doc['plan_id'], runner=checked, downloader=no_call)
+    assert result.ran
+    def md5(path):
+        return checked(['ffmpeg', '-v', 'error', '-i', str(path), '-map', '0:v', '-f', 'framemd5', '-']).stdout
+    assert md5(result.path) == md5(expected)
+
+
 def test_hd_intro_preserves_landscape_frames_identity_and_cache(media, tmp_path):
     from auto_short.enhance import state as enhance
     from auto_short.render import hd_intro
