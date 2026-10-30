@@ -19,6 +19,7 @@ from ...enhance.state import EnhanceError
 from ...pipeline import PIPELINE_STAGES
 from ...post import store as post_store
 from ...render import full as render_full
+from ...render import hd_intro
 from ...review import (
     ArchivedError, EpisodeNotFound, ReviewError, archive_source, content_disposition,
     delete_episode, is_archived, list_titles, set_published, set_watched, shorts as review_shorts,
@@ -29,7 +30,8 @@ from ...review.names import hashtags as review_hashtags
 from ...store.client import StoreClient, StoreMismatch, StoreRangeError, StoreUnavailable
 from .. import episodes as ep
 from ..context import WebContext, KIND_RESTORE_SOURCE, KINDS
-from ..jobs import KIND_ADD, KIND_COMPILATION, KIND_RENDER, KIND_VERTICAL, render_target
+from ..jobs import (EPISODE_KINDS, KIND_ADD, KIND_COMPILATION, KIND_HD_INTRO, KIND_RENDER, KIND_VERTICAL,
+                    HDIntroTarget, job_key, render_target)
 from ..playlists import PlaylistError
 from ..urls import ASK, PLAYLIST, UrlError, classify_url
 from .models import PublishedIn
@@ -59,6 +61,10 @@ class EnhanceSwitchIn(BaseModel):
 class BackupIn(BaseModel):
     kind: Literal["hd", "vertical"]
     sha256: str = Field(max_length=200)
+
+
+class HDIntroIn(BaseModel):
+    keep_original: StrictBool = False
 
 
 class ReleaseIn(BaseModel):
@@ -246,6 +252,7 @@ def build(ctx: WebContext) -> APIRouter:
                 "name": ep.hd_download_name(ctx.config, episode_id) if hd is not None or on_store else None,
                 "size": _size_or_none(hd), "source": src.kind if src is not None else "released",
                 **({"store": True} if on_store else {}),
+                "hd_intro": _hd_intro_view(episode_id),
                 "vertical": {"ready": ready is not None or stored is not None,
                              "store": stored is not None,
                              "url": f"/api/episodes/{episode_id}/vertical",
@@ -325,6 +332,9 @@ def build(ctx: WebContext) -> APIRouter:
                 current = ctx.runner.latest_post(episode_id)  # CP8.16 R3: a compose job also blocks the deletion
             if current is None or not current.active:
                 current = ctx.runner.latest_enhance(episode_id)  # CP13.1b: so does the assembly of the HD source
+            if current is None or not current.active:
+                current = next((j for j in ctx.runner.jobs() if j.kind == KIND_HD_INTRO and j.active
+                                and enh_state.owner_id(j.episode_id) == enh_state.owner_id(episode_id)), None)
             if current is not None and current.active:
                 return JSONResponse({"detail": "episode đang có job chạy/đợi; xóa sau khi job xong",
                                      "job": ctx.job_view(current)}, status_code=409)
@@ -525,6 +535,33 @@ def build(ctx: WebContext) -> APIRouter:
                    if k.lower() in ("content-length", "content-range", "accept-ranges")}
         headers.update({"Content-Disposition": content_disposition(name), "Cache-Control": "private, no-cache"})
         return _StoreResponse(stream, status_code=status, headers=headers)
+
+    def _hd_intro_view(episode_id: str) -> dict | None:
+        view = hd_intro.view(ctx.config, episode_id)
+        if view is not None:
+            key = job_key(KIND_HD_INTRO, enh_state.owner_for(ctx.config, episode_id))
+            job = next((j for j in reversed(ctx.runner.jobs()) if job_key(j.kind, j.episode_id) == key), None)
+            view["job"] = ctx.job_view(job, logs=False)
+        return view
+
+    @router.post("/api/episodes/{episode_id}/hd-intro")
+    def api_hd_intro(episode_id: str, body: HDIntroIn | None = None):
+        if not ep.valid_episode_id(episode_id) or not (Path(ctx.config.workspace.dir) / episode_id / "manifest.json").is_file() \
+                or hd_intro.playlist(ctx.config, episode_id) is None:
+            return JSONResponse({"detail": "không có tập / bộ kinh chưa bật HD intro"}, status_code=404)
+        owner = enh_state.owner_for(ctx.config, episode_id)
+        d = Path(ctx.config.workspace.dir) / owner
+        with ctx.submit_lock:
+            if not ctx.config.store.enabled or not enh_state.is_released(d):
+                return JSONResponse({"detail": "HD chưa giải phóng lên kho"}, status_code=409)
+            busy = next((j for j in ctx.runner.jobs() if j.active and enh_state.owner_id(j.episode_id) == enh_state.owner_id(owner)
+                         and j.kind in (*EPISODE_KINDS, KIND_VERTICAL, KIND_RESTORE_SOURCE)), None)
+            if busy is not None:
+                return JSONResponse({"detail": "đang có job bản dọc / Short / khai thị; tạo HD intro sau khi xong"}, status_code=409)
+            job, created = ctx.runner.submit(owner, KIND_HD_INTRO,
+                                             HDIntroTarget(ctx.config, keep_original=bool(body and body.keep_original)))
+        return JSONResponse({"job": ctx.job_view(job, logs=False), "hd_intro": _hd_intro_view(episode_id)},
+                            status_code=202 if created else 200)
 
     @router.post("/api/episodes/{episode_id}/vertical")
     def api_episode_vertical_make(episode_id: str):

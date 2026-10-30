@@ -102,6 +102,7 @@ class CpuAverage:
                 return None
             return max(0.0, min(1.0, 1.0 - (idle1 - idle0) / (tot1 - tot0)))
 KIND_ENHANCE = "enhance"  # CP13.1b: assemble ``source_hd.mp4`` from the received segments (lane render; runs under enhance_key)
+KIND_HD_INTRO = "hd_intro"
 KIND_VERTICAL = "vertical"  # CP8.27 H4: vertical full-episode video from ``source_hd.mp4`` (lane render; runs under vertical_key)
 KIND_COMPILATION = "compilation"  # CP8.33 G5: khai thị compilation (lane render; key ``compilation:<playlist_id>:<cid>``)
 POST_IMAGES_KEY = "_post_images"  # CP8.15 P9: pseudo episode id for the (single, global) image search job
@@ -125,6 +126,7 @@ def vertical_key(episode_id: str) -> str:
 
 def job_key(kind: str, episode_id: str) -> str:
     return post_key(episode_id) if kind == KIND_POST else enhance_key(episode_id) if kind == KIND_ENHANCE \
+        else f"{episode_id}#hd_intro" if kind == KIND_HD_INTRO \
         else vertical_key(episode_id) if kind == KIND_VERTICAL else episode_id
 
 
@@ -596,7 +598,7 @@ class JobRunner:
         lane_steps = getattr(target, "lane_steps", None)
         if lane_steps is not None:
             return list(lane_steps())
-        return [Step(RENDER if kind in (KIND_RENDER, KIND_ENHANCE, KIND_VERTICAL, KIND_COMPILATION) else PREPARE, target)]
+        return [Step(RENDER if kind in (KIND_RENDER, KIND_ENHANCE, KIND_VERTICAL, KIND_HD_INTRO, KIND_COMPILATION) else PREPARE, target)]
 
     def _enqueue_locked(self, episode_id: str, kind: str, target: Callable[[Job], None],
                         clip_ids: list[str] | None) -> Job:
@@ -720,7 +722,8 @@ class JobRunner:
         """Drop the finished jobs of a deleted episode (CP8.5 X3) so it leaves every view; refused (False) while
         one of its jobs is queued/running."""
         with self._lock:
-            for key in (episode_id, post_key(episode_id), enhance_key(episode_id), vertical_key(episode_id)):
+            for key in (episode_id, post_key(episode_id), enhance_key(episode_id), vertical_key(episode_id),
+                        job_key(KIND_HD_INTRO, episode_id)):
                 latest = self._latest.get(key)
                 if latest is not None and latest.active:
                     return False
@@ -728,6 +731,7 @@ class JobRunner:
             self._latest.pop(post_key(episode_id), None)
             self._latest.pop(enhance_key(episode_id), None)
             self._latest.pop(vertical_key(episode_id), None)
+            self._latest.pop(job_key(KIND_HD_INTRO, episode_id), None)
             for job_id in [j.id for j in self._jobs.values() if j.episode_id == episode_id]:
                 del self._jobs[job_id]
             self._save_locked()
@@ -2090,6 +2094,27 @@ def vertical_target(config: Config, *, vertical: Callable | None = None, episode
     """See :class:`VerticalTarget`."""
     return VerticalTarget(config, vertical=vertical, episode_id=episode_id, downloader=downloader,
                           disk_blocked=disk_blocked)
+
+
+class HDIntroTarget:
+    def __init__(self, config: Config, *, keep_original: bool = False):
+        self.config, self.keep_original = config, keep_original
+
+    def __call__(self, job: Job) -> None:
+        from ..render.hd_intro import run_intro
+        from ..store.client import StoreError
+        job.stage = "hd_intro"
+        t0 = time.monotonic()
+        try:
+            run_intro(job.episode_id, self.config, keep_original=self.keep_original)
+        except (StoreError, StoreWait, RenderError, OSError, ValueError) as exc:
+            raise JobFailed(f"HD intro: {exc}") from exc
+        job.stages.append({"stage": "hd_intro", "ran": True, "seconds": round(time.monotonic() - t0, 3)})
+        job.stage = None
+        job.summary = "HD có intro ✓"
+
+    def spec(self) -> dict:
+        return {"keep_original": self.keep_original}
 
 
 # --- khai thị compilation job (CP8.33 G5) --------------------------------------------------------------------------

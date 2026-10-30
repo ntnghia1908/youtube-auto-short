@@ -360,6 +360,11 @@ class StoreConfig:
 
 
 @dataclass(frozen=True)
+class HDIntroConfig:
+    playlists: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class Config:
     workspace: WorkspaceConfig = field(default_factory=WorkspaceConfig)
     ingest: IngestConfig = field(default_factory=IngestConfig)
@@ -377,6 +382,7 @@ class Config:
     packaging: PackagingConfig = field(default_factory=PackagingConfig)
     store: StoreConfig = field(default_factory=StoreConfig)
     thumbs: ThumbsConfig = field(default_factory=ThumbsConfig)
+    hd_intro: HDIntroConfig = field(default_factory=HDIntroConfig)
 
 
 def _section(data: dict, name: str) -> dict:
@@ -859,9 +865,18 @@ def from_dict(data: dict) -> Config:
         compilation=_compilation(data),
         store=_store(data),
         thumbs=_thumbs(data),
+        hd_intro=_hd_intro(data),
         packaging=PackagingConfig(asset_dir=Path(_str(_section(data, "packaging"), "asset_dir",
             str(PackagingConfig().asset_dir), "packaging")).expanduser()),
     )
+
+
+def _hd_intro(data):
+    playlists = _section(data, "hd_intro").get("playlists", [])
+    if not isinstance(playlists, list) or not all(isinstance(p, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", p)
+                                               for p in playlists):
+        raise ConfigError("hd_intro.playlists must be a list of playlist ids")
+    return HDIntroConfig(tuple(playlists))
 
 
 def _thumbs(data):

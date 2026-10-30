@@ -118,7 +118,9 @@ def current(config: Config, episode_id: str) -> bool:
     src = enhance_state.effective_source(config, owner)
     if src is None and config.store.enabled and enhance_state.is_released(Path(config.workspace.dir) / owner):
         from ..store.borrow import released_hd_sha  # HD2a: a released HD lives on the store; its sha256 was recorded
-        sha = released_hd_sha(config, owner, Path(config.workspace.dir) / owner)
+        d = Path(config.workspace.dir) / owner
+        intro = enhance_state.hd_intro_record(d)
+        sha = intro["original"]["sha256"] if intro else released_hd_sha(config, owner, d)
         return sha is not None and meta.get("hd_sha256") == sha
     return src is not None and meta.get("hd_sha256") == src.sha256
 
@@ -334,8 +336,9 @@ def filter_graph(*, frames: list[tuple[int, int]], fps: Fraction, lay: FullLayou
 
 
 def ffmpeg_command(*, ffmpeg: str, source: Path, output: Path, graph_script: Path, fps: Fraction, crf: int,
-                   preset: str, audio_bitrate: str, threads: int, intro: Path | None = None) -> list[str]:
-    inputs = ["-i", str(source)]
+                   preset: str, audio_bitrate: str, threads: int, intro: Path | None = None,
+                   hd_source: enhance_state.EffectiveSource | None = None) -> list[str]:
+    inputs = enhance_state.hd_input_args(hd_source, source)
     if intro is not None:
         inputs += intro_inputs(intro, fps, INTRO_SECONDS)
     return [
@@ -470,7 +473,7 @@ def _run_vertical(episode_id: str, config: Config, *, run, force: bool, note: st
             raise ValueError("invalid max_pause")
     except (KeyError, TypeError, ValueError) as exc:
         raise RenderError("candidates.json has no valid params.max_pause; re-run 'auto-short analysis'") from exc
-    duration = float(src["video"].get("duration") or src["duration"])
+    duration = enhance_state.hd_duration(hd, float(src["video"].get("duration") or src["duration"]))
     try:
         frames = content_frames(duration, silences, max_pause, fps)
     except plan.PlanError as exc:
@@ -513,7 +516,7 @@ def _run_vertical(episode_id: str, config: Config, *, run, force: bool, note: st
                      plan.fps_text(fps), cfg.threads or "auto")
             proc = runner(ffmpeg_command(ffmpeg="ffmpeg", source=hd.path, output=part, graph_script=script, fps=fps,
                                          crf=cfg.crf, preset=cfg.preset, audio_bitrate=cfg.audio_bitrate,
-                                         threads=cfg.threads, intro=image))
+                                         threads=cfg.threads, intro=image, hd_source=hd))
         if proc.returncode != 0 or not part.is_file():
             raise RenderError(f"ffmpeg failed: {_last_line(proc.stderr) or f'exit {proc.returncode}'}")
         facts = verify(part, fps, expected_seconds, runner)

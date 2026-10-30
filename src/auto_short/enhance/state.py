@@ -328,6 +328,9 @@ def mirror(config: Config, base_id: str, *, only: str | None = None) -> dict | N
     elif not _hd_usable(base):
         hd_path(root / kid).unlink(missing_ok=True)
     write(root / kid, doc)
+    intro = read_json_dict(root / base_id / "hd_intro.json")
+    if intro is not None:
+        atomic_write_json(root / kid / "hd_intro.json", intro)
     return doc
 
 
@@ -380,17 +383,20 @@ def hd_fingerprint(ws_dir: Path) -> FileFingerprint | None:
     path = hd_path(ws_dir)
     if not doc or not _hd_usable(doc) or not doc.get("source_hd_sha256") or not path.is_file():
         return None
+    intro = hd_intro_record(ws_dir)
+    stored = intro["stored"] if intro and intro["original"]["sha256"] == doc["source_hd_sha256"] else None
+    expected_sha = stored["sha256"] if stored else doc["source_hd_sha256"]
     try:
         st = path.stat()
-        if st.st_size == doc.get("source_hd_size") and st.st_mtime_ns == doc.get("source_hd_mtime_ns"):
+        if not stored and st.st_size == doc.get("source_hd_size") and st.st_mtime_ns == doc.get("source_hd_mtime_ns"):
             return FileFingerprint(path.resolve(), st.st_size, st.st_mtime_ns, doc["source_hd_sha256"])
         fp = hashing.fingerprint(path)
     except OSError:
         return None
-    if fp.sha256 != doc["source_hd_sha256"]:
+    if fp.sha256 != expected_sha:
         log.warning("enhance: %s does not match enhance.json (sha256); the render uses the original source", path)
         return None
-    return fp
+    return FileFingerprint(fp.path, fp.size, fp.mtime_ns, doc["source_hd_sha256"])
 
 
 # --- CP8.32 V1: the effective HD source of a video (enhanced HD, else the original when it is >= the threshold) ----
@@ -411,6 +417,65 @@ class EffectiveSource:
     path: Path | None
     sha256: str
     height: int | None = None
+    offset: float = 0.0
+    stored_sha256: str | None = None
+
+    def __post_init__(self):
+        if self.stored_sha256 is None:
+            object.__setattr__(self, "stored_sha256", self.sha256)
+
+
+def hd_intro_record(ws_dir: Path) -> dict | None:
+    """The owner's completed replacement; khai thị shares the same timeline and stored bytes."""
+    d = Path(ws_dir)
+    base = d.parent / owner_id(d.name)
+    if base.is_dir():
+        d = base
+    doc = read_json_dict(d / "hd_intro.json")
+    if not doc or doc.get("version") != 1 or doc.get("status") != "done":
+        return None
+    try:
+        if (read(d) or {}).get("source_hd_sha256") != doc["original"]["sha256"]:
+            return None
+        if int(doc["frames"]) <= 0 or Fraction(doc["fps"]) <= 0:
+            return None
+        for key in ("original", "stored"):
+            if len(doc[key]["sha256"]) != 64 or int(doc[key]["size"]) <= 0:
+                return None
+    except (KeyError, TypeError, ValueError, ZeroDivisionError):
+        return None
+    return doc
+
+
+def hd_source(ws_dir: Path, sha256: str, path: Path | None = None) -> EffectiveSource:
+    doc = hd_intro_record(ws_dir)
+    if doc is None or doc["original"]["sha256"] != sha256:
+        return EffectiveSource(SRC_HD, path, sha256)
+    return EffectiveSource(SRC_HD, path, sha256, offset=float(int(doc["frames"]) / Fraction(doc["fps"])),
+                           stored_sha256=doc["stored"]["sha256"])
+
+
+def hd_input_args(src: EffectiveSource | None, path: Path, *, start: float = 0) -> list[str]:
+    """Accurate input seek on the stored timeline; zero offset keeps the previous command unchanged."""
+    offset = src.offset if src is not None else 0
+    return (["-ss", str(start + offset)] if offset or start else []) + ["-i", str(path)]
+
+
+def hd_input_command(src: EffectiveSource | None, command: list[str], path: Path) -> list[str]:
+    """Adapt CP7's windowed, copyts input while keeping filter timestamps on the original timeline."""
+    if src is None or not src.offset:
+        return command
+    cmd = list(command)
+    i = cmd.index(str(path)) - 1
+    # ffmpeg applies the input timestamp offset to its existing -ss seek as well.
+    cmd[i:i] = ["-itsoffset", str(-src.offset)]
+    return cmd
+
+
+def hd_duration(src: EffectiveSource | None, duration: float | None) -> float | None:
+    if duration is None or src is None or not src.offset:
+        return duration
+    return max(0.0, duration - src.offset)
 
 
 def owner_id(episode_id: str) -> str:
@@ -437,7 +502,7 @@ def effective_source(config: Config, episode_id: str) -> EffectiveSource | None:
     d = Path(config.workspace.dir) / owner_for(config, episode_id)
     fp = hd_fingerprint(d)
     if fp is not None:
-        return EffectiveSource(SRC_HD, fp.path, fp.sha256)
+        return hd_source(d, fp.sha256, fp.path)
     if is_released(d):  # HD1 G3: no silent fall-back to the (lower quality) original
         return None
     manifest = read_json_dict(d / "manifest.json")

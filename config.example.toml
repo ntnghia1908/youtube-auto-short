@@ -279,3 +279,7 @@ codex_bin = "codex"
 codex_model = "gpt-6.1-sol"
 codex_effort = "medium"
 codex_timeout_minutes = 30
+
+# HDI1: bật từng bộ sau khi duyệt bản test; rỗng = tắt.
+[hd_intro]
+playlists = []

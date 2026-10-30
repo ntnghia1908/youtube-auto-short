@@ -387,3 +387,19 @@ def test_template_names_and_legacy_rename():
     assert ".jpg" in t and "[HD Mobile] ... - Tập N.jpg" in t
     r = (ROOT / "scripts" / "backup" / "rename.template.ps1").read_text(encoding="utf-8")
     assert '"[HD Mobile]"' in r and "StartsWith(\"[HD Dọc] \")" in r and "backup.ps1" in r
+
+
+def test_hd_intro_released_backup_sha_is_stored_identity(tcfg):
+    from auto_short.workspace import atomic_write_json
+    make_ep(tcfg)
+    d = wsdir(tcfg)
+    backup.confirm(tcfg, VID, "hd", HD_SHA)
+    backup.confirm(tcfg, VID, "vertical", V_SHA)
+    backup.release(tcfg, VID)
+    stored = {"sha256": "b" * 64, "size": len(HD) + 100}
+    atomic_write_json(d / "hd_intro.json", {"version": 1, "status": "done",
+        "original": {"sha256": HD_SHA, "size": len(HD)}, "stored": stored,
+        "frames": 90, "fps": "30000/1001", "offset_seconds": 3.003})
+    doc = backup.read_backup(d)
+    assert doc["released"]["hd"] == stored and doc["confirmed"]["hd"]["sha256"] == stored["sha256"]
+    assert backup._current_hd(d) is None

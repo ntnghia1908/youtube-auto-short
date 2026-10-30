@@ -611,3 +611,27 @@ def test_short_client_socket_free_roundtrip(tmp_path, monkeypatch, video_id, cli
 def test_short_client_requires_valid_clip(kind, clip):
     with pytest.raises(StoreMismatch):
         StoreClient._path(VID, kind, clip)
+
+
+def test_hdi1_replace_client_streams_header_and_old_server_error(tmp_path, monkeypatch):
+    import io
+    import urllib.error
+
+    path = tmp_path / "new.mp4"
+    path.write_bytes(b"new")
+    old, new = "a" * 64, hashlib.sha256(b"new").hexdigest()
+    client = StoreClient("http://memory", "secret")
+    monkeypatch.setattr(client, "head", lambda *a: {"sha256": old, "size": 3})
+    calls = []
+    def open_request(req, timeout):
+        calls.append(req)
+        assert req.method == "PUT" and req.get_header("X-replace-sha256") == old
+        assert req.data.read() == b"new"
+        raise urllib.error.HTTPError(req.full_url, 409, "old server", {}, io.BytesIO())
+    monkeypatch.setattr("urllib.request.urlopen", open_request)
+    with pytest.raises(StoreMismatch, match="cần cập nhật store.py trên 3090") as error:
+        client.replace(VID, "hd", "PLtest", "hd.mp4", path, new, current_sha256=old)
+    assert "secret" not in str(error.value) and len(calls) == 1
+    monkeypatch.setattr(client, "head", lambda *a: {"sha256": new, "size": 3})
+    client.replace(VID, "hd", "PLtest", "hd.mp4", path, new, current_sha256=old)
+    assert len(calls) == 1

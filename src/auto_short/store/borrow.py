@@ -29,6 +29,9 @@ _BORROWED: Counter = Counter()  # path -> number of jobs using the file we fetch
 def released_hd_sha(config: Config, episode_id: str, dest_dir: Path) -> str | None:
     """The sha256 of the HD recorded at release (``backup.json`` ``released.hd``; else ``enhance.json``)."""
     owner_dir = Path(config.workspace.dir) / enh.owner_for(config, episode_id)
+    intro = enh.hd_intro_record(owner_dir)
+    if intro is not None:
+        return intro["stored"]["sha256"]
     try:
         doc = json.loads((owner_dir / "backup.json").read_text(encoding="utf-8"))
         sha = (((doc.get("released") or {}).get("hd")) or {}).get("sha256")

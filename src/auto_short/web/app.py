@@ -80,6 +80,8 @@ from .jobs import (
     KIND_RENDER,
     INTERRUPTED,
     KIND_VERTICAL,
+    KIND_HD_INTRO,
+    HDIntroTarget,
     AI,
     RENDER,
     PREPARE,
@@ -838,6 +840,8 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             except (ReviewError, OSError, ValueError, KeyError, TypeError, khaithi.KhaithiError):
                 return None
             return _restore_target(target_id, edits=edits, restored=restored, pipelines=pipelines)
+        if kind == KIND_HD_INTRO:
+            return HDIntroTarget(config, keep_original=spec.get("keep_original") is True)
         if is_archived(ws / eid) and kind != KIND_VERTICAL:
             return None
         if kind == KIND_PIPELINE:
