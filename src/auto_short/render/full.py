@@ -39,6 +39,7 @@ from ..workspace import (
     validate_episode_id,
 )
 from . import plan
+from .intro import INTRO_SECONDS, filters as intro_filters, inputs as intro_inputs
 from .stage import (RenderError, _last_line, _run, _sha, _write_lines, font_path, probe_media, used_config,
                     _rate, load_silences)
 from .text import Font, TextError, baselines, fit_header, nfc
@@ -53,7 +54,6 @@ SPEAKER_SCALE = 2.4  # speaker font size / [render] header font size (even large
 TOP_SHARE = 0.43  # share of the panel height (video box excluded) taken by the top panel
 _SPEAKER_DOT_RE = re.compile(r"\.(?=[^\W\d_])")  # CP8.16 R5: "HT.Tịnh Không" -> "HT. Tịnh Không"
 FULL_PLAN_VERSION = 4  # bump when the filter graph / ffmpeg command below changes
-INTRO_SECONDS = 3
 
 
 class SourceBlocked(RenderError):
@@ -327,13 +327,7 @@ def filter_graph(*, frames: list[tuple[int, int]], fps: Fraction, lay: FullLayou
         f"aresample={plan.SAMPLE_RATE},aformat=sample_fmts=fltp:channel_layouts=stereo[contenta]",
     ]
     if intro:
-        chains += [
-            f"[1:v]fps={f},scale={plan.WIDTH}:{plan.HEIGHT}:force_original_aspect_ratio=decrease,"
-            f"pad={plan.WIDTH}:{plan.HEIGHT}:(ow-iw)/2:(oh-ih)/2,setsar=1,format={plan.PIX_FMT},"
-            "setpts=PTS-STARTPTS[introv]",
-            f"[2:a]aformat=sample_fmts=fltp:channel_layouts=stereo,asetpts=N/SR/TB[introa]",
-            "[introv][introa][contentv][contenta]concat=n=2:v=1:a=1[vout][aout]",
-        ]
+        chains += intro_filters(fps)
     else:
         chains += ["[contentv]null[vout]", "[contenta]anull[aout]"]
     return ";".join(chains)
@@ -343,9 +337,7 @@ def ffmpeg_command(*, ffmpeg: str, source: Path, output: Path, graph_script: Pat
                    preset: str, audio_bitrate: str, threads: int, intro: Path | None = None) -> list[str]:
     inputs = ["-i", str(source)]
     if intro is not None:
-        inputs += ["-loop", "1", "-framerate", plan.fps_text(fps), "-t", str(INTRO_SECONDS), "-i", str(intro),
-                   "-f", "lavfi", "-t", str(INTRO_SECONDS), "-i",
-                   f"anullsrc=r={plan.SAMPLE_RATE}:cl=stereo"]
+        inputs += intro_inputs(intro, fps, INTRO_SECONDS)
     return [
         ffmpeg, "-nostdin", "-hide_banner", "-v", "error", "-y", *inputs,
         "-filter_complex_script", str(graph_script), "-map", "[vout]", "-map", "[aout]",

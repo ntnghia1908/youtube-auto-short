@@ -592,3 +592,16 @@ def test_kt_start_hides_already_built_files(cfg):
     assert kt.valid_files(cfg, ident) == {}
     atomic_write_json(cfg.packaging.asset_dir / "khaithi_from.json", {"schema_version": 1, "playlists": {}})
     assert set(kt.valid_files(cfg, ident)) == {"k01", "k02"}
+
+
+def test_kti1_single_vertical_is_thumb1_download_with_same_portrait_and_cache(cfg):
+    ident = IDS[0] + '.kt'
+    portrait_manifest(cfg, count=2)
+    fields = kt.display_fields(cfg, PID, episode.header(cfg, IDS[0]))
+    image = kt.vertical_clip(cfg, ident, 'k01', pid=PID, fields=fields)
+    first = sha256_file(image)
+    assert kt.build_episode(cfg, ident, pid=PID) == dict(built=3, reused=1, skipped_reason=None)
+    entry = kt.valid_files(cfg, ident)['k01']['vertical']
+    assert image.name == entry['file'] and first == entry['sha256']
+    assert kt.vertical_clip(cfg, ident, 'k01', pid=PID, fields=fields,
+                            run=lambda _: pytest.fail('cached image was redrawn')) == image
