@@ -541,7 +541,7 @@ def _intro_from_existing(ws: Workspace, manifest: dict, config: Config, cfg: Ren
         return None
     if not font_path(cfg).is_file():
         return None
-    cfg_hash = hashing.config_hash(used_config(cfg, hashing.sha256_file(font_path(cfg)), True))
+    cfg_hash = hashing.config_hash(used_config(cfg, hashing.sha256_file(font_path(cfg)), is_khaithi(ws.dir)))
     if old.get("render_config_hash") != cfg_hash or entry.get("config_hash") != cfg_hash:
         return None
     docs = {n: read_json_dict(ws.dir / n) for n in (CLIPS_NAME, TITLES_NAME, CANDIDATES_NAME)}
@@ -674,20 +674,19 @@ def run_render(episode_id: str, config: Config, *, force: bool = False, run: Run
     if manifest is None:
         raise RenderError(f"no manifest for episode {episode_id!r} in {ws.dir}; run 'auto-short ingest' first")
     images = {}
-    if kt:
-        from ..packaging import PackageError, khaithi_thumbs
-        try:
-            context = khaithi_thumbs.intro_context(config, ws.episode_id)
-            if context is not None:
-                pid, fields = context
-                if "kt_vertical" not in khaithi_thumbs.cover.current(config, pid):
-                    raise PackageError(f"Bộ kinh chưa có ảnh bìa khai thị — /playlists/{pid}/thumbs")
-                for title in khaithi_thumbs.titles(config, ws.episode_id):
-                    images[title.clip_id] = khaithi_thumbs.vertical_clip(
-                        config, ws.episode_id, title.clip_id, pid=pid, fields=fields, run=runner)
-        except (PackageError, TextError, OSError, ValueError) as exc:
-            record_failure(ws, manifest, STAGE, str(exc))
-            raise RenderError(str(exc)) from exc
+    from ..packaging import PackageError, khaithi_thumbs
+    try:
+        context = khaithi_thumbs.intro_context(config, ws.episode_id, short=not kt)
+        if context is not None:
+            pid, fields = context
+            if "kt_vertical" not in khaithi_thumbs.cover.current(config, pid):
+                raise PackageError(f"Bộ kinh chưa có ảnh bìa khai thị — /playlists/{pid}/thumbs")
+            for title in khaithi_thumbs.titles(config, ws.episode_id, short=not kt):
+                images[title.clip_id] = khaithi_thumbs.vertical_clip(
+                    config, ws.episode_id, title.clip_id, pid=pid, fields=fields, run=runner, short=not kt)
+    except (PackageError, TextError, OSError, ValueError) as exc:
+        record_failure(ws, manifest, STAGE, str(exc))
+        raise RenderError(str(exc)) from exc
     if images and not force:
         existing = _intro_from_existing(ws, manifest, config, cfg, images, runner)
         if existing is not None:

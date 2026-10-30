@@ -20,8 +20,12 @@ from .. import compilation as comp
 from .. import khaithi
 from ..compilation import CompilationError, Item, store
 from ..config import Config
+from ..hashing import sha256_file
+from ..packaging import PackageError, compilation_thumbs, khaithi_thumbs
 from ..review.names import short_code
-from ..render.intro import clip_record, offset
+from ..render.intro import clip_record, offset, metadata as intro_metadata
+from ..render.stage import RenderError
+from ..render.text import TextError
 from ..workspace import atomic_write_json
 from ..store.shorts import borrow_short, fetch_released
 from ..store.client import StoreError
@@ -257,6 +261,8 @@ class Compilations:
             state, error = store.FAILED, "bị ngắt (khởi động lại hoặc hủy) — bấm tạo lại"
         elif state == store.DONE and not store.video_path(self.folder(pid), cid).is_file():
             state, error = store.FAILED, "file video không còn"
+        elif state == store.DONE and not self.intro_current(pid, d, verify=False):
+            state, error = store.FAILED, "Thumbnail intro đã đổi — cần ghép lại"
         done = state == store.DONE
         return {"cid": cid, "title": d.get("title"), "mode": d.get("mode"), "segments": len(d.get("items") or []),
                 "repeat": d.get("repeat"), "duration": d.get("duration") if done else d.get("duration_estimate"),
@@ -266,6 +272,16 @@ class Compilations:
                 "description": comp.meta.description(d.get("mode") or "concat", d.get("chapters") or [],
                                                      d.get("title"), tags) if done else None,
                 "chapters": d.get("chapters") or []}
+
+    def intro_current(self, pid: str, doc: dict, *, verify=True) -> bool:
+        if khaithi_thumbs.start_episode(self.config, pid) is None:
+            return True
+        try:
+            source = compilation_thumbs.favorite(self.config, pid, doc["cid"], pending=True)
+            return compilation_thumbs.intro_current(self.config, source, "vertical", doc,
+                                                     store.video_path(self.folder(pid), doc["cid"]), verify=verify)
+        except (PackageError, OSError, ValueError, KeyError, TypeError, TextError):
+            return False
 
     def view(self, playlist_id: str, doc: dict) -> dict:
         tags = self.playlists.effective_hashtags(doc)[0]
@@ -344,7 +360,8 @@ class Compilations:
             current = store.read_doc(folder, cid)
             key = compilation_key(playlist_id, cid)
             job = self.runner.latest(key)
-            done = current is not None and current.get("status") == store.DONE and store.video_path(folder, cid).is_file()
+            done = current is not None and current.get("status") == store.DONE and store.video_path(folder, cid).is_file() \
+                and self.intro_current(playlist_id, current)
             if done or (job is not None and job.active):
                 created = False
             else:
@@ -400,6 +417,8 @@ class Compilations:
         cid, folder = spec.cid, self.folder(playlist_id)
         if self._update(playlist_id, cid, status=store.RUNNING, error=None) is None:
             raise JobFailed("video ghép đã bị xóa")
+        intro_required = khaithi_thumbs.start_episode(self.config, playlist_id) is not None
+        published = False
         try:
             doc = self.playlists.load(playlist_id)
             if doc is None:
@@ -411,17 +430,29 @@ class Compilations:
             clips = [by_item[i] for i in spec.items]
             enc = comp.Encode(crf=self.config.render.crf, preset=self.config.render.preset,
                               audio_bitrate=self.config.render.audio_bitrate, threads=self.config.render.threads)
+            image = None
+            if intro_required:
+                current = lambda: compilation_thumbs.favorite(self.config, playlist_id, cid, pending=True)
+                image = compilation_thumbs.intro_image(self.config, current(), "vertical", current=current,
+                                                       run=self._probe_runner)
             with ExitStack() as stack:
                 paths = {c.item: stack.enter_context(borrow_short(self.config, c.path, folder))
                          for c in dict((c.item, c) for c in clips).values()}
                 done = comp.assemble([paths[c.item] for c in clips], store.video_path(folder, cid), enc,
-                                     runner=self._probe_runner)
-            chapters = [] if spec.mode == "loop" else comp.meta.chapters([c.title or c.code for c in clips], done.parts)
+                                     runner=self._probe_runner, **({"intro_image": image} if image else {}))
+                published = True
+            chapter_options = {"content_offset": done.content_offset} if image is not None else {}
+            chapters = [] if spec.mode == "loop" else comp.meta.chapters([c.title or c.code for c in clips], done.parts,
+                                                                        **chapter_options)
+            extra = dict(intro=intro_metadata(image), content_offset=done.content_offset,
+                         content_sha256=done.content_sha256,
+                         sha256=sha256_file(store.video_path(folder, cid))) if image else {}
             self._update(playlist_id, cid, status=store.DONE, error=None, duration=round(done.duration, 3),
-                         chapters=chapters, size=done.size, reencoded=done.reencoded, finished_at=store.now())
-        except (CompilationError, StoreError, OSError) as exc:
+                         chapters=chapters, size=done.size, reencoded=done.reencoded, finished_at=store.now(), **extra)
+        except (CompilationError, StoreError, OSError, PackageError, RenderError, TextError) as exc:
             self._update(playlist_id, cid, status=store.FAILED, error=str(exc))
-            store.video_path(folder, cid).unlink(missing_ok=True)
+            if not intro_required or published:
+                store.video_path(folder, cid).unlink(missing_ok=True)
             raise JobFailed(str(exc)) from exc
         job.summary = f"{len(clips)} đoạn, {done.duration / 60:.1f} phút" + (" (encode lại)" if done.reencoded else "")
 

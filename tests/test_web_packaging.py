@@ -246,3 +246,23 @@ def test_both_video_cards_thumbnail_actions_and_polling(state):
     result = subprocess.run(["node", "-e", NODE_CARDS, str(static), state], capture_output=True, text=True, timeout=20)
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "ok"
+
+
+@pytest.mark.parametrize('case', ['intro_stale', 'intro_current', 'missing_cover'])
+def test_kti2_intro_status_and_cover_links_on_both_cards(case):
+    script = NODE_CARDS
+    if case == 'missing_cover':
+        message = 'Bộ kinh chưa có ảnh bìa khai thị — /playlists/PLeligible/thumbs'
+        script = script.replace("cid:'0123456789ab',state:", f"error:'{message}',cid:'0123456789ab',state:")
+        script = script.replace("output:{download_name:", f"render_job:{{status:'failed',error:'{message}'}},output:{{download_name:")
+        assertion = """for (const id of ['fv-comps','tp-plans']) assert.ok(all(get(id)).some(n=>
+          n.tagName==='A' && n.textContent==='Thiết kế bìa khai thị' && n.href==='/playlists/PLeligible/thumbs'));"""
+    else:
+        digest = 'old' if case == 'intro_stale' else 'new'
+        script = script.replace('output:{download_name:', f"output:{{intro:{{sha256:'{digest}'}},download_name:")
+        script = script.replace('landscape:{preview_url:', "landscape:{sha256:'new',preview_url:")
+        assertion = f"assert.equal(get('tp-plans').textContent.includes('Thumbnail intro đã đổi'), {str(case == 'intro_stale').lower()});"
+    script = script.replace("console.log('ok');", assertion + "\nconsole.log('ok');")
+    static = Path(web.__file__).parent / 'static'
+    result = subprocess.run(['node', '-e', script, str(static), 'stale'], capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stderr

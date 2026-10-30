@@ -14,7 +14,7 @@ from auto_short.packaging import cover, khaithi_thumbs as kt
 from auto_short.render import intro, stage
 from auto_short.web.priority import Priority
 from auto_short.workspace import Workspace, atomic_write_json, read_json_dict
-from render_helpers import EID, make_render_episode, make_source, write_docs
+from render_helpers import EID, make_render_episode, make_source, write_docs, ffmpeg, frame_hashes, assert_fade
 from test_packaging_cover import source_image
 from test_packaging_episode import PID
 from test_store_server import PLAYLIST, archive  # noqa: F401
@@ -49,35 +49,6 @@ def rendered(tmp_path, request):
     cover.install(cfg, PID, 'kt_vertical', source_image(tmp_path), [100, 700, 880, 700])
     atomic_write_json(cfg.packaging.asset_dir / 'khaithi_from.json', dict(schema_version=1, playlists={PID: 31}))
     return cfg, ws, folder, baseline
-
-
-def ffmpeg(*args):
-    return subprocess.run(['ffmpeg', '-v', 'error', *map(str, args)], capture_output=True, check=True, timeout=60).stdout
-
-
-def frame_hashes(path):
-    text = ffmpeg('-i', path, '-map', '0:v', '-f', 'framemd5', '-').decode()
-    return [line.split(',')[-1].strip() for line in text.splitlines() if not line.startswith('#')]
-
-
-def assert_fade(video, fps):
-    pixels = ffmpeg('-i', video, '-map', '0:v', '-vf', 'scale=36:64', '-pix_fmt', 'rgb24', '-f', 'rawvideo', '-')
-    size = 36 * 64 * 3
-    count = round(3 * fps)
-    first = pixels[:size]
-    last = pixels[(count-1)*size:count*size]
-    content = pixels[count*size:(count+1)*size]
-    middle_at = round((count / float(fps) - .5) * fps)
-    middle = pixels[middle_at*size:(middle_at+1)*size]
-    def distance(a, b):
-        return sum(abs(x-y) for x, y in zip(a, b)) / size
-    contrast = distance(first, content)
-    assert contrast > 20  # distinct synthetic thumbnail and video; blending must be observable
-    assert distance(last, content) < contrast * .1
-    assert contrast * .2 < distance(middle, first) < contrast * .8
-    assert contrast * .2 < distance(middle, content) < contrast * .8
-    assert distance(middle, bytes((a+b)//2 for a, b in zip(first, content))) < 5
-    return first
 
 
 @pytest.mark.parametrize("fresh", [False, True])

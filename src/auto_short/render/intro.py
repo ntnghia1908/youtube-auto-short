@@ -1,4 +1,4 @@
-"""Silent thumbnail inputs shared by VERT2 and KTI1; clip content keeps its encoded packets."""
+"""Silent thumbnail inputs shared by VERT2/KTI1/KTI2; content keeps its encoded packets."""
 from __future__ import annotations
 
 from copy import deepcopy
@@ -25,11 +25,12 @@ def inputs(image: Path, fps: Fraction, seconds=INTRO_SECONDS) -> list[str]:
             "-f", "lavfi", "-t", str(seconds), "-i", f"anullsrc=r={plan.SAMPLE_RATE}:cl=stereo"]
 
 
-def filters(fps: Fraction, *, color_correct=False, fade=False, seconds=INTRO_SECONDS) -> list[str]:
+def filters(fps: Fraction, *, color_correct=False, fade=False, seconds=INTRO_SECONDS, size=None) -> list[str]:
+    width, height = size or (plan.WIDTH, plan.HEIGHT)
     color = "scale=out_color_matrix=bt709:out_range=tv," if color_correct else ""
     if fade:
-        scale = (f"scale={plan.WIDTH}:{plan.HEIGHT}:force_original_aspect_ratio=decrease,"
-                 f"pad={plan.WIDTH}:{plan.HEIGHT}:(ow-iw)/2:(oh-ih)/2,setsar=1")
+        scale = (f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+                 f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1")
         return [
             f"[1:v]fps={plan.fps_text(fps)},{scale},{color}format=yuv444p,settb=AVTB,setpts=PTS-STARTPTS[thumb]",
             f"[0:v]trim=end_frame=1,setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration={FADE_SECONDS},"
@@ -107,7 +108,7 @@ def extract_content(source: Path, output: Path, record: dict, run) -> Path:
     return output
 
 
-def prepend(content: Path, output: Path, image: Path, fps: Fraction, cfg, work: Path, run) -> float:
+def prepend(content: Path, output: Path, image: Path, fps: Fraction, cfg, work: Path, run, *, size=None) -> float:
     """Encode only the picture, then mux it before the untouched content (whose first frame is an IDR).
 
     Using a second full encode would change content bytes, invalidate approved TC3 plans and cost CPU on
@@ -119,7 +120,8 @@ def prepend(content: Path, output: Path, image: Path, fps: Fraction, cfg, work: 
     frames = round(INTRO_SECONDS * fps)
     seconds = frames / float(fps)
     graph, prefix, listing = work / "intro.filter", work / "intro.mp4", work / "intro.txt"
-    graph.write_text(";".join(filters(fps, color_correct=True, fade=True, seconds=seconds)), encoding="utf-8")
+    graph.write_text(";".join(filters(fps, color_correct=True, fade=True, seconds=seconds,
+                                   **({"size": size} if size else {}))), encoding="utf-8")
     cmd = ["ffmpeg", "-nostdin", "-hide_banner", "-v", "error", "-y", "-i", str(content),
            *inputs(image, fps, seconds), "-filter_complex_script", str(graph),
            "-map", "[vout]", "-map", "[aout]", "-t", str(seconds),
