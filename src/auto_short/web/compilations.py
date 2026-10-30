@@ -441,8 +441,9 @@ class Compilations:
                 done = comp.assemble([paths[c.item] for c in clips], store.video_path(folder, cid), enc,
                                      runner=self._probe_runner, **({"intro_image": image} if image else {}))
                 published = True
+            chapter_options = {"content_offset": done.content_offset} if image is not None else {}
             chapters = [] if spec.mode == "loop" else comp.meta.chapters([c.title or c.code for c in clips], done.parts,
-                                                                        content_offset=done.content_offset)
+                                                                        **chapter_options)
             extra = dict(intro=intro_metadata(image), content_offset=done.content_offset,
                          content_sha256=done.content_sha256,
                          sha256=sha256_file(store.video_path(folder, cid))) if image else {}

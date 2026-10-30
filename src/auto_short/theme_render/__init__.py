@@ -295,9 +295,10 @@ def render_landscape(config: Config, playlist_id: str, plan_id: str, *, hashtags
             joined = tmp / "compilation.mp4"
             result = assemble(paths, joined, Encode(cfg.crf, cfg.preset, cfg.audio_bitrate, cfg.threads), runner=runner,
                               **({"intro_image": image} if image else {}))
-            _verify(joined, sum(s["duration"] for s in approved["clips"]) + result.content_offset, sum(tolerances), runner,
-                    audio_tolerance=sum(tolerances))
-            chapters = meta.chapters([title for _, title in references], result.parts, content_offset=result.content_offset)
+            chapter_options = {"content_offset": result.content_offset} if image is not None else {}
+            _verify(joined, sum(s["duration"] for s in approved["clips"]) + chapter_options.get("content_offset", 0),
+                    sum(tolerances), runner, audio_tolerance=sum(tolerances))
+            chapters = meta.chapters([title for _, title in references], result.parts, **chapter_options)
             doc = {"schema_version": SCHEMA_VERSION, "plan_id": plan_id, "revision": approved["revision"],
                    "plan_fingerprint": fingerprint, "encode_key": key, "clips": clips, "duration": result.duration,
                    "chapters": chapters, "description": _description(config, approved, chapters, hashtags),

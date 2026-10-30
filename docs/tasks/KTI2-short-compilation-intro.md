@@ -148,3 +148,19 @@ Các lượt trong vòng sửa cũng được ghi nhận: nhóm required ban đ�
 - Review riêng theo contract → diff → AC: inventory nằm trong Owned paths; default KT/THUMB2/VERT2 được giữ, consumer sidecar dùng chung, không có thay đổi dependency/API/security. Không gọi reviewer/agent khác theo ràng buộc session.
 - Chưa chạy: `P -q -n auto` (full suite), toàn bộ `tests/test_web_compilation.py`, phần HTTP TestClient của `tests/test_web_theme_plan.py` / các test web khác; toàn suite slow; 8080 / mẫu 10 s + ảnh 1,5 s / manual checklist; upload 3090, cài config/bìa runtime và batch thật D-KTI2-5/6. Sandbox không có socket loopback; các phần này thuộc ORCHESTRATOR theo Required verification.
 - Giới hạn kế thừa THUMB2: favorite có `title: null` vẫn báo lỗi tiêu đề rỗng, không tự đổi tiêu đề/tên video; ORCHESTRATOR cần kiểm dữ liệu này trước batch. Không gọi YouTube, Ollama hoặc kho thật để kiểm trong session.
+
+### Vòng sửa 1 — ORCHESTRATOR review (2026-10-30)
+
+- **READY phần IMPLEMENTER**, trên HEAD `83b4423`, không commit. ORCHESTRATOR báo full suite trước sửa: **3568 passed, 1 failed** (`test_compilation_released_clips_borrow_and_cleanup[None]`); không ghi nhận full suite đó là PASS.
+- Sửa `web/compilations.py` và `theme_render/__init__.py`: chỉ đọc `done/result.content_offset` khi `image is not None`; không intro → không truyền tùy chọn mới cho `meta.chapters`, độ lệch kiểm duration vẫn 0. Giữ giao diện kết quả assemble cũ cho đường không intro. Rà toàn `src/auto_short` bằng `rg -n '\.(content_offset|content_sha256)'`: các lần đọc còn lại chỉ nằm trong nhánh có ảnh intro. Không thêm helper, không sửa bất kỳ test cũ nào.
+- AC2/4/5 → test cũ `test_compilation_released_clips_borrow_and_cleanup` (kết quả giả chỉ có trường cũ), nhóm theme/compilation hiện hành và `test_short_compilation_intro.py` (giữ đường có intro).
+- Đã chạy đúng lệnh: `timeout 290s env PYTHONPATH=/home/ntnghia/projects/youtube-auto-short/.claude/worktrees/hdi1-hd-intro/.claude/worktrees/kti2/src /home/ntnghia/miniconda3/envs/auto-short/bin/python -m pytest -q -x --tb=short -n 2 tests/test_store_shorts_edit.py tests/test_short_compilation_intro.py tests/test_theme_render.py tests/test_compilation.py` → **116 passed, 117.53 s**. `node scripts/framework-check.mjs` và `git diff --check`: **PASS**.
+- Diff vòng sửa 1 so với `83b4423`: ứng dụng **+6 / −4**, test **+0 / −0**; thêm mục Result này. Review lại diff: chỉ hai file ứng dụng và contract, trong Owned paths.
+- Chưa chạy lại full suite / HTTP TestClient sau sửa; manual/8080 và batch thật vẫn thuộc ORCHESTRATOR. Không gọi mạng thật, agent, commit/push/PR.
+
+### ORCHESTRATOR (2026-10-30)
+
+- Review vòng 1 (Codex 206.706 tokens): phạm vi `short_intro_from.json` tách khỏi `khaithi_from.json`, mốc ≥ 1; ảnh Short thư mục `short_intro_thumbs`, nhãn "TRÍCH ĐOẠN"; intro video ghép qua `intro.prepend` đúng khổ; chapter giữ 0:00; helper test dời nguyên văn sang `render_helpers.py` (không nới assertion). Clip id Short thật là `kNN` (khớp `CLIP_ID`).
+- Full suite vòng 1: 3568 passed, **1 failed** `test_store_shorts_edit.py::test_compilation_released_clips_borrow_and_cleanup[None]` (đường không intro đọc `content_offset`) → finding gửi Codex (resume), sửa +6 / −4.
+- Full suite sau vòng sửa: **3569 passed, 1 skipped**.
+- Còn: chạy thật 8080 (8080 đang bận 38 job bản dọc Địa Tạng; script restart từ chối khi làn bận), mẫu 10 s Short + video ghép gửi HUMAN LEAD, cài bìa KT Địa Tạng (HUMAN LEAD chọn mẫu), tạo `short_intro_from.json` + thêm Địa Tạng vào `khaithi_from.json`, rồi đợt D-KTI2-5/6. Lưu ý vận hành: sau deploy, video ghép cũ của các bộ trong phạm vi hiện "Thumbnail intro đã đổi — cần ghép lại" (ẩn nút tải) đến khi ghép lại.
