@@ -131,14 +131,16 @@ const Favorites = (() => {
     const info = `${MODE[c.mode] || c.mode} · ${c.mode === "loop" ? `${c.repeat} lần` : `${c.segments} đoạn`} · ${fmtDur(c.duration)}`;
     const actions = el("span", { class: "fv-actions" });
     if (c.download_url) {
-      actions.append(el("a", { class: "btn small", href: c.download_url, download: c.download_name || "", text: "Tải" }));
-      const copy = el("button", { class: "btn small", type: "button", text: "Copy mô tả" });
-      copy.addEventListener("click", async () => {
-        const ok = await copyText(c.description || "");
-        copy.textContent = ok ? "Đã copy" : "Không copy được";
-        setTimeout(() => { copy.textContent = "Copy mô tả"; }, 1500);
-      });
-      actions.append(copy);
+      actions.append(el("a", { class: "btn small", href: c.download_url + "?inline=1", target: "_blank", rel: "noopener", text: "Xem" }),
+        el("a", { class: "btn small", href: c.download_url, download: c.download_name || "", text: "Tải video" }));
+      for (const [label, text] of [["Copy tiêu đề", c.title || (c.download_name || "").replace(/\.mp4$/, "")], ["Copy mô tả", c.description || ""]]) {
+        const copy = el("button", { class: "btn small", type: "button", text: label });
+        copy.addEventListener("click", async () => {
+          copy.textContent = await copyText(text) ? "Đã copy" : "Không copy được";
+          setTimeout(() => { copy.textContent = label; }, 1500);
+        });
+        actions.append(copy);
+      }
     }
     const del = el("button", { class: "btn small danger", type: "button", text: "Xóa" });
     del.disabled = c.state === "queued" || c.state === "running";
@@ -148,12 +150,54 @@ const Favorites = (() => {
       catch (e) { say(e.message, "error"); }
     });
     actions.append(del);
-    return el("li", { class: "fv-row" },
+    const card = el("li", { class: "fv-row" },
       el("div", { class: "fv-main" }, el("strong", { text: c.download_name || c.cid }), " ",
         el("span", { class: "badge", text: STATE[c.state] || c.state }), " ",
         el("span", { class: "muted small", text: info }),
         c.error ? el("div", { class: "error small", text: c.error }) : null),
       actions);
+    if (c.download_url) card.append(thumbnailBlock(`/api/playlists/${encodeURIComponent(pid)}/compilations/${c.cid}/thumbs`));
+    return card;
+  }
+
+  // Both types of video card share the same server-audited two-shape thumbnail controls.
+  function thumbnailBlock(endpoint) {
+    const block = el("div", { class: "fv-thumbnails", "aria-label": "Thumbnail video ghép" });
+    async function refresh() {
+      if (!block.isConnected) return;
+      try {
+        const view = await api(endpoint);
+        if (!block.isConnected) return;
+        const busy = !!(view.job && view.job.active);
+        const status = el("p", { class: "small", role: "status", text: busy ? "Đang dựng thumbnail…" : view.reason || (view.state === "ready" ? "Thumbnail" : "Chưa có thumbnail") });
+        const build = el("button", { class: "btn small", type: "button", text: view.state === "empty" ? "Dựng thumbnail" : "Dựng lại" });
+        build.disabled = busy;
+        build.addEventListener("click", async () => {
+          build.disabled = true;
+          try { await post(endpoint, {}); await refresh(); }
+          catch (e) { status.textContent = e.message; build.disabled = false; }
+        });
+        block.replaceChildren(status, build);
+        if (view.job && view.job.error && !busy) block.append(el("p", { class: "small error", text: view.job.error }));
+        if (view.reason && view.reason.includes("chưa có ảnh bìa khai thị")) {
+          build.disabled = true;
+          block.append(el("a", { class: "btn small", href: view.cover_url, text: "Cài ảnh bìa khai thị của bộ" }));
+        }
+        const images = el("div", { class: "fv-thumb-images" });
+        for (const [shape, file] of Object.entries(view.files || {})) {
+          const label = shape === "vertical" ? "dọc" : "ngang";
+          images.append(el("figure", {}, el("a", { href: file.preview_url, target: "_blank", rel: "noopener" },
+            el("img", { src: file.preview_url, alt: "Thumbnail " + label, loading: "lazy" })),
+            el("figcaption", {}, el("a", { class: "btn small", href: file.download_url, download: "", text: "Tải ảnh " + label }))));
+        }
+        block.append(images);
+        if (busy) setTimeout(refresh, POLL_MS);
+      } catch (e) {
+        if (block.isConnected) block.replaceChildren(el("p", { class: "small error", role: "status", text: e.message }));
+      }
+    }
+    setTimeout(refresh, 0); // the caller attaches the card before the first request
+    return block;
   }
 
   function render() {
@@ -233,5 +277,5 @@ const Favorites = (() => {
     load();
   }
 
-  return { init, el, api, fmtDur, copyText };
+  return { init, el, api, fmtDur, copyText, thumbnailBlock };
 })();
