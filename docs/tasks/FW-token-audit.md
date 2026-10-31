@@ -60,7 +60,7 @@
 
 Không chạm database, security model hay public API contract.
 
-- [ ] Chạy lệnh đo lại vào 2026-10-29.
+- [x] Chạy lệnh đo lại vào 2026-10-29 (thực hiện 2026-10-31).
 
 ## Result
 
@@ -68,3 +68,41 @@ Không chạm database, security model hay public API contract.
 - Tests: AC1 chạy thật, số khớp đợt đo trong phiên.
 - Known limitations: chỉ transcript trên máy này (không gồm claude.ai / thiết bị khác); quota thuê bao không quy được từ giá API.
 - PR:
+
+## Re-measure 2026-10-31
+
+HUMAN LEAD duyệt implementation sau re-measure (2026-10-31): YES; IMPLEMENTER: Codex;
+nhánh `fix/token-audit-origin-main` từ `origin/main`.
+Owned paths đợt này: `scripts/token-audit.py`, `tests/test_token_audit.py`, `docs/tasks/FW-token-audit.md`.
+
+Đo kỳ sau bằng `python3 scripts/token-audit.py --since 2026-10-20 --until 2026-10-31`.
+Các số đối chiếu do HUMAN LEAD cung cấp sau re-measure:
+
+| Chỉ số | Trước → Sau |
+|---|---|
+| Chi phí/ngày (giá API quy đổi) | $35,5 → $25,8 |
+| Tỷ lệ subagent | 40 % → 3 % |
+| Input trên 250k context | 22 % → 3 % |
+| Main cache-expired rewrite | 44 → 11 |
+| Subagent cache-expired rewrite | 190 → 0 |
+| $/PR | 6,9 → 6,1 (51 PR vào `origin/main`) |
+| Main $/PR | 4,1 → 5,9 |
+| Context đỉnh trung vị | 155k → 215k |
+
+Hai thay đổi script đã duyệt:
+
+1. Đếm `merged_prs` trên `origin/main`; cảnh báo và báo unavailable nếu không đọc được ref. Lý do: `main` local có thể cũ, làm sai mẫu số $/PR.
+2. In chi phí MAIN theo loại việc (`delegate`, `test`, `git`, `ops`, `edit`, `read`, `reply`, `other`), số turn, $, % chi phí MAIN, giảm dần theo $. Lý do: thấy chi phí phiên chính tập trung vào loại việc nào sau khi giảm delegation.
+
+Mỗi message assistant tính một turn; gộp tool từ các chunk streaming cùng message id,
+chọn loại theo thứ tự ưu tiên đã duyệt (không tool là `reply`); chỉ in số tổng hợp.
+Tests dùng JSONL trong `tmp_path` và mock subprocess, không đọc `~/.claude` thật.
+
+Verification đợt này: lệnh đo trên; `/home/ntnghia/miniconda3/envs/auto-short/bin/python -m pytest -q tests/test_token_audit.py -x --tb=short`;
+`node scripts/framework-check.mjs`; `git diff --check`.
+
+
+Kết quả verification trong worktree (2026-10-31): PASS cả bốn lệnh; pytest 32 passed.
+Lệnh đo đọc được `~/.claude`, tổng $310; MAIN 5.139 turn, nhóm `ops` $185,63 (62,0 % chi phí MAIN).
+Snapshot `origin/main` khi verification đếm 52 PR ($6,0/PR), khác mốc HUMAN LEAD cung cấp là 51 PR ở bảng trên;
+giữ nguyên mốc đối chiếu, không thay bằng kết quả snapshot này.
