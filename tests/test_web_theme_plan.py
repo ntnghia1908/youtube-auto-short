@@ -806,6 +806,90 @@ def test_sources_store_snapshot_async_ttl_and_failure_without_http(monkeypatch):
     assert index_cache.source_ids(Config()) == frozenset() and len(calls) == 2
 
 
+@pytest.mark.parametrize("kind", ["compilation", "theme"])
+def test_video_published_api_persistence_stale_and_delete(setup, kind):
+    s = setup
+    folder = web.store.directory(s.cfg.render.output_dir, PID)
+    if kind == "theme":
+        plan = approve(s, create(s))
+        ident, path = plan["plan_id"], plan_path(plan)
+        fake_output(s, plan)
+        list_url, list_key, job_kind = BASE + "/theme-plan", "plans", web.KIND_THEME_RENDER
+        key = web.render_key(PID, ident)
+    else:
+        from auto_short.web.jobs import KIND_COMPILATION, compilation_key
+        ident = "0123456789ab"
+        # The preview fixture predates ``index`` on playlist entries; /compilations sorts by it.
+        playlist = s.service.playlists.path(PID)
+        doc = json.loads(playlist.read_text())
+        for i, entry in enumerate(doc["entries"]):
+            entry["index"] = i
+        playlist.write_text(json.dumps(doc))
+        path = BASE + "/compilations/" + ident
+        doc = web.store.new_doc(PID, ident, "concat", (), 1, download_name="test.mp4", title="test", duration_estimate=60)
+        doc.update(status=web.store.DONE, duration=60)
+        web.store.write_doc(folder, doc)
+        web.store.video_path(folder, ident).write_bytes(b"video")
+        list_url, list_key, job_kind = BASE + "/compilations", "compilations", KIND_COMPILATION
+        key = compilation_key(PID, ident)
+    endpoint = BASE + "/videos/published"
+    body = {"kind": kind, "id": ident, "published": True}
+    assert TestClient(s.app).post(endpoint, json=body).status_code == 401
+    for bad_pid in ("bad!", "PLunknown"):
+        assert s.c.post(f"/api/playlists/{bad_pid}/videos/published", json=body).status_code == 404
+    assert s.c.post(endpoint, json={**body, "id": "deadbeefabcd"}).status_code == 404
+    for bad in ({"kind": "short"}, {"published": "yes"}, {"id": 123}):
+        assert s.c.post(endpoint, json={**body, **bad}).status_code == 422
+    view = s.c.get(list_url).json()[list_key][0]
+    assert not view["published"] and view["published_at"] is None and not view["published_stale"]
+    url = view["output"]["download_url"] if kind == "theme" else view["download_url"]
+    assert s.c.get(url).status_code == 200  # downloading does not mark a compilation
+    assert not s.c.get(list_url).json()[list_key][0]["published"]
+    job, _ = s.runner.submit(key, job_kind, lambda job: None)
+    assert job.active
+    tick = s.c.post(endpoint, json=body)
+    assert tick.status_code == 200 and tick.json()["published"] and tick.json()["published_at"]
+    assert s.c.post(endpoint, json=body).json() == tick.json()  # idempotent timestamp
+    assert s.c.post(endpoint, json={**body, "published": False}).json() == {
+        "published": False, "published_at": None, "published_stale": False}
+    assert s.c.post(endpoint, json=body).status_code == 200  # user state works while a job is active
+    s.runner.cancel(job_kind)
+    other = TestClient(s.app)
+    other.cookies.update(s.c.cookies)
+    assert other.get(list_url).json()[list_key][0]["published"]
+    if kind == "theme":
+        edit = s.c.put(path, json={"revision": 1, "title": "Tiêu đề mới", "clip_ids": [c["id"] for c in plan["clips"]]})
+        assert edit.status_code == 200 and edit.json()["revision"] == 2
+        view = other.get(list_url).json()[list_key][0]
+        assert view["published"] and view["published_stale"]
+        assert not s.c.post(endpoint, json=body).json()["published_stale"]
+    saved = json.loads((folder / "published.json").read_text())
+    assert saved[f"{kind}:{ident}"]["at"]
+    if kind == "theme":
+        assert saved[f"{kind}:{ident}"]["revision"] == 2
+    assert s.c.delete(path).status_code == 200
+    assert f"{kind}:{ident}" not in json.loads((folder / "published.json").read_text())
+    assert s.c.post(endpoint, json={**body, "published": False}).status_code == 404
+
+
+def test_video_published_atomic_state_without_http(tmp_path):
+    store = web.store
+    ids = [f"{n:012x}" for n in range(20)]
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(lambda ident: store.set_published(tmp_path, "compilation", ident, True), ids))
+    saved = json.loads((tmp_path / store.PUBLISHED_NAME).read_text())
+    assert len(saved) == len(ids)  # concurrent read-modify-write keeps every mark
+    store.set_published(tmp_path, "theme", ids[0], True, 1)
+    assert store.published_status(tmp_path, "theme", ids[0], 2)["published_stale"]
+    store.set_published(tmp_path, "theme", ids[0], True, 2)
+    assert not store.published_status(tmp_path, "theme", ids[0], 2)["published_stale"]
+    store.write_doc(tmp_path, {"cid": ids[0]})
+    assert store.delete(tmp_path, ids[0])
+    assert not store.published_status(tmp_path, "compilation", ids[0])["published"]
+    assert store.published_status(tmp_path, "theme", ids[0], 2)["published"]
+    assert store.published_status(tmp_path, "compilation", ids[1])["published"]
+
+
 NODE = r"""
 const fs = require('fs'), vm = require('vm'), assert = require('assert/strict');
 class El {
@@ -881,7 +965,7 @@ function boot() {
   return block;
  };
  const ctx = {Favorites:{el, api, fmtDur:x=>x+' s', copyText:async text=>{copies.push(text);return true;},
-  player,busy,thumbnailBlock,onIdle:fn=>idle.push(fn),pauseAll:()=>{for(const v of players.values())v.pause();},setVideoCount:(source,n)=>counts[source]=n,
+  player,busy,thumbnailBlock,publishBox:()=>el("div"),onIdle:fn=>idle.push(fn),pauseAll:()=>{for(const v of players.values())v.pause();},setVideoCount:(source,n)=>counts[source]=n,
   showTab:name=>navigation.push(name),scrollToVideo:id=>navigation.push(id)},
   document, window:{addEventListener:(k,f)=>events[k]=f}, location:{pathname:'/playlists/PLeligible/favorites'},
   setTimeout:(f,ms)=>{timers.push({f,ms});return timers.length;}, clearTimeout:()=>{}, confirm:()=>true};
@@ -1205,13 +1289,28 @@ const filters=['all','short','khaithi'].map(kind=>{const n=new El('button');n.da
 get('fv-auto-min').value='60';
 const favorites=[{episode_id:'ep1',clip:'k1',code:'KT01',kind:'khaithi',usable:true,duration:350},
  {episode_id:'ep2',clip:'s1',code:'S01',kind:'short',usable:true,duration:50}];
-let compilations=mode==='players'?[{cid:'c1',mode:'concat',state:'done',download_url:'/files/manual.mp4',duration:600,segments:2},
+let compilations=['players','published'].includes(mode)?[{cid:'c1',mode:'concat',state:'done',download_url:'/files/manual.mp4',duration:600,segments:2},
  {cid:'c2',mode:'loop',state:'done',download_url:'/files/loop.mp4',duration:600,repeat:2}]:[];
 const document={querySelector:s=>get(s.slice(1)),getElementById:get,createElement:tag=>new El(tag),
  querySelectorAll:s=>s==='[data-fv-tab]'?tabs:filters,addEventListener:(k,f)=>events[k]=f,activeElement:null};
+const published=new Map(), fields=(kind,id)=>published.get(kind+':'+id)||{published:false,published_at:null,published_stale:false};
+let publishFail=false,publishWait=null;
 const ctx={document,location:{pathname:'/playlists/PLeligible/favorites'},localStorage:{getItem:k=>{if(mode==='blocked')throw Error('denied');return values.get(k);},setItem:(k,v)=>{if(mode==='blocked')throw Error('denied');values.set(k,v);}},
- fetch:async(path,opts)=>{calls.push({path,opts});return {ok:true,status:200,json:async()=>path.endsWith('/thumbs')?{state:'ready',files:{}}:opts.method==='POST'?{created:true}:{series:'Bộ kinh',max_minutes:720,favorites,compilations}};},
- window:{dispatchEvent:()=>{}},setTimeout:(f,ms)=>{timers.push({f,ms});return timers.length;},clearTimeout:()=>{},confirm:()=>true};
+ fetch:async(path,opts)=>{
+  calls.push({path,opts});let result;
+  if(path.endsWith('/videos/published')) {
+   const body=JSON.parse(opts.body);if(publishWait){const wait=publishWait;publishWait=null;await wait;}
+   if(publishFail){publishFail=false;throw Error('publish failed');}
+   result={published:body.published,published_at:body.published?'now':null,published_stale:false};
+   published.set(body.kind+':'+body.id,result);
+  } else if(path.endsWith('/theme-plan')) result={index_summary:{usable:0},generate_job:null,proposals:null,clips_available:[],
+   plans:[{plan_id:'plan1234',revision:2,title:'Theme',clips:[],check:{state:'approved'},render_job:null,
+    output:{download_url:'/files/theme.mp4'},...fields('theme','plan1234')}]};
+  else result=path.endsWith('/thumbs')?{state:'ready',files:{}}:opts.method==='POST'?{created:true}:
+   {series:'Bộ kinh',max_minutes:720,favorites,compilations:compilations.map(c=>({...c,...fields('compilation',c.cid)}))};
+  return {ok:true,status:200,json:async()=>JSON.parse(JSON.stringify(result))};
+ },
+ window:{dispatchEvent:()=>{},addEventListener:()=>{}},setTimeout:(f,ms)=>{timers.push({f,ms});return timers.length;},clearTimeout:()=>{},confirm:()=>true};
 const tick=()=>new Promise(r=>setImmediate(r));
 (async()=>{
  vm.createContext(ctx);  // favorites.html loads app.js (AutoShort helpers) before favorites.js
@@ -1239,6 +1338,40 @@ const tick=()=>new Promise(r=>setImmediate(r));
  const loop=all(get('fv-list')).find(n=>n.type==='number');loop.value='30';
  all(get('fv-list')).find(n=>n.textContent==='Tạo').listeners.click();await tick();
  assert.deepEqual(JSON.parse(calls.filter(c=>c.opts.method==='POST').at(-1).opts.body),{mode:'loop',item:{episode_id:'ep1',clip:'k1'},minutes:30});
+ if(mode==='published') {
+  vm.runInContext(fs.readFileSync(require('path').join(require('path').dirname(process.argv[1]),'theme_plan.js'),'utf8')+'\nThemePlan.init();',ctx);await tick();
+  const box=id=>all(get(id)).find(n=>n.className==='publish');
+  const checkbox=id=>all(box(id)).find(n=>n.type==='checkbox');
+  for(const [id,kind,ident] of [['fv-comps','compilation','c1'],['tp-plans','theme','plan1234']]) {
+   const card=get(id).children[0],video=all(card).find(n=>n.tagName==='VIDEO');video.currentTime=37;video.play();
+   let input=checkbox(id);assert.equal(input.checked,false);
+   publishFail=true;input.checked=true;await input.listeners.change();
+   assert.equal(input.checked,false);assert.ok(box(id).textContent.includes('publish failed'));
+   assert.equal(get(id).children[0],card);assert.equal(video.paused,false);
+   let release;publishWait=new Promise(r=>release=r);input.checked=true;const pending=input.listeners.change();
+   assert.equal(input.disabled,true);
+   // A poll replaces data while the card stays mounted. The successful POST must update that new object.
+   if(kind==='theme')await get('tp-refresh').listeners.click();
+   else {await get('fv-auto').listeners.click({target:get('fv-auto')});await tick();}
+   release();await pending;
+   assert.equal(get(id).children[0],card);assert.equal(input.checked,true);assert.equal(input.disabled,false);
+   assert.equal(video.currentTime,37);assert.equal(video.paused,false);
+   const last=calls.filter(c=>c.path.endsWith('/videos/published')).at(-1);
+   assert.deepEqual(JSON.parse(last.opts.body),{kind,id:ident,published:true});
+   video.pause();assert.equal(checkbox(id).checked,true);
+   const next=get(id).children[0];input=checkbox(id);input.checked=false;await input.listeners.change();
+   assert.equal(input.checked,false);assert.equal(get(id).children[0],next);
+   if(kind==='theme')await all(get(id)).find(n=>n.tagName==='BUTTON' && n.textContent==='Tải lại bản đã lưu').listeners.click();
+   else get('fv-all').listeners.change({target:{checked:false}});
+   assert.equal(checkbox(id).checked,false); // rerender from data, without GET
+  }
+  published.set('theme:plan1234',{published:true,published_at:'old',published_stale:true});
+  await get('tp-refresh').listeners.click();const old=get('tp-plans').children[0];
+  const stale=all(box('tp-plans')).find(n=>n.className==='stale small');assert.equal(stale.hidden,false);
+  await all(stale).find(n=>n.tagName==='BUTTON').listeners.click();
+  assert.equal(stale.hidden,true);assert.equal(get('tp-plans').children[0],old);
+  assert.equal(checkbox('tp-plans').checked,true);
+ }
  if(mode==='players') {
   const fv=ctx.fv, videos=()=>all(get('fv-comps')).filter(n=>n.tagName==='VIDEO');
   const [v,other]=videos();assert.ok(v && other);
@@ -1279,7 +1412,7 @@ const tick=()=>new Promise(r=>setImmediate(r));
 """
 
 
-@pytest.mark.parametrize("storage", ["default", "saved", "saved-videos", "invalid", "blocked", "players"])
+@pytest.mark.parametrize("storage", ["default", "saved", "saved-videos", "invalid", "blocked", "players", "published"])
 def test_js_favorites_tabs_and_manual_compilation(storage):
     if shutil.which("node") is None:
         pytest.skip("node unavailable")

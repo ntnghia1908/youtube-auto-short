@@ -67,8 +67,17 @@ Task không chạm database, security model hay public API contract; manual test
 
 - [ ] Điện thoại: mở tab Video đã ghép, phát video ngang và dọc; đang phát có job ghép chạy song song không bị giật / mất vị trí.
 
+## Amendment FV1.1 — nút "Đã đăng" (HUMAN LEAD 2026-10-31: "Thêm nút đã đang vào tab video đã ghép")
+
+- Owned paths thêm: `src/auto_short/compilation/store.py`, `src/auto_short/web/compilations.py`, `src/auto_short/web/theme_plan.py`, `src/auto_short/web/app.py` (chỉ route mới nếu cần), `tests/test_web_compilation.py`.
+- Lưu ở server để điện thoại và máy tính thấy như nhau: `output/_compilations/<playlist_id>/published.json`, key `compilation:<cid>` / `theme:<plan_id>` (ghi `revision` cho theme), `at`. Đây là trạng thái người dùng, cho phép khi có job chạy, có khóa đọc-ghi. Không có route mới nào ngoài `POST /api/playlists/{pid}/videos/published` {kind, id, published}; API danh sách thêm field `published`, `published_at`, `published_stale`.
+- Thẻ video: ô tick "Đã đăng", cập nhật tại chỗ, không dựng lại thẻ nên không ngắt video đang phát; chỉ hiện khi video đã xong (hoặc đã từng tick). Theme: ghép lại ra revision mới thì hiện "đã đăng bản cũ" như Short. Xóa video thì xóa dấu. Tải video KHÔNG tự tick (khác Short). Không thêm bộ lọc.
+
+AC 8. Tick / bỏ tick lưu qua reload và trạng thái đúng trên cả hai loại thẻ; không dựng lại thẻ; id không tồn tại → 404; xóa video xóa dấu; stale theo revision.
+
 ## Result
 
 - Codex 2 vòng (86k + 114k tokens), 0 finding còn mở; ORCHESTRATOR sửa assert nút Xem + stub `paused` trong `tests/test_web_packaging.py`.
 - PASS: full suite 3581 passed, 1 skipped; `node --check`, framework-check, `git diff --check`.
 - CHƯA chạy: chụp màn hình 375 px / desktop và phát thử trên dữ liệu thật (máy không có trình duyệt tự động; 8080 chưa ghim nhánh vì làn render còn 4 job). Kiểm Range trên route compilation thật chưa xong: API `compilations` quá 15 s. Vì vậy task chưa READY; chờ manual test.
+- FV1.1: Codex 1 vòng (211k tokens); ORCHESTRATOR bỏ huy hiệu trùng chữ, ẩn ô tick khi video chưa xong, sửa fixture thiếu `index`. Full suite 3585 passed, 1 skipped. Chưa chạy thật: cần restart 8080, đang chờ đợt intro Vô Lượng Thọ.

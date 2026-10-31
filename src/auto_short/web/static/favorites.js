@@ -57,6 +57,37 @@ const Favorites = (() => {
 
   const post = (path, obj) => api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(obj) });
 
+  // User state only, like the Short publishBox: update controls without rebuilding a playing card.
+  function publishBox(item, kind, id, onUpdate) {
+    const input = el("input", { type: "checkbox" });
+    const stale = el("span", { class: "stale small" }, "đã đăng bản cũ ");
+    const renew = el("button", { class: "btn link-dark small", type: "button", text: "đánh dấu bản này" });
+    const msg = el("span", { class: "error small", hidden: true });
+    stale.append(renew);
+    function update() {
+      input.checked = !!item.published;
+      stale.hidden = !item.published_stale;
+    }
+    async function send(value) {
+      input.disabled = renew.disabled = true;
+      msg.hidden = true;
+      try {
+        const result = await post(`/api/playlists/${encodeURIComponent(pid)}/videos/published`, { kind, id, published: value });
+        Object.assign(item, result);
+        onUpdate(result); // polling may have replaced data while this request was pending
+      } catch (e) {
+        msg.textContent = e.message;
+        msg.hidden = false;
+      }
+      update();
+      input.disabled = renew.disabled = false;
+    }
+    input.addEventListener("change", () => send(input.checked));
+    renew.addEventListener("click", () => send(true));
+    update();
+    return el("div", { class: "publish" }, el("label", { class: "publish-label" }, input, " Đã đăng"), stale, msg);
+  }
+
   function say(text, cls) {
     const m = $("#fv-msg");
     m.textContent = text || "";
@@ -194,7 +225,10 @@ const Favorites = (() => {
         el("span", { class: "badge", text: STATE[c.state] || c.state }), " ",
         el("span", { class: "muted small", text: info }),
         c.error ? el("div", { class: "error small", text: c.error }) : null),
-      actions);
+      actions, c.download_url || c.published ? publishBox(c, "compilation", c.cid, (result) => {
+        const current = data.compilations.find((item) => item.cid === c.cid);
+        if (current) Object.assign(current, result);
+      }) : null);
     if (String(c.error || "").includes("Bộ kinh chưa có ảnh bìa khai thị")) card.append(
       el("a", { href: `/playlists/${encodeURIComponent(pid)}/thumbs`, text: "Thiết kế bìa khai thị" }));
     if (c.download_url) card.append(el("details", { class: "tp-details" },
@@ -338,6 +372,6 @@ const Favorites = (() => {
     load();
   }
 
-  return { init, el, api, fmtDur, copyText, thumbnailBlock, player, busy, onIdle, pauseAll,
+  return { init, el, api, fmtDur, copyText, thumbnailBlock, publishBox, player, busy, onIdle, pauseAll,
     showTab: (name) => showTab(name), scrollToVideo, setVideoCount };
 })();

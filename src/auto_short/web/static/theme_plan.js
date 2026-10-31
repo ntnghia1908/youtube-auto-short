@@ -235,6 +235,10 @@ const ThemePlan = (() => {
       return perform(async (at) => { at("Xóa video"); Favorites.pauseAll(); await request(path, "DELETE"); drafts.delete(plan.plan_id); say("Đã xóa."); });
     }, busy));
     box.append(actions);
+    if (output || plan.published) box.append(Favorites.publishBox(plan, "theme", plan.plan_id, (result) => {
+      const current = data.plans.find((item) => item.plan_id === plan.plan_id);
+      if (current) Object.assign(current, result);
+    }));
     if (!broken || output) box.append(editDetails);
     return box;
   }
