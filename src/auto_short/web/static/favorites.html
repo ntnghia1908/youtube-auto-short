@@ -25,8 +25,9 @@
     <p id="fv-msg" class="small" hidden></p>
   </section>
   <nav class="tabs fv-tabs" role="tablist" aria-label="Cách ghép video">
-    <button id="fv-tab-ai" class="btn tab active" type="button" role="tab" aria-selected="true" aria-controls="fv-pane-ai" data-fv-tab="ai">Ghép theo chủ đề (AI)</button>
+    <button id="fv-tab-ai" class="btn tab active" type="button" role="tab" aria-selected="true" aria-controls="fv-pane-ai" data-fv-tab="ai">Gợi ý chủ đề (AI)</button>
     <button id="fv-tab-manual" class="btn tab" type="button" role="tab" aria-selected="false" aria-controls="fv-pane-manual" data-fv-tab="manual" tabindex="-1">Yêu thích &amp; ghép tay</button>
+    <button id="fv-tab-videos" class="btn tab" type="button" role="tab" aria-selected="false" aria-controls="fv-pane-videos" data-fv-tab="videos" tabindex="-1">Video đã ghép (<span id="fv-videos-count">0</span>)</button>
   </nav>
   <div id="fv-pane-ai" class="fv-pane" role="tabpanel" aria-labelledby="fv-tab-ai">
     <section class="card">
@@ -40,8 +41,6 @@
       <p id="tp-job" class="small" role="status"></p>
       <p id="tp-msg" class="small" role="status"></p>
       <div id="tp-proposals"></div>
-      <h3>Video đã ghép</h3>
-      <div id="tp-plans"></div>
     </section>
   </div>
   <div id="fv-pane-manual" class="fv-pane" role="tabpanel" aria-labelledby="fv-tab-manual" hidden>
@@ -70,9 +69,15 @@
         <button id="fv-auto" class="btn small" type="button">Tạo</button>
       </div>
     </section>
+  </div>
+  <div id="fv-pane-videos" class="fv-pane" role="tabpanel" aria-labelledby="fv-tab-videos" hidden>
     <section class="card">
-      <h3>Video ghép</h3>
-      <ul id="fv-comps" class="fv-list"><li class="muted">Chưa có.</li></ul>
+      <h3>Ghép theo chủ đề</h3>
+      <div id="tp-plans" class="vd-grid"></div>
+    </section>
+    <section class="card">
+      <h3>Ghép tay</h3>
+      <ul id="fv-comps" class="fv-list vd-grid"><li class="muted">Chưa có.</li></ul>
     </section>
   </div>
 </main>

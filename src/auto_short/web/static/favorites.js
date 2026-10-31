@@ -12,6 +12,44 @@ const Favorites = (() => {
   let openLoop = null; // key of the row whose "Lặp" box is open
   const KINDS = ["all", "short", "khaithi"];
   let kindFilter = "all"; // Amendment 2: Tất cả | Short | Khai thị (remembered per browser)
+  const players = new Map(), idleCallbacks = new Set();
+  const videoCounts = { plans: 0, comps: 0 };
+  let compsDeferred = false, showTab = () => {};
+  function busy() {
+    return [...players.values()].some((video) => (!video.paused && !video.ended) || document.fullscreenElement === video);
+  }
+  function flush() {
+    if (!busy()) for (const fn of idleCallbacks) fn();
+  }
+  function onIdle(fn) { idleCallbacks.add(fn); }
+  function pauseAll() {
+    for (const video of players.values()) video.pause();
+  }
+  function player(src, cls = "") {
+    let video = players.get(src);
+    if (!video) {
+      video = el("video", { src, controls: "", playsinline: "", preload: "metadata" });
+      players.set(src, video);
+      video.addEventListener("play", () => {
+        for (const other of players.values()) if (other !== video) other.pause();
+      });
+      video.addEventListener("pause", flush);
+      video.addEventListener("ended", flush);
+    }
+    video.className = cls;
+    return video;
+  }
+  function setVideoCount(source, n) {
+    videoCounts[source] = n;
+    $("#fv-videos-count").textContent = videoCounts.plans + videoCounts.comps;
+    // Run after the synchronous render: cached elements may have moved to new cards.
+    Promise.resolve().then(() => {
+      for (const [src, video] of players) if (!video.isConnected) players.delete(src);
+    });
+  }
+  function scrollToVideo(id) {
+    document.getElementById("vd-plan-" + id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
   function store(key, value) {
     try { if (value === undefined) return localStorage.getItem(key); localStorage.setItem(key, value); } catch (_) { /* private mode */ }
     return null;
@@ -131,8 +169,7 @@ const Favorites = (() => {
     const info = `${MODE[c.mode] || c.mode} · ${c.mode === "loop" ? `${c.repeat} lần` : `${c.segments} đoạn`} · ${fmtDur(c.duration)}`;
     const actions = el("span", { class: "fv-actions" });
     if (c.download_url) {
-      actions.append(el("a", { class: "btn small", href: c.download_url + "?inline=1", target: "_blank", rel: "noopener", text: "Xem" }),
-        el("a", { class: "btn small", href: c.download_url, download: c.download_name || "", text: "Tải video" }));
+      actions.append(el("a", { class: "btn small", href: c.download_url, download: c.download_name || "", text: "Tải video" }));
       for (const [label, text] of [["Copy tiêu đề", c.title || (c.download_name || "").replace(/\.mp4$/, "")], ["Copy mô tả", c.description || ""]]) {
         const copy = el("button", { class: "btn small", type: "button", text: label });
         copy.addEventListener("click", async () => {
@@ -146,11 +183,13 @@ const Favorites = (() => {
     del.disabled = c.state === "queued" || c.state === "running";
     del.addEventListener("click", async () => {
       if (!confirm(`Xóa video ghép "${c.download_name || c.cid}"? File bị xóa khỏi đĩa.`)) return;
+      pauseAll();
       try { await api(`/api/playlists/${encodeURIComponent(pid)}/compilations/${c.cid}`, { method: "DELETE" }); await load(); }
       catch (e) { say(e.message, "error"); }
     });
     actions.append(del);
-    const card = el("li", { class: "fv-row" },
+    const card = el("li", { class: "vd-card" },
+      c.download_url ? player(c.download_url + "?inline=1", "vd-vertical") : null,
       el("div", { class: "fv-main" }, el("strong", { text: c.download_name || c.cid }), " ",
         el("span", { class: "badge", text: STATE[c.state] || c.state }), " ",
         el("span", { class: "muted small", text: info }),
@@ -158,12 +197,14 @@ const Favorites = (() => {
       actions);
     if (String(c.error || "").includes("Bộ kinh chưa có ảnh bìa khai thị")) card.append(
       el("a", { href: `/playlists/${encodeURIComponent(pid)}/thumbs`, text: "Thiết kế bìa khai thị" }));
-    if (c.download_url) card.append(thumbnailBlock(`/api/playlists/${encodeURIComponent(pid)}/compilations/${c.cid}/thumbs`));
+    if (c.download_url) card.append(el("details", { class: "tp-details" },
+      el("summary", { text: "Sửa video & thumbnail" }),
+      thumbnailBlock(`/api/playlists/${encodeURIComponent(pid)}/compilations/${c.cid}/thumbs`)));
     return card;
   }
 
   // Both types of video card share the same server-audited two-shape thumbnail controls.
-  function thumbnailBlock(endpoint, introState = null) {
+  function thumbnailBlock(endpoint, introState = null, onIntroChanged = null) {
     const block = el("div", { class: "fv-thumbnails", "aria-label": "Thumbnail video ghép" });
     async function refresh() {
       if (!block.isConnected) return;
@@ -180,8 +221,12 @@ const Favorites = (() => {
           catch (e) { status.textContent = e.message; build.disabled = false; }
         });
         block.replaceChildren(status, build);
-        if (introState && view.files?.[introState.shape]?.sha256 !== introState.intro.sha256) block.append(
-          el("p", { class: "small error", role: "status", text: "Thumbnail intro đã đổi — bấm Ghép lại video." }));
+        if (introState && view.files?.[introState.shape]?.sha256 !== introState.intro.sha256) {
+          block.append(el("p", { class: "small error", role: "status", text: "Thumbnail intro đã đổi — bấm Ghép lại video." }));
+          const details = block.closest?.("details");
+          if (details) details.open = true;
+          if (onIntroChanged) onIntroChanged();
+        }
         if (view.job && view.job.error && !busy) block.append(el("p", { class: "small error", text: view.job.error }));
         if (view.reason && view.reason.includes("chưa có ảnh bìa khai thị")) {
           build.disabled = true;
@@ -214,11 +259,19 @@ const Favorites = (() => {
     const rows = data.favorites.filter(shown);
     $("#fv-list").replaceChildren(...(rows.length ? rows.map(row)
       : [el("li", { class: "muted", text: "Chưa có mục yêu thích. Bấm ♥ ở trang một tập (Short hoặc khai thị)." })]));
-    $("#fv-comps").replaceChildren(...(data.compilations.length ? data.compilations.map(compRow)
-      : [el("li", { class: "muted", text: "Chưa có." })]));
+    renderComps();
     updateConcat();
     updateAuto();
   }
+
+  function renderComps() {
+    setVideoCount("comps", data.compilations.length);
+    compsDeferred = busy();
+    if (compsDeferred) return;
+    $("#fv-comps").replaceChildren(...(data.compilations.length ? data.compilations.map(compRow)
+      : [el("li", { class: "muted", text: "Chưa có." })]));
+  }
+  onIdle(() => { if (compsDeferred && data) renderComps(); });
 
   async function load() {
     clearTimeout(timer);
@@ -227,7 +280,7 @@ const Favorites = (() => {
       const keys = new Set(data.favorites.map(keyOf));
       for (const k of [...ticked]) if (!keys.has(k)) ticked.delete(k);
       if (!document.activeElement || document.activeElement.tagName !== "INPUT" || document.activeElement.type === "checkbox") render();
-      else { $("#fv-comps").replaceChildren(...(data.compilations.length ? data.compilations.map(compRow) : [])); }
+      else renderComps();
     } catch (e) { say(e.message, "error"); }
     if (data && data.compilations.some((c) => c.state === "queued" || c.state === "running")) timer = setTimeout(load, POLL_MS);
   }
@@ -235,6 +288,7 @@ const Favorites = (() => {
   function initTabs() {
     const tabs = [...document.querySelectorAll("[data-fv-tab]")];
     function show(name, focus = false) {
+      if (name !== "videos") pauseAll();
       for (const tab of tabs) {
         const selected = tab.dataset.fvTab === name;
         tab.classList.toggle("active", selected);
@@ -254,7 +308,10 @@ const Favorites = (() => {
         show(tabs[keys[event.key]].dataset.fvTab, true);
       });
     }
-    show(store("autoShort.fvTab") === "manual" ? "manual" : "ai");
+    showTab = show;
+    const saved = store("autoShort.fvTab");
+    show(["manual", "videos"].includes(saved) ? saved : "ai");
+    document.addEventListener("fullscreenchange", flush);
   }
 
   function init() {
@@ -281,5 +338,6 @@ const Favorites = (() => {
     load();
   }
 
-  return { init, el, api, fmtDur, copyText, thumbnailBlock };
+  return { init, el, api, fmtDur, copyText, thumbnailBlock, player, busy, onIdle, pauseAll,
+    showTab: (name) => showTab(name), scrollToVideo, setVideoCount };
 })();

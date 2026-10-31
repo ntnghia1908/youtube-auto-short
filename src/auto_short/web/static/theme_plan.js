@@ -1,7 +1,7 @@
 /* TC2.3: one-click thematic compilations on Yêu thích. */
 "use strict";
 const ThemePlan = (() => {
-  const { el, api, fmtDur, copyText } = Favorites;
+  const { el, api, fmtDur, copyText, player, busy: playing, onIdle, setVideoCount } = Favorites;
   const $ = (id) => document.getElementById(id);
   const jobs = { queued: "đang chờ", running: "đang ghép", done: "xong", failed: "lỗi", interrupted: "bị ngắt" };
   const REASONS = {
@@ -11,7 +11,7 @@ const ThemePlan = (() => {
     "episode outside selected playlist": "tập không thuộc bộ kinh này",
   };
   const drafts = new Map(), choices = new Map(), opened = new Map(), inputs = new Set();
-  let base = "", data = null, timer = null, loading = false, pending = false, refreshAgain = false;
+  let base = "", data = null, timer = null, loading = false, pending = false, refreshAgain = false, plansDeferred = false;
   const active = (job) => !!(job && job.active);
   const jobText = (job) => job ? `${job.yt_wait ? "đang chờ YouTube" : job.gpu_wait ? "đang chờ GPU / Ollama" : jobs[job.status] || job.status}${job.summary ? " · " + job.summary : ""}${job.error ? ": " + job.error : ""}` : "";
   function sourceStatus(plan) {
@@ -102,7 +102,7 @@ const ThemePlan = (() => {
       at("Xếp hàng ghép video");
       await request(path + "/render", "POST");
       drafts.delete(plan.plan_id);
-      say("Đã xếp vào hàng đợi ghép. Xem tiến độ ở Video đã ghép.");
+      say("Đã xếp vào hàng đợi ghép. Xem tiến độ ở tab Video đã ghép.");
     });
   }
   function proposal(p) {
@@ -132,7 +132,10 @@ const ThemePlan = (() => {
       const done = existing && existing.check && existing.check.state === "approved" && existing.output && existing.output.download_url;
       if (done && !busy && !failed) {
         actions.append(el("span", { class: "small", role: "status", text: "✓ Đã ghép · " + minutes(existing.total_duration) }));
-        appendOutput(actions, existing.output);
+        actions.append(button("Xem video", () => {
+          Favorites.showTab("videos");
+          Favorites.scrollToVideo(existing.plan_id);
+        }));
         if (choice.title === existing.title) return;
       }
       if (failed && !busy) actions.append(el("span", { class: "small error", role: "status", text: jobText(job) }));
@@ -149,29 +152,16 @@ const ThemePlan = (() => {
       sourceStatus(existing),
       details("proposal-" + p.proposal_id, `Xem ${p.clips.length} khai thị`, clips), actions);
   }
-  function appendOutput(actions, output) {
-    const player = el("div", { class: "tp-player" });
-    const watch = button("Xem", () => {
-      if (player.children.length) {
-        player.replaceChildren();
-        watch.textContent = "Xem";
-      } else {
-        player.append(el("video", { controls: "", playsinline: "", preload: "metadata",
-          src: output.download_url + "?inline=1" }));
-        watch.textContent = "Ẩn video";
-      }
-    });
-    actions.append(watch);
-    actions.append(el("a", { class: "btn small", href: output.download_url, download: output.download_name || "", text: "Tải video" }),
-      button("Copy tiêu đề", async () => say(await copyText((output.download_name || "").replace(/\.mp4$/, "")) ? "Đã copy tiêu đề." : "Không copy được.")),
-      button("Copy mô tả", async () => say(await copyText(output.description || "") ? "Đã copy mô tả." : "Không copy được.")), player);
-  }
   function planRow(plan) {
     const check = plan.check || { state: "invalid", problems: [] };
     const busy = active(plan.render_job), broken = ["stale", "invalid"].includes(check.state);
     const path = "/theme-plans/" + encodeURIComponent(plan.plan_id);
-    const box = el("article", { class: "tp-plan" }, el("h4", { text: plan.title || plan.plan_id }));
-    let thumbnailEndpoint = null;
+    const output = plan.output && plan.output.download_url ? plan.output : null;
+    const failed = plan.render_job && ["failed", "interrupted"].includes(plan.render_job.status);
+    const box = el("article", { class: "tp-plan vd-card", id: "vd-plan-" + plan.plan_id },
+      output ? player(output.download_url + "?inline=1", "vd-landscape") : null,
+      el("h4", { text: plan.title || plan.plan_id }));
+    const editDetails = details("plan-" + plan.plan_id, "Sửa video & thumbnail");
     const status = broken ? "Nội dung clip đã đổi hoặc không dùng được — hãy Gợi ý lại."
       : jobText(plan.render_job) || (plan.output ? "xong" : "Chưa ghép — bấm Ghép lại để tiếp tục.");
     box.append(el("p", { class: "small" + (broken || (plan.render_job && plan.render_job.error) ? " error" : ""), role: "status", text: status }));
@@ -180,6 +170,14 @@ const ThemePlan = (() => {
     box.append(sourceStatus(plan));
     for (const why of check.problems || []) box.append(el("p", { class: "error small", text: why }));
     const actions = el("div", { class: "actions" });
+    if (output) {
+      actions.append(el("a", { class: "btn small", href: output.download_url, download: output.download_name || "", text: "Tải video" }),
+        button("Copy tiêu đề", async () => say(await copyText((output.download_name || "").replace(/\.mp4$/, "")) ? "Đã copy tiêu đề." : "Không copy được.")),
+        button("Copy mô tả", async () => say(await copyText(output.description || "") ? "Đã copy mô tả." : "Không copy được.")));
+      if (Favorites.thumbnailBlock) editDetails.append(Favorites.thumbnailBlock(base + path + "/thumbs",
+        output.intro ? { shape: "landscape", intro: output.intro } : null,
+        () => opened.set("plan-" + plan.plan_id, true)));
+    }
     if (broken) actions.append(button("Gợi ý lại", generate, busy || active(data.generate_job)));
     else {
       let draft = drafts.get(plan.plan_id);
@@ -226,22 +224,18 @@ const ThemePlan = (() => {
         if (clip) { draft.clips.push({ ...clip }); edit(); drawClips(); }
       }, busy);
       const reset = button("Tải lại bản đã lưu", () => { drafts.delete(plan.plan_id); renderData(); }, busy);
-      box.append(details("plan-" + plan.plan_id, "Sửa danh sách clip", title, rows,
-        el("div", { class: "actions" }, select, add), total, el("div", { class: "actions" }, reset)));
-      actions.append(retry);
-      if (plan.output && plan.output.download_url) {
-        appendOutput(actions, plan.output);
-        thumbnailEndpoint = base + path + "/thumbs";
-      }
+      editDetails.append(title, rows, el("div", { class: "actions" }, select, add), total,
+        el("div", { class: "actions" }, reset));
+      if (!output || failed) actions.append(retry);
+      else editDetails.append(el("div", { class: "actions" }, retry));
       drawClips();
     }
     actions.append(button("Xóa", () => {
       if (!confirm("Xóa video ghép này?")) return;
-      return perform(async (at) => { at("Xóa video"); await request(path, "DELETE"); drafts.delete(plan.plan_id); say("Đã xóa."); });
+      return perform(async (at) => { at("Xóa video"); Favorites.pauseAll(); await request(path, "DELETE"); drafts.delete(plan.plan_id); say("Đã xóa."); });
     }, busy));
     box.append(actions);
-    if (thumbnailEndpoint && Favorites.thumbnailBlock) box.append(Favorites.thumbnailBlock(thumbnailEndpoint,
-      plan.output?.intro ? { shape: "landscape", intro: plan.output.intro } : null));
+    if (!broken || output) box.append(editDetails);
     return box;
   }
   function renderData() {
@@ -256,11 +250,19 @@ const ThemePlan = (() => {
     $("tp-summary").textContent = parts.join(" · ");
     $("tp-job").textContent = jobText(data.generate_job);
     $("tp-generate").disabled = active(data.generate_job);
-    // Preserve focus/caret; draft values and expanded details also survive later polls.
+    setVideoCount("plans", data.plans.length);
+    // Preserve focus/caret independently in each pane. Keep controls in a deferred pane registered.
     const focused = document.activeElement;
-    if (focused && focused.tagName === "INPUT" && focused.type === "text" &&
-      ($("tp-plans").contains(focused) || $("tp-proposals").contains(focused))) return;
-    inputs.clear();
+    const editing = (root) => focused && focused.tagName === "INPUT" && focused.type === "text" && root.contains(focused);
+    if (!editing($("tp-proposals"))) renderProposals();
+    plansDeferred = playing() || editing($("tp-plans"));
+    if (!plansDeferred) renderPlans();
+  }
+  function forgetControls(root) {
+    for (const node of inputs) if (root.contains(node)) inputs.delete(node);
+  }
+  function renderProposals() {
+    forgetControls($("tp-proposals"));
     $("tp-proposals").replaceChildren();
     const doc = data.proposals;
     if (doc) {
@@ -272,6 +274,9 @@ const ThemePlan = (() => {
         $("tp-proposals").append(rejected);
       }
     }
+  }
+  function renderPlans() {
+    forgetControls($("tp-plans"));
     $("tp-plans").replaceChildren(...(data.plans.length ? data.plans.map(planRow) : [el("p", { class: "muted small", text: "Chưa có video ghép theo chủ đề." })]));
   }
   async function load() {
@@ -300,6 +305,7 @@ const ThemePlan = (() => {
     $("tp-generate").addEventListener("click", generate);
     $("tp-refresh").addEventListener("click", load);
     for (const id of ["tp-plans", "tp-proposals"]) $(id).addEventListener("focusout", () => setTimeout(() => { if (data && !pending) renderData(); }, 0));
+    onIdle(() => { if (plansDeferred && data && !pending) renderData(); });
     window.addEventListener("favorites-changed", load);
     load();
   }

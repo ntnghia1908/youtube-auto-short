@@ -809,13 +809,14 @@ def test_sources_store_snapshot_async_ttl_and_failure_without_http(monkeypatch):
 NODE = r"""
 const fs = require('fs'), vm = require('vm'), assert = require('assert/strict');
 class El {
-  constructor(tag) { this.tagName = tag.toUpperCase(); this.children = []; this.listeners = {}; this.value = ''; this.type = ''; this._text = ''; this.disabled = false; }
+  constructor(tag) { this.tagName = tag.toUpperCase(); this.children = []; this.listeners = {}; this.value = ''; this.type = ''; this._text = ''; this.disabled = false; this.paused = true; this.ended = false; this.currentTime = 0; }
   set textContent(v) { this._text = String(v); this.children = []; }
   get textContent() { return this._text + this.children.map(c => typeof c === 'string' ? c : c.textContent).join(''); }
-  append(...cs) { this.children.push(...cs); }
+  append(...cs) { this.children.push(...cs.filter(c=>c!=null)); }
   replaceChildren(...cs) { this.children = cs; this._text = ''; }
   addEventListener(k, f) { this.listeners[k] = f; }
   setAttribute(k, v) { this[k] = v; }
+  pause() { this.paused = true; this.listeners.pause?.(); }
   contains(node) { return this === node || this.children.some(c => typeof c !== 'string' && c.contains(node)); }
 }
 const all = n => [n,...n.children.filter(c=>typeof c!=='string').flatMap(all)];
@@ -856,7 +857,7 @@ async function api(path, opts = {}) {
  } else if (path.endsWith('/render')) {
   assert.equal(plan.check.state, 'approved'); plan.render_job = {active:true,status:'queued'};
   return {job:clone(plan.render_job),created:true};
- } else if (method === 'DELETE') { fixture.plans = []; return {}; }
+ } else if (method === 'DELETE') { fixture.plans = fixture.plans.filter(p=>p.plan_id!==path.split('/').at(-1)); return {}; }
  const response = clone(plan); delete response.check; return response;
 }
 function boot() {
@@ -864,11 +865,28 @@ function boot() {
  const document = {getElementById:id=>els[id] ||= new El('div'), createElement:tag=>new El(tag), activeElement:null};
  function el(tag, attrs = {}, ...children) { const n = document.createElement(tag); for (const [k,v] of Object.entries(attrs)) {
   if (k === 'text') n.textContent = v; else n.setAttribute(k,v); } n.append(...children); return n; }
- const ctx = {Favorites:{el, api, fmtDur:x=>x+' s', copyText:async text=>{copies.push(text);return true;}},
+ const players = new Map(), idle = [], navigation = [], counts = {};
+ const busy = () => [...players.values()].some(v=>(!v.paused && !v.ended) || document.fullscreenElement===v);
+ const flush = () => {if(!busy())idle.forEach(fn=>fn());};
+ const player = (src,cls) => {
+  if(!players.has(src)) {
+   const v=el('video',{src,class:cls,controls:'',playsinline:'',preload:'metadata'});
+   v.addEventListener('pause',flush);v.addEventListener('ended',flush);players.set(src,v);
+  }
+  return players.get(src);
+ };
+ const thumbnailBlock = (endpoint,intro,onChanged) => {
+  const block=el('div',{class:'fv-thumbnails'});
+  block.reveal=()=>{const detail=all(els['tp-plans']).find(n=>n.tagName==='DETAILS' && n.contains(block));detail.open=true;onChanged();};
+  return block;
+ };
+ const ctx = {Favorites:{el, api, fmtDur:x=>x+' s', copyText:async text=>{copies.push(text);return true;},
+  player,busy,thumbnailBlock,onIdle:fn=>idle.push(fn),pauseAll:()=>{for(const v of players.values())v.pause();},setVideoCount:(source,n)=>counts[source]=n,
+  showTab:name=>navigation.push(name),scrollToVideo:id=>navigation.push(id)},
   document, window:{addEventListener:(k,f)=>events[k]=f}, location:{pathname:'/playlists/PLeligible/favorites'},
   setTimeout:(f,ms)=>{timers.push({f,ms});return timers.length;}, clearTimeout:()=>{}, confirm:()=>true};
  vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8')+'\nThemePlan.init();', ctx);
- return {els,timers,events,document};
+ return {els,timers,events,document,navigation,counts,flush};
 }
 const tick = () => new Promise(r=>setImmediate(r));
 let app;
@@ -927,6 +945,7 @@ if (process.argv[2] === 'summary-zero') fixture.index_summary = {usable:4, pendi
   assert.deepEqual(approve.body,{revision:scenario==='one-click'?1:2,duration_override:true});
   assert.equal(fixture.plans[0].title,scenario==='radio'?p.titles[1]:scenario==='custom'?'Tựa tự sửa':p.titles[0]);
   assert.ok(app.els['tp-plans'].textContent.includes('đang chờ'));
+  assert.ok(!nodes('tp-plans').some(n=>n.tagName==='VIDEO'));
   assert.equal(btn('tp-proposals','Đang ghép…').disabled,true);
   assert.equal(btn('tp-plans','Xóa').disabled,true);
   const count=mutations().length;await click('tp-proposals','Đang ghép…');await click('tp-plans','Ghép lại');assert.equal(mutations().length,count);
@@ -961,19 +980,21 @@ if (process.argv[2] === 'summary-zero') fixture.index_summary = {usable:4, pendi
   const card=app.els['tp-proposals'];
   assert.ok(card.textContent.includes('✓ Đã ghép · 11,7 phút'));
   assert.ok(!nodes('tp-proposals').some(n=>n.tagName==='BUTTON' && /Ghép video|Ghép lại/.test(n.textContent)));
-  const link=nodes('tp-proposals').find(n=>n.tagName==='A');
+  assert.ok(!nodes('tp-proposals').some(n=>n.tagName==='A' || n.tagName==='VIDEO'));
+  await click('tp-proposals','Xem video');assert.deepEqual(app.navigation,['videos',fixture.plans[0].plan_id]);
+  const link=nodes('tp-plans').find(n=>n.tagName==='A');
   assert.equal(link.href,'/files/ready.mp4');assert.equal(link.download,'Tu học.mp4');
-  await click('tp-proposals','Copy mô tả');assert.deepEqual(copies,['00:00 Tu học']);
-  for (const id of ['tp-proposals','tp-plans']) {
-   assert.ok(!nodes(id).some(n=>n.tagName==='VIDEO'));
-   await click(id,'Xem');
-   const video=nodes(id).find(n=>n.tagName==='VIDEO');assert.ok(video);
-   assert.equal(video.src,'/files/ready.mp4?inline=1');
-   assert.equal(video.preload,'metadata');assert.ok('controls' in video && 'playsinline' in video);
-   await click(id,'Ẩn video');assert.ok(!nodes(id).some(n=>n.tagName==='VIDEO'));
-   await click(id,'Xem');assert.notEqual(nodes(id).find(n=>n.tagName==='VIDEO'),video);
-   await click(id,'Ẩn video');
-  }
+  await click('tp-plans','Copy mô tả');assert.deepEqual(copies,['00:00 Tu học']);
+  const video=nodes('tp-plans').find(n=>n.tagName==='VIDEO');assert.ok(video);
+  assert.equal(video.src,'/files/ready.mp4?inline=1');
+  assert.equal(video.preload,'metadata');assert.ok('controls' in video && 'playsinline' in video);
+  assert.equal(app.els['tp-plans'].children[0].children[0],video);
+  assert.equal(app.els['tp-plans'].children[0].id,'vd-plan-'+fixture.plans[0].plan_id);
+  const detail=nodes('tp-plans').find(n=>n.tagName==='DETAILS');
+  assert.ok(detail.textContent.includes('Sửa video & thumbnail'));assert.ok(detail.contains(btn('tp-plans','Ghép lại')));
+  for(const text of ['Tải video','Copy tiêu đề','Copy mô tả','Xóa'])
+   assert.ok(!detail.textContent.includes(text));
+  assert.equal(app.counts.plans,1);
   if (scenario === 'card-retitle') {
    nodes('tp-proposals').filter(n=>n.type==='radio')[1].listeners.change();
    assert.equal(btn('tp-proposals','Ghép lại với tiêu đề này').disabled,false);
@@ -987,6 +1008,63 @@ if (process.argv[2] === 'summary-zero') fixture.index_summary = {usable:4, pendi
    assert.equal(fixture.plans.length,1);
    assert.equal(btn('tp-proposals','Đang ghép…').disabled,true);
   }
+ } else if (scenario === 'thumbnail-open') {
+  await made();fixture.plans[0].output={download_url:'/files/ready.mp4',intro:{sha256:'old'}};await refresh();
+  const detail=nodes('tp-plans').find(n=>n.tagName==='DETAILS');assert.equal(detail.open,false);
+  nodes('tp-plans').find(n=>n.class==='fv-thumbnails').reveal();assert.equal(detail.open,true);
+  await refresh();assert.equal(nodes('tp-plans').find(n=>n.tagName==='DETAILS').open,true);
+  fixture.plans[0].render_job={active:false,status:'failed',error:'Lỗi ghép lại'};await refresh();
+  const failedDetails=nodes('tp-plans').find(n=>n.tagName==='DETAILS');
+  assert.ok(!failedDetails.contains(btn('tp-plans','Ghép lại')));
+ } else if (scenario === 'delete-playing' || scenario === 'delete-playing-late-pause') {
+  await made();fixture.plans[0].output={download_url:'/files/delete.mp4'};
+  const other=clone(fixture.plans[0]);other.plan_id='87654321';other.proposal=null;
+  other.output={download_url:'/files/other.mp4'};fixture.plans.push(other);await refresh();
+  const video=nodes('tp-plans').filter(n=>n.tagName==='VIDEO')[1];video.paused=false;
+  const old=app.els['tp-plans'].children[0];await refresh();assert.equal(app.els['tp-plans'].children[0],old);
+  // Browser pause events may arrive before or after DELETE and its final refresh.
+  const onPause=video.listeners.pause;
+  if(scenario==='delete-playing-late-pause')video.listeners.pause=()=>{};
+  let release;hold=new Promise(r=>release=r);
+  const started=click('tp-plans','Xóa');assert.equal(video.paused,true);
+  assert.equal(fixture.plans.length,2);release();await started;
+  assert.deepEqual(fixture.plans.map(p=>p.plan_id),['87654321']);
+  assert.ok(!nodes('tp-plans').some(n=>n.id==='vd-plan-12345678'));
+  assert.ok(nodes('tp-plans').some(n=>n.id==='vd-plan-87654321'));
+  assert.equal(app.counts.plans,1);
+  assert.equal(mutations().filter(r=>r.method==='DELETE').length,1);
+  if(scenario==='delete-playing-late-pause')onPause();
+  assert.ok(!nodes('tp-plans').some(n=>n.id==='vd-plan-12345678'));
+ } else if (scenario.startsWith('video-')) {
+  await made();fixture.plans[0].output={download_url:'/files/ready.mp4',download_name:'Ready.mp4'};await refresh();
+  const old=app.els['tp-plans'].children[0], video=nodes('tp-plans').find(n=>n.tagName==='VIDEO');
+  assert.ok(video);video.currentTime=42;
+  const oldProposal=app.els['tp-proposals'].children[0];
+  if(scenario==='video-paused') {
+   await refresh();assert.notEqual(app.els['tp-plans'].children[0],old);
+  } else {
+   if(scenario==='video-fullscreen') app.document.fullscreenElement=video;
+   else video.paused=false;
+   fixture.plans[0].title='Cập nhật khi dừng';
+   const poll=app.timers.filter(t=>t.ms===5000).at(-1);await poll.f();
+   assert.equal(app.els['tp-plans'].children[0],old);
+   assert.notEqual(app.els['tp-proposals'].children[0],oldProposal);
+   app.els['tp-plans'].listeners.focusout();await app.timers.filter(t=>t.ms===0).at(-1).f();
+   assert.equal(app.els['tp-plans'].children[0],old);
+   if(scenario==='video-lock') {
+    const controls=nodes('tp-plans').filter(n=>['BUTTON','INPUT','SELECT'].includes(n.tagName));
+    let release;hold=new Promise(r=>release=r);
+    const started=app.els['tp-generate'].listeners.click();
+    assert.ok(controls.every(n=>n.disabled));assert.equal(app.els['tp-plans'].children[0],old);
+    release();await started;assert.equal(app.els['tp-plans'].children[0],old);
+    assert.equal(input('tp-plans').disabled,false);
+   }
+   if(scenario==='video-fullscreen') {app.document.fullscreenElement=null;app.flush();}
+   else video.pause();
+   assert.notEqual(app.els['tp-plans'].children[0],old);
+   assert.ok(app.els['tp-plans'].textContent.includes('Cập nhật khi dừng'));
+  }
+  assert.equal(nodes('tp-plans').find(n=>n.tagName==='VIDEO'),video);assert.equal(video.currentTime,42);
  } else if (scenario === 'double-reload') {
   let release;hold=new Promise(r=>release=r);
   const first=click('tp-proposals','Ghép video'), second=click('tp-proposals','Đang ghép…');
@@ -1080,6 +1158,8 @@ if (process.argv[2] === 'summary-zero') fixture.index_summary = {usable:4, pendi
 @pytest.mark.parametrize("scenario", [
     "display", "summary", "summary-zero", "sources", "sources-ready", "one-click", "radio", "custom", "double-reload",
     "card-poll", "card-reload", "card-retitle",
+    "video-busy", "video-paused", "video-fullscreen", "video-lock", "thumbnail-open",
+    "delete-playing", "delete-playing-late-pause",
     "failure-create", "failure-edit", "failure-approve", "failure-render",
     "lost-create-response", "edit-clips", "edit-retry-failure", "failed-job", "read-failure",
     "conflict", "stale", "focus-long",
@@ -1100,40 +1180,53 @@ def test_js_smoke_and_text_only(scenario):
 NODE_TABS = r"""
 const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
 class El {
- constructor(tag='div') {this.tagName=tag.toUpperCase();this.children=[];this.listeners={};this.dataset={};this.classes=new Set();this.classList={toggle:(c,on)=>on?this.classes.add(c):this.classes.delete(c)};}
+ constructor(tag='div') {this.tagName=tag.toUpperCase();this.children=[];this.listeners={};this.dataset={};this.classes=new Set();this.paused=true;this.ended=false;this.currentTime=0;this._text='';this.classList={toggle:(c,on)=>on?this.classes.add(c):this.classes.delete(c)};}
+ set textContent(v) {this.replaceChildren();this._text=String(v);}
+ get textContent() {return this._text+this.children.map(c=>typeof c==='string'?c:c.textContent).join('');}
  setAttribute(k,v) {this[k]=v;}
- append(...nodes) {this.children.push(...nodes);}
- replaceChildren(...nodes) {this.children=nodes;}
+ append(...nodes) {for(const n of nodes) {if(n==null)continue;if(typeof n!=='string'){if(n.parent)n.parent.children=n.parent.children.filter(c=>c!==n);n.parent=this;}this.children.push(n);}}
+ replaceChildren(...nodes) {for(const n of this.children)if(typeof n!=='string')n.parent=null;this.children=[];this._text='';this.append(...nodes);}
+ get isConnected() {return !!this.root || !!this.parent?.isConnected;}
+ contains(n) {return n===this || this.children.some(c=>typeof c!=='string' && c.contains(n));}
+ closest(tag) {return this.tagName===tag.toUpperCase()?this:this.parent?.closest(tag);}
  addEventListener(k,f) {this.listeners[k]=f;}
+ pause() {if(!this.paused){this.paused=true;this.listeners.pause?.();}}
+ play() {this.paused=false;this.ended=false;this.listeners.play?.();}
  focus() {this.focused=true;}
+ scrollIntoView(opts) {this.scrolled=opts;}
 }
-const mode=process.argv[2],els={},values=new Map(),calls=[];
+const mode=process.argv[2],els={},values=new Map(),calls=[],timers=[],events={};
 if(mode==='saved')values.set('autoShort.fvTab','manual');
+if(mode==='saved-videos')values.set('autoShort.fvTab','videos');
 if(mode==='invalid')values.set('autoShort.fvTab','unknown');
-const get=id=>els[id] ||= new El();
-const tabs=['ai','manual'].map(name=>{const n=get('fv-tab-'+name);n.dataset.fvTab=name;return n;});
+const get=id=>{if(!els[id]){els[id]=new El();els[id].root=true;}return els[id];};
+const tabs=['ai','manual','videos'].map(name=>{const n=get('fv-tab-'+name);n.dataset.fvTab=name;return n;});
 const filters=['all','short','khaithi'].map(kind=>{const n=new El('button');n.dataset.kind=kind;return n;});
 get('fv-auto-min').value='60';
 const favorites=[{episode_id:'ep1',clip:'k1',code:'KT01',kind:'khaithi',usable:true,duration:350},
  {episode_id:'ep2',clip:'s1',code:'S01',kind:'short',usable:true,duration:50}];
+let compilations=mode==='players'?[{cid:'c1',mode:'concat',state:'done',download_url:'/files/manual.mp4',duration:600,segments:2},
+ {cid:'c2',mode:'loop',state:'done',download_url:'/files/loop.mp4',duration:600,repeat:2}]:[];
 const document={querySelector:s=>get(s.slice(1)),getElementById:get,createElement:tag=>new El(tag),
- querySelectorAll:s=>s==='[data-fv-tab]'?tabs:filters,addEventListener:()=>{},activeElement:null};
+ querySelectorAll:s=>s==='[data-fv-tab]'?tabs:filters,addEventListener:(k,f)=>events[k]=f,activeElement:null};
 const ctx={document,location:{pathname:'/playlists/PLeligible/favorites'},localStorage:{getItem:k=>{if(mode==='blocked')throw Error('denied');return values.get(k);},setItem:(k,v)=>{if(mode==='blocked')throw Error('denied');values.set(k,v);}},
- fetch:async(path,opts)=>{calls.push({path,opts});return {ok:true,status:200,json:async()=>opts.method==='POST'?{created:true}:{series:'Bộ kinh',max_minutes:720,favorites,compilations:[]}};},
- window:{dispatchEvent:()=>{}},setTimeout:()=>1,clearTimeout:()=>{},confirm:()=>true};
+ fetch:async(path,opts)=>{calls.push({path,opts});return {ok:true,status:200,json:async()=>path.endsWith('/thumbs')?{state:'ready',files:{}}:opts.method==='POST'?{created:true}:{series:'Bộ kinh',max_minutes:720,favorites,compilations}};},
+ window:{dispatchEvent:()=>{}},setTimeout:(f,ms)=>{timers.push({f,ms});return timers.length;},clearTimeout:()=>{},confirm:()=>true};
 const tick=()=>new Promise(r=>setImmediate(r));
 (async()=>{
  vm.createContext(ctx);  // favorites.html loads app.js (AutoShort helpers) before favorites.js
  vm.runInContext(fs.readFileSync(require('path').join(require('path').dirname(process.argv[1]),'app.js'),'utf8'),ctx);
- vm.runInContext(fs.readFileSync(process.argv[1],'utf8')+'\nFavorites.init();',ctx);await tick();
- assert.equal(get('fv-pane-ai').hidden,mode==='saved');
- assert.equal(get('fv-pane-manual').hidden,mode!=='saved');
- assert.equal(tabs[mode==='saved'?1:0]['aria-selected'],'true');
+ vm.runInContext(fs.readFileSync(process.argv[1],'utf8')+'\nFavorites.init();globalThis.fv=Favorites;',ctx);await tick();
+ const initial=mode==='saved'?'manual':mode==='saved-videos'?'videos':'ai';
+ for(const name of ['ai','manual','videos'])assert.equal(get('fv-pane-'+name).hidden,name!==initial);
+ assert.equal(tabs[['ai','manual','videos'].indexOf(initial)]['aria-selected'],'true');
  tabs[1].listeners.click();assert.equal(get('fv-pane-manual').hidden,false);
  if(mode!=='blocked')assert.equal(values.get('autoShort.fvTab'),'manual');
  let prevented=false;tabs[1].listeners.keydown({key:'ArrowRight',preventDefault:()=>prevented=true});
- assert.ok(prevented);assert.equal(get('fv-pane-ai').hidden,false);assert.ok(tabs[0].focused);
- assert.equal(get('fv-count').textContent,2);
+ assert.ok(prevented);assert.equal(get('fv-pane-videos').hidden,false);assert.ok(tabs[2].focused);
+ if(mode!=='blocked')assert.equal(values.get('autoShort.fvTab'),'videos');
+ tabs[2].listeners.keydown({key:'ArrowRight',preventDefault:()=>{}});assert.equal(get('fv-pane-ai').hidden,false);
+ assert.equal(get('fv-count').textContent,'2');
  // Existing manual concat and duration-based creation still use their CP8.33 payloads.
  get('fv-all').listeners.change({target:{checked:true}});
  get('fv-concat').listeners.click({target:get('fv-concat')});await tick();
@@ -1146,12 +1239,47 @@ const tick=()=>new Promise(r=>setImmediate(r));
  const loop=all(get('fv-list')).find(n=>n.type==='number');loop.value='30';
  all(get('fv-list')).find(n=>n.textContent==='Tạo').listeners.click();await tick();
  assert.deepEqual(JSON.parse(calls.filter(c=>c.opts.method==='POST').at(-1).opts.body),{mode:'loop',item:{episode_id:'ep1',clip:'k1'},minutes:30});
+ if(mode==='players') {
+  const fv=ctx.fv, videos=()=>all(get('fv-comps')).filter(n=>n.tagName==='VIDEO');
+  const [v,other]=videos();assert.ok(v && other);
+  assert.equal(v.src,'/files/manual.mp4?inline=1');assert.equal(v.preload,'metadata');
+  assert.ok('controls' in v && 'playsinline' in v);assert.equal(v.className,'vd-vertical');
+  assert.equal(get('fv-comps').children[0].children[0],v);
+  assert.ok(!all(get('fv-comps')).some(n=>n.tagName==='A' && n.textContent==='Xem'));
+  fv.setVideoCount('plans',3);assert.equal(get('fv-videos-count').textContent,'5');
+  const reload=async()=>{await get('fv-auto').listeners.click({target:get('fv-auto')});await tick();};
+  fv.showTab('videos');v.currentTime=23;await reload();assert.equal(videos()[0],v);assert.equal(v.currentTime,23);
+  v.play();assert.equal(fv.busy(),true);
+  const old=get('fv-comps').children[0];compilations[0].download_name='Updated';
+  document.activeElement=new El('input');document.activeElement.type='number';
+  await reload();assert.equal(get('fv-comps').children[0],old);assert.equal(videos()[0],v);
+  // Render paths triggered by manual controls must also defer the video list.
+  filters[0].listeners.click();assert.equal(get('fv-comps').children[0],old);
+  v.pause();assert.notEqual(get('fv-comps').children[0],old);assert.ok(get('fv-comps').textContent.includes('Updated'));
+  assert.equal(videos()[0],v);assert.equal(v.currentTime,23);document.activeElement=null;
+  document.fullscreenElement=v;const fullCard=get('fv-comps').children[0];await reload();
+  assert.equal(fv.busy(),true);assert.equal(get('fv-comps').children[0],fullCard);
+  document.fullscreenElement=null;events.fullscreenchange();assert.notEqual(get('fv-comps').children[0],fullCard);
+  v.play();other.play();assert.equal(v.paused,true);assert.equal(other.paused,false);
+  const playingCard=get('fv-comps').children[0];await reload();other.ended=true;other.listeners.ended();
+  assert.notEqual(get('fv-comps').children[0],playingCard);other.pause();
+  v.play();fv.showTab('manual');assert.equal(v.paused,true);assert.equal(fv.busy(),false);
+  fv.scrollToVideo('123');assert.equal(get('vd-plan-123').scrolled.block,'start');
+  // Thumbnail warnings reveal the nearest details immediately.
+  let warned=false;
+  const thumb=fv.thumbnailBlock('/thumbs',{shape:'landscape',intro:{sha256:'old'}},()=>warned=true);
+  const detail=new El('details');detail.append(thumb);get('thumb-test').append(detail);
+  await timers.filter(t=>t.ms===0).at(-1).f();assert.equal(detail.open,true);assert.equal(warned,true);
+  assert.ok(detail.textContent.includes('Thumbnail intro đã đổi'));
+  compilations=[];await reload();assert.equal(get('fv-videos-count').textContent,'3');
+  const fresh=fv.player(v.src);assert.notEqual(fresh,v);assert.equal(fv.busy(),false);
+ }
  console.log('ok');
 })().catch(e=>{console.error(e);process.exitCode=1;});
 """
 
 
-@pytest.mark.parametrize("storage", ["default", "saved", "invalid", "blocked"])
+@pytest.mark.parametrize("storage", ["default", "saved", "saved-videos", "invalid", "blocked", "players"])
 def test_js_favorites_tabs_and_manual_compilation(storage):
     if shutil.which("node") is None:
         pytest.skip("node unavailable")
@@ -1161,7 +1289,7 @@ def test_js_favorites_tabs_and_manual_compilation(storage):
     assert result.stdout.strip() == "ok"
 
 
-def test_favorites_tab_panel_ownership():
+def test_favorites_ui_tab_panel_ownership():
     from html.parser import HTMLParser
 
     class Panels(HTMLParser):
@@ -1188,7 +1316,13 @@ def test_favorites_tab_panel_ownership():
     assert "hidden" in nodes["fv-pane-manual"][0]
     assert nodes["fv-tab-ai"][0]["aria-selected"] == "true"
     assert html.index('id="fv-pane-ai"') < html.index('id="fv-pane-manual"')
-    for name in ("tp-generate", "tp-proposals", "tp-plans"):
+    for name in ("tp-generate", "tp-proposals"):
         assert "fv-pane-ai" in nodes[name][1]
-    for name in ("fv-list", "fv-filters", "fv-concat", "fv-all", "fv-auto", "fv-comps", "fv-max"):
+    for name in ("fv-list", "fv-filters", "fv-concat", "fv-all", "fv-auto", "fv-max"):
         assert "fv-pane-manual" in nodes[name][1]
+
+    assert "hidden" in nodes["fv-pane-videos"][0]
+    assert nodes["fv-tab-videos"][0]["data-fv-tab"] == "videos"
+    assert "fv-tab-videos" in nodes["fv-videos-count"][1]
+    for name in ("tp-plans", "fv-comps"):
+        assert "fv-pane-videos" in nodes[name][1]
