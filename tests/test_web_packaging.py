@@ -169,7 +169,7 @@ def test_retired_package_routes_are_404_and_new_routes_require_auth(service):
 
 NODE_CARDS = r"""
 const fs = require('fs'), vm = require('vm'), assert = require('assert/strict');
-class El {
+class El {paused=true;
  constructor(tag='div') { this.tagName=tag.toUpperCase(); this.children=[]; this.listeners={}; this.dataset={}; this.isConnected=true; this._text=''; this.classList={toggle:()=>{}}; }
  setAttribute(k,v) { this[k]=v; }
  append(...nodes) { this.children.push(...nodes.filter(n=>n!=null)); }
@@ -181,7 +181,7 @@ class El {
 }
 const els={}, get=id=>els[id] ||= new El(), timers=[], calls=[], copies=[];
 const mode=process.argv[2], jobs=new Map();
-const document={querySelector:s=>get(s.slice(1)),getElementById:get,querySelectorAll:()=>[],activeElement:null};
+const document={querySelector:s=>get(s.slice(1)),getElementById:get,querySelectorAll:()=>[],addEventListener:()=>{},activeElement:null};
 function el(tag, attrs={}, ...children) {const n=new El(tag);for(const [k,v] of Object.entries(attrs)) {if(k==='text')n.textContent=v;else n.setAttribute(k,v);}n.append(...children);return n;}
 async function api(path, options={}) {
  calls.push([path,options.method || 'GET']);
@@ -212,7 +212,8 @@ function button(root,text) {const b=all(root).find(n=>n.tagName==='BUTTON' && n.
  for(const t of timers.filter(t=>t.ms===0))await t.f();await tick();
  const blocks=[get('fv-comps'),get('tp-plans')].map(root=>{
   const texts=all(root).map(n=>n.textContent);
-  for(const label of ['Xem','Tải video','Copy tiêu đề','Copy mô tả'])assert.ok(texts.includes(label),label);
+  for(const label of ['Tải video','Copy tiêu đề','Copy mô tả'])assert.ok(texts.includes(label),label);
+  assert.ok(!texts.includes('Xem'));assert.ok(all(root).some(n=>n.tagName==='VIDEO'));
   assert.ok(!texts.includes('Đóng gói'));
   return all(root).find(n=>n.class==='fv-thumbnails');
  });

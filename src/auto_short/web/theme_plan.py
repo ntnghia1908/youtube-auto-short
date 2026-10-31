@@ -12,6 +12,7 @@ import threading
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
@@ -345,6 +346,8 @@ class ThemePlans:
         store_videos = index_cache.source_ids(self.config, blocking=False)
         for plan in self.plans(pid, index=index):
             view = safe(plan)
+            view.update(store.published_status(store.directory(self.config.render.output_dir, pid),
+                                               "theme", plan.get("plan_id", ""), plan.get("revision")))
             output = self.output(pid, plan)
             view["render_job"] = job_view(self.runner.latest(render_key(pid, plan.get("plan_id"))))
             view["output"] = None
@@ -400,6 +403,12 @@ class ApproveIn(BaseModel):
     duration_override: StrictBool = False
 
 
+class VideoPublishedIn(BaseModel):
+    kind: Literal["compilation", "theme"]
+    id: StrictStr
+    published: StrictBool
+
+
 def response(data, status=200):
     return JSONResponse(safe(data), status_code=status, headers={"Cache-Control": "no-store"})
 
@@ -432,10 +441,24 @@ def register(app: FastAPI, service: ThemePlans):
             msg = str(exc)
             status = 422 if msg.startswith(("cannot read", "invalid theme_proposals")) else (409 if conflict else 400)
             return response({"detail": msg}, status)
-        except (theme_index.IndexError, OSError, ValueError, KeyError, TypeError):
+        except (store.CompilationError, theme_index.IndexError, OSError, ValueError, KeyError, TypeError):
             return response({"detail": "dữ liệu chủ đề không hợp lệ; không thể kiểm tra"}, 422)
 
     base = "/api/playlists/{pid}"
+
+    @app.post(base + "/videos/published")
+    def published(pid: str, body: VideoPublishedIn):
+        def action():
+            folder = store.directory(service.config.render.output_dir, pid)
+            with store.publish_lock:
+                revision = None
+                if body.kind == "compilation":
+                    if store.read_doc(folder, body.id) is None:
+                        return response({"detail": "không có video ghép này"}, 404)
+                else:
+                    revision = service.find(pid, body.id)["revision"]
+                return response(store.set_published(folder, body.kind, body.id, body.published, revision))
+        return invoke(pid, action)
 
     @app.get(base + "/theme-plan")
     def get(pid: str):
@@ -486,7 +509,9 @@ def register(app: FastAPI, service: ThemePlans):
                 return response({"detail": "đang xuất video, chưa thể xóa kế hoạch"}, 409)
             if not any(p.get("plan_id") == plan_id for p in service.plans(pid)):
                 raise MissingPlan()
-            theme_plan.delete_plan(service.config, pid, plan_id)
+            with store.publish_lock:
+                theme_plan.delete_plan(service.config, pid, plan_id)
+                store.set_published(store.directory(service.config.render.output_dir, pid), "theme", plan_id, False)
             return response({"deleted": plan_id})
         return invoke(pid, action)
 

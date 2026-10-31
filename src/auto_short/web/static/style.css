@@ -333,9 +333,15 @@ body.modal-open { overflow: hidden; }
 
 /* TC2: thematic planner inside Yêu thích */
 .tp-plan { border-top: 1px solid var(--border); margin-top: .75rem; padding-top: .5rem; overflow-wrap: anywhere; }
-.tp-player { flex-basis: 100%; width: 100%; min-width: 0; }
-.tp-player:empty { display: none; }
-.tp-player video { display: block; width: 100%; max-width: 100%; background: #000; }
+.vd-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: .75rem; }
+.vd-card { min-width: 0; border: 1px solid var(--border); border-radius: 8px; padding: .6rem; overflow-wrap: anywhere; }
+.vd-card.tp-plan { margin-top: 0; }
+.vd-card video { display: block; width: 100%; max-width: 100%; background: #000; object-fit: contain; }
+.vd-card .vd-landscape { aspect-ratio: 16 / 9; }
+.vd-card .vd-vertical { aspect-ratio: 9 / 16; max-height: 70vh; }
+@media (max-width: 640px) {
+  .vd-grid { grid-template-columns: minmax(0, 1fr); }
+}
 .tp-plan input[type="text"] { width: 100%; box-sizing: border-box; padding: .5rem; margin-bottom: .5rem; font-size: 1rem; }
 .tp-plan select { flex: 1 1 12rem; min-width: 0; max-width: 100%; padding: .5rem; font-size: 1rem; }
 

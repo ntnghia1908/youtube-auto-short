@@ -271,7 +271,8 @@ class Compilations:
                 "download_url": f"/files/playlists/{pid}/compilations/{cid}.mp4" if done else None,
                 "description": comp.meta.description(d.get("mode") or "concat", d.get("chapters") or [],
                                                      d.get("title"), tags) if done else None,
-                "chapters": d.get("chapters") or []}
+                "chapters": d.get("chapters") or [],
+                **store.published_status(self.folder(pid), "compilation", cid)}
 
     def intro_current(self, pid: str, doc: dict, *, verify=True) -> bool:
         if khaithi_thumbs.start_episode(self.config, pid) is None:

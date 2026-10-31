@@ -6,6 +6,7 @@ cleaning a source never touches it.
 
 from __future__ import annotations
 
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -15,6 +16,8 @@ from .spec import CID_RE, CompilationError, Item, item_from_json
 SCHEMA_VERSION = 1
 NAMESPACE = "_compilations"
 FAVORITES_NAME = "favorites.json"
+PUBLISHED_NAME = "published.json"
+publish_lock = threading.RLock()  # user state: reads, read-modify-write and deletion; no job guard
 KEPT_DIR = "kept"  # G11: <folder>/kept/<episode_id>/<clip>.mp4
 QUEUED, RUNNING, DONE, FAILED = "queued", "running", "done", "failed"
 
@@ -70,12 +73,48 @@ def delete(folder: Path, cid: str) -> bool:
     """G6 DELETE: remove ``<cid>.mp4`` and ``<cid>.json``; False when neither exists."""
     if not CID_RE.match(cid):
         return False
-    found = False
-    for path in (video_path(folder, cid), doc_path(folder, cid)):
-        if path.exists():
-            path.unlink()
-            found = True
-    return found
+    with publish_lock:
+        found = False
+        for path in (video_path(folder, cid), doc_path(folder, cid)):
+            if path.exists():
+                path.unlink()
+                found = True
+        if found:
+            set_published(folder, "compilation", cid, False)
+        return found
+
+
+def published_status(folder: Path, kind: str, ident: str, revision: int | None = None) -> dict:
+    with publish_lock:
+        entry = _published(folder).get(f"{kind}:{ident}")
+        return {"published": entry is not None, "published_at": entry["at"] if entry else None,
+                "published_stale": bool(entry and kind == "theme" and entry.get("revision") != revision)}
+
+
+def _published(folder: Path) -> dict:
+    path = folder / PUBLISHED_NAME
+    if not path.exists():
+        return {}
+    doc = read_json_dict(path)
+    if doc is None or any(not isinstance(v, dict) or not isinstance(v.get("at"), str) for v in doc.values()):
+        raise CompilationError(f"{PUBLISHED_NAME} không đọc được")
+    return doc
+
+
+def set_published(folder: Path, kind: str, ident: str, published: bool, revision: int | None = None) -> dict:
+    """Atomic user state shared by manual compilations and theme plans; repeat ticks keep their timestamp."""
+    with publish_lock:
+        doc = _published(folder)
+        key = f"{kind}:{ident}"
+        if published:
+            entry = doc.get(key)
+            if entry is None or entry.get("revision") != revision:
+                doc[key] = {"at": now(), **({"revision": revision} if kind == "theme" else {})}
+                atomic_write_json(folder / PUBLISHED_NAME, doc)
+        elif key in doc:
+            del doc[key]
+            atomic_write_json(folder / PUBLISHED_NAME, doc)
+        return published_status(folder, kind, ident, revision)
 
 
 def read_favorites(folder: Path) -> list[Item]:
