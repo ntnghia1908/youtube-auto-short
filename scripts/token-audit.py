@@ -8,6 +8,7 @@ Cost = API list price equivalent (not the subscription bill). Baseline + re-meas
 import argparse
 import datetime
 import json
+import re
 import subprocess
 import sys
 from collections import defaultdict
@@ -26,19 +27,53 @@ def family(model):
 def turns(path: Path):
     """One record per API message (streamed chunks share a message id; output_tokens grows, keep the max)."""
     msgs = {}
+    tools = defaultdict(list)
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         try:
             event = json.loads(line)
         except ValueError:
             continue
         message = event.get("message") if event.get("type") == "assistant" else None
+        if not isinstance(message, dict):
+            continue
+        message_tools = tools[message.get("id")]
+        for block in message.get("content", []):
+            if isinstance(block, dict) and block.get("type") == "tool_use":
+                name = block.get("name", "")
+                command = (block.get("input") or {}).get("command", "") if name == "Bash" else ""
+                tool = (name, command)
+                if tool not in message_tools:
+                    message_tools.append(tool)
         usage = message.get("usage") if isinstance(message, dict) else None
         if not usage or not family(message.get("model")):
             continue
         rec = msgs.setdefault(message.get("id"), {"model": family(message["model"]), "usage": usage, "out": 0,
-                                                   "ts": event.get("timestamp", "")})
+                                                   "ts": event.get("timestamp", ""), "tools": message_tools})
         rec["out"] = max(rec["out"], usage.get("output_tokens", 0))
     return sorted(msgs.values(), key=lambda r: r["ts"])
+
+
+def classify_turn(rec):
+    """Choose one work type per message, in priority order across all tools."""
+    kinds = set()
+    for name, command in rec["tools"]:
+        if name == "Agent" or (name == "Bash" and re.search(r"\bcodex\s+exec\b", command)):
+            kinds.add("delegate")
+        elif name == "Bash":
+            if re.search(r"\bpytest\b|\bnode\s+--check\b|\bframework-check\b", command):
+                kinds.add("test")
+            elif re.match(r"^\s*(git|gh)\b", command):
+                kinds.add("git")
+            else:
+                kinds.add("ops")
+        elif name in ("Edit", "Write", "NotebookEdit"):
+            kinds.add("edit")
+        elif name in ("Read", "Grep", "Glob", "ToolSearch"):
+            kinds.add("read")
+        else:
+            kinds.add("other")
+    return next((kind for kind in ("delegate", "test", "git", "ops", "edit", "read", "other")
+                 if kind in kinds), "reply")
 
 
 def cost(rec):
@@ -67,9 +102,12 @@ def agent_type(path: Path):
 
 
 def merged_prs(repo: Path, since, until):
-    out = subprocess.run(["git", "-C", str(repo), "log", "--merges", "--first-parent", "main", "--format=%ad",
-                          "--date=short"], capture_output=True, text=True).stdout.split()
-    return sum(since <= day <= until for day in out)
+    result = subprocess.run(["git", "-C", str(repo), "log", "--merges", "--first-parent", "origin/main", "--format=%ad",
+                             "--date=short"], capture_output=True, text=True)
+    if result.returncode:
+        print("WARNING: cannot read origin/main; check that the remote ref exists. PR count unavailable.", file=sys.stderr)
+        return None
+    return sum(since <= day <= until for day in result.stdout.split())
 
 
 def codex_tokens(since, until):
@@ -103,6 +141,7 @@ def main() -> int:
     paths = [p for p in list(root.glob("*/*.jsonl")) + list(root.glob("*/*/subagents/*.jsonl"))
              if args.project in p.relative_to(root).parts[0]]
     by_agent = defaultdict(lambda: [0, 0.0])  # (agent, model) -> turns, $
+    by_work = defaultdict(lambda: [0, 0.0])  # MAIN work type -> turns, $
     main_input, above = 0, {t: 0 for t in THRESHOLDS}
     rewrites = {"MAIN": [0, 0], "subagent": [0, 0]}  # count, tokens
     peaks = []
@@ -121,6 +160,9 @@ def main() -> int:
                 rewrites[kind][0] += 1
                 rewrites[kind][1] += written
             if agent == "MAIN":
+                work = by_work[classify_turn(rec)]
+                work[0] += 1
+                work[1] += cost(rec)
                 main_input += ctx
                 for t in THRESHOLDS:
                     above[t] += max(0, ctx - t)
@@ -135,6 +177,10 @@ def main() -> int:
         print(f"  {agent:18} {model:7} turns {n:6}  ${usd:7.0f}  {100 * usd / max(total, 1e-9):5.1f}%")
     sub = sum(v[1] for k, v in by_agent.items() if k[0] != "MAIN")
     print(f"subagent share: {100 * sub / max(total, 1e-9):.0f}%")
+    main_cost = sum(v[1] for v in by_work.values())
+    print("main session cost by work type (% of MAIN cost):")
+    for kind, (n, usd) in sorted(by_work.items(), key=lambda kv: -kv[1][1]):
+        print(f"  {kind:18} turns {n:6}  ${usd:8.2f}  {100 * usd / max(main_cost, 1e-9):5.1f}%")
     for t in THRESHOLDS:
         print(f"main input above {t // 1000}k context: {100 * above[t] / max(main_input, 1):.0f}%")
     if peaks:
@@ -144,7 +190,10 @@ def main() -> int:
     for kind, (n, tok) in rewrites.items():
         print(f"{kind} cache-expired rewrites: {n} ({tok / 1e6:.1f}M tokens)")
     prs = merged_prs(Path(args.repo), args.since, args.until)
-    print(f"merged PRs on main: {prs}  -> ${total / prs:.1f}/PR" if prs else "merged PRs on main: 0")
+    if prs is None:
+        print("merged PRs on origin/main: unavailable")
+    else:
+        print(f"merged PRs on origin/main: {prs}  -> ${total / prs:.1f}/PR" if prs else "merged PRs on origin/main: 0")
     codex_in, codex_cached = codex_tokens(args.since, args.until)
     print(f"codex input tokens: {codex_in / 1e6:.1f}M ({100 * codex_cached / max(codex_in, 1):.0f}% cached; separate subscription)")
     return 0
