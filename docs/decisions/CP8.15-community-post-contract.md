@@ -110,6 +110,8 @@ Khác P5b (vào thẳng thư viện): **không ảnh nào vào thư viện khi c
 
 Ô dán link (tùy chọn). Nhận `youtube.com/watch?v=<id>`, `youtu.be/<id>`, `youtube.com/shorts/<id>` (có/không `www.`/`m.`, bỏ query khác `v`) → chuẩn hóa `https://youtube.com/shorts/<id>` (`post/logic.normalize_link`, độc lập với `web/urls.py` — không thêm import ngược từ `post/` vào `web/`); dạng khác → `LinkError` (route 422). Rỗng (`null` hoặc chuỗi trắng) = xóa link.
 
+**LNK1 (HUMAN LEAD 2026-11-01):** tự điền link từ các playlist đã upload bằng OAuth chỉ đọc, gồm video riêng tư / lên lịch. Canonical owner của nguồn / chọn token nhiều kênh, mã file / tiêu đề, phạm vi ghép, dạng link Short / khai thị, không ghi đè, trùng mã và bài chưa soạn: [LNK1 L1–L7, L2a](../tasks/LNK1-post-links-from-playlist.md#authority--key-decisions). Ô dán tay ở trên giữ nguyên. Route, UI, lưu kết quả và `[post] link_sync_hours`: cùng contract, mục Implementation approach.
+
 ## P7. `work/<id>/posts.json`
 
 State người dùng, **không** là input stage nào (như `publish.json`, CP8.3 W8): ghi atomic, JSON indent 2, thứ tự key cố định, entry theo thứ tự `render_manifest.json` (`shorts[]` `status: "rendered"`):

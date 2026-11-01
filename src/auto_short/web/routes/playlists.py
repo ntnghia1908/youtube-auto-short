@@ -22,7 +22,7 @@ from ..context import WebContext, RANGE_SIZE, KINDS
 from .. import episodes as ep, playlists as playlists_mod
 from ..jobs import KIND_PIPELINE, KIND_POST, KIND_VERTICAL, post_compose_target
 from ..playlists import PlaylistError
-from ..urls import valid_playlist_id
+from ..urls import UrlError, valid_playlist_id
 from .models import PublishedIn
 
 log = logging.getLogger("auto_short")
@@ -49,6 +49,10 @@ class DocIn(BaseModel):
     videos_per_page: Any = None  # CP8.24 P1: videos per text page (integer 1..10); absent / null keeps the stored one
 
 
+class LinkPlaylistIn(BaseModel):
+    url: str = Field(max_length=4096)
+
+
 class FavoriteIn(BaseModel):
     episode_id: str = Field(max_length=128)
     clip: str = Field(max_length=64)
@@ -57,6 +61,35 @@ class FavoriteIn(BaseModel):
 
 def build(ctx: WebContext) -> APIRouter:
     router = APIRouter()
+
+    @router.get("/api/playlists/{playlist_id}/link-playlists")
+    def api_link_playlists(playlist_id: str):
+        if ctx.playlist_or_404(playlist_id) is None:
+            return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
+        return ctx.post_links.view(playlist_id)
+
+    @router.post("/api/playlists/{playlist_id}/link-playlists")
+    def api_add_link_playlist(playlist_id: str, body: LinkPlaylistIn):
+        if ctx.playlist_or_404(playlist_id) is None:
+            return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
+        try:
+            return ctx.post_links.add(playlist_id, body.url)
+        except (UrlError, PlaylistError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=422)
+
+    @router.delete("/api/playlists/{playlist_id}/link-playlists/{youtube_playlist_id}")
+    def api_remove_link_playlist(playlist_id: str, youtube_playlist_id: str):
+        if ctx.playlist_or_404(playlist_id) is None:
+            return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
+        if not valid_playlist_id(youtube_playlist_id):
+            return JSONResponse({"detail": "playlist id không hợp lệ"}, status_code=422)
+        return ctx.post_links.remove(playlist_id, youtube_playlist_id)
+
+    @router.post("/api/playlists/{playlist_id}/link-playlists/sync")
+    def api_sync_link_playlists(playlist_id: str):
+        if ctx.playlist_or_404(playlist_id) is None:
+            return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
+        return ctx.post_links.sync(playlist_id)
 
     def _jobs_by_episode() -> dict[str, dict]:
         out = {}
@@ -188,6 +221,7 @@ def build(ctx: WebContext) -> APIRouter:
         view["vertical_active"] = sum(1 for e in view["entries"] if (e.get("vertical") or {}).get("active"))  # CP8.32 V4
         view["posts_ranges"] = _posts_ranges(playlist_id, view["entries"])
         view["favorites_count"] = ctx.compilations.favorites_count(playlist_id)  # CP8.33 G9
+        view["post_links"] = ctx.post_links.view(playlist_id)
         kc = ctx.config.khaithi  # CP8.9 A2.2: defaults of the kind bar ("Khai thị [min]–[max] phút")
         view["khaithi_defaults"] = {"min_minutes": kc.default_min_minutes, "max_minutes": kc.default_max_minutes,
                                     "max_minutes_limit": kc.max_minutes_limit}

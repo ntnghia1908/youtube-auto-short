@@ -30,6 +30,10 @@ def default_token():
     return Path.home() / ".local/share/auto-short/youtube-token.json"
 
 
+def default_token_dir():
+    return Path.home() / ".local/share/auto-short/youtube-tokens"
+
+
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
@@ -166,11 +170,12 @@ def _api_error(status, doc):
 class YouTube:
     """Read owned uploads and set thumbnails, refreshing once on HTTP 401."""
 
-    def __init__(self, client_path=None, token_path=None, *, transport=None, now=None):
+    def __init__(self, client_path=None, token_path=None, *, transport=None, now=None, read_only=False):
         self.client_path = client_path or default_client()
         self.token_path = token_path or default_token()
         self.send = transport or urllib_transport
         self.now = now or time.time
+        self.read_only = read_only
         self.token = read_json_dict(Path(self.token_path)) or {}
 
     def _refresh(self):
@@ -186,6 +191,8 @@ class YouTube:
         self.token = token
 
     def _request(self, method, url, body=None):
+        if self.read_only and method != "GET":
+            raise PublishError("web chỉ được đọc YouTube (GET)")
         expiry = self.token.get("expires_at", 0)
         if not isinstance(self.token.get("access_token"), str) or not self.token["access_token"] \
                 or type(expiry) not in (int, float) or not math.isfinite(expiry) or expiry <= self.now():
@@ -214,9 +221,38 @@ class YouTube:
                 raise ValueError
         except (KeyError, IndexError, TypeError, ValueError):
             raise PublishError("không tìm thấy playlist uploads của kênh") from None
+        return self._playlist_videos(uploads, part="fileDetails,snippet", label="uploads")
+
+    def channel_id(self):
+        doc = self._list("channels", part="id", mine="true")
+        try:
+            ident = doc["items"][0]["id"]
+            if not isinstance(ident, str) or not ident:
+                raise ValueError
+            return ident
+        except (KeyError, IndexError, TypeError, ValueError):
+            raise PublishError("không tìm thấy kênh; chạy lại auth") from None
+
+    def playlist_channel(self, playlist_id):
+        """Owner id and display name, including a private playlist visible to this token."""
+        doc = self._list("playlists", part="snippet", id=playlist_id)
+        try:
+            snippet = doc["items"][0]["snippet"]
+            ident = snippet["channelId"]
+            if not isinstance(ident, str) or not ident:
+                raise ValueError
+            return {"id": ident, "title": snippet.get("channelTitle") or ident}
+        except (KeyError, IndexError, TypeError, ValueError):
+            raise PublishError("không đọc được playlist; kiểm tra link và chạy lại auth --token cho kênh chủ playlist") from None
+
+    def playlist_videos(self, playlist_id):
+        return self._playlist_videos(playlist_id, part="fileDetails,snippet,status", label="playlist")
+
+    def _playlist_videos(self, playlist_id, *, part, label):
+        """Shared pagination and 50-id batches; repeated playlist items count once."""
         ids, seen_ids, seen_pages, page = [], set(), set(), None
         while True:
-            params = dict(part="contentDetails", playlistId=uploads, maxResults=50)
+            params = dict(part="contentDetails", playlistId=playlist_id, maxResults=50)
             if page:
                 params["pageToken"] = page
             doc = self._list("playlistItems", **params)
@@ -229,16 +265,16 @@ class YouTube:
                         ids.append(ident)
                         seen_ids.add(ident)
             except (KeyError, TypeError, ValueError):
-                raise PublishError("danh sách uploads không hợp lệ") from None
+                raise PublishError(f"danh sách {label} không hợp lệ") from None
             page = doc.get("nextPageToken")
             if not page:
                 break
             if not isinstance(page, str) or page in seen_pages:
-                raise PublishError("phân trang uploads không hợp lệ")
+                raise PublishError(f"phân trang {label} không hợp lệ")
             seen_pages.add(page)
         result = []
         for offset in range(0, len(ids), 50):
-            doc = self._list("videos", part="fileDetails,snippet", id=",".join(ids[offset:offset + 50]))
+            doc = self._list("videos", part=part, id=",".join(ids[offset:offset + 50]))
             if not isinstance(doc.get("items"), list):
                 raise PublishError("danh sách video không hợp lệ")
             result.extend(doc["items"])

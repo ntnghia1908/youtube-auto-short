@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -33,7 +33,7 @@ Trên trang bộ kinh, HUMAN LEAD dán link một hoặc nhiều playlist YouTub
 ## Authority / key decisions
 
 - `docs/decisions/CP8.15-community-post-contract.md` P6, P7. Bổ sung vào P6 trong task này:
-  - **L1 Nguồn**: YouTube Data API bằng token PUB2: `playlistItems.list` rồi `videos.list part=fileDetails,snippet,status`. Sửa PUB2 G1: tiến trình web được đọc token và chỉ gọi GET; thao tác ghi vẫn chỉ ở CLI. Đọc ẩn danh bị loại: đo 2026-11-01 playlist Short 285 video chỉ 79 có tiêu đề, khai thị 101 video chỉ 46 có tiêu đề, phần còn lại chỉ có id.
+  - **L1 Nguồn**: YouTube Data API bằng token PUB2: `playlistItems.list` rồi `videos.list part=fileDetails,snippet,status`. Sửa PUB2 G1: tiến trình web được đọc token và chỉ gọi GET tới YouTube Data API; thao tác ghi Data API vẫn chỉ ở CLI. POST duy nhất được phép từ adapter web là refresh OAuth tới `https://oauth2.googleapis.com/token` (`TOKEN_URL`); token refresh được lưu atomic, mode 600, không lộ token / secret. Đọc ẩn danh bị loại: đo 2026-11-01 playlist Short 285 video chỉ 79 có tiêu đề, khai thị 101 video chỉ 46 có tiêu đề, phần còn lại chỉ có id.
   - **L1a Phiên đăng nhập**: OAuth app ở chế độ Testing (Production đòi homepage + privacy policy, HUMAN LEAD chưa làm), token hết hạn sau 7 ngày, chạy lại `auth`. Token hỏng / bị thu hồi hoặc hết quota → lần quét báo lỗi trên trang bộ kinh ("chạy lại auth"), không xóa link, vòng sau thử lại. Quota: 1 đơn vị / 50 video, quét 6 giờ một lần là không đáng kể.
   - **L1b Nhiều kênh** (HUMAN LEAD 2026-11-01: 3 kênh cùng một Gmail, mỗi kênh một token): token mặc định PUB2 + mọi `~/.local/share/auto-short/youtube-tokens/*.json`. Với mỗi playlist, `playlists.list part=snippet` lấy `channelId`, so với `channels.list mine=true` của từng token để chọn token chủ playlist; không chọn tay trên web. Không token nào sở hữu playlist → lần quét báo tên kênh cần `auth --token`. Một token hỏng không chặn playlist của kênh khác. CLI `thumbs` giữ nguyên.
   - **L2 Phạm vi ghép**: chỉ trong bộ kinh đang dán playlist, nên `T29_S01` của hai bộ khác nhau không lẫn. Short và khai thị của bộ đều được xét.
@@ -50,7 +50,7 @@ Trên trang bộ kinh, HUMAN LEAD dán link một hoặc nhiều playlist YouTub
 
 - `publish/youtube.py`: thêm `default_token_dir()`, `channel_id()`, `playlist_channel(playlist_id)`, `playlist_videos(playlist_id)`, tách phần phân trang + lô `videos.list` dùng chung với `videos()`; không đổi hành vi `videos()`.
 - `post/links.py`: hàm thuần `parse_code(text)`, `link_for(video_id, khaithi)`, `plan(entries, targets, current_links)` trả danh sách cần điền và số liệu từng lý do.
-- `web/post_links.py`: dựng `targets` từ `playlists` + `episodes.copy_prefixes` / `kind_fields`, gọi `YouTube.playlist_videos`, ghi `posts.json` dưới `ctx.post_lock` qua `post_store.with_fields`. Lần quét gần nhất lưu ở `work/_publish/post_links.json`.
+- `web/post_links.py`: dựng `targets` từ `playlists` + `episodes.copy_prefixes` / `kind_fields`, gọi `YouTube.playlist_videos`, ghi `posts.json` dưới `ctx.post_lock` qua `post_store.with_fields`. Lần quét gần nhất lưu ở `work/_publish/post_links.json`; `rows` chỉ giữ `no_code`, `unmatched`, `duplicate`, `different`, `waiting` (`plan()` vẫn trả mọi dòng). Khóa quét chỉ tuần tự hóa `add` / `sync` / `sync_all`; `view` đọc file atomic và `remove` dùng khóa riêng của playlist, không chờ quét mạng.
 - Danh sách playlist lưu ở trường `link_playlists` của `work/_playlists/<pid>.json`, thêm vào `USER_FIELDS` để "Cập nhật danh sách" không làm mất.
 - Route: `GET` / `POST` / `DELETE /api/playlists/{playlist_id}/link-playlists[/{youtube_playlist_id}]`, `POST …/link-playlists/sync`. `POST` kiểm link bằng `web/urls.py` (từ chối Mix, Watch later, Liked; chấp nhận thêm khi `watch?v=…&list=…` lấy `list`).
 - Vòng nền `_post_link_loop` trong `app.py` theo mẫu `_auto_archive_loop`, chạy tuần tự từng playlist, `asyncio.to_thread`, lỗi không làm dừng vòng. Config `[post] link_sync_hours` mặc định 6; 0 = chỉ quét bằng tay.
@@ -81,7 +81,7 @@ Trên trang bộ kinh, HUMAN LEAD dán link một hoặc nhiều playlist YouTub
 7. Một bộ kinh có nhiều playlist, gồm playlist Short và playlist khai thị riêng: dán theo thứ tự nào cũng điền đúng loại; "Cập nhật danh sách" không làm mất playlist đã gắn; gỡ playlist không xóa link đã điền.
 8. Vòng nền chạy theo `link_sync_hours`, `0` thì không chạy; YouTube lỗi / timeout chỉ ghi lỗi của lần quét, playlist khác và vòng sau vẫn chạy.
 9. Trang bộ kinh hiện số đã điền, không có mã, trùng, khác link, chờ soạn và thời điểm + lỗi lần quét gần nhất. Link không hợp lệ / Mix báo 422.
-10. Test không gọi mạng thật (transport giả). Web chỉ gọi method GET (có test chặn).
+10. Test không gọi mạng thật (transport giả). Web chỉ GET YouTube Data API; POST duy nhất là refresh tới OAuth `TOKEN_URL` theo L1. Có test chặn POST Data API, kiểm access token hết hạn / phản hồi 401 → refresh thành công rồi GET, lưu token atomic mode 600.
 
 ## Required verification
 
@@ -93,18 +93,22 @@ Tất cả required verification phải chạy và PASS trước READY.
 
 ## Manual test checklist (Tech Lead)
 
-Task chạm security model (web đọc token OAuth của kênh, chỉ GET), nên manual test là gate trước integration. Không chạm database; thêm route web sau đăng nhập, không đổi API cũ.
+Task chạm security model (web đọc token OAuth của kênh, chỉ GET Data API và refresh OAuth theo L1), nên manual test là gate trước integration. Không chạm database; thêm route web sau đăng nhập, không đổi API cũ.
 
 - [ ] Trang bộ kinh: dán playlist thật, thấy số liệu quét.
 - [ ] Tab Bài đăng: link đã điền, nút Copy có dòng `▶ Xem video:`, mở link đúng video.
 
 ## Result
 
-- Main changes:
-- Tests:
-- Diff + / − (app, test):
-- Helper mới (đã tìm, lý do không tái dùng):
-- Review:
-- Important findings / decisions:
-- Known limitations:
-- PR:
+- Main changes: hoàn tất phần IMPLEMENTER: đọc playlist nhiều kênh bằng GET; ghép thuần L2–L7; lưu `link_playlists`, route / UI tiếng Việt, vòng nền cấu hình; mọi ghi `posts.json` của service đi qua `ctx.post_lock` + `with_fields`. CP8.15 P6 và PUB2 G1/G2/G4 chỉ trỏ tới L1–L7, không nhân bản rule.
+- Tests: `PYTHONPATH=/home/ntnghia/projects/youtube-auto-short-lnk1/src ~/miniconda3/envs/auto-short/bin/python -m pytest tests/test_post_links.py tests/test_publish_thumbs.py -q -x --tb=short` — PASS 72 (sau vòng sửa F1–F3). `tests/test_web_post_links.py --collect-only -q` — 13 ca thu thập được, chưa thực thi HTTP. `node --check src/auto_short/web/static/app.js`, `git diff --check` — PASS; dựng app + đăng ký đủ 4 route mới bằng kiểm tra trực tiếp, không socket.
+- AC → test: AC1–6, 7a, 7, 8, 10 → `test_post_links.py` (matcher + service + transport GET giả + coroutine không socket); AC1–7a/7, 9–10 → `test_web_post_links.py` (auth, route, giữ user fields khi refresh, UI; chờ ORCHESTRATOR chạy). `test_publish_thumbs.py` kiểm hồi quy `videos()` / CLI.
+- Diff + / − vòng sửa F1–F3: app +20 / −20; test +127 / −10; docs +8 / −8 (so với đầu vòng sửa, gồm file chưa stage).
+- Helper mới (đã tìm, lý do không tái dùng): `default_token_dir`, `channel_id`, `playlist_channel`, `playlist_videos`, `_playlist_videos` (mở rộng adapter sẵn có, dùng chung phân trang/lô); `parse_code`, `link_for`, `plan` (chưa có matcher LNK1; tái dùng `short_code`, `normalize_link`); `PostLinks`, `playlist_id_from_url`, `_safe_error`, `_post_link_loop`, `PlaylistStore.set_link_playlist` (điều phối / trạng thái mới, tái dùng `copy_prefixes`, `kind_fields`, URL policy, khóa playlist và `with_fields`).
+- Review: tự rà owned paths, khóa ghi, không log / trả exception gốc chứa bí mật; chưa có review độc lập. Không gọi agent khác.
+- Important findings / decisions: vòng sửa F1–F3 theo yêu cầu HUMAN LEAD: `read_only` chỉ chặn method khác GET ở `_request` (YouTube Data API); `_refresh` được POST tới OAuth `TOKEN_URL`, tái dùng lưu token atomic mode 600. `view` / `remove` không chờ khóa quét; journal chỉ lưu các dòng cần xử lý, giữ nguyên `plan()` và toàn bộ counts.
+- Known limitations: chưa chạy lệnh required gồm `tests/test_web_post_links.py` (sandbox không socket loopback; ORCHESTRATOR chạy), `python -m pytest -q -n auto`, chạy thật trên bản sao `work/` và manual checklist (theo phân công / cấm mạng thật). Test vòng nền từng treo khi dùng event loop thật trong sandbox, đã dừng và kiểm bằng coroutine + `to_thread` giả. Chưa chuyển task READY vì các required verification trên còn thiếu.
+- ORCHESTRATOR: full suite `python -m pytest -q -n auto` 3672 passed, 1 skipped. Chạy thật 2026-11-01 trên bản sao Thập Thiện với 2 playlist thật: điền 178 Short + 101 khai thị (135 → 414 link), 88 link cũ giữ nguyên, 1 "khác link" (`T6_S01`, giữ link cũ), 18 không mã, 0 trùng, quét lại điền 0 (idempotent), journal 5 KB. 3 token 3 kênh đọc được (2026-11-01).
+- Vòng sửa: 1 vòng ORCHESTRATOR (F1 chặn refresh, F2 khóa quét treo trang, F3 rows thừa). Codex: 125.743 + 156.145 tokens.
+- Giới hạn: dán playlist nhầm bộ kinh sẽ ghép theo mã của bộ đó; gỡ playlist không xóa link đã điền. Testing mode: `auth` lại sau 7 ngày. Manual test trên 8080 chờ sau đợt Vô Lượng Thọ.
+- PR: không commit / push / PR theo yêu cầu.
