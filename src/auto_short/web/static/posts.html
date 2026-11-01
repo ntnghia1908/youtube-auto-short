@@ -54,6 +54,8 @@
       <div class="edit-actions">
         <input id="image-find-keyword" type="text" placeholder="Tìm ảnh theo từ khóa (vd: Tây Phương Tam Thánh)…" aria-label="Từ khóa tìm ảnh">
         <button id="image-find-btn" class="btn small primary" type="button">Tìm theo từ khóa</button>
+        <button id="image-generate-btn" class="btn small" type="button" disabled>AI vẽ 5 ảnh</button>
+        <button id="image-generate-cancel" class="btn small" type="button" hidden>Hủy</button>
         <button id="image-redistribute-btn" class="btn small" type="button">Chia lại ảnh cho bài chưa đăng</button>
       </div>
       <p id="image-find-sources" class="muted small"></p>
@@ -63,6 +65,7 @@
           <button id="image-cand-all" class="btn small" type="button">Chọn tất cả</button>
           <button id="image-cand-none" class="btn small" type="button">Bỏ chọn</button>
           <button id="image-cand-add" class="btn small primary" type="button">Thêm vào thư viện</button>
+          <button id="image-cand-dismiss" class="btn small" type="button" hidden>Bỏ các ảnh này</button>
         </div>
         <p id="image-cand-skipped" class="muted small"></p>
         <div id="image-cand-grid" class="img-grid"></div>

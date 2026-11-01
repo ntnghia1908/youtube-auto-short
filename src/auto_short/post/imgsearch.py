@@ -467,12 +467,18 @@ def new_search_id(now: datetime | None = None) -> str:
 
 
 def purge_old(cdir: Path, ttl_hours: float, *, now: float | None = None) -> int:
-    """Delete candidate folders older than ``ttl_hours`` (by mtime). Returns how many were removed."""
+    """Delete expired candidate folders by mtime, except running generations. Returns the removed count."""
     if not cdir.is_dir():
         return 0
     limit, removed = (now if now is not None else time.time()) - ttl_hours * 3600, 0
     for d in cdir.iterdir():
         if d.is_dir() and SEARCH_ID_RE.match(d.name) and d.stat().st_mtime < limit:
+            try:
+                doc = json.loads((d / "state.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                doc = None
+            if isinstance(doc, dict) and doc.get("status") == "running":
+                continue
             shutil.rmtree(d, ignore_errors=True)
             removed += 1
     return removed

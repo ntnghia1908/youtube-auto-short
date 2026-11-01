@@ -76,6 +76,7 @@ class WebContext:
     post_preflight: Callable | None
     post_search: Callable | None
     keyword_search: Callable | None
+    post_image_gen: Any
     doc_prepare: Callable | None
 
     render: Callable

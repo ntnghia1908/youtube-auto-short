@@ -2205,10 +2205,13 @@ const AutoShort = (() => {
     });
     $("#image-search-btn").addEventListener("click", () => runImageSearch($("#image-search-url").value));
     $("#image-find-btn").addEventListener("click", () => runKeywordFind($("#image-find-keyword").value));
+    $("#image-generate-btn").addEventListener("click", () => runImageGenerate($("#image-find-keyword").value));
+    $("#image-generate-cancel").addEventListener("click", cancelImageGenerate);
     $("#image-find-keyword").addEventListener("keydown", (e) => { if (e.key === "Enter") runKeywordFind(e.target.value); });
     $("#image-cand-all").addEventListener("click", () => setAllCandidates(true));
     $("#image-cand-none").addEventListener("click", () => setAllCandidates(false));
     $("#image-cand-add").addEventListener("click", addPickedCandidates);
+    $("#image-cand-dismiss").addEventListener("click", dismissImageCandidates);
     $("#image-redistribute-btn").addEventListener("click", redistributeImages);
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape" && !$("#image-dialog").hidden) closeImageDialog();
@@ -2216,6 +2219,7 @@ const AutoShort = (() => {
   }
 
   function closeImageDialog() {
+    stopImageGeneratePoll();
     $("#image-dialog").hidden = true;
     document.body.classList.remove("modal-open");
     imagePickCallback = null;
@@ -2227,6 +2231,7 @@ const AutoShort = (() => {
     document.body.classList.add("modal-open");
     $("#image-msg").hidden = true;
     await loadImageGrid();
+    await latestImageGenerate();
   }
 
   function imgMsg(text, cls) {
@@ -2243,6 +2248,8 @@ const AutoShort = (() => {
       const d = await api("/api/post-images");
       renderImageGrid(d.images);
       renderQuickLinks(d.image_sources || []);
+      imageGenerateUnavailable = (d.generate || {}).unavailable || null;
+      updateImageGenerateButtons();
       const g = (d.search || {}).google || {};
       $("#image-find-sources").textContent = "Nguồn: các trang đã biết (niemphatanvui.vn, hwadzan, amtb, sachphat, ph.tinhtong)" +
         (g.enabled ? ` + Google (đã dùng ${g.used_today}/${g.daily_limit} lượt hôm nay).`
@@ -2344,6 +2351,112 @@ const AutoShort = (() => {
   }
 
   // CP8.30: search by keyword -> candidates -> pick -> library; re-deal images to the posts not yet posted.
+  let imageGenerateUnavailable = null;
+  let imageGenerateRun = null;
+  let imageGenerateTimer = null;
+  let imageGenerateSeq = 0;
+
+  function stopImageGeneratePoll() {
+    imageGenerateSeq++;
+    clearTimeout(imageGenerateTimer);
+    imageGenerateTimer = null;
+  }
+
+  function updateImageGenerateButtons() {
+    const running = imageGenerateRun?.status === "running";
+    $("#image-generate-btn").disabled = !!imageGenerateUnavailable || running;
+    $("#image-generate-btn").title = imageGenerateUnavailable || "";
+    $("#image-generate-cancel").hidden = !running;
+  }
+
+  function showImageGenerate(run, seq) {
+    if (seq !== imageGenerateSeq || $("#image-dialog").hidden) return;
+    imageGenerateRun = run;
+    updateImageGenerateButtons();
+    if (!run) {
+      // Remove an exhausted AI batch when reopening the dialog.
+      if (candSearchId && $("#image-candidates").dataset.origin === "codex") $("#image-candidates").hidden = true;
+      return;
+    }
+    if (run.status === "running") {
+      imgMsg("Codex đang vẽ… có thể đóng hộp thoại, quay lại sau");
+      imageGenerateTimer = setTimeout(() => pollImageGenerate(run.search_id, seq), 3000);
+    } else if (run.status === "done") {
+      renderCandidates(run);
+    } else {
+      imgMsg(run.status === "cancelled" ? "Đã hủy vẽ ảnh." : `Vẽ ảnh lỗi: ${run.error || run.status}`, "error");
+      api(`/api/post-images/generate/${encodeURIComponent(run.search_id)}/dismiss`, jsonBody("POST", {})).catch(() => {});
+    }
+  }
+
+  async function dismissImageCandidates() {
+    if (!candSearchId || $("#image-candidates").dataset.origin !== "codex") return;
+    const id = candSearchId;
+    const btn = $("#image-cand-dismiss");
+    btn.disabled = true;
+    try {
+      await api(`/api/post-images/generate/${encodeURIComponent(id)}/dismiss`, jsonBody("POST", {}));
+      if (candSearchId === id && $("#image-candidates").dataset.origin === "codex") {
+        $("#image-candidates").hidden = true;
+        candSearchId = null;
+        pickedCandidates.clear();
+        updateCandAddButton();
+        imgMsg("Đã bỏ các ảnh AI vẽ.");
+      }
+    } catch (e) { imgMsg(e.message, "error"); }
+    btn.disabled = false;
+  }
+
+  async function pollImageGenerate(id, seq) {
+    if (seq !== imageGenerateSeq || $("#image-dialog").hidden) return;
+    try {
+      const r = await api(`/api/post-images/generate/${encodeURIComponent(id)}`);
+      showImageGenerate(r.run, seq);
+    } catch (e) {
+      if (seq === imageGenerateSeq && !$("#image-dialog").hidden) {
+        imgMsg(e.message, "error");
+        imageGenerateTimer = setTimeout(() => pollImageGenerate(id, seq), 3000);
+      }
+    }
+  }
+
+  async function latestImageGenerate() {
+    stopImageGeneratePoll();
+    const seq = imageGenerateSeq;
+    try {
+      const r = await api("/api/post-images/generate/latest");
+      showImageGenerate(r.run, seq);
+    } catch (e) {
+      if (seq === imageGenerateSeq && !$("#image-dialog").hidden) imgMsg(e.message, "error");
+    }
+  }
+
+  async function runImageGenerate(keyword) {
+    if (!keyword || !keyword.trim()) { imgMsg("Nhập từ khóa trước.", "error"); return; }
+    stopImageGeneratePoll();
+    const seq = imageGenerateSeq;
+    $("#image-generate-btn").disabled = true;
+    try {
+      const r = await api("/api/post-images/generate", jsonBody("POST", { keyword }));
+      showImageGenerate(r.run, seq);
+    } catch (e) {
+      if (seq === imageGenerateSeq && !$("#image-dialog").hidden) {
+        imgMsg(e.message, "error");
+        updateImageGenerateButtons();
+      }
+    }
+  }
+
+  async function cancelImageGenerate() {
+    if (!imageGenerateRun || imageGenerateRun.status !== "running") return;
+    $("#image-generate-cancel").disabled = true;
+    try {
+      await api(`/api/post-images/generate/${encodeURIComponent(imageGenerateRun.search_id)}/cancel`, jsonBody("POST", {}));
+      imgMsg("Đang hủy Codex…");
+    } catch (e) { imgMsg(e.message, "error"); }
+    $("#image-generate-cancel").disabled = false;
+  }
+
   let candSearchId = null;
   const pickedCandidates = new Set();
 
@@ -2395,6 +2508,8 @@ const AutoShort = (() => {
     candSearchId = r.search_id;
     pickedCandidates.clear();
     const box = $("#image-candidates");
+    box.dataset.origin = r.sources?.codex !== undefined ? "codex" : "search";
+    $("#image-cand-dismiss").hidden = box.dataset.origin !== "codex";
     const cands = r.candidates || [];
     const skippedN = Object.values(r.skipped || {}).reduce((a, b) => a + b, 0);
     box.hidden = false;

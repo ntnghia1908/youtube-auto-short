@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from ...post import images as post_images, imgsearch as post_imgsearch, redistribute as post_redistribute
 from ...review import content_disposition
+from ...packaging import cover_suggest
 from ..context import WebContext
 from ..jobs import (
     KIND_IMAGE_SEARCH,
@@ -65,7 +66,46 @@ def build(ctx: WebContext) -> APIRouter:
         return {"images": [{"name": i.name, "width": i.width, "height": i.height, "bytes": i.bytes,
                             "used": used.get(i.name, 0), "source": sources.get(i.name)} for i in infos],
                 "image_sources": list(ctx.config.post.image_sources),
-                "search": post_imgsearch.search_status(ctx.config)}
+                "search": post_imgsearch.search_status(ctx.config),
+                "generate": {"unavailable": ctx.post_image_gen.unavailable()}}
+
+    @router.post("/api/post-images/generate")
+    def api_post_images_generate(body: PostImageFindIn):
+        try:
+            return JSONResponse({"run": ctx.post_image_gen.start(body.keyword)}, status_code=202)
+        except post_imgsearch.SearchError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=422)
+        except cover_suggest.MissingCodex as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=503)
+        except cover_suggest.Busy as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=409)
+
+    @router.get("/api/post-images/generate/latest")
+    def api_post_images_generate_latest():
+        return {"run": ctx.post_image_gen.latest()}
+
+    @router.get("/api/post-images/generate/{search_id}")
+    def api_post_images_generate_state(search_id: str):
+        try:
+            return {"run": ctx.post_image_gen.get(search_id)}
+        except FileNotFoundError:
+            return JSONResponse({"detail": "không có lượt vẽ này"}, status_code=404)
+
+    @router.post("/api/post-images/generate/{search_id}/cancel")
+    def api_post_images_generate_cancel(search_id: str):
+        try:
+            return {"run": ctx.post_image_gen.cancel(search_id)}
+        except FileNotFoundError:
+            return JSONResponse({"detail": "không có lượt vẽ này"}, status_code=404)
+
+    @router.post("/api/post-images/generate/{search_id}/dismiss")
+    def api_post_images_generate_dismiss(search_id: str):
+        try:
+            return {"run": ctx.post_image_gen.dismiss(search_id)}
+        except FileNotFoundError:
+            return JSONResponse({"detail": "không có lượt vẽ này"}, status_code=404)
+        except cover_suggest.Busy as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=409)
 
     @router.post("/api/post-images")
     async def api_post_images_upload(request: Request, name: str = ""):
