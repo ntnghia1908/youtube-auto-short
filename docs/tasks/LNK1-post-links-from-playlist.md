@@ -28,7 +28,7 @@ Trên trang bộ kinh, HUMAN LEAD dán link một hoặc nhiều playlist YouTub
 ## Scope
 
 - In scope: lưu danh sách playlist theo bộ kinh; ghép tiêu đề với Short / khai thị; điền link; quét ngay khi thêm, nút "Cập nhật ngay", vòng nền định kỳ; hiển thị kết quả lần quét.
-- Out of scope: mọi thao tác ghi lên YouTube từ web; route đăng nhập OAuth trên web (đăng nhập vẫn qua CLI `auth`); suy đoán theo thứ tự playlist hoặc so gần đúng tiêu đề; tự đăng bài cộng đồng; đổi link của ảnh, video ghép, bản HD; sửa ô dán tay.
+- Out of scope: mọi thao tác ghi lên YouTube từ web; route đăng nhập OAuth trên web (đăng nhập vẫn qua CLI `auth`); suy đoán theo thứ tự playlist hoặc nội dung tiêu đề; tự đăng bài cộng đồng; đổi link của ảnh, video ghép, bản HD; sửa ô dán tay.
 
 ## Authority / key decisions
 
@@ -39,8 +39,7 @@ Trên trang bộ kinh, HUMAN LEAD dán link một hoặc nhiều playlist YouTub
   - **L2 Phạm vi ghép**: chỉ trong bộ kinh đang dán playlist, nên `T29_S01` của hai bộ khác nhau không lẫn. Short và khai thị của bộ đều được xét.
   - **L2a Hai playlist**: Short và khai thị ở playlist riêng (HUMAN LEAD 2026-11-01), mỗi đợt 20 tập nên một bộ kinh có nhiều cặp playlist. Web giữ một danh sách playlist theo bộ kinh, không phân loại khi dán; `S` / `KT` trong mã quyết định loại, mọi video trong danh sách được ghép chung một lần quét. Mã trùng giữa các playlist xử lý theo L6.
   - **L3 Mã**: ưu tiên `fileDetails.fileName` (NFC); không có mã thì dùng tiêu đề (NFC, bỏ khoảng trắng đầu). Mã nằm ở đầu chuỗi: `T<tập>`, dấu cách hoặc `_`, rồi `S` / `KT` + 2–3 chữ số, tiếp theo là dấu cách, `_`, `.` hoặc hết chuỗi (tiêu đề thật có cả `T1 S10 …` và `T7_S07_…`). Đưa về dạng `review.names.short_code` rồi so chính xác theo vị trí trong `render_manifest.json`, không đoán. Tên file và tiêu đề ra hai mã khác nhau → coi là trùng (L6), không điền.
-  - **L3a Không có mã**: chỉ khi cả tên file và tiêu đề đều không có mã, so tiêu đề YouTube (bỏ hashtag, bỏ dấu câu, gộp khoảng trắng, NFC, casefold) với title của Short trong bộ; đúng một Short khớp nguyên văn thì điền, không khớp hoặc nhiều Short khớp thì đưa vào danh sách dán tay. Không so gần đúng.
-  - **G-FILE** (đã đo 2026-11-01, Thập Thiện, 386 video): 267/285 Short + 101/101 khai thị có mã và đều ứng đúng một Short trên web, 0 mã trùng, 0 mâu thuẫn tên file / tiêu đề; 88/89 link dán tay trùng khớp, 1 khác (L5). 18 Short không mã: 15 khớp nguyên văn (L3a), 3 phải dán tay. Một số video có `fileName` rỗng nên vẫn cần tiêu đề.
+  - **G-FILE** (đã đo 2026-11-01, Thập Thiện, 386 video): 267/285 Short + 101/101 khai thị có mã và đều ứng đúng một Short trên web, 0 mã trùng, 0 mâu thuẫn tên file / tiêu đề; 88/89 link dán tay trùng khớp, 1 khác (L5). 18 Short không mã: HUMAN LEAD đã xử lý tay, không ghép (2026-11-01). Một số video có `fileName` rỗng nên vẫn cần tiêu đề.
   - **L4 Dạng link**: Short = `post.logic.normalize_link` (`/shorts/<id>`). Khai thị (4–7 phút, vượt giới hạn Shorts) = `https://youtube.com/watch?v=<id>`. Ô dán tay giữ nguyên P6.
   - **L5 Không ghi đè**: chỉ điền khi `link` trống, kể cả bài đã đăng; link đang có khác YouTube thì giữ và báo "khác link". Không xóa link khi video biến mất khỏi playlist.
   - **L6 Trùng**: hai video YouTube cùng mã, hoặc một mã ứng với hai Short trong bộ, thì bỏ qua và báo.
@@ -79,7 +78,6 @@ Trên trang bộ kinh, HUMAN LEAD dán link một hoặc nhiều playlist YouTub
 5. Tên file và tiêu đề đều không có mã / mã không có Short tương ứng không điền gì, được đếm riêng và trang bộ kinh liệt kê tiêu đề để dán tay. `T1 S10`, `T7_S07_…`, `T1_S10_x.mp4` đều nhận; `T29_S01` không khớp `T29_S010`.
 6. Bài chưa soạn không bị tạo; soạn xong, lần quét sau điền link (L7).
 7a. Playlist của kênh khác được đọc đúng token kênh đó; không có token phù hợp hoặc một token hỏng thì chỉ playlist đó báo lỗi rõ, playlist khác vẫn điền (L1b).
-7b. Short không mã khớp nguyên văn đúng một Short thì được điền; khớp nhiều hoặc không khớp thì không điền (L3a).
 7. Một bộ kinh có nhiều playlist, gồm playlist Short và playlist khai thị riêng: dán theo thứ tự nào cũng điền đúng loại; "Cập nhật danh sách" không làm mất playlist đã gắn; gỡ playlist không xóa link đã điền.
 8. Vòng nền chạy theo `link_sync_hours`, `0` thì không chạy; YouTube lỗi / timeout chỉ ghi lỗi của lần quét, playlist khác và vòng sau vẫn chạy.
 9. Trang bộ kinh hiện số đã điền, không có mã, trùng, khác link, chờ soạn và thời điểm + lỗi lần quét gần nhất. Link không hợp lệ / Mix báo 422.
