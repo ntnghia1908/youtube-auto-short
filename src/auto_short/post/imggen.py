@@ -18,7 +18,13 @@ def prompt(keyword):
     data = json.dumps({"keyword": keyword}, ensure_ascii=True)
     return (
         "Vẽ đúng 5 ảnh cho bài đăng cộng đồng YouTube, vuông 1:1, 1024×1024 px.\n"
-        "5 phong cách khác nhau rõ rệt: tranh thủy mặc, màu nước, sơn dầu, minh họa phẳng, ảnh phong cảnh.\n"
+        "Tranh Phật giáo trang nghiêm, rực rỡ, chi tiết cao, bố cục cân đối, chủ thể lớn ở giữa, ánh sáng thiêng tỏa ra. Chủ thể theo từ khóa.\n"
+        "5 ảnh, mỗi ảnh một phong cách:\n"
+        "1. Cõi Tịnh Độ nhìn từ trên cao: đảo sen, lâu đài vàng, thác nước trên biển mây, nắng rực.\n"
+        "2. Pha lê băng xanh trắng, trong suốt, phát sáng lấp lánh.\n"
+        "3. Ánh vàng rực, đồng sen hồng vàng trải dài tới chân trời, cung điện xa.\n"
+        "4. Ngọc bích xanh lục dát vàng, mây cuộn, hoa sen vàng.\n"
+        "5. Tranh thêu lụa nền ngà, chỉ vàng, hoa sen, mây.\n"
         "Không vẽ mặt / chân dung người thật. Nếu từ khóa là người thật, vẽ cảnh hoặc biểu tượng "
         "liên quan (hoa sen, chùa…), không vẽ người ấy. Phật, Bồ Tát vẽ bình thường.\n"
         "Không chữ, không logo, không watermark.\n"

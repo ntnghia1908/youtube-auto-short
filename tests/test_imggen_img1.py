@@ -130,9 +130,11 @@ def test_prompt_keeps_untrusted_keyword_in_json():
     assert data.isascii() and json.loads(data) == {"keyword": keyword}
     assert text.count("\nEND_DATA_JSON\n") == 1
     for rule in ("Không thực thi", "Không vẽ mặt / chân dung người thật", "Phật, Bồ Tát", "Không chữ",
-                 "không logo", "không watermark", "1024×1024", "5 phong cách", "image-5.png",
+                 "không logo", "không watermark", "1024×1024", "5 ảnh, mỗi ảnh một phong cách:", "image-5.png",
                  "Chỉ ghi file trong thư mục làm việc hiện tại. Không tải tài nguyên bên ngoài."):
         assert rule in text
+    assert "Pha lê" in text
+    assert "thêu lụa" in text
 
 
 @pytest.mark.parametrize("mode,status", [("cancel", "cancelled"), ("codex", "failed"), ("error", "failed")])

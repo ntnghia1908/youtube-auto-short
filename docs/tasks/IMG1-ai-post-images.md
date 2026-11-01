@@ -37,6 +37,7 @@ Trong hộp thoại "Thư viện ảnh": nhập từ khóa, bấm **"AI vẽ 5 �
 - D-IMG1-1: dùng lại ô từ khóa và lưới ứng viên P5c. Ứng viên AI lưu đúng định dạng P5c trong `<image_dir>-candidates/<search_id>/`, nên route file ứng viên và `POST /api/post-images/candidates/add` chạy nguyên, không sửa.
 - D-IMG1-2 (HUMAN LEAD): không vẽ mặt / chân dung người thật. Từ khóa là người thật → vẽ cảnh hoặc biểu tượng (hoa sen, chùa…). Phật, Bồ Tát vẽ bình thường. Như THUMB1: không chữ, không logo, không watermark (AI viết sai dấu tiếng Việt).
 - D-IMG1-3 (HUMAN LEAD: "khổ phù hợp nhất với bài post youtube"): vuông 1:1, `1024×1024` (khổ gốc của công cụ vẽ, ≥ 600 px của P5a). YouTube không công bố thông số chính thức; đa số hướng dẫn bên thứ ba khuyên 1:1 vì hiển thị tốt trên điện thoại. 5 ảnh khác phong cách rõ rệt.
+- D-IMG1-8 (HUMAN LEAD 2026-11-01, gửi 8 ảnh mẫu "Tây Trai Tịnh Độ Thi"): thay 5 phong cách chung bằng 5 phong cách theo mẫu: cõi Tịnh Độ trên biển mây, pha lê băng xanh, đồng sen ánh vàng, ngọc bích dát vàng, tranh thêu lụa. Vẫn không chữ (D-IMG1-2) cho tới khi HUMAN LEAD quyết khác.
 - D-IMG1-4: không dùng hàng đợi job. Một lượt Codex mất nhiều phút (THUMB1 đo 8 phút 16 s cho 4 ảnh), nếu chạy ở làn `prepare` sẽ chặn ingest. Dùng thread riêng như `EpisodeThumbs.suggest` và **dùng chung `EpisodeThumbs.codex_lock`**: toàn web chỉ một lượt Codex; đang bận → 409.
 - D-IMG1-5: dùng lại `[thumbs]` (`enabled`, `codex_bin`, `codex_model`, `codex_effort`, `codex_timeout_minutes`), `cover_suggest.available`, `cover_suggest.run_codex`. Không thêm config.
 - D-IMG1-6: nguồn ảnh trong `sources.tsv` là `codex-ai:<từ khóa urlquote>` (vẫn 2 cột, không khoảng trắng); `origin` ứng viên = `"codex"`.
@@ -120,6 +121,7 @@ Không dùng.
 | 8 | full suite: test P5c, THUMB1 không sửa |
 
 - Verification ORCHESTRATOR 2026-11-01: full suite `3663 passed, 1 skipped`; `node scripts/framework-check.mjs` PASS trước vòng sửa cuối, chạy lại lúc commit. Chạy thật Codex trên thư mục ảnh tạm: "Tây Phương Tam Thánh" 5/5 ảnh 1024×1024, 289 s, 51.388 tokens; "Hòa thượng Tịnh Không" 5/5, 319 s, 31.975 tokens, chỉ cảnh + hoa sen, không mặt người. Hai lượt này chạy trước vòng sửa `purge_old`.
+- Sau D-IMG1-8: full suite lần 1 `1 failed, 3662 passed` (không ghi tên test nên chưa rõ test nào; có thể là test chập chờn đã biết ở current-state, chưa xác nhận), lần 2 `3663 passed, 1 skipped`, chạy thật "Tây Phương Cực Lạc" 5/5 ảnh 1024×1024, 266 s, 26.690 tokens, HUMAN LEAD xem ảnh mẫu.
 - Diff + / −: app +433/−2, test +475/−0.
 - Helper mới (đã tìm, lý do không tái dùng): lifecycle `imggen` riêng vì `cover_suggest` gắn playlist / phase, tìm ảnh P5c dùng job queue (D-IMG1-4). Tái dùng `run_codex`, `available`, `codex_lock`, `validate`, định dạng ứng viên P5c.
 - Review: ORCHESTRATOR phát hiện không có cách từ chối cả lượt → thêm `dismiss` + tự bỏ thông báo lỗi. Codex review `6dd0e6a`: một P2 (`purge_old` xóa lượt đang chạy khi TTL nhỏ) → đã sửa, thêm vào Owned paths `imgsearch.py`. IMPLEMENTER Codex 8 phút 20 s, 2 vòng sửa; `tokens used` theo log 96.212 / 127.977 / 267.965.
