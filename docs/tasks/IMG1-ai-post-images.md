@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -12,7 +12,7 @@
 - Authorization mode: boundary
 - Authorization source: HUMAN LEAD 2026-11-01: "tôi muốn có thêm chức năng cho codex tạo hình thêm cho thư viện bài đăng, Chỉ cần user nhập keywork AI tạo thêm 5 ảnh, người dùng duyệt. Hiện tại đã có chức năng tìm hình trên web có thể tận dụng feat này nếu tiện"; trả lời gate cùng ngày: "Không vẽ mặt" (kèm đồng ý bắt đầu), khổ = "khổ phù hợp nhất với bài post youtube".
 - Parallel group: —
-- Owned paths: `src/auto_short/post/imggen.py` (mới), `src/auto_short/web/post_image_gen.py` (mới), `src/auto_short/web/routes/post_images.py`, `src/auto_short/web/app.py` + `src/auto_short/web/context.py` (chỉ nối service), `src/auto_short/web/static/app.js` + `src/auto_short/web/static/posts.html` (chỉ hộp thoại "Thư viện ảnh"), `tests/test_imggen_img1.py` (mới), `tests/test_web_imggen_img1.py` (mới), `docs/decisions/CP8.15-community-post-contract.md` (mục P5e mới, P13, dòng Implementation tham chiếu), contract này
+- Owned paths: `src/auto_short/post/imggen.py` (mới), `src/auto_short/post/imgsearch.py` (chỉ `purge_old`, thêm sau review), `src/auto_short/web/post_image_gen.py` (mới), `src/auto_short/web/routes/post_images.py`, `src/auto_short/web/app.py` + `src/auto_short/web/context.py` (chỉ nối service), `src/auto_short/web/static/app.js` + `src/auto_short/web/static/posts.html` (chỉ hộp thoại "Thư viện ảnh"), `tests/test_imggen_img1.py` (mới), `tests/test_web_imggen_img1.py` (mới), `docs/decisions/CP8.15-community-post-contract.md` (mục P5e mới, P13, dòng Implementation tham chiếu), contract này
 - Dependencies: CP8.30 (P5c ứng viên), THUMB1 (`cover_suggest.run_codex`, `[thumbs]`, `EpisodeThumbs.codex_lock`)
 - Base commit / branch: `a6837e3` (`origin/main`) / `feature/img1-ai-post-images`
 - Human Lead approval: inherited from boundary (nguồn ở trên)
@@ -106,11 +106,23 @@ Không dùng.
 
 ## Result
 
-- Main changes:
-- Tests:
-- Diff + / − (app, test):
-- Helper mới (đã tìm, lý do không tái dùng):
-- Review:
-- Important findings / decisions:
-- Known limitations:
-- PR:
+- Main changes: `post/imggen.py` (prompt, lượt vẽ, lọc ảnh, lưu ứng viên), `web/post_image_gen.py` (thread + `codex_lock`), route `/api/post-images/generate*` kèm `dismiss`, nút "AI vẽ 5 ảnh" / "Hủy" / "Bỏ các ảnh này", `purge_old` bỏ qua lượt đang chạy, CP8.15 P5e.
+- Tests: `tests/test_imggen_img1.py`, `tests/test_web_imggen_img1.py`.
+
+| AC | Test |
+|---|---|
+| 1–2 | `test_five_candidates_files_thumbs_and_add_only_picked` |
+| 3 | `test_bad_image_is_skipped_independently`, `test_no_valid_images_fails_with_reasons` |
+| 4 | `test_prompt_keeps_untrusted_keyword_in_json` |
+| 5 | `test_invalid_keyword_creates_nothing`, test service / lock |
+| 6 | `test_execute_terminal_errors_and_log`, test recovery + nhả lock |
+| 7 | `test_unknown_or_unsafe_id`, test latest / recovery / dismiss |
+| 8 | full suite: test P5c, THUMB1 không sửa |
+
+- Verification ORCHESTRATOR 2026-11-01: full suite `3663 passed, 1 skipped`; `node scripts/framework-check.mjs` PASS trước vòng sửa cuối, chạy lại lúc commit. Chạy thật Codex trên thư mục ảnh tạm: "Tây Phương Tam Thánh" 5/5 ảnh 1024×1024, 289 s, 51.388 tokens; "Hòa thượng Tịnh Không" 5/5, 319 s, 31.975 tokens, chỉ cảnh + hoa sen, không mặt người. Hai lượt này chạy trước vòng sửa `purge_old`.
+- Diff + / −: app +433/−2, test +475/−0.
+- Helper mới (đã tìm, lý do không tái dùng): lifecycle `imggen` riêng vì `cover_suggest` gắn playlist / phase, tìm ảnh P5c dùng job queue (D-IMG1-4). Tái dùng `run_codex`, `available`, `codex_lock`, `validate`, định dạng ứng viên P5c.
+- Review: ORCHESTRATOR phát hiện không có cách từ chối cả lượt → thêm `dismiss` + tự bỏ thông báo lỗi. Codex review `6dd0e6a`: một P2 (`purge_old` xóa lượt đang chạy khi TTL nhỏ) → đã sửa, thêm vào Owned paths `imgsearch.py`. IMPLEMENTER Codex 8 phút 20 s, 2 vòng sửa; `tokens used` theo log 96.212 / 127.977 / 267.965.
+- Important findings / decisions: D-IMG1-3 khổ 1:1 dựa trên hướng dẫn bên thứ ba, YouTube không công bố thông số chính thức.
+- Known limitations: UI chưa chạy trên trình duyệt thật (chỉ `node --check` + test HTTP). Chưa chạy trên 8080. Ảnh bị từ chối / chưa duyệt bị xóa theo `candidate_ttl_hours` khi có lượt tìm mới. Bộ lọc không phát hiện ảnh AI có chữ hay mặt người: HUMAN LEAD duyệt bằng mắt.
+- PR: chưa tạo, chờ HUMAN LEAD.

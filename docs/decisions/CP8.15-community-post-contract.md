@@ -108,6 +108,8 @@ Khác P5b (vào thẳng thư viện): **không ảnh nào vào thư viện khi c
 
 ## P5e. Codex vẽ ảnh theo từ khóa → duyệt ứng viên (IMG1)
 
+`purge_old` bỏ qua thư mục có `state.json` đọc được với `status: "running"` dù đã quá TTL; lượt mồ côi được `imggen.recover` chuyển sang `failed` khi khởi động để được purge bình thường.
+
 - **D-IMG1-1:** dùng chung ô từ khóa và lưới P5c; tối đa 5 ảnh lưu đúng định dạng ứng viên P5c tại `<image_dir>-candidates/<search_id>/`, chỉ ghi `meta.json` khi lượt xong; route file và `candidates/add` dùng nguyên, ảnh chưa chọn không vào thư viện.
 - **D-IMG1-2:** không vẽ mặt / chân dung người thật; từ khóa là người thật → cảnh hoặc biểu tượng (hoa sen, chùa…); Phật, Bồ Tát vẽ bình thường; không chữ, logo, watermark.
 - **D-IMG1-3:** 5 phong cách khác nhau rõ rệt, yêu cầu vuông 1:1, `1024×1024`; từng ảnh phải là PNG đạt P5a, tỉ lệ 1:1 ± 6 %, không symlink, bỏ trùng sha256 với thư viện và trong lô; ghi lý do loại trong `skipped`, ≥ 1 ảnh đạt → `done`, 0 ảnh → `failed` có lý do.

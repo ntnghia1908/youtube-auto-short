@@ -179,6 +179,41 @@ def test_recover_only_our_runs_latest_and_purge_before_create(gen_cfg):
     assert imggen.latest(gen_cfg)["status"] == "failed"
 
 
+def test_purge_preserves_running_but_removes_expired_done_and_p5c(gen_cfg):
+    config = replace(gen_cfg, post=replace(gen_cfg.post, candidate_ttl_hours=.1))
+    running = imggen.create(config, "sen")
+    done = imggen.create(config, "chùa")
+    done["status"] = "done"
+    running_dir = imggen.directory(config, running["search_id"])
+    done_dir = imggen.directory(config, done["search_id"])
+    imggen.save(done_dir, done)
+    p5c_dir = imgsearch.cache_dir(config.post.image_dir) / imgsearch.new_search_id()
+    p5c_dir.mkdir()
+    (p5c_dir / "meta.json").write_text("{}", encoding="utf-8")
+    for folder in (running_dir, done_dir, p5c_dir):
+        os.utime(folder, (1000, 1000))
+    assert imgsearch.purge_old(running_dir.parent, config.post.candidate_ttl_hours, now=2000) == 2
+    assert imggen.state(config, running["search_id"])["status"] == "running"
+    assert not done_dir.exists() and not p5c_dir.exists()
+    imggen.recover(config)
+    os.utime(running_dir, (1000, 1000))
+    assert imgsearch.purge_old(running_dir.parent, config.post.candidate_ttl_hours, now=2000) == 1
+    assert not running_dir.exists()
+
+
+@pytest.mark.parametrize("state", ["{", "[]", None])
+def test_purge_expired_folder_with_unreadable_or_invalid_state(gen_cfg, state):
+    folder = imgsearch.cache_dir(gen_cfg.post.image_dir) / imgsearch.new_search_id()
+    folder.mkdir(parents=True)
+    if state is None:
+        (folder / "state.json").mkdir()  # reading a directory raises OSError
+    else:
+        (folder / "state.json").write_text(state, encoding="utf-8")
+    os.utime(folder, (1000, 1000))
+    assert imgsearch.purge_old(folder.parent, .1, now=2000) == 1
+    assert not folder.exists()
+
+
 @pytest.mark.parametrize("ident", ["../x", "/tmp/x", "bad", "20260101000000-abcdef\n", "20260101000000-abcdef"])
 def test_unknown_or_unsafe_id(gen_cfg, ident):
     with pytest.raises(FileNotFoundError):
