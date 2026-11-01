@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: READY
+- Status: IN_PROGRESS — chờ full suite xanh khi máy rảnh và manual test 8080
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -111,4 +111,6 @@ Task chạm security model (web đọc token OAuth của kênh, chỉ GET Data A
 - ORCHESTRATOR: full suite `python -m pytest -q -n auto` 3672 passed, 1 skipped. Chạy thật 2026-11-01 trên bản sao Thập Thiện với 2 playlist thật: điền 178 Short + 101 khai thị (135 → 414 link), 88 link cũ giữ nguyên, 1 "khác link" (`T6_S01`, giữ link cũ), 18 không mã, 0 trùng, quét lại điền 0 (idempotent), journal 5 KB. 3 token 3 kênh đọc được (2026-11-01).
 - Vòng sửa: 1 vòng ORCHESTRATOR (F1 chặn refresh, F2 khóa quét treo trang, F3 rows thừa). Codex: 125.743 + 156.145 tokens.
 - Giới hạn: dán playlist nhầm bộ kinh sẽ ghép theo mã của bộ đó; gỡ playlist không xóa link đã điền. Testing mode: `auth` lại sau 7 ngày. Manual test trên 8080 chờ sau đợt Vô Lượng Thọ.
+- Vòng reviewer: Codex review `8cef435`: P2 gỡ playlist giữa lúc quét vẫn ghi link, đã sửa ở `0b821db`.
+- Full suite sau `0b821db` chưa xanh: 4 / 4 lần, mỗi lần 1 test khác nhau fail (load 50–85, đợt Vô Lượng Thọ đang chạy): `test_web_lanes_cp810::test_disk_block_rechecked_in_prepare_lane`, `test_ollama_wait_runner::test_submit_202_and_gpu_field_while_down`, `test_theme_render::test_description_refresh_on_cache_hit_without_encoding` (lệch atime 1 giây, module không liên quan), `test_web_stop_fix::test_ac2_no_child_survives_stop`. Từng test chạy riêng: PASS. So sánh: base `a6837e3` full suite 2 / 2 lần xanh; chạy lặp 3 file test đó `-n 24` 8 vòng: `test_ac2_orphaned_grandchild_and_children_started_after` fail 8 / 8 trên cả base và nhánh. Chưa chứng minh nhánh không làm tăng tỉ lệ fail; chạy lại full suite khi load thấp trước READY.
 - PR: không commit / push / PR theo yêu cầu.
