@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -187,4 +187,4 @@ HUMAN LEAD: "G3. Chỉ dùng 1 bài. Còn lại đồng ý." → G1, G2 (fade t�
 - Kho thật: backup `library.json.bak-aud2-2026-11-01`; 6/6 bài nạp + approve (HUMAN LEAD xác nhận license cả 6 giữa task); CC0 `6a5f…` đã `unapprove` (G7).
 - Chạy thật trên bản sao, Falling Snow: clip `Idioc4hReTw.kt/k01` (268 s, intro) ~45 s / mức; tuyển tập `27d26bf5c151-r1` (29 phút, intro) ~232 s / mức (tải máy 35–55). Mức nhạc theo gain −18,0 / −22,0 / −26,0 LU so với giọng; corr 0,9975–0,9996; lag 0; chênh thời lượng audio 0; streamhash hình = nguồn; true peak −0,4…+0,1 dBTP.
 - Giới hạn đã biết: xóa video ghép / tuyển tập không xóa bản nhạc trong `music/` (file mồ côi, không nằm trong Owned paths, dọn tay); `view` băm sha nguồn + bản nhạc mỗi lần mở khối / poll 2 s lúc có job, video 1 GB tốn vài giây; nguồn có true peak sát 0 dBTP cho bản mix tới +0,1 dBTP theo công thức contract.
-
+- Verification: `test_music_mix.py` gồm slow 32 PASS; TestClient web PASS; full suite trên commit gộp `08bd6ac` (origin/main + LNK1 + AUD2): 3758 passed, 1 skipped. Chưa làm: manual test checklist (nghe mẫu, chọn `default_level_lu`, thử UI, upload riêng tư kiểm Content ID).
