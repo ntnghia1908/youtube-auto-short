@@ -115,12 +115,12 @@ class PostLinks:
             doc = self.ctx.playlists.load(playlist_id)
             if doc is None:
                 raise FileNotFoundError(playlist_id)
-            entries, errors = [], []
+            entries_by_playlist, errors = {}, []
             ids = doc.get("link_playlists") or []
             clients, failures = self._clients() if ids else ([], [])
             for ident in ids:
                 try:
-                    entries.extend(self._videos(ident, clients))
+                    entries_by_playlist[ident] = self._videos(ident, clients)
                 except MissingChannel as exc:
                     name = f' cho kênh “{exc.channel}”' if exc.channel else " cho kênh chủ playlist (playlist có thể riêng tư)"
                     message = "Cần chạy lại auth --token" + name
@@ -135,6 +135,9 @@ class PostLinks:
                 with self.ctx.post_lock:
                     posts = {eid: store.read_posts(self.ctx.posts_path(eid), eid) for eid in orders}
                     current = {(eid, p["clip_id"]): p["link"] for eid, d in posts.items() for p in d["posts"]}
+                    attached = set((self.ctx.playlists.load(playlist_id) or {}).get("link_playlists") or [])
+                    entries = [entry for ident, videos in entries_by_playlist.items() if ident in attached
+                               for entry in videos]
                     result = links.plan(entries, targets, current)
                     changed = set()
                     for update in result["updates"]:

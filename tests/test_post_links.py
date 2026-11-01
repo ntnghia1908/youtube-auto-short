@@ -351,6 +351,39 @@ def test_view_and_remove_do_not_wait_for_scan_network(service, operation):  # F2
     assert not errors and not scanning.is_alive() and not reading.is_alive()
 
 
+@pytest.mark.parametrize("removed", [SHORTS, KT])
+def test_sync_ignores_playlist_removed_while_reading_youtube(service, removed):  # reviewer P2
+    svc, ctx, _ = service
+    for ident in (SHORTS, KT):
+        ctx.playlists.set_link_playlist(PID, ident)
+    seed(ctx)
+    seed(ctx, EID + ".kt")
+    factory = svc.api_factory
+    removals = []
+
+    def removing_factory(**kw):
+        api = factory(**kw)
+        read_videos = api.playlist_videos
+        def playlist_videos(ident):
+            videos = read_videos(ident)
+            if ident == removed:
+                svc.remove(PID, ident)
+                removals.append(ident)
+            return videos
+        api.playlist_videos = playlist_videos
+        return api
+
+    svc.api_factory = removing_factory
+    result = svc.sync(PID)
+    assert removals == [removed]
+    assert result["link_playlists"] == [ident for ident in (SHORTS, KT) if ident != removed]
+    assert result["last_scan"]["counts"]["filled"] == 1
+    assert not result["last_scan"]["errors"]
+    for ident, eid, vid in ((SHORTS, EID, "youtube0001"), (KT, EID + ".kt", "youtube0002")):
+        post = store.read_posts(ctx.posts_path(eid), eid)["posts"][0]
+        assert post["link"] == (None if ident == removed else links.link_for(vid, ident == KT))
+
+
 def test_scan_journal_only_keeps_rows_needing_attention(service):  # F3
     svc, ctx, wire = service
     wire.videos[KT] = []  # the fake transport resolves ids across its playlists; keep this set disjoint
