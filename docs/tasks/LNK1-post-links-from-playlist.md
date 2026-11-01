@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS — chờ full suite xanh khi máy rảnh và manual test 8080
+- Status: IN_PROGRESS
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -114,3 +114,4 @@ Task chạm security model (web đọc token OAuth của kênh, chỉ GET Data A
 - Vòng reviewer: Codex review `8cef435`: P2 gỡ playlist giữa lúc quét vẫn ghi link, đã sửa ở `0b821db`.
 - Full suite sau `0b821db` chưa xanh: 4 / 4 lần, mỗi lần 1 test khác nhau fail (load 50–85, đợt Vô Lượng Thọ đang chạy): `test_web_lanes_cp810::test_disk_block_rechecked_in_prepare_lane`, `test_ollama_wait_runner::test_submit_202_and_gpu_field_while_down`, `test_theme_render::test_description_refresh_on_cache_hit_without_encoding` (lệch atime 1 giây, module không liên quan), `test_web_stop_fix::test_ac2_no_child_survives_stop`. Từng test chạy riêng: PASS. So sánh: base `a6837e3` full suite 2 / 2 lần xanh; chạy lặp 3 file test đó `-n 24` 8 vòng: `test_ac2_orphaned_grandchild_and_children_started_after` fail 8 / 8 trên cả base và nhánh. Chưa chứng minh nhánh không làm tăng tỉ lệ fail; chạy lại full suite khi load thấp trước READY.
 - PR: không commit / push / PR theo yêu cầu.
+- 2026-11-01: full suite trên commit gộp `08bd6ac` (origin/main + LNK1 + AUD2): 3758 passed, 1 skipped (load 46–50). Còn manual test 8080.
