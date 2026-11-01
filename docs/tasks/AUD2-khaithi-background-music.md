@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: IN_PROGRESS
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -15,7 +15,7 @@
 - Parallel group: —
 - Owned paths: `src/auto_short/packaging/music.py` (mới), `src/auto_short/packaging/assets.py` (trường metadata nhạc tùy chọn + nạp từ manifest), `src/auto_short/packaging/__main__.py` (CLI `assets add` thêm cờ metadata, `assets import-music`), `src/auto_short/config.py` + `config.example.toml` (chỉ mục `[music]`), `src/auto_short/web/music.py` (mới: service + route + job kind), `src/auto_short/web/app.py` / `web/jobs.py` (chỉ đăng ký route / job kind), `src/auto_short/web/static/app.js`, `episode.html`, `favorites.js`, `theme_plan.js`, `style.css` (khối "Nhạc nền" trên thẻ), `docs/assets/music-manifest.json` (mới, chỉ metadata), `tests/test_music_mix.py` (mới), `tests/test_web_music.py` (mới), `tests/test_packaging_assets.py` (nếu có, phần metadata), contract này
 - Dependencies: KTI1 / KTI2 (merged: `render/intro.offset` / `clip_record`, sidecar `intro` / `content_offset`), CP8.33, TC3, SHO1 (`store/shorts.borrow_short` khi clip đã lên kho 3090), kho asset PKG1 (`kind: music`)
-- Base commit / branch: `a6837e3` (`origin/main`; rebase nếu main đã đi trước, kiểm VM trước khi code) / `feature/aud2-khaithi-music`
+- Base commit / branch: `d665342` (`origin/main` 2026-11-01, gồm IMG1 #192; contract viết trên `a6837e3`) / `feature/aud2-khaithi-music`
 - Human Lead approval: APPROVED 2026-11-01 (G1, G2, G4–G8 theo đề xuất; G3 = chỉ dùng 1 bài)
 - Implementation authorized: YES
 
@@ -141,6 +141,12 @@ HUMAN LEAD: "G3. Chỉ dùng 1 bài. Còn lại đồng ý." → G1, G2 (fade t�
 - Trong container: repo `claude/lucid-dijkstra-9gqla4` = `origin/main` `a6837e3`, working tree sạch trước khi thêm contract; ffmpeg / ffprobe có ở `/usr/bin`; ổ trống 30 GB. `.gitignore` đã có `*.mp3`.
 - File nhạc: nhận đủ **6/6** bài (BGM-01 Whispering Stream gửi sau, cùng ngày). Số đo từng bài: `docs/assets/music-manifest.json`. Tên, nghệ sĩ và thời lượng khớp danh sách HUMAN LEAD (sai ≤ 1 s). File không có tag ID3, nên nguồn / license lấy theo xác nhận của HUMAN LEAD.
 - License: chỉ BGM-06 Falling Snow `verified`. BGM-01…05 để `pending`, không nạp kho cho đến khi HUMAN LEAD xác nhận trong Studio (loại license + có yêu cầu ghi công không, và nếu có thì chép nguyên dòng ghi công Studio cung cấp).
+
+### Kiểm trên VM (ORCHESTRATOR, 2026-11-01, phiên có VM)
+
+- Repo chính `main` sạch, sau `origin/main` 11 commit (không pull); task chạy ở worktree riêng `.claude/worktrees/aud2-music`. Checkout 8080 (`youtube-auto-short-web`) detached `abc8ba8`, có file sửa dở không thuộc task này; không đụng, không restart.
+- `assets list`: bài CC0 `6a5f3380fb46…` còn, `approved: true` (G7: `assets unapprove` khi HUMAN LEAD chốt).
+- ffmpeg / ffprobe 6.1.1; ổ trống 149 GB. Quota Codex 40 % (5 giờ) / 65 % (tuần): dưới ngưỡng.
 
 ## Result
 
