@@ -964,7 +964,7 @@ function boot() {
   block.reveal=()=>{const detail=all(els['tp-plans']).find(n=>n.tagName==='DETAILS' && n.contains(block));detail.open=true;onChanged();};
   return block;
  };
- const ctx = {Favorites:{el, api, fmtDur:x=>x+' s', copyText:async text=>{copies.push(text);return true;},
+ const ctx = {Favorites:{el, api, musicBlock:()=>el('details'), fmtDur:x=>x+' s', copyText:async text=>{copies.push(text);return true;},
   player,busy,thumbnailBlock,publishBox:()=>el("div"),onIdle:fn=>idle.push(fn),pauseAll:()=>{for(const v of players.values())v.pause();},setVideoCount:(source,n)=>counts[source]=n,
   showTab:name=>navigation.push(name),scrollToVideo:id=>navigation.push(id)},
   document, window:{addEventListener:(k,f)=>events[k]=f}, location:{pathname:'/playlists/PLeligible/favorites'},

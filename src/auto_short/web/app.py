@@ -82,6 +82,7 @@ from .jobs import (
     INTERRUPTED,
     KIND_VERTICAL,
     KIND_HD_INTRO,
+    KIND_MUSIC,
     HDIntroTarget,
     AI,
     RENDER,
@@ -808,7 +809,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         if kind == KIND_COMPILATION:  # CP8.33 G5: the key is ``compilation:<playlist_id>:<cid>``, not an episode
             return compilations.rebuild(eid, spec)
         if kind in (theme_plan_web.KIND_GENERATE, theme_plan_web.KIND_THEME_RENDER,
-                    packaging_web.KIND, episode_thumbs_web.KIND):
+                    packaging_web.KIND, episode_thumbs_web.KIND, KIND_MUSIC):
             return None  # TC2: restart requires a fresh user request and plan audit
         if not ep.valid_episode_id(eid):
             return None
@@ -1089,6 +1090,11 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
 
     packaging_web.register(app, packages)  # THUMB2: compilation thumbnails on video cards
     episode_thumbs_web.register(app, episode_thumbs)
+
+    from . import music as music_web
+    music_service = music_web.Music(config, runner, compilations, theme_plans)
+    app.state.music = music_service
+    app.include_router(music_web.router(music_service))
 
     app.include_router(files_catchall.build(ctx))  # D4: catch-all is always registered last.
 

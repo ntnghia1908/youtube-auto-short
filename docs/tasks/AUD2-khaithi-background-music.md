@@ -140,7 +140,7 @@ HUMAN LEAD: "G3. Chỉ dùng 1 bài. Còn lại đồng ý." → G1, G2 (fade t�
 
 - Trong container: repo `claude/lucid-dijkstra-9gqla4` = `origin/main` `a6837e3`, working tree sạch trước khi thêm contract; ffmpeg / ffprobe có ở `/usr/bin`; ổ trống 30 GB. `.gitignore` đã có `*.mp3`.
 - File nhạc: nhận đủ **6/6** bài (BGM-01 Whispering Stream gửi sau, cùng ngày). Số đo từng bài: `docs/assets/music-manifest.json`. Tên, nghệ sĩ và thời lượng khớp danh sách HUMAN LEAD (sai ≤ 1 s). File không có tag ID3, nên nguồn / license lấy theo xác nhận của HUMAN LEAD.
-- License: chỉ BGM-06 Falling Snow `verified`. BGM-01…05 để `pending`, không nạp kho cho đến khi HUMAN LEAD xác nhận trong Studio (loại license + có yêu cầu ghi công không, và nếu có thì chép nguyên dòng ghi công Studio cung cấp).
+- License: HUMAN LEAD xác nhận trong Studio 2026-11-01: cả 6 bài đều Giấy phép của Thư viện âm thanh YouTube, không cần ghi công, không được phân phối riêng file nhạc. Manifest: 6/6 `verified`, `attribution` rỗng.
 
 ### Kiểm trên VM (ORCHESTRATOR, 2026-11-01, phiên có VM)
 
@@ -150,4 +150,41 @@ HUMAN LEAD: "G3. Chỉ dùng 1 bài. Còn lại đồng ý." → G1, G2 (fade t�
 
 ## Result
 
-- (chưa implement)
+- IMPLEMENTER: READY để ORCHESTRATOR review; lifecycle giữ `IN_PROGRESS` tới khi ORCHESTRATOR hoàn tất AC8/AC9 và các gate nghe mẫu. Branch `feature/aud2-khaithi-music`, HEAD vẫn `a2d68dc`; không commit / push / PR, không gọi agent khác / mạng thật, không sửa dữ liệu kho đang chạy.
+- Đã thêm CLI metadata / import-music / unapprove; `[music]`; core mix + preview; service/router `/api/music/{kind}/{owner}/{video}` với job `music`, render lane, dedup 409 / cancel, restart không tái tạo; khối Nhạc nền dùng chung cho ba loại thẻ. Không sửa `render/intro.py`, `theme_render/audio.py`, `store/shorts.py`, route/nút cũ hoặc file nguồn.
+- Key dùng spec hiệu lực (fade mặc định theo intro), SHA nguồn / asset, MUSIC_VERSION, bitrate; bổ sung `loop_end` hiệu lực để tránh cache sai khi metadata điểm cắt đổi. Preview dùng cùng timeline nhạc trước khi trim; chỉ giữ bộ mới nhất. Publish có rollback, giữ bản cũ đến khi bộ mới publish xong, gồm thay revision tuyển tập.
+- Manifest hỗn hợp: bài pending được trả trong `rejected` (không nạp); mọi bài verified được preflight file/SHA/source/license trước khi nạp; vẫn cần approve riêng. Không thay manifest đã được cung cấp.
+
+| AC | Test / bằng chứng |
+|---|---|
+| 1 | `test_mix_preserves_source_and_level` (−18 / −22 / −26; nguồn 44,1 kHz, hình dài hơn audio, metadata/chapter); `test_no_music_creates_nothing_and_cache_skips_runner` |
+| 2 | `test_speech_and_peak_gates_reject_corrupt_runner` (+0 LU tiêm qua runner), speech gate trong các mix thật |
+| 3 | `test_trim_override_loop_and_all_seams` (silence, loop_end, mọi nối, RMS 20 ms) |
+| 4 | `test_intro_default_fade_and_preview_phase`, `test_preview_positions_and_timeline_filters`; ca dài `test_long_preview_matches_full_at_nonzero_position` đánh dấu slow, chưa chạy |
+| 5 | `test_effective_spec_changes_key`, `test_stale_source_asset_approval_version`, cache không gọi runner |
+| 6 | `test_failed_replacement_preserves_current` (encode/hủy/publish/recheck), `test_success_replaces_only_after_publish_and_disk_gate` |
+| 7 | `test_manifest_verified_metadata_and_pending_refusal`, `test_silent_asset_and_invalid_specs`; ranges config qua parametrize |
+| 8 | `tests/test_web_music.py`: auth/id/symlink, job/lane/dedup/cancel/restart, tải/stale/ghi công/xóa, compilation/theme, borrow 3090 và lỗi, 2 preview. **Chưa chạy**. Sáu hàm (bảy ca) vượt mặc định ~3/AC vì sáu luồng tích hợp độc lập |
+| 9 | node --check (3 JS), framework-check, diff --check PASS; full suite chưa chạy |
+
+- Verification đã chạy:
+  - `PYTHONPATH=/home/ntnghia/projects/youtube-auto-short/.claude/worktrees/aud2-music/src /home/ntnghia/miniconda3/envs/auto-short/bin/python -m pytest -q -x tests/test_music_mix.py` → **30 PASS, 1 slow deselected, 74,63 s** (lần cuối).
+  - `node --check src/auto_short/web/static/app.js`, `favorites.js`, `theme_plan.js` → PASS.
+  - `node scripts/framework-check.mjs`, `git diff --check` (kèm whitespace check file mới bằng diff --no-index) → PASS.
+  - Python import `web.music` / `web.app`, parse AST `test_web_music.py`, kiểm default music config → PASS; không tạo TestClient.
+- Chưa chạy theo phân công / ràng buộc sandbox: `test_web_music.py`, `test_web_compilation.py`, `test_web_theme_plan.py`, full suite, test slow, ca thật 3090 / clip intro / TC3, nghe mẫu và YouTube Studio. Không tuyên bố AC8 / toàn bộ AC9 PASS. ORCHESTRATOR chạy ngoài sandbox.
+- Helper mới và tái dùng: tìm bằng `rg -n '^def (ff|run_ff|make_.*|.*audio|.*asset|.*preview|.*publish)' tests/*helpers* src/auto_short/packaging src/auto_short/render src/auto_short/web/compilations.py`; đọc `git show 48c7677a:.../music.py` và `visual.py` `_call`. Tái dùng `measure`, `loop_unit`, `music_filter`, `check_audio`, `video_hash` và giao thức rollback AUD1; helper `_call` nhỏ tại chỗ vì visual đã gỡ. Mới: trim silence, normalize/key/current, artifact_files/records (family revision), preview_positions, mix/preview; assets metadata/import/unapprove; Source/MusicTarget/service/router; UI musicBlock. Các helper cũ không có boundary AUD2 / hai preview / family revision, nên không restore variant/visual. Dùng lại audio.compare, probe_media/_run, sha256_file/config_hash, atomic_write_json/utc_now, intro.offset/clip_record, borrow_short, ep.short_locations/StoredShort, _no_symlinks, content_disposition và test render_helpers.ffmpeg / web_helpers.
+- Dòng code ứng dụng (gồm config mẫu): **+867 / −5**; test: **+590 / −0** (tracked diff --numstat + file mới diff --no-index).
+- Không lệch scope / quyết định đã duyệt. G7 trên kho thật: ORCHESTRATOR còn cần chạy `assets unapprove <id CC0 6a5f…>` khi triển khai; IMPLEMENTER chỉ sửa Owned paths, chưa thay `library.json` ngoài worktree.
+
+### ORCHESTRATOR (2026-11-01)
+
+- Codex: 1 lượt, ~26 phút, 185.165 tokens (`gpt-6.1-sol`, high). ORCHESTRATOR review rồi sửa 4 điểm test ngoài sandbox bắt được:
+  - `amix` làm hụt 4 khung AAC cuối (3279 / 3283) khi hai input cùng hết: đệm cuối cả hai `MIX_PAD = 1 s` rồi `atrim` đúng độ dài; bản đủ giờ khớp nguồn tuyệt đối. Test `slow` phát hiện, Codex chưa chạy được.
+  - Ngưỡng true peak lỗi số thực (`-0,4 + 0,5 < 0,1`) làm fail oan ở clip thật: `true_peak_limit` làm tròn 1 chữ số.
+  - `theme_plan.js` lấy `musicBlock` qua `Favorites` như mọi helper; khối nhạc đặt sau "Sửa video & thumbnail".
+  - Stub JS trong `tests/test_web_theme_plan.py`, `tests/test_web_packaging.py` thêm `musicBlock` (mỗi file 1 dòng, ngoài Owned paths, không đổi assert).
+- Kho thật: backup `library.json.bak-aud2-2026-11-01`; 6/6 bài nạp + approve (HUMAN LEAD xác nhận license cả 6 giữa task); CC0 `6a5f…` đã `unapprove` (G7).
+- Chạy thật trên bản sao, Falling Snow: clip `Idioc4hReTw.kt/k01` (268 s, intro) ~45 s / mức; tuyển tập `27d26bf5c151-r1` (29 phút, intro) ~232 s / mức (tải máy 35–55). Mức nhạc theo gain −18,0 / −22,0 / −26,0 LU so với giọng; corr 0,9975–0,9996; lag 0; chênh thời lượng audio 0; streamhash hình = nguồn; true peak −0,4…+0,1 dBTP.
+- Giới hạn đã biết: xóa video ghép / tuyển tập không xóa bản nhạc trong `music/` (file mồ côi, không nằm trong Owned paths, dọn tay); `view` băm sha nguồn + bản nhạc mỗi lần mở khối / poll 2 s lúc có job, video 1 GB tốn vài giây; nguồn có true peak sát 0 dBTP cho bản mix tới +0,1 dBTP theo công thức contract.
+

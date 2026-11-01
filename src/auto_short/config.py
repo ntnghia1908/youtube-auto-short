@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import re
 import string
@@ -340,6 +341,14 @@ class ThumbsConfig:
 
 
 @dataclass(frozen=True)
+class MusicConfig:
+    default_level_lu: float = -22.0
+    fade_in: float = 3.0
+    fade_out: float = 5.0
+    loop_crossfade: float = 4.0
+
+
+@dataclass(frozen=True)
 class PackagingConfig:
     asset_dir: Path = field(default_factory=lambda: Path("~/.local/share/auto-short/packaging").expanduser())
 
@@ -383,6 +392,7 @@ class Config:
     store: StoreConfig = field(default_factory=StoreConfig)
     thumbs: ThumbsConfig = field(default_factory=ThumbsConfig)
     hd_intro: HDIntroConfig = field(default_factory=HDIntroConfig)
+    music: MusicConfig = field(default_factory=MusicConfig)
 
 
 def _section(data: dict, name: str) -> dict:
@@ -798,6 +808,18 @@ def _compilation(data: dict) -> CompilationConfig:
     return CompilationConfig(max_minutes=_int(co, "max_minutes", d.max_minutes, w, lo=1, hi=720))
 
 
+def _music(data):
+    section, default = _section(data, "music"), MusicConfig()
+    values = {key: _number(section, key, getattr(default, key), "music", lo=lo, hi=hi)
+              for key, lo, hi in (("default_level_lu", -30, -12), ("fade_in", 0, 10),
+                                  ("fade_out", 0, 15), ("loop_crossfade", .5, 8))}
+    if any(not math.isfinite(v) for v in values.values()):
+        raise ConfigError("music values must be finite")
+    if values["default_level_lu"] * 2 != round(values["default_level_lu"] * 2):
+        raise ConfigError("music.default_level_lu must use steps of 0.5")
+    return MusicConfig(**values)
+
+
 def _post(data: dict) -> PostConfig:
     po = _section(data, "post")
     d, w = PostConfig(), "post"
@@ -863,6 +885,7 @@ def from_dict(data: dict) -> Config:
         storage=_storage(data),
         enhance=_enhance(data),
         compilation=_compilation(data),
+        music=_music(data),
         store=_store(data),
         thumbs=_thumbs(data),
         hd_intro=_hd_intro(data),

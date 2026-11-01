@@ -103,6 +103,7 @@ class CpuAverage:
             return max(0.0, min(1.0, 1.0 - (idle1 - idle0) / (tot1 - tot0)))
 KIND_ENHANCE = "enhance"  # CP13.1b: assemble ``source_hd.mp4`` from the received segments (lane render; runs under enhance_key)
 KIND_HD_INTRO = "hd_intro"
+KIND_MUSIC = "music"
 KIND_VERTICAL = "vertical"  # CP8.27 H4: vertical full-episode video from ``source_hd.mp4`` (lane render; runs under vertical_key)
 KIND_COMPILATION = "compilation"  # CP8.33 G5: khai thị compilation (lane render; key ``compilation:<playlist_id>:<cid>``)
 POST_IMAGES_KEY = "_post_images"  # CP8.15 P9: pseudo episode id for the (single, global) image search job
@@ -598,7 +599,7 @@ class JobRunner:
         lane_steps = getattr(target, "lane_steps", None)
         if lane_steps is not None:
             return list(lane_steps())
-        return [Step(RENDER if kind in (KIND_RENDER, KIND_ENHANCE, KIND_VERTICAL, KIND_HD_INTRO, KIND_COMPILATION) else PREPARE, target)]
+        return [Step(RENDER if kind in (KIND_RENDER, KIND_ENHANCE, KIND_VERTICAL, KIND_HD_INTRO, KIND_COMPILATION, KIND_MUSIC) else PREPARE, target)]
 
     def _enqueue_locked(self, episode_id: str, kind: str, target: Callable[[Job], None],
                         clip_ids: list[str] | None) -> Job:
