@@ -83,6 +83,46 @@ lập bảng video KT → ảnh KT dọc cho đúng các video trong playlist KT
 - Full suite `-n 4` (ORCHESTRATOR, ngoài sandbox).
 - Chạy thật (ORCHESTRATOR): chạy thử 4 playlist KT → 356 sẵn sàng, 25 bỏ qua không mã; `--apply` 1 video (Thập Thiện) → HUMAN LEAD xem trên YouTube; rồi `--apply` phần còn lại cả 4 playlist.
 
+## Sửa đổi 1 (HUMAN LEAD 2026-11-02 "Đồng ý" dùng ảnh ngang cho KT)
+
+- Lý do: video KT 4–7 phút là video thường; YouTube hiện thumbnail trong khung 16:9 (trang chủ, tìm kiếm, đề xuất), ảnh dọc bị thu nhỏ → chữ nhỏ.
+- `kt-thumbs` thêm `--shape {vertical,landscape}`, **mặc định `landscape`**; ảnh = `khaithi_thumbs.valid_files(...)[clip][shape]`; bản ghi nhật ký `shape` theo lựa chọn. Video đã gắn ảnh dọc → sha khác → `--apply` gắn lại không cần `--force`.
+- AC8: `--shape landscape` chọn ảnh ngang; clip thiếu ảnh ngang → bỏ qua với lý do; mặc định là landscape; `--shape vertical` giữ hành vi cũ.
+- Decision PUB2 G2 (đoạn KT): "→ ảnh KT ngang (mặc định) hoặc dọc theo `--shape`".
+
 ## Result
 
--
+- IMPLEMENTER READY (2026-11-02), branch `feature/pub2k-kt-thumbs`, base HEAD `7d438c4` theo giao việc; chưa commit / push / PR.
+- Đổi 7 file trong owned paths: `publish/__main__.py`, `publish/thumbs.py`, `publish/kt.py` (mới), `tests/test_publish_thumbs.py` (chỉ thêm test), `tests/test_publish_kt.py` (mới), decision PUB2 (G1/G2 + trường nhật ký KT ở G3), mục Result này.
+- Helper mới: `kt._code` (parse mã đầu) và `kt.plan` (ghép playlist KT). Đã tìm bằng `rg -n 'def (plan|apply|_journal|_thumbnail|_series|short_code|read|valid_files|titles)|KT.*re\.compile|re\.compile.*KT' src/auto_short/publish src/auto_short/review/names.py src/auto_short/packaging/khaithi_thumbs.py`: chưa có parser / planner KT; `review.names.short_code` chỉ tạo mã. Tái dùng `YouTube.playlist_videos`, `thumbs._series`, `_thumbnail` (thêm chọn provider theo `clip_id`), `apply` / `_journal`, `episode.header` và `khaithi_thumbs.read/valid_files/titles/directory`; giữ một vòng apply.
+
+| AC | Test |
+|---|---|
+| 1 | `test_code_matching` (parametrize; gồm `KT05` → `m01`, đọc `thumbs.json` thật), `test_cli_requires_both_playlists` |
+| 2 | `test_code_conflict` |
+| 3 | `test_local_resolution_skips` (thiếu / nhiều tập, ngoài playlist, thiếu clip / hồ sơ / ảnh dọc, ảnh stale) |
+| 4 | `test_title_warning_only` |
+| 5 | `test_cli_dry_run_apply_skip_force`, `test_apply_revalidates_kt_image`, `test_kt_api_failure_stops_after_journaled_success` |
+| 6 | `test_playlist_ignores_kt_journal_records` + toàn bộ test PUB2/PUB2P cũ giữ nguyên |
+
+- Kiểm thêm schema bằng `test_journal_optional_clip_id_must_be_string`. Fixture dùng workspace tạm, read / titles KT thật; chỉ giả `valid_files` để bỏ setup cover / render và transport HTTP.
+- Dòng ứng dụng: **+127 / −21** (`__main__.py` +23/−11, `thumbs.py` +19/−10, `kt.py` +85/−0); test: **+272 / −0** (file cũ +19, file mới +253).
+- Verification: `cd /home/ntnghia/projects/yas-pub2k && PYTHONPATH=/home/ntnghia/projects/yas-pub2k/src /home/ntnghia/miniconda3/envs/auto-short/bin/python -m pytest -q tests/test_publish_thumbs.py tests/test_publish_kt.py` → **98 passed in 3.53s**. `git diff --check` PASS.
+- Không có lệnh verification bị chặn / không chạy được. Full suite và mạng thật không chạy theo giao việc; full suite / thử 4 playlist / apply thật thuộc ORCHESTRATOR. Chưa claim các bước đó PASS.
+
+### Vòng sửa sau chạy thật — 2026-11-02
+
+- Theo phản hồi ORCHESTRATOR: nhận mã KT 1–3 chữ số, vẫn chặn số dài hơn thay vì ghép nhầm tiền tố; so mã bằng `int` nên `KT1`, `KT01`, `KT001` cùng số. `test_clip_number_widths_without_filename` kiểm `T8_KT1`, `T8_KT4`, `T8_KT123` không có fileDetails; `test_code_matching` thêm kiểm khác độ rộng / số 0 đầu và cập nhật biên từ 3 sang 4 chữ số.
+- Thêm `kt._title_key`: NFC / casefold qua `thumbs._series`, thay dấu câu / ký hiệu bằng khoảng trắng và gộp khoảng trắng; giữ chữ có dấu tiếng Việt và chữ số. `test_title_warning_only` kiểm dấu hỏi cuối / giữa câu, dấu câu Unicode, NFD / hoa thường / khoảng trắng; `vi tín` khác `vi tính`, khác dấu tiếng Việt hoặc chữ số vẫn cảnh báo. Đã tìm `rg` ở `publish`, `review/names.py`, `post`: helper chuẩn hóa phrase của post phục vụ token bài đăng, helper hashtag xóa khoảng trắng; không phù hợp so tiêu đề KT.
+- File sửa trong vòng này: `src/auto_short/publish/kt.py`, `tests/test_publish_kt.py`, mục Result contract. Không sửa test PUB2/PUB2P cũ; không commit / push / PR / gọi mạng thật.
+- Dòng cộng dồn so với HEAD: ứng dụng **+132 / −21**; tests **+299 / −0** (kể cả hai file mới chưa tracked).
+- Verification đúng lệnh ở trên → **108 passed in 7.07s**; `git diff --check` PASS. Không có lệnh verification bị chặn / không chạy được; chưa chạy lại playlist thật, thuộc ORCHESTRATOR.
+
+### Vòng 3 — Sửa đổi 1, chọn khuôn KT (2026-11-02)
+
+- IMPLEMENTER READY theo Sửa đổi 1 đã duyệt: CLI `kt-thumbs --shape {vertical,landscape}` và `kt.plan(..., shape=...)` mặc định `landscape`. Mỗi row mang khuôn đã chọn; `_thumbnail` chọn đúng ảnh qua provider hiện có và nêu rõ ảnh ngang / dọc thiếu hoặc stale, không fallback sang khuôn khác. Giữ nguyên vòng `apply`, ghi nhật ký theo `row["shape"]`.
+- File sửa vòng này: `publish/__main__.py`, `publish/kt.py`, `publish/thumbs.py` (chỉ lý do thiếu ảnh KT), `tests/test_publish_kt.py`, decision PUB2 G2 (khuôn mặc định / tùy chọn; G3 đổi trường shape cố định thành pointer tới lựa chọn G2), mục Result này. Không thêm helper; tái dùng `_thumbnail`, `apply` / `_journal` như trên.
+- AC8 → `test_shape_selection` (mặc định / ngang / dọc, có / thiếu ảnh; giữ ảnh khuôn kia để kiểm không fallback), `test_cli_shape_selection` (ảnh upload + row / nhật ký đúng khuôn), `test_shape_change_reapplies_without_force` (dọc → ngang sha khác gắn lại, lần sau bỏ qua). Fixture có cả hai khuôn; test KT cũ điều chỉnh theo mặc định mới hoặc truyền `shape="vertical"` để kiểm hành vi dọc. Test PUB2/PUB2P cũ không sửa.
+- Dòng cộng dồn so với HEAD: ứng dụng **+134 / −21**; tests **+356 / −0** (kể cả hai file mới chưa tracked).
+- Verification: `PYTHONPATH=/home/ntnghia/projects/yas-pub2k/src /home/ntnghia/miniconda3/envs/auto-short/bin/python -m pytest -q tests/test_publish_thumbs.py tests/test_publish_kt.py` → **118 passed in 5.87s**; `git diff --check` PASS.
+- Không lệnh verification nào bị chặn / không chạy được. Không commit / push / PR; không mạng thật / full suite theo giao việc.

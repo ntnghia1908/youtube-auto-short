@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 
 from ..hashing import sha256_file
-from ..packaging import PackageError, episode
+from ..packaging import PackageError, episode, khaithi_thumbs
 from ..render.text import nfc
 from ..titling.logic import TitlingError
 from ..titling.playlist import stored_series
@@ -24,17 +24,23 @@ def _series(value):
     return " ".join(nfc(value).casefold().split()) if isinstance(value, str) else ""
 
 
-def _thumbnail(config, video_id, pid, shape):
-    entry = episode.valid_files(config, video_id, pid=pid).get(shape)
+def _thumbnail(config, video_id, pid, shape, *, clip_id=None):
+    provider = episode if clip_id is None else khaithi_thumbs
+    files = provider.valid_files(config, video_id, pid=pid)
+    entry = (files if clip_id is None else files.get(clip_id, {})).get(shape)
     if entry is None:
-        doc = episode.read(config, video_id) or {}
-        recorded = doc.get("files", {}).get(shape)
+        doc = provider.read(config, video_id) or {}
+        files = doc.get("files", {}) if clip_id is None else doc.get("clips", {}).get(clip_id, {})
+        recorded = files.get(shape)
         if recorded:
-            path = episode.directory(config, video_id) / recorded["file"]
+            path = provider.directory(config, video_id) / recorded["file"]
             if path.is_file() and path.stat().st_size > MAX_BYTES:
                 raise PublishError("ảnh lớn hơn 2 MB")
+        if clip_id is not None:
+            label = "ngang" if shape == "landscape" else "dọc"
+            raise PublishError(f"chưa có ảnh {label} khai thị hợp lệ hoặc ảnh đã cũ")
         raise PublishError("chưa có ảnh thumbnail hợp lệ hoặc ảnh đã cũ")
-    path = episode.directory(config, video_id) / entry["file"]
+    path = provider.directory(config, video_id) / entry["file"]
     if path.stat().st_size > MAX_BYTES:
         raise PublishError("ảnh lớn hơn 2 MB")
     if sha256_file(path) != entry["sha256"]:
@@ -113,7 +119,7 @@ def plan(config, videos, *, pid, series=None, output=None, journal=None):
         raise PublishError("thiếu tên bộ kinh; đặt series của playlist hoặc dùng --series")
     if output is not None:
         output(f"Bộ kinh: {' '.join(nfc(selected).split())}")
-    records = {r["youtube_id"]: r for r in journal["records"] if r["playlist_id"] == pid} \
+    records = {r["youtube_id"]: r for r in journal["records"] if r["playlist_id"] == pid and "clip_id" not in r} \
         if journal is not None else {}
     rows, groups = [], {}
     for video in videos:
@@ -169,7 +175,8 @@ def _journal(config):
     doc = read_json_dict(path)
     if doc is None or doc.get("schema_version") != 1 or not isinstance(doc.get("records"), list) \
             or any(not isinstance(r, dict) or any(not isinstance(r.get(k), str) for k in
-                   ("youtube_id", "video_id", "playlist_id", "shape", "sha256", "set_at")) for r in doc["records"]):
+                   ("youtube_id", "video_id", "playlist_id", "shape", "sha256", "set_at"))
+                   or "clip_id" in r and not isinstance(r["clip_id"], str) for r in doc["records"]):
         raise PublishError("nhật ký thumbnail không hợp lệ; không ghi đè")
     return path, doc
 
@@ -188,7 +195,8 @@ def apply(config, rows, youtube, *, force=False):
             row.update(status="bỏ qua", reason="đã gắn cùng sha256")
             continue
         try:
-            entry, image = _thumbnail(config, row["video_id"], row["playlist_id"], row["shape"])
+            entry, image = _thumbnail(config, row["video_id"], row["playlist_id"], row["shape"],
+                                      clip_id=row.get("clip_id"))
             if entry["sha256"] != row["sha256"] or str(image) != row["file"]:
                 raise PublishError("thumbnail đã thay đổi; chạy lại lệnh để lập bảng mới")
             body = image.read_bytes()
@@ -202,6 +210,8 @@ def apply(config, rows, youtube, *, force=False):
             continue
         youtube.set_thumbnail(row["youtube_id"], body)
         record = {k: row[k] for k in ("youtube_id", "video_id", "playlist_id", "shape", "sha256")}
+        if "clip_id" in row:
+            record["clip_id"] = row["clip_id"]
         record["set_at"] = utc_now()
         journal["records"] = [r for r in journal["records"] if r["youtube_id"] != row["youtube_id"]] + [record]
         atomic_write_json(path, journal)

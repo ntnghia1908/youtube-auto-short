@@ -558,3 +558,22 @@ def test_playlist_fallback_is_opt_in(playlist_episodes, oauth, capsys):
     result = json.loads(captured.out[captured.out.index("{\n"):])
     assert result["rows"][0]["status"] == "bỏ qua" and "matched_by" not in result["rows"][0]
     assert not wire.responses
+
+
+@pytest.mark.parametrize("source_kind", ["title", "filename", "none"])
+@pytest.mark.parametrize("kt_id", [True, False])
+def test_playlist_ignores_kt_journal_records(playlist_episodes, source_kind, kt_id):
+    source = dict(id="selected001")
+    if source_kind == "title":
+        source["snippet"] = dict(title="[HD Mobile] Thái Thượng Cảm Ứng Thiên - Tập 12")
+    elif source_kind == "filename":
+        source["fileDetails"] = dict(fileName="Thái Thượng Cảm Ứng Thiên_Tập12_Doc.mp4")
+    journal = dict(records=[dict(youtube_id="selected001", video_id=IDS[1] + (".kt" if kt_id else ""),
+                                playlist_id=PID, shape="landscape", sha256="old", set_at="before", clip_id="k01")])
+    row = thumbs.plan(playlist_episodes, [source], pid=PID, journal=journal)[0]
+    if source_kind == "none":
+        assert row["status"] == "bỏ qua" and not row["matched_by"]
+        assert row["reason"] == "nhật ký, tên file gốc và tiêu đề không ghép được tập / khuôn"
+    else:
+        assert row["status"] == "sẵn sàng" and row["video_id"] == IDS[0] and row["shape"] == "vertical"
+        assert row["matched_by"] == ("tiêu đề" if source_kind == "title" else "tên file")
