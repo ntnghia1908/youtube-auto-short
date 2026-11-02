@@ -126,3 +126,5 @@ lập bảng video KT → ảnh KT dọc cho đúng các video trong playlist KT
 - Dòng cộng dồn so với HEAD: ứng dụng **+134 / −21**; tests **+356 / −0** (kể cả hai file mới chưa tracked).
 - Verification: `PYTHONPATH=/home/ntnghia/projects/yas-pub2k/src /home/ntnghia/miniconda3/envs/auto-short/bin/python -m pytest -q tests/test_publish_thumbs.py tests/test_publish_kt.py` → **118 passed in 5.87s**; `git diff --check` PASS.
 - Không lệnh verification nào bị chặn / không chạy được. Không commit / push / PR; không mạng thật / full suite theo giao việc.
+- Chạy thật ORCHESTRATOR 2026-11-02: chạy thử dọc rồi ngang 4 playlist → 355 sẵn sàng, 25 bỏ qua (không mã), 2 cảnh báo tiêu đề (lỗi gõ T29_KT05, T11_KT04 CƯT). Gắn thử T11_KT01 Thập Thiện (dọc, rồi ngang) → HUMAN LEAD OK. Dựng thêm 263 ảnh KT ngang (VLT + Thập Thiện, 49 tập; ảnh dọc dùng lại).
+- Gắn ngang hàng loạt 2026-11-02: Thập Thiện 100/105 (HTTP 429 ở mốc 100 / kênh / ngày), VLT 11, rồi `quotaExceeded` (hạn mức chung client). Phần còn lại (5 + 142 + CƯT 97): `output/_operations/kt-thumbs-2026-11-02/run.sh` qua cron 08:30 UTC hằng ngày (429 → sang playlist sau; quotaExceeded → dừng; xong → tự gỡ cron).
