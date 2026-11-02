@@ -28,6 +28,27 @@ Ghi chú vận hành ít dùng, tách từ `current-state.md` (CHG-current-state
 - Đo ≈ 43 MB/s VM←3090.
 - Script backup `~/.local/share/auto-short/backup-hd1/backup.ps1` (generator `scripts/backup/make_backup.py`): luôn truyền `-Dest E:\KinhDiaTang_HD`.
 
+### STN1 — đổi tên HD / HD Mobile (chưa chạy trên 3090)
+
+Sau merge, chép `tools/store/store.py` mới vào thư mục cài. Dừng task `AutoShortStore` và các script backup / upload trước khi đổi tên: `_put_lock` / `_lock` chỉ đồng bộ trong một process, CLI không khoá process server đang chạy. Sao lưu metadata trước; kiểm bản sao dữ liệu trước khi áp dụng trên kho thật.
+
+PowerShell trên 3090 (lấy Python từ Scheduled Task hiện hành):
+
+```powershell
+$install = Join-Path $env:LOCALAPPDATA "AutoShortStore"
+$storePython = (Get-ScheduledTask -TaskName AutoShortStore).Actions[0].Execute
+Stop-ScheduledTask -TaskName AutoShortStore
+& $storePython "$install\store.py" --config "$install\config.json" rename-vertical --series PLOynZc0cJJfDMY5-Fd0su_Ea3TGdZ2wk4
+# Kiểm bảng HD + vertical trước khi chạy dòng sau:
+& $storePython "$install\store.py" --config "$install\config.json" rename-vertical --series PLOynZc0cJJfDMY5-Fd0su_Ea3TGdZ2wk4 --apply
+& $storePython "$install\store.py" --config "$install\config.json" --self-test
+Start-ScheduledTask -TaskName AutoShortStore
+```
+
+Mặc định chỉ chạy thử. Tên mới lấy tên bộ + số tập từ tên file hiện hành, thêm `PS. Tịnh Không` khi tên bộ chưa chứa `Tịnh Không`; bỏ `(rN)`. `--speaker-label` đổi nhãn cho lượt migration; `--format` mặc định `{tag} {title} - Tập {episode}.mp4` (`title` đã gồm giảng sư), phải giữ mẫu HD và identity. Bản cũ cùng identity ở gốc chuyển vào `_cu\`; nếu trùng tên trong `_cu`, chọn tên lưu trữ khác, không ghi đè. Có `.part` ở bất kỳ thư mục con nào thì từ chối cả lượt. `index.csv` / `SHA256SUMS.txt` ghi nối, không băm lại media; chạy lại không sửa file đã đúng tên.
+
+VM 8080: `[store] speaker_label = "PS. Tịnh Không"` là mặc định cho lần đẩy bản dọc và sinh backup script mới. Tên gửi cũ / mới cùng SHA đều được nhận; SHA mới giữ một bản hiện hành không `(rN)`, bản trước vào `_cu\`. Backup nhận tên mới hoặc tên hiện hành trong CSV / tên cũ không giảng sư, giữ tên thực tế cho xác nhận và `-Release`. Sau khởi động lại kho, ORCHESTRATOR kiểm `/index` qua tunnel và HUMAN LEAD xem / tải tập 1, 100 trên 8080; bước này chưa thực hiện trong sandbox STN1.
+
 ## Hạ tầng
 
 - VM 32 nhân, 125 GB RAM; IP DHCP, hiện `10.8.102.102` (đổi 2026-10-08; trước đó `.100`, `.101`) — nên xin IP cố định. ssh config máy 3090 / 3050 phải theo IP hiện hành.

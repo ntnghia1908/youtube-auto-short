@@ -188,18 +188,23 @@ def test_store_revision_roundtrip(memory_store, tmp_path, kind):
         assert request(service, "PUT", f"/files/{VIDEO}/hd?" + urlencode(dict(series=PLAYLIST, name=name)),
                        {"Content-Length": str(path.stat().st_size), "X-Sha256": sha}, path.read_bytes())[0] == 409
         return
-    client.put(VIDEO, kind, PLAYLIST, name, path, sha)
-    row, stored = service.lookup(VIDEO, kind)
-    assert row["file"] == name[:-4] + " (r2).mp4"
-    assert stored.read_bytes() == path.read_bytes() and (stored.parent / name).read_bytes() == DATA
-    assert client.head(VIDEO, kind) == {"sha256": sha, "size": path.stat().st_size}
+    # STN1: a new vertical sha keeps one canonical name (speaker, no "(rN)"); the previous file moves to _cu.
+    name = "[HD Mobile] Bộ kinh - Tập 1.mp4"
+    other = "[HD Mobile] Bộ kinh - Tập 2.mp4"
+    path.write_bytes(DATA)
+    client.put("zzzDEF12_-3", kind, PLAYLIST, name, path, first_sha)
+    path.write_bytes(b"new-version")
+    client.put("zzzDEF12_-3", kind, PLAYLIST, name, path, sha)
+    row, stored = service.lookup("zzzDEF12_-3", kind)
+    assert row["file"] == "[HD Mobile] Bộ kinh - PS. Tịnh Không - Tập 1.mp4"
+    assert stored.read_bytes() == b"new-version" and (stored.parent / "_cu" / name).read_bytes() == DATA
+    assert client.head("zzzDEF12_-3", kind) == {"sha256": sha, "size": path.stat().st_size}
     sums = (stored.parent / "SHA256SUMS.txt").read_text(encoding="utf-8-sig")
     assert f"{first_sha}  {name}" in sums and f"{sha}  {stored.name}" in sums
-    assert ("PUT", f"/files/{VIDEO}/vertical") in memory_store.calls
-    client.put(VIDEO, kind, PLAYLIST, name, path, sha)
-    assert len(list(stored.parent.glob("*.mp4"))) == 2
+    client.put("zzzDEF12_-3", kind, PLAYLIST, name, path, sha)  # same sha, legacy name: no new file
+    assert not (stored.parent / other).exists() and len(list(stored.parent.glob("[[]HD Mobile[]]*.mp4"))) == 1
     restarted = store.Store(service.config)
-    assert restarted.lookup(VIDEO, kind)[0]["file"] == row["file"]
+    assert restarted.lookup("zzzDEF12_-3", kind)[0]["file"] == row["file"]
 
 
 @pytest.mark.parametrize('fps,graph_sha,command_sha', [

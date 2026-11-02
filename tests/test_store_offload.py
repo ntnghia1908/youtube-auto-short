@@ -99,7 +99,7 @@ def test_push_confirm_release_rules(ocfg, monkeypatch, hd, confirmed):
     assert result["pushed"] and result["released"] == (not hd or confirmed)
     doc = backup.read_backup(d)
     assert doc["confirmed"]["vertical"]["sha256"] == digest(VERTICAL)
-    assert client.uploads == [(VID, "vertical", "_khac", "[HD Mobile] Kinh Vô Lượng Thọ - Tập 3.mp4")]
+    assert client.uploads == [(VID, "vertical", "_khac", "[HD Mobile] Kinh Vô Lượng Thọ - PS. Tịnh Không - Tập 3.mp4")]
     assert invalidations
     if hd and not confirmed:
         assert path.is_file() and (d / "source_hd.mp4").is_file()
@@ -109,6 +109,29 @@ def test_push_confirm_release_rules(ocfg, monkeypatch, hd, confirmed):
         assert backup.released_vertical(ocfg, VID) == dict(sha256=digest(VERTICAL), size=len(VERTICAL))
         assert not (d / "source_hd.mp4").exists()
         assert (enh.read(d) or {}).get("released", False) == hd
+
+
+@pytest.mark.parametrize("series,speaker,expected", [
+    ("Bộ thử", "PS. Tịnh Không", "Bộ thử - PS. Tịnh Không"),
+    ("Bộ thử", "HT. Tịnh Không", "Bộ thử - HT. Tịnh Không"),
+    ("Lời Dạy Tịnh Không", "PS. Tịnh Không", "Lời Dạy Tịnh Không"),
+])
+def test_vertical_speaker_config_and_existing_speaker(ocfg, series, speaker, expected):
+    assert from_dict({}).store.speaker_label == "PS. Tịnh Không"
+    configured = from_dict({"store": {"speaker_label": speaker}}).store
+    ocfg = replace(ocfg, store=replace(ocfg.store, speaker_label=configured.speaker_label))
+    seed(ocfg)
+    atomic_write_json(Path(ocfg.workspace.dir) / "_playlists" / "PLtest.json",
+                      dict(series=series, entries=[dict(video_id=VID)]))
+    client = MemoryStore()
+    assert offload.push_vertical(ocfg, VID, client=client)["pushed"]
+    assert client.uploads[0][3] == f"[HD Mobile] {expected} - Tập 3.mp4"
+
+
+@pytest.mark.parametrize("label", ["", "  ", "../bad", "bad/name", "bad\nname", 2])
+def test_store_rejects_invalid_speaker_label(label):
+    with pytest.raises(ConfigError, match="store.speaker_label"):
+        from_dict({"store": {"speaker_label": label}})
 
 
 def test_old_candidates_order_digest_cache_and_confirmation(ocfg, monkeypatch):
@@ -125,7 +148,7 @@ def test_old_candidates_order_digest_cache_and_confirmation(ocfg, monkeypatch):
     client = MemoryStore()
     offload.push_vertical(ocfg, VID, client=client)
     assert len(hashes) == 1  # PUT / confirm / release all reuse vertical_sha
-    assert client.uploads[0][2:] == ("PLtest", "[HD Mobile] Bộ thử - Tập 3.mp4")
+    assert client.uploads[0][2:] == ("PLtest", "[HD Mobile] Bộ thử - PS. Tịnh Không - Tập 3.mp4")
     backup.confirm(ocfg, OTHER, "vertical", digest(VERTICAL * 10))
     assert offload.candidates(ocfg) == []
 

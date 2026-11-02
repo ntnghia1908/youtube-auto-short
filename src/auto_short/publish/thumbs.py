@@ -24,6 +24,12 @@ def _series(value):
     return " ".join(nfc(value).casefold().split()) if isinstance(value, str) else ""
 
 
+def _same_series(value, expected):
+    """STN1: a store name may append " - <giảng sư>" after the series; the series itself may contain " - "."""
+    actual = _series(value)
+    return actual == expected or actual.startswith(expected + " - ")
+
+
 def _thumbnail(config, video_id, pid, shape, *, clip_id=None):
     provider = episode if clip_id is None else khaithi_thumbs
     files = provider.valid_files(config, video_id, pid=pid)
@@ -75,7 +81,7 @@ def _playlist_match(row, video, expected, numbers, records):
         sources.append((title_match[2], int(title_match[3]),
                         "landscape" if title_match[1].casefold() == "hd" else "vertical", "tiêu đề"))
     for series, number, shape, source in sources:
-        if _series(series) != expected:
+        if not _same_series(series, expected):
             row["reason"] = "tên bộ kinh khác"
             return None
         matches.append((None, number, shape, source))
@@ -143,7 +149,7 @@ def plan(config, videos, *, pid, series=None, output=None, journal=None):
         elif match is None:
             row["reason"] = "tên file gốc không theo mẫu [HD] / [HD Mobile] / [HD Dọc]"
             continue
-        elif _series(match[2]) != expected:
+        elif not _same_series(match[2], expected):
             row["reason"] = "tên bộ kinh khác"
             continue
         else:

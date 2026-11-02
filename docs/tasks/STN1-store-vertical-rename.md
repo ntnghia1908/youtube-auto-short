@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: IN_PROGRESS
 - Type: CHANGE
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -12,7 +12,7 @@
 - Authorization mode: task
 - Authorization source: HUMAN LEAD 2026-11-03 (chat): "đổi thành [HD Mobile] Kinh Địa Tạng Bồ Tát Bổn Nguyện - PS. Tịnh Không - Tập 1"; bản `(r2)` xen kẽ bản cũ khi sắp xếp
 - Parallel group: —
-- Owned paths: `tools/store/store.py`, `scripts/backup/backup.template.ps1`, `scripts/backup/make_backup.py` (nếu cần truyền giảng sư), `tests/test_backup*.py`, `src/auto_short/store/offload.py`, `src/auto_short/store/shorts.py` (chỉ nếu dùng chung hàm đặt tên), `src/auto_short/config.py` (`[store]`), `src/auto_short/publish/thumbs.py`, `tests/test_store_*.py`, `tests/test_publish_thumbs.py`, `docs/workflow/ops-notes.md` (cách chạy lệnh đổi tên trên 3090), file này
+- Owned paths: `tools/store/store.py`, `scripts/backup/backup.template.ps1`, `scripts/backup/make_backup.py` (nếu cần truyền giảng sư), `tests/test_backup*.py`, `src/auto_short/store/offload.py`, `src/auto_short/store/shorts.py` (chỉ nếu dùng chung hàm đặt tên), `src/auto_short/config.py` (`[store]`), `src/auto_short/publish/thumbs.py`, `tests/test_store_*.py`, `tests/test_publish_thumbs.py`, `tests/test_vertical_silence_intro.py` (bổ sung khi review: test `(r2)` bản dọc cũ là "Code bị thay"), `docs/workflow/ops-notes.md` (cách chạy lệnh đổi tên trên 3090), file này
 - Dependencies: none
 - Base commit / branch: `23d5088` (origin/main) / `feature/stn1-store-vertical-rename`
 - Human Lead approval: accepted 2026-11-03 (chat: G1 cả bản ngang, G2 mọi bộ kinh, G3 ok)
@@ -82,11 +82,36 @@ Không chạm database / security model / public API ngoài kho nội bộ; manu
 
 ## Result
 
-- Main changes:
-- Tests:
-- Diff + / − (app, test):
-- Helper mới (đã tìm, lý do không tái dùng):
-- Review:
-- Important findings / decisions:
-- Known limitations:
-- PR:
+- Main changes: CLI `rename-vertical` chạy thử / `--apply` cho HD + vertical, ghi nối metadata qua `_publish`, kế thừa thứ tự cột Export-Csv từ `danh-sach.csv` khi chưa có index; chuyển bản lưu trữ vào `_cu`, giữ bản trùng tên. `put` vertical nhận alias tên cũ / mới, SHA mới bỏ revision và lưu bản trước; rollback bản trước nếu bước thay file thất bại. Thêm `[store] speaker_label`, cập nhật offload, backup generator/template và PUB2. Short giữ revision; HD conditional replace giữ đường dẫn hiện hành.
+- Tests (IMPLEMENTER, sandbox): targeted cuối **257 passed, 15 deselected**. `git diff --check` PASS. Không chạy full suite hoặc gọi HTTP/mạng thật.
+
+  | AC | Test (tên trong các file đã sửa / thêm) |
+  |---|---|
+  | AC1 | `test_rename_hd_vertical_dry_run_apply_idempotent` (102 dọc: 64 r2 + 38 thường, 102 ngang thường/r2, archive, `/index` qua handler bộ nhớ, cột/CRLF); `test_rename_refuses_unsafe_plan_without_changes` |
+  | AC2 | `test_rename_hd_vertical_dry_run_apply_idempotent` (lần hai byte và mtime giữ nguyên) |
+  | AC3 | `test_vertical_put_accepts_transition_names_and_archives_only_after_validation`; `test_vertical_custom_label_and_failed_update_preserve_current`; regression `test_short_revisions_keep_history_and_current_index` |
+  | AC4 | `test_vertical_speaker_config_and_existing_speaker`; `test_push_confirm_release_rules`; `test_store_rejects_invalid_speaker_label` |
+  | AC5 | `test_store_names_with_optional_speaker_match_thumbnail` (cả hai chế độ PUB2, ba tag cũ/mới, mẫu tập 7) |
+  | AC6 | `tests/test_backup_stn1.py::test_backup_names_and_existing_file_resolution`; test generator/template hiện hữu trong `test_hd_backup.py` (không sửa file này) |
+  | AC7 | `test_hd_replace_after_rename_uses_current_path`; `test_hd_conditional_replace_preserves_identity_csv_and_rejects_conflicts` |
+
+- Lệnh verification: prefix `PYTHONPATH=/home/ntnghia/projects/yas-stn1/src /home/ntnghia/miniconda3/envs/auto-short/bin/python -m pytest`; các đường dẫn dưới đây tương đối từ worktree.
+  - Lượt đầu 123 PASS / 1 FAIL: assertion của test mới giả định archive không trùng tên. Sửa test mới để kiểm đủ hai bản lưu trữ khi trùng tên; không sửa test cũ để che lỗi.
+  - `tests/test_store_server.py tests/test_publish_thumbs.py tests/test_backup_stn1.py -q -p no:cacheprovider -x --tb=short`: 200 PASS trước khi thêm 6 ca bảo toàn file khi upload lỗi / giảng sư tuỳ chỉnh; các ca bổ sung PASS trong lượt gộp cuối.
+  - `tests/test_store_offload.py -q -p no:cacheprovider -x --tb=short -k 'not test_loop_uses_thread_and_short_success_delay and not test_lifespan_stops_hash_worker'`: 44 PASS, 2 deselected.
+  - `tests/test_hd_backup.py -q -p no:cacheprovider -x --tb=short -k 'generator or template or hd_intro_released_backup_sha_is_stored_identity'`: 7 PASS, 13 deselected.
+  - Lượt gộp cuối: 5 file trên, cùng cờ `-q -p no:cacheprovider -x --tb=short`, `-k` loại đúng 2 ca offload và 13 ca HD backup dùng `logged()` / TestClient; **257 PASS, 15 deselected**.
+- Lệnh không hoàn tất: lệnh 4 file HUMAN LEAD giao + `tests/test_backup_stn1.py` treo tại `test_loop_uses_thread_and_short_success_delay`, đã dừng (exit 130). Chạy chẩn đoán `timeout -s INT -k 3s 35s ... tests/test_store_offload.py tests/test_hd_backup.py -vv -p no:cacheprovider -x --tb=short -o faulthandler_timeout=20`: stack ở asyncio selector, test offload dòng `asyncio.run(run())`, timeout exit 137. Không sửa test lifecycle để né hạn chế môi trường; ca lifespan còn lại và 13 ca TestClient không chạy trong lượt cuối.
+- Diff + / − (app, test): app **+191 / −17**; test **+239 / −2** (gồm file mới chưa stage). Hai assertion offload cũ cập nhật tên theo AC4.
+- Helper mới (đã tìm, lý do không tái dùng): đã đọc và tìm bằng `rg -n 'def |revision|r[0-9]' src/auto_short/store/shorts.py tools/store/store.py`, tra `_destination`, `_publish`, `_metadata`, `_rows`, `stored_series` và fixtures hiện hữu. Tái dùng các helper đường dẫn/metadata và `_destination` (đã dùng `stored_series`), đưa regex revision có sẵn thành `REVISION`. `hd_name` / `vertical_key` cần cho tên canonical và alias, vì `_destination` dựa workspace VM và không thể import vào store stdlib độc lập. `_archive_plan` đặt tên archive không ghi đè, helper cũ chưa có hành vi này. `rename_vertical` là operation CLI mới. PowerShell `LegacyBackupName` tách thân hàm cũ; `ExistingBackupName` chọn tên thực tế qua file/CSV để checksum, thumbnail, release cùng trỏ đúng file; `Rename-LegacyMobile` chỉ đổi prefix nên không thay thế được.
+- Review: IMPLEMENTER đã đọc diff, đối chiếu Owned paths và AC; không đổi dependency/API HTTP. Chờ review độc lập của ORCHESTRATOR; chưa tuyên bố READY toàn bộ vì verification ngoài sandbox còn thiếu.
+- Important findings / decisions: khoá chỉ có hiệu lực trong process; khi chạy CLI phải dừng server và writer khác trước (hướng dẫn ở `ops-notes.md`). Không đổi G1–G3. Bản sao dữ liệu / migration thật chưa thực hiện.
+- Known limitations: thiếu PowerShell trên VM, chỉ kiểm script sinh ra và nội dung template. ORCHESTRATOR chạy lại các ca bị loại / required verification ngoài sandbox, full suite và bản sao metadata/file rỗng; sau merge HUMAN LEAD triển khai 3090 rồi kiểm xem/tải 8080. Chưa gọi mạng, không commit/push/PR.
+- ORCHESTRATOR review (2026-11-03, claude-code):
+  - Sửa: `publish/thumbs.py` — Codex đổi `FILE_NAME` sang `(.+?)` làm tên bộ có " - " (vd Thập Thiện "… - Lão Pháp Sư … (biên dịch mới 2023)") bị cắt; giữ regex tham lam cũ + `_same_series` (bằng, hoặc bắt đầu bằng "<bộ> - "). Test `test_series_containing_dash_still_matches_with_and_without_speaker`.
+  - Sửa: `tests/test_vertical_silence_intro.py::test_store_revision_roundtrip[vertical]` khẳng định `(r2)` cho bản dọc (hành vi bị thay theo contract) → viết lại theo STN1: tên chuẩn có giảng sư, bản trước vào `_cu`, cùng sha tên cũ không tạo file.
+  - Full suite (`-n 4`, nice 10): lượt 1 **3789 passed, 1 failed** (ca trên), 1 skipped; sau sửa, 7 file liên quan **316 passed**.
+  - Chạy thật bản sao: metadata từ `/index` kho 3090 thật (tunnel 18090; tên + sha thật, file rỗng, `index.csv` + `SHA256SUMS.txt`), 5 series. Chạy thử: KĐT 204 dòng, VLT 748, CƯT 72, TTN 1. `--apply` cả 4 → self-test 1710 file (hd 476, vertical 549) như trước; index: 476 hd + 549 vertical đều có "PS. Tịnh Không", 0 tên `(rN)`; source 685 không đổi; chạy thử lại 0 dòng đổi (idempotent); thư mục con `_cu-khong-intro` không bị đụng.
+  - Diff + / − tổng: app +198 / −18, test +263 / −11.
+  - Giới hạn: tên bản dọc không theo mẫu `[tag] X - Tập N.mp4` → `put` khác sha bị 400 (thực tế 549 / 549 bản dọc kho đều đúng mẫu). PowerShell (`backup.template.ps1`) chưa chạy được trên VM. CLI phải chạy khi đã dừng task `AutoShortStore` (ops-notes).
+- PR: (điền khi mở)
