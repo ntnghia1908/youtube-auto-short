@@ -393,3 +393,168 @@ def test_corrupt_journal_is_not_overwritten(episodes, oauth):
     with pytest.raises(PublishError, match="nhật ký"):
         thumbs.apply(episodes, thumbs.plan(episodes, [video()], pid=PID), youtube.YouTube(*oauth, transport=wire))
     assert path.read_text() == "broken" and not wire.calls
+
+
+@pytest.fixture
+def playlist_episodes(episodes):
+    """Use the operational series and episode numbers with real thumbnail checks."""
+    series = "Thái Thượng Cảm Ứng Thiên"
+    playlist_path = episodes.workspace.dir / "_playlists" / f"{PID}.json"
+    playlist = read_json_dict(playlist_path)
+    playlist["series"] = series
+    atomic_write_json(playlist_path, playlist)
+    for entry, number in zip(playlist["entries"], (12, 3)):
+        ident = entry["video_id"]
+        entry["episode"] = str(number)
+        path = episodes.workspace.dir / ident / "titles.json"
+        title = read_json_dict(path)
+        title["header"]["fields"].update(series=series, episode=str(number))
+        atomic_write_json(path, title)
+        folder = episode.directory(episodes, ident)
+        doc = read_json_dict(folder / "thumbs.json")
+        doc["header"] = episode.header(episodes, ident)
+        for shape, image in doc["files"].items():
+            key = episode.cache_key(doc["header"], episode.read_settings(episodes, PID), shape)
+            filename = f"{shape}-{key}.jpg"
+            (folder / image["file"]).rename(folder / filename)
+            image.update(key=key, file=filename)
+        atomic_write_json(folder / "thumbs.json", doc)
+    atomic_write_json(playlist_path, playlist)
+    return episodes
+
+
+def test_playlist_pagination_batches_and_deduplication(oauth):
+    ids = [f"uploaded{i:03}" for i in range(103)]
+    pages = [dict(items=[dict(contentDetails=dict(videoId=i)) for i in batch], **tokens)
+             for batch, tokens in [(ids[:50], dict(nextPageToken="page-2")),
+                                   (ids[49:100], dict(nextPageToken="page-3")), (ids[100:], {})]]
+    batches = [dict(items=[dict(id=i) for i in ids[offset:offset + 50]]) for offset in (0, 50, 100)]
+    wire = Wire(*pages, *batches)
+    assert [v["id"] for v in youtube.YouTube(*oauth, transport=wire).playlist_videos("SELECTED")] == ids
+    queries = [parse_qs(urlparse(c[1]).query) for c in wire.calls]
+    assert all(urlparse(c[1]).path.endswith("/playlistItems") for c in wire.calls[:3])
+    assert all(q["playlistId"] == ["SELECTED"] and q["maxResults"] == ["50"] for q in queries[:3])
+    assert [q.get("pageToken") for q in queries[:3]] == [None, ["page-2"], ["page-3"]]
+    assert [q["id"][0].split(",") for q in queries[3:]] == [ids[:50], ids[50:100], ids[100:]]
+    assert all(q["part"] == ["fileDetails,snippet"] for q in queries[3:]) and not wire.responses
+
+
+@pytest.mark.parametrize("uploads", [False, True])
+@pytest.mark.parametrize("failure", ["repeat", "invalid_page", "invalid_items"])
+def test_playlist_invalid_pagination(oauth, uploads, failure):
+    pages = ([dict(items=[], nextPageToken="again")] * 2 if failure == "repeat" else
+             [dict(items=[], nextPageToken=123)] if failure == "invalid_page" else [dict(items=[{}])])
+    wire = Wire(*([listing()[0]] if uploads else []), *pages)
+    api = youtube.YouTube(*oauth, transport=wire)
+    with pytest.raises(PublishError, match=("phân trang" if failure != "invalid_items" else "danh sách") +
+                             (" uploads" if uploads else " playlist")):
+        api.videos() if uploads else api.playlist_videos("SELECTED")
+    assert not wire.responses
+
+
+@pytest.mark.parametrize("name,title,number,shape,source", [
+    ("Thái Thượng Cảm Ứng Thiên_Tập12_Doc.mp4", "", 12, "vertical", "tên file"),
+    ("[hD] thái thượng cảm ứng thiên_TẬP12_DOC.MP4", "", 12, "vertical", "tên file"),
+    ("[HD Mobile] Thái Thượng Cảm Ứng Thiên - Tập 12.mp4", "", 12, "vertical", "tên file"),
+    ("", "[HD mobile] Thái Thượng Cảm Ứng Thiên - PS. Tịnh Không - Tập 12", 12, "vertical", "tiêu đề"),
+    ("", "[hd dỌc] Thái Thượng Cảm Ứng Thiên - Tập 12", 12, "vertical", "tiêu đề"),
+    ("", "[HD] THÁI  THƯỢNG CẢM ỨNG THIÊN - Tập 3", 3, "landscape", "tiêu đề"),
+])
+def test_playlist_filename_and_title_matches(playlist_episodes, name, title, number, shape, source):
+    source_video = dict(id="selected001", fileDetails=dict(fileName=unicodedata.normalize("NFD", name)),
+                        snippet=dict(title=unicodedata.normalize("NFD", title)))
+    row = thumbs.plan(playlist_episodes, [source_video], pid=PID, journal=dict(records=[]))[0]
+    assert (row["episode"], row["shape"], row["matched_by"], row["status"]) == (number, shape, source, "sẵn sàng")
+    assert row["video_id"] == IDS[0 if number == 12 else 1] and not row["reason"]
+
+
+@pytest.mark.parametrize("case", ["journal", "journal_agreement", "filename_priority", "other_playlist", "wrong_series",
+                                  "no_match", "episode_conflict", "shape_conflict", "title_conflict",
+                                  "file_title_conflict", "invalid_journal"])
+def test_playlist_journal_priority_and_conflicts(playlist_episodes, case):
+    source = dict(id="selected001", snippet=dict(title="Tiêu đề đã sửa"))
+    record = dict(youtube_id=source["id"], video_id=IDS[0], playlist_id=PID, shape="vertical",
+                  sha256="old", set_at="before")
+    records = [record]
+    if case in ("journal_agreement", "filename_priority"):
+        source["fileDetails"] = dict(fileName="Thái Thượng Cảm Ứng Thiên_Tập12_Doc.mp4")
+        source["snippet"]["title"] = "[HD Mobile] Thái Thượng Cảm Ứng Thiên - Tập 12"
+        if case == "filename_priority":
+            records = []
+    elif case == "other_playlist":
+        record["playlist_id"] = "OTHER"
+        source["snippet"]["title"] = "[HD] Thái Thượng Cảm Ứng Thiên - Tập 3"
+    elif case == "invalid_journal":
+        record["video_id"] = "not-in-source"
+    elif case == "wrong_series":
+        records = []
+        source["snippet"]["title"] = "[HD Mobile] Bộ khác - Tập 12"
+    elif case == "no_match":
+        records = []
+    elif case in ("episode_conflict", "shape_conflict", "file_title_conflict"):
+        source["fileDetails"] = dict(fileName="[HD] Thái Thượng Cảm Ứng Thiên - Tập 12.mp4" if
+                                     case == "shape_conflict" else "Thái Thượng Cảm Ứng Thiên_Tập3_Doc.mp4")
+        if case == "file_title_conflict":
+            records = []
+            source["snippet"]["title"] = "[HD Mobile] Thái Thượng Cảm Ứng Thiên - Tập 12"
+    elif case == "title_conflict":
+        source["snippet"]["title"] = "[HD Mobile] Thái Thượng Cảm Ứng Thiên - Tập 3"
+    row = thumbs.plan(playlist_episodes, [source], pid=PID, journal=dict(records=records))[0]
+    if case in ("journal", "journal_agreement", "filename_priority", "other_playlist"):
+        assert row["status"] == "sẵn sàng" and not row["reason"]
+        assert row["matched_by"] == ("tiêu đề" if case == "other_playlist" else
+                                      "tên file" if case == "filename_priority" else "nhật ký")
+        assert row["video_id"] == IDS[1 if case == "other_playlist" else 0]
+    else:
+        assert row["status"] == "bỏ qua" and not row["matched_by"]
+        assert row["reason"] == ("tên bộ kinh khác" if case == "wrong_series" else
+                                 "nhật ký, tên file gốc và tiêu đề không ghép được tập / khuôn" if case == "no_match" else
+                                 "nhật ký không trỏ tới tập / khuôn hợp lệ trong playlist nguồn" if case == "invalid_journal" else
+                                 "nhật ký và tên / tiêu đề lệch nhau")
+
+
+def test_playlist_cli_journal_dry_run_apply_and_force(playlist_episodes, oauth, capsys):
+    cfg = playlist_episodes
+    selected = dict(id="selected001", fileDetails=dict(fileName="Thái Thượng Cảm Ứng Thiên_Tập12_Doc.mp4"))
+    listing_responses = [dict(items=[dict(contentDetails=dict(videoId=selected["id"]))]), dict(items=[selected])]
+    args = cli_args(cfg, oauth, "--yt-playlist", "SELECTED")
+    journal_path = cfg.workspace.dir / "_publish" / "thumbs.json"
+    for extra, posts in [((), 0), (("--apply",), 1), (("--apply",), 0), (("--apply", "--force"), 1)]:
+        before = {p: p.read_bytes() for p in cfg.workspace.dir.rglob("*.json")}
+        wire = Wire(*listing_responses, *([dict(items=[])] * posts))
+        assert main([*args, *extra], transport=wire) == 0
+        captured = capsys.readouterr()
+        assert captured.out.splitlines()[1].endswith("\tghép theo") and not captured.err
+        result = json.loads(captured.out[captured.out.index("{\n"):])
+        assert [r["youtube_id"] for r in result["rows"]] == ["selected001"]
+        assert result["rows"][0]["matched_by"] == ("nhật ký" if journal_path in before else "tên file")
+        assert len([c for c in wire.calls if c[0] == "POST"]) == posts and not wire.responses
+        if not extra:
+            assert {p: p.read_bytes() for p in cfg.workspace.dir.rglob("*.json")} == before
+    # An older journal hash still resolves identity; force sends the current image.
+    journal = read_json_dict(journal_path)
+    journal["records"][0]["sha256"] = "old"
+    atomic_write_json(journal_path, journal)
+    selected.pop("fileDetails")
+    wire = Wire(*listing_responses, dict(items=[]))
+    assert main([*args, "--apply", "--force"], transport=wire) == 0
+    uploaded = [c for c in wire.calls if c[0] == "POST"]
+    assert len(uploaded) == 1 and not wire.responses
+    image = episode.directory(cfg, IDS[0]) / episode.read(cfg, IDS[0])["files"]["vertical"]["file"]
+    assert uploaded[0][3] == image.read_bytes()
+    assert read_json_dict(journal_path)["records"][0]["sha256"] == sha256_file(image)
+
+
+def test_playlist_fallback_is_opt_in(playlist_episodes, oauth, capsys):
+    source = dict(id="selected001", fileDetails=dict(fileName="Thái Thượng Cảm Ứng Thiên_Tập12_Doc.mp4"),
+                  snippet=dict(title="[HD Mobile] Thái Thượng Cảm Ứng Thiên - Tập 12"))
+    path = playlist_episodes.workspace.dir / "_publish" / "thumbs.json"
+    path.parent.mkdir()
+    path.write_text("broken journal must not be read by legacy dry run")
+    wire = Wire(*listing(source))
+    assert main(cli_args(playlist_episodes, oauth), transport=wire) == 0
+    captured = capsys.readouterr()
+    assert captured.out.splitlines()[1] == "Video YouTube\tTập / khuôn\tẢnh thumbnail\tTrạng thái / lý do"
+    result = json.loads(captured.out[captured.out.index("{\n"):])
+    assert result["rows"][0]["status"] == "bỏ qua" and "matched_by" not in result["rows"][0]
+    assert not wire.responses
