@@ -114,4 +114,4 @@ Không chạm database / security model / public API ngoài kho nội bộ; manu
   - Chạy thật bản sao: metadata từ `/index` kho 3090 thật (tunnel 18090; tên + sha thật, file rỗng, `index.csv` + `SHA256SUMS.txt`), 5 series. Chạy thử: KĐT 204 dòng, VLT 748, CƯT 72, TTN 1. `--apply` cả 4 → self-test 1710 file (hd 476, vertical 549) như trước; index: 476 hd + 549 vertical đều có "PS. Tịnh Không", 0 tên `(rN)`; source 685 không đổi; chạy thử lại 0 dòng đổi (idempotent); thư mục con `_cu-khong-intro` không bị đụng.
   - Diff + / − tổng: app +198 / −18, test +263 / −11.
   - Giới hạn: tên bản dọc không theo mẫu `[tag] X - Tập N.mp4` → `put` khác sha bị 400 (thực tế 549 / 549 bản dọc kho đều đúng mẫu). PowerShell (`backup.template.ps1`) chưa chạy được trên VM. CLI phải chạy khi đã dừng task `AutoShortStore` (ops-notes).
-- PR: (điền khi mở)
+- PR: #198
