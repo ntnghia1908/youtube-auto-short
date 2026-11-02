@@ -14,7 +14,7 @@ NODE = shutil.which("node")
 
 HARNESS = r"""
 const fs = require("fs"), vm = require("vm");
-let gesture = false, copies = 0, copyOk = JSON.parse(process.argv[3]);
+let gesture = false, copies = 0, posted = [], copyOk = JSON.parse(process.argv[3]);
 class El {
   constructor(tag) { this.tag = tag; this.children = []; this.listeners = {}; this.hidden = false; this.style = {}; }
   setAttribute(k, v) { this[k] = k === "hidden" ? true : v; }
@@ -43,7 +43,8 @@ const context = {
     execCommand(cmd) { if (!gesture || cmd !== "copy") throw Error("copy outside click"); copies++; return copyOk; } },
   window: { isSecureContext: false }, navigator: {}, setTimeout() {},
   localStorage: { getItem: k => storage.get(k) || null, setItem: (k, v) => storage.set(k, v) },
-  fetch() { throw Error("unexpected network"); },
+  // POSTCOPY1: record the "Đã đăng bài" request; the reply never comes, so the card is not re-rendered.
+  fetch(url, opts) { posted.push({ url, method: opts.method, body: JSON.parse(opts.body) }); return new Promise(() => {}); },
   alert() { throw Error("unexpected alert"); }, confirm() { throw Error("unexpected confirm"); },
 };
 // Expose private functions only in the VM, leaving the production API unchanged.
@@ -58,7 +59,7 @@ const card = ui.postCard({ id: "t11", view: { kind: "short" }, posts: [post] }, 
 const button = label => card.querySelectorAll(".btn").find(n => n.textContent === label);
 const warning = card.querySelector(".post-copy-warning");
 const state = () => ({ copies, warning: !!warning && !warning.hidden,
-  marks: JSON.parse(storage.get("autoShort.postMarks") || "{}"),
+  posted: posted.slice(),
   fallback: card.querySelectorAll(".copy-fallback").length });
 (async () => {
   const badges = ui.postBadges(post).map(n => n.textContent);
@@ -84,7 +85,7 @@ const state = () => ({ copies, warning: !!warning && !warning.hidden,
 @pytest.mark.skipif(NODE is None, reason="node not installed")
 @pytest.mark.parametrize("origin", ["ai", "raw", "doc", "manual"])
 @pytest.mark.parametrize("copy_ok", [True, False])
-def test_post_copy_warning_and_mark_only_after_success(origin, copy_ok):
+def test_post_copy_warning_and_tick_only_after_success(origin, copy_ok):
     result = subprocess.run([NODE, "-e", HARNESS, str(APP_JS), origin, json.dumps(copy_ok)],
                             capture_output=True, text=True, timeout=20)
     assert result.returncode == 0, result.stderr
@@ -95,9 +96,9 @@ def test_post_copy_warning_and_mark_only_after_success(origin, copy_ok):
         assert "AI không chắc — kiểm lại" in out["badges"]
     if origin == "doc":
         assert "Văn bản gốc" in out["badges"]
-    assert out["initial"] == {"copies": 0, "warning": False, "marks": {}, "fallback": 0}
+    assert out["initial"] == {"copies": 0, "warning": False, "posted": [], "fallback": 0}
     if origin in {"ai", "raw"}:
-        assert out["first"] == {"copies": 0, "warning": True, "marks": {}, "fallback": 0}
+        assert out["first"] == {"copies": 0, "warning": True, "posted": [], "fallback": 0}
         assert out["message"] == ("Bài này do AI chấm câu từ phụ đề tự động, có thể sai chữ. "
                                   "Đọc kỹ / sửa trước khi đăng.")
         assert out["cancelled"] == out["initial"]
@@ -105,6 +106,8 @@ def test_post_copy_warning_and_mark_only_after_success(origin, copy_ok):
     else:
         assert out["first"]["copies"] == 1 and out["first"]["warning"] is False
     assert out["final"]["copies"] == 1  # exactly one clipboard attempt, inside a user click
-    assert out["final"]["marks"] == ({"t11/k03": {"copy": "Bài đầy đủ"}} if copy_ok else {})
+    # POSTCOPY1: a successful copy alone ticks "Đã đăng bài" (the post has an image: no download needed).
+    tick = {"url": "/api/episodes/t11/posts/k03/posted", "method": "POST", "body": {"value": True}}
+    assert out["final"]["posted"] == ([tick] if copy_ok else [])
     assert out["final"]["fallback"] == int(not copy_ok)
     assert out["titleCopies"] == 1

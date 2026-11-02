@@ -238,4 +238,4 @@ def test_static_ui_labels_and_refresh_after_zip(tcfg):
         html = c.get(f"/episodes/{VID}").text
         assert "Tải tất cả Short (.zip)" in js and "Tải tất cả khai thị (.zip)" in js
         assert 'id="zip-all"' in html and "Tải cả hai (.zip)" in html
-        assert "autoShort.postMarks" in js and "markPostStep" in js  # D1
+        assert "tickPostedAfterCopy" in js and "autoShort.postMarks" not in js  # POSTCOPY1 replaces D1 / D2

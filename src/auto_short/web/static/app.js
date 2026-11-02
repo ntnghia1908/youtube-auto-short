@@ -326,12 +326,13 @@ const AutoShort = (() => {
         const text = el("textarea", { class: "post-textarea", readonly: true,
           "aria-label": `Bài đăng ${p.clip_id}` });
         text.value = p.copy_text;
-        const copy = copyTitleButton(p.copy_text);
-        copy.querySelector("button").style.minHeight = "40px";
-        copy.querySelector("button").title = "Copy bài đăng";
         const tick = el("input", { type: "checkbox", checked: p.posted_at !== null });
         const label = el("label", { class: "publish-label", style: "min-height:40px" }, tick, " Đã đăng bài");
-        tick.addEventListener("change", async () => {
+        // POSTCOPY1: a successful copy ticks "Đã đăng bài" (an already ticked post is left alone).
+        const copy = copyTitleButton(p.copy_text, () => { if (!tick.checked) { tick.checked = true; setPosted(); } });
+        copy.querySelector("button").style.minHeight = "40px";
+        copy.querySelector("button").title = "Copy bài đăng";
+        const setPosted = async () => {
           const value = tick.checked;
           tick.disabled = true;
           try {
@@ -343,7 +344,8 @@ const AutoShort = (() => {
             updateCount();
           } catch (e) { tick.checked = p.posted_at !== null; alert(e.message); }
           finally { tick.disabled = false; }
-        });
+        };
+        tick.addEventListener("change", setPosted);
         card.append(el("strong", { text: `${p.clip_id} · ${p.short_title || "Bài đăng"}` }), text);
         if (p.image && !p.image_missing) {
           const image = el("img", { src: `/files/post-images/${encodeURIComponent(p.image)}`, alt: "Ảnh bài đăng",
@@ -1988,46 +1990,6 @@ const AutoShort = (() => {
       : `Trung bình bạn sửa ${st.avg_changed_pct}% từ mỗi bài (${Math.min(st.saves, 20)} lần lưu gần nhất).`;
   }
 
-  // --- CP8.17 D1/D2: "Đã đăng bài" ticks itself once the post text was copied AND its image downloaded -----------
-  // Marks live in the browser (localStorage, memory fallback): per post ``{copy: <text copied>, image: <image
-  // downloaded>}``; a mark only counts while the post still has that text / image. No image to download -> the
-  // copy alone is enough (D2 = a). The marks of a post are cleared once it ticks, so an un-tick by hand sticks.
-  const POST_MARKS_KEY = "autoShort.postMarks";
-  let postMarksMem = {};
-
-  function readPostMarks() {
-    try {
-      const raw = localStorage.getItem(POST_MARKS_KEY);
-      const v = raw ? JSON.parse(raw) : {};
-      if (v && typeof v === "object" && !Array.isArray(v)) postMarksMem = v;
-    } catch (_) { /* keep the in-memory marks */ }
-    return postMarksMem;
-  }
-
-  function writePostMarks(marks) {
-    postMarksMem = marks;
-    try { localStorage.setItem(POST_MARKS_KEY, JSON.stringify(marks)); } catch (_) { /* memory only */ }
-  }
-
-  function setPostMark(key, kind, value) {
-    const marks = readPostMarks();
-    marks[key] = { ...(marks[key] || {}), [kind]: value };
-    writePostMarks(marks);
-  }
-
-  function clearPostMark(key) {
-    const marks = readPostMarks();
-    if (key in marks) { delete marks[key]; writePostMarks(marks); }
-  }
-
-  // True when the marks of ``key`` cover ``post`` (the stored post: text, image, image_missing).
-  function postMarksDone(key, post) {
-    const mark = readPostMarks()[key] || {};
-    if (!post || typeof post.text !== "string" || mark.copy !== post.text) return false;
-    const hasImage = !!post.image && !post.image_missing;
-    return !hasImage || mark.image === post.image;
-  }
-
   // One Short's post card: title + "Xem Short" + the editor (paragraphs, image, link, copy, "Soạn lại", "Đã đăng bài"),
   // always open. ``cur`` = the stored post (view of ``GET …/posts``) or null (not composed yet).
   function postCard(g, s, cur) {
@@ -2077,7 +2039,6 @@ const AutoShort = (() => {
       const download = cur.image && !cur.image_missing
         ? el("a", { class: "btn small", href: `/files/post-images/${encodeURIComponent(cur.image)}?download=1`,
           text: "Tải ảnh" }) : null;
-      if (download) download.addEventListener("click", () => markPostStep("image", cur.image));
 
       const link = el("input", { type: "url", value: cur.link || "", placeholder: "Dán link Short (tùy chọn)",
         "aria-label": "Link Short" });
@@ -2085,7 +2046,7 @@ const AutoShort = (() => {
       const linkMsg = el("span", { class: "small", hidden: true });
       linkSave.addEventListener("click", () => saveLink(link, linkSave, linkMsg));
 
-      const copyBtn = copyPostButton(cur, () => markPostStep("copy", cur.text));
+      const copyBtn = copyPostButton(cur, tickPostedAfterCopy);
       const composeAgain = el("button", { class: "btn small", type: "button", text: "Soạn lại" });
       const composeMsg = el("p", { class: "error small", hidden: true });
       composeAgain.addEventListener("click", () => compose(composeAgain, composeMsg));
@@ -2160,13 +2121,9 @@ const AutoShort = (() => {
       btn.disabled = false;
     }
 
-    // CP8.17 D1: remember a step of this post (copy / image download); tick "Đã đăng bài" once both are done.
-    async function markPostStep(kind, value) {
+    // POSTCOPY1 (replaces CP8.17 D1/D2): a successful "Sao chép bài" ticks "Đã đăng bài" at once, like Short / khai thị.
+    async function tickPostedAfterCopy() {
       if (!cur || cur.posted) return; // a ticked post is left alone
-      const key = `${g.id}/${s.clip_id}`;
-      setPostMark(key, kind, value);
-      if (!postMarksDone(key, cur)) return;
-      clearPostMark(key);
       try {
         const r = await api(url("/posted"), jsonBody("POST", { value: true }));
         changed({ ...cur, posted: r.posted, posted_at: r.posted_at });
