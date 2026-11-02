@@ -1,4 +1,4 @@
-"""Plan and apply file-name matches without changing local packaging artifacts."""
+"""Plan and apply thumbnail matches without changing local packaging artifacts."""
 from __future__ import annotations
 
 import hashlib
@@ -15,6 +15,8 @@ from . import PublishError
 
 # HD1 G6: the store names a vertical "[HD Mobile] …"; "[HD Dọc] …" stays for videos uploaded before the rename.
 FILE_NAME = re.compile(r"^\[(HD|HD Dọc|HD Mobile)\] (.+) - Tập ([0-9]+)\.(?i:mp4)$")
+WEB_FILE_NAME = re.compile(r"^(?:\[HD\] )?(.+)_Tập([0-9]+)_Doc\.mp4$", re.I)
+TITLE = re.compile(r"^\[(HD|HD Dọc|HD Mobile)\] (.+?) - (?:.+ - )?Tập ([0-9]+)$", re.I)
 MAX_BYTES = 2 * 1024 * 1024
 
 
@@ -40,8 +42,59 @@ def _thumbnail(config, video_id, pid, shape):
     return entry, path
 
 
-def plan(config, videos, *, pid, series=None, output=None):
-    """Return one reviewable row per YouTube video; no HTTP or writes."""
+def _playlist_match(row, video, expected, numbers, records):
+    """Reconcile recognized sources before choosing journal, filename, then title."""
+    matches = []
+    record = records.get(row["youtube_id"])
+    if record is not None:
+        number = next((n for n, ids in numbers.items() if record["video_id"] in ids), None)
+        if number is None or record["shape"] not in ("landscape", "vertical"):
+            row["reason"] = "nhật ký không trỏ tới tập / khuôn hợp lệ trong playlist nguồn"
+            return None
+        matches.append((record["video_id"], number, record["shape"], "nhật ký"))
+
+    name = row["file_name"]
+    file_match = FILE_NAME.fullmatch(nfc(name))
+    old_match = WEB_FILE_NAME.fullmatch(nfc(name)) if file_match is None else None
+    snippet = video.get("snippet")
+    title = snippet.get("title") if isinstance(snippet, dict) else None
+    title_match = TITLE.fullmatch(nfc(title)) if isinstance(title, str) else None
+    sources = []
+    if file_match:
+        sources.append((file_match[2], int(file_match[3]),
+                        "landscape" if file_match[1] == "HD" else "vertical", "tên file"))
+    elif old_match:
+        sources.append((old_match[1], int(old_match[2]), "vertical", "tên file"))
+    if title_match:
+        sources.append((title_match[2], int(title_match[3]),
+                        "landscape" if title_match[1].casefold() == "hd" else "vertical", "tiêu đề"))
+    for series, number, shape, source in sources:
+        if _series(series) != expected:
+            row["reason"] = "tên bộ kinh khác"
+            return None
+        matches.append((None, number, shape, source))
+    if len({(m[1], m[2]) for m in matches}) > 1:
+        row["reason"] = "nhật ký và tên / tiêu đề lệch nhau"
+        return None
+    if not matches:
+        row["reason"] = "nhật ký, tên file gốc và tiêu đề không ghép được tập / khuôn"
+        return None
+    video_id, number, shape, source = matches[0]
+    if video_id is None:
+        candidates = numbers.get(number, set())
+        if len(candidates) != 1:
+            row["reason"] = "không tìm thấy tập duy nhất trong playlist"
+            return None
+        video_id = next(iter(candidates))
+    row["matched_by"] = source
+    return video_id, number, shape
+
+
+def plan(config, videos, *, pid, series=None, output=None, journal=None):
+    """Return reviewable rows; journal enables matching for a selected YouTube playlist.
+
+    With journal=None, retain the uploads-only filename rules. No HTTP or writes.
+    """
     playlist = episode.playlist(config, pid)
     selected = stored_series(playlist) if series is None else series
     numbers = {}
@@ -60,6 +113,8 @@ def plan(config, videos, *, pid, series=None, output=None):
         raise PublishError("thiếu tên bộ kinh; đặt series của playlist hoặc dùng --series")
     if output is not None:
         output(f"Bộ kinh: {' '.join(nfc(selected).split())}")
+    records = {r["youtube_id"]: r for r in journal["records"] if r["playlist_id"] == pid} \
+        if journal is not None else {}
     rows, groups = [], {}
     for video in videos:
         details = video.get("fileDetails") if isinstance(video, dict) else None
@@ -68,13 +123,23 @@ def plan(config, videos, *, pid, series=None, output=None):
         row = dict(youtube_id=ident if isinstance(ident, str) else "", file_name=name if isinstance(name, str) else "",
                    playlist_id=pid, status="bỏ qua", reason="", warning="")
         rows.append(row)
+        if journal is not None:
+            row["matched_by"] = ""
         match = FILE_NAME.fullmatch(nfc(name)) if isinstance(name, str) else None
         if not row["youtube_id"]:
             row["reason"] = "thiếu id video YouTube"
+            continue
+        if journal is not None:
+            resolved = _playlist_match(row, video, expected, numbers, records)
+            if resolved is None:
+                continue
+            video_id, number, shape = resolved
         elif match is None:
             row["reason"] = "tên file gốc không theo mẫu [HD] / [HD Mobile] / [HD Dọc]"
+            continue
         elif _series(match[2]) != expected:
             row["reason"] = "tên bộ kinh khác"
+            continue
         else:
             number = int(match[3])
             candidates = numbers.get(number, set())
@@ -83,13 +148,13 @@ def plan(config, videos, *, pid, series=None, output=None):
                 continue
             video_id = next(iter(candidates))
             shape = "landscape" if match[1] == "HD" else "vertical"
-            row.update(video_id=video_id, episode=number, shape=shape)
-            groups.setdefault((number, shape), []).append(row)
-            try:
-                entry, path = _thumbnail(config, video_id, pid, shape)
-                row.update(file=str(path), sha256=entry["sha256"], status="sẵn sàng")
-            except (PublishError, PackageError, OSError) as exc:
-                row["reason"] = str(exc) if isinstance(exc, (PublishError, PackageError)) else "không đọc được thumbnail"
+        row.update(video_id=video_id, episode=number, shape=shape)
+        groups.setdefault((number, shape), []).append(row)
+        try:
+            entry, path = _thumbnail(config, video_id, pid, shape)
+            row.update(file=str(path), sha256=entry["sha256"], status="sẵn sàng")
+        except (PublishError, PackageError, OSError) as exc:
+            row["reason"] = str(exc) if isinstance(exc, (PublishError, PackageError)) else "không đọc được thumbnail"
     for group in groups.values():
         if len(group) > 1:
             for row in group:

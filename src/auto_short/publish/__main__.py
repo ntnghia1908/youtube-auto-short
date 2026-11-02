@@ -18,6 +18,7 @@ def main(argv=None, *, transport=None, sleep=None, now=None):
     commands.add_parser("auth")
     attach = commands.add_parser("thumbs")
     attach.add_argument("--playlist", required=True)
+    attach.add_argument("--yt-playlist")
     attach.add_argument("--series")
     attach.add_argument("--apply", action="store_true")
     attach.add_argument("--force", action="store_true")
@@ -34,12 +35,16 @@ def main(argv=None, *, transport=None, sleep=None, now=None):
             # Validate local identity before reading the channel.
             episode.playlist(cfg, args.playlist)
             client = youtube.YouTube(args.client, args.token, transport=transport, now=now)
-            rows = thumbs.plan(cfg, client.videos(), pid=args.playlist, series=args.series, output=print)
-            print("Video YouTube\tTập / khuôn\tẢnh thumbnail\tTrạng thái / lý do")
+            journal = thumbs._journal(cfg)[1] if args.yt_playlist else None
+            videos = client.playlist_videos(args.yt_playlist) if args.yt_playlist else client.videos()
+            rows = thumbs.plan(cfg, videos, pid=args.playlist, series=args.series, output=print, journal=journal)
+            print("Video YouTube\tTập / khuôn\tẢnh thumbnail\tTrạng thái / lý do" +
+                  ("\tghép theo" if args.yt_playlist else ""))
             for row in rows:
                 detail = f"{row.get('episode', '')} {row.get('shape', '')}".strip()
-                print(f"{row['youtube_id']}\t{detail}\t{row.get('file', '')}\t"
-                      f"{row['status']} {row['reason']} {row['warning']}".rstrip())
+                line = (f"{row['youtube_id']}\t{detail}\t{row.get('file', '')}\t"
+                        f"{row['status']} {row['reason']} {row['warning']}".rstrip())
+                print(line + (f"\t{row['matched_by']}" if args.yt_playlist else ""))
             result = dict(mode="apply" if args.apply else "chạy thử", rows=
                           thumbs.apply(cfg, rows, client, force=args.force) if args.apply else rows)
         print(json.dumps(result, ensure_ascii=False, indent=2))
