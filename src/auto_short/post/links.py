@@ -32,6 +32,7 @@ def plan(entries: list[dict], targets: list[dict], current_links: dict) -> dict:
 
     A missing key means no post yet. Rows expose every skipped video's title for manual matching.
     The same YouTube id in several playlists is one video; conflicts block both implicated codes.
+    Codeless videos already linked in either URL form count as unchanged without updates.
     """
     by_code, by_target, conflicts = defaultdict(list), defaultdict(list), set()
     for target in targets:
@@ -54,7 +55,8 @@ def plan(entries: list[dict], targets: list[dict], current_links: dict) -> dict:
         code = codes[ident]
         row = {"video_id": ident, "title": (entry.get("snippet") or {}).get("title") or ident, "code": code}
         if not code:
-            reason = "no_code"
+            reason = ("unchanged" if any(link_for(ident, kt) in current_links.values()
+                                         for kt in (False, True)) else "no_code")
         elif code in conflicts:
             reason = "duplicate"
         elif code not in by_target:

@@ -41,6 +41,7 @@ Trên trang bộ kinh, HUMAN LEAD dán link một hoặc nhiều playlist YouTub
   - **L3 Mã**: ưu tiên `fileDetails.fileName` (NFC); không có mã thì dùng tiêu đề (NFC, bỏ khoảng trắng đầu). Mã nằm ở đầu chuỗi: `T<tập>`, dấu cách hoặc `_`, rồi `S` / `KT` + 2–3 chữ số, tiếp theo là dấu cách, `_`, `.` hoặc hết chuỗi (tiêu đề thật có cả `T1 S10 …` và `T7_S07_…`). Đưa về dạng `review.names.short_code` rồi so chính xác theo vị trí trong `render_manifest.json`, không đoán. Tên file và tiêu đề ra hai mã khác nhau → coi là trùng (L6), không điền.
   - **G-FILE** (đã đo 2026-11-01, Thập Thiện, 386 video): 267/285 Short + 101/101 khai thị có mã và đều ứng đúng một Short trên web, 0 mã trùng, 0 mâu thuẫn tên file / tiêu đề; 88/89 link dán tay trùng khớp, 1 khác (L5). 18 Short không mã: HUMAN LEAD đã xử lý tay, không ghép (2026-11-01). Một số video có `fileName` rỗng nên vẫn cần tiêu đề.
   - **L4 Dạng link**: Short = `post.logic.normalize_link` (`/shorts/<id>`). Khai thị (4–7 phút, vượt giới hạn Shorts) = `https://youtube.com/watch?v=<id>`. Ô dán tay giữ nguyên P6.
+  - **L3a Video không mã đã có link** (HUMAN LEAD 2026-11-01, sau lần quét thật: 18 video upload trước khi có mã, cả 18 đều đã có đúng link dán tay): video không có mã mà id của nó đã nằm trong `link` của một bài bất kỳ trong bộ kinh thì tính `unchanged`, không báo `no_code`. Chỉ so id video, không so tiêu đề, không ghi gì vào bài đăng. Video không mã chưa có link vẫn là `no_code` để dán tay.
   - **L5 Không ghi đè**: chỉ điền khi `link` trống, kể cả bài đã đăng; link đang có khác YouTube thì giữ và báo "khác link". Không xóa link khi video biến mất khỏi playlist.
   - **L6 Trùng**: hai video YouTube cùng mã, hoặc một mã ứng với hai Short trong bộ, thì bỏ qua và báo.
   - **L7 Bài chưa soạn**: không tạo bài; Short chưa có bài được tính là "chờ soạn" và điền ở lần quét sau khi đã có bài.
@@ -76,6 +77,7 @@ Trên trang bộ kinh, HUMAN LEAD dán link một hoặc nhiều playlist YouTub
 3. Bài đã có link không đổi; link khác được báo "khác link" (L5).
 4. Cùng mã ở hai bộ kinh không lẫn; mã trùng trong một bộ bị bỏ qua và báo (L2, L6).
 5. Tên file và tiêu đề đều không có mã / mã không có Short tương ứng không điền gì, được đếm riêng và trang bộ kinh liệt kê tiêu đề để dán tay. `T1 S10`, `T7_S07_…`, `T1_S10_x.mp4` đều nhận; `T29_S01` không khớp `T29_S010`.
+5a. Video không mã đã có link trong bài của bộ kinh được tính `unchanged`, không có update; chưa có link thì vẫn `no_code` (L3a).
 6. Bài chưa soạn không bị tạo; soạn xong, lần quét sau điền link (L7).
 7a. Playlist của kênh khác được đọc đúng token kênh đó; không có token phù hợp hoặc một token hỏng thì chỉ playlist đó báo lỗi rõ, playlist khác vẫn điền (L1b).
 7. Một bộ kinh có nhiều playlist, gồm playlist Short và playlist khai thị riêng: dán theo thứ tự nào cũng điền đúng loại; "Cập nhật danh sách" không làm mất playlist đã gắn; gỡ playlist không xóa link đã điền.

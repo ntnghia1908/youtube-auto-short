@@ -70,6 +70,23 @@ def test_plan_filename_fallback_exact_width_and_reasons():  # AC1,3,5,6
     assert links.plan(entries, targets, current)["counts"]["filled"] == 3
 
 
+@pytest.mark.parametrize("current,expected", [
+    pytest.param({(EID, "k02"): "https://youtube.com/shorts/youtube0001"}, "unchanged", id="short-link"),
+    pytest.param({(EID + ".kt", "k02"): "https://youtube.com/watch?v=youtube0001"}, "unchanged", id="watch-link"),
+    pytest.param({}, "no_code", id="no-link"),
+    pytest.param({(EID, "k02"): "https://youtube.com/shorts/youtube0002"}, "no_code", id="other-video"),
+    pytest.param({(EID, "k02"): None}, "no_code", id="none-link"),
+    pytest.param({(EID, "k01"): None, (EID, "k02"): "https://youtube.com/watch?v=youtube0001"},
+                 "unchanged", id="none-and-matching-link"),
+])
+def test_plan_no_code_existing_links(current, expected):  # AC5a, L3a
+    result = links.plan([video(filename="plain.mp4", title="Không mã")], [target()], current)
+    assert result["updates"] == []
+    assert result["rows"][0]["reason"] == expected
+    assert result["counts"][expected] == 1
+    assert sum(result["counts"].values()) == 1
+
+
 def test_duplicates_and_conflicting_codes_block_all_involved():  # AC4, L2a
     entries = [video(), video("youtube0002"), video("youtube0003", "T1_S02.mp4", "T1_S03 title"),
                video("youtube0004", "T1_S03.mp4", ""), video("youtube0005", "T1_S04.mp4", "")]
