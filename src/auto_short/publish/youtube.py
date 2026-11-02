@@ -214,9 +214,16 @@ class YouTube:
                 raise ValueError
         except (KeyError, IndexError, TypeError, ValueError):
             raise PublishError("không tìm thấy playlist uploads của kênh") from None
+        return self._playlist_videos(uploads, "uploads")
+
+    def playlist_videos(self, playlist_id):
+        """Read only the selected playlist, with the same paging as uploads."""
+        return self._playlist_videos(playlist_id, "playlist")
+
+    def _playlist_videos(self, playlist_id, label):
         ids, seen_ids, seen_pages, page = [], set(), set(), None
         while True:
-            params = dict(part="contentDetails", playlistId=uploads, maxResults=50)
+            params = dict(part="contentDetails", playlistId=playlist_id, maxResults=50)
             if page:
                 params["pageToken"] = page
             doc = self._list("playlistItems", **params)
@@ -229,12 +236,12 @@ class YouTube:
                         ids.append(ident)
                         seen_ids.add(ident)
             except (KeyError, TypeError, ValueError):
-                raise PublishError("danh sách uploads không hợp lệ") from None
+                raise PublishError(f"danh sách {label} không hợp lệ") from None
             page = doc.get("nextPageToken")
             if not page:
                 break
             if not isinstance(page, str) or page in seen_pages:
-                raise PublishError("phân trang uploads không hợp lệ")
+                raise PublishError(f"phân trang {label} không hợp lệ")
             seen_pages.add(page)
         result = []
         for offset in range(0, len(ids), 50):
