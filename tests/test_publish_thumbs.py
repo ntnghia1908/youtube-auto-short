@@ -244,6 +244,15 @@ def test_match_shapes_normalization_skips_and_duplicates(episodes):
     assert not (episodes.workspace.dir / "_publish").exists()
 
 
+def test_hd_mobile_store_name_is_vertical(episodes):
+    # HD1 G6: "[HD Mobile] …" (3090 store name) = vertical like the older "[HD Dọc] …"; the tag is case-sensitive.
+    rows = thumbs.plan(episodes, [video("mobile00001", shape="HD Mobile"), video("mobilecase1", number=102,
+                                                                                  shape="hd mobile")], pid=PID)
+    assert rows[0]["status"] == "sẵn sàng" and rows[0]["shape"] == "vertical" and rows[0]["video_id"] == IDS[0]
+    assert not rows[0]["warning"] and not rows[0]["reason"]
+    assert rows[1]["status"] == "bỏ qua" and "[HD Mobile]" in rows[1]["reason"]
+
+
 def test_series_override_and_header_number_authority(episodes):
     path = episodes.workspace.dir / IDS[0] / "titles.json"
     doc = read_json_dict(path)
