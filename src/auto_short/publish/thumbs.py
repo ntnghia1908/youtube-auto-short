@@ -13,7 +13,8 @@ from ..titling.playlist import stored_series
 from ..workspace import atomic_write_json, read_json_dict, utc_now
 from . import PublishError
 
-FILE_NAME = re.compile(r"^\[(HD|HD Dọc)\] (.+) - Tập ([0-9]+)\.(?i:mp4)$")
+# HD1 G6: the store names a vertical "[HD Mobile] …"; "[HD Dọc] …" stays for videos uploaded before the rename.
+FILE_NAME = re.compile(r"^\[(HD|HD Dọc|HD Mobile)\] (.+) - Tập ([0-9]+)\.(?i:mp4)$")
 MAX_BYTES = 2 * 1024 * 1024
 
 
@@ -71,7 +72,7 @@ def plan(config, videos, *, pid, series=None, output=None):
         if not row["youtube_id"]:
             row["reason"] = "thiếu id video YouTube"
         elif match is None:
-            row["reason"] = "tên file gốc không theo mẫu [HD] / [HD Dọc]"
+            row["reason"] = "tên file gốc không theo mẫu [HD] / [HD Mobile] / [HD Dọc]"
         elif _series(match[2]) != expected:
             row["reason"] = "tên bộ kinh khác"
         else:
