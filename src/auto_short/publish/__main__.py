@@ -3,6 +3,7 @@ import argparse
 import json
 import re
 import sys
+from datetime import date
 from pathlib import Path
 
 from ..config import ConfigError, load
@@ -15,6 +16,16 @@ def _episode_range(value):
     if not match or not 1 <= int(match[1]) <= int(match[2]):
         raise argparse.ArgumentTypeError("cần khoảng tập A-B với 1 ≤ A ≤ B")
     return int(match[1]), int(match[2])
+
+
+def _since(value):
+    try:
+        if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value):
+            raise ValueError
+        date.fromisoformat(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("cần ngày hợp lệ YYYY-MM-DD") from None
+    return value
 
 
 def main(argv=None, *, transport=None, sleep=None, now=None):
@@ -33,7 +44,7 @@ def main(argv=None, *, transport=None, sleep=None, now=None):
     kt_attach = commands.add_parser("kt-thumbs")
     kt_attach.add_argument("--playlist", required=True)
     kt_attach.add_argument("--yt-playlist", required=True)
-    kt_attach.add_argument("--shape", choices=("vertical", "landscape"), default="landscape")
+    kt_attach.add_argument("--shape", choices=("vertical", "landscape"), default="vertical")
     kt_attach.add_argument("--apply", action="store_true")
     kt_attach.add_argument("--force", action="store_true")
     short_attach = commands.add_parser("short-thumbs")
@@ -42,6 +53,7 @@ def main(argv=None, *, transport=None, sleep=None, now=None):
     short_attach.add_argument("--apply", action="store_true")
     short_attach.add_argument("--force", action="store_true")
     for command in (kt_attach, short_attach):
+        command.add_argument("--since", type=_since)
         command.add_argument("--episodes", type=_episode_range)
         command.add_argument("--only", help="id video YouTube, phân cách bằng dấu phẩy")
     # Accept common options before or after the command, like other module CLIs.
@@ -61,8 +73,8 @@ def main(argv=None, *, transport=None, sleep=None, now=None):
             videos = client.playlist_videos(args.yt_playlist) if args.yt_playlist else client.videos()
             if args.command in ("kt-thumbs", "short-thumbs"):
                 is_short = args.command == "short-thumbs"
-                rows = (shorts.plan(cfg, videos, pid=args.playlist, episodes=args.episodes) if is_short else
-                        kt.plan(cfg, videos, pid=args.playlist, shape=args.shape))
+                rows = (shorts.plan(cfg, videos, pid=args.playlist, episodes=args.episodes, since=args.since) if is_short else
+                        kt.plan(cfg, videos, pid=args.playlist, shape=args.shape, since=args.since))
                 if args.episodes:
                     rows = [r for r in rows if args.episodes[0] <= r.get("episode", 0) <= args.episodes[1]]
                 if args.only is not None:

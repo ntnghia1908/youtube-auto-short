@@ -5,7 +5,7 @@ import re
 from ..packaging import PackageError, episode, khaithi_thumbs
 from ..render.text import nfc
 from ..titling.logic import TitlingError
-from . import PublishError, thumbs
+from . import PublishError, thumbs, youtube
 
 CODE = re.compile(r"^T([0-9]+)[ _]KT([0-9]{1,3})(?!\d)", re.I)
 
@@ -52,7 +52,7 @@ def _video_row(video, pid, shape):
     return row, name, title
 
 
-def plan(config, videos, *, pid, shape="landscape"):
+def plan(config, videos, *, pid, shape="vertical", since=None):
     """Plan without HTTP or writes; only source-playlist episodes with khaithi.json qualify."""
     numbers = _episodes(config, pid, khai_thi=True)
     rows = []
@@ -69,6 +69,10 @@ def plan(config, videos, *, pid, shape="landscape"):
         match = file_code if file_code is not None else title_code
         number, clip_number = map(int, match.groups())
         row.update(code=f"T{number}_KT{clip_number:02d}", episode=number, clip_number=clip_number)
+        reason = youtube.since_reason(video, since)
+        if reason:
+            row["reason"] = reason
+            continue
         if file_code and title_code and tuple(map(int, file_code.groups())) != tuple(map(int, title_code.groups())):
             row["reason"] = "tên file và tiêu đề lệch mã"
             continue

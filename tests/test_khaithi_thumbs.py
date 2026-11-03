@@ -17,6 +17,180 @@ from test_packaging_episode import IDS, PID, seed_episodes
 TITLE = "Giữ tâm thanh tịnh trong cuộc sống để được an lạc mỗi ngày"
 
 
+@pytest.mark.parametrize("hue,omitted", [(225, 3), (30, 2), (150, 1), (35, 2), (359, 0)])
+def test_vsafe_palette_averages_inside_original_box(cfg, tmp_path, hue, omitted):
+    import colorsys
+    rgb = tuple(round(v * 255) for v in colorsys.hsv_to_rgb(hue / 360, .7, .35))
+    image = source_image(tmp_path, color="0x" + bytes(rgb).hex())
+    # The gold ornament in source_image lies outside this box and must not affect its hue.
+    box = [107, 129, 865, 597]
+    cover.install(cfg, PID, "kt_vertical", image, box)
+    original = cover.current(cfg, PID)["kt_vertical"]
+    entry = kt.vertical_entry(cfg, PID, original)
+    assert entry["box"] == [107, 129, 865, 700] and entry["stretch"] == 103
+    assert entry["palette"] == ("", *(t for i, (_, t) in enumerate(kt.TINTS) if i != omitted))
+    assert entry["shift"] == 201 and original["box"] == box and "palette" not in original
+    assert cover.read(cfg, PID)["shapes"]["kt_vertical"] == original
+    for n in (1, 5, 9):
+        assert entry["palette"][(n - 1) % 4] == ""
+    assert kt.cache_key(TITLE, "2", entry, "vertical") != kt.cache_key(TITLE, "2", original, "vertical")
+    assert kt.cache_key(TITLE, "2", entry, "vertical") != kt.cache_key(TITLE, "2", dict(entry, shift=0), "vertical")
+    assert kt.cache_key(TITLE, "2", entry, "vertical") != kt.cache_key(TITLE, "2", dict(entry, stretch=0), "vertical")
+    assert kt.cache_key(TITLE, "2", entry, "vertical") != kt.cache_key(TITLE, "2", dict(entry, palette=("",) * 4), "vertical")
+
+
+@pytest.mark.parametrize("box", [[90, 220, 900, 700], [107, 129, 865, 597],
+                                 [107, 129, 865, 597], [99, 247, 879, 581], [90, 400, 900, 700]])
+@pytest.mark.parametrize("short", [False, True])
+def test_vsafe_vertical_flows_shift_ink_and_portrait(cfg, tmp_path, monkeypatch, box, short):
+    image = source_image(tmp_path)
+    cover.install(cfg, PID, "kt_vertical", image, box)
+    folder, portraits = portrait_manifest(cfg, count=1)
+    captured = []
+    real = cover.draw_lines
+
+    def draw(work, lines, image, name, **kwargs):
+        captured.append((lines, kwargs["box"]))
+        return real(work, lines, image, name, **kwargs)
+
+    monkeypatch.setattr(cover, "draw_lines", draw)
+    ident = IDS[0] if short else IDS[0] + ".kt"
+    if short:
+        atomic_write_json(cfg.workspace.dir / ident / "titles.json", dict(
+            header=dict(fields=episode.header(cfg, IDS[0])), titles=[
+                dict(clip_id="k01", candidate_id="c01", title=TITLE, status="titled")]))
+    fields = kt.display_fields(cfg, PID, episode.header(cfg, IDS[0]))
+    path = kt.vertical_clip(cfg, ident, "k01", pid=PID, fields=fields, short=short)
+    lines, shifted = captured[0]
+    assert shifted == [box[0], max(330, box[1]), box[2], 700]
+    assert lines[0].text == (kt.SHORT_LABEL if short else kt.DEFAULT_LABEL)
+    for line in lines:
+        top, bottom = Font(thumbnail.EPISODE_FONTS[line.font]).ink_bounds(line.text, line.size)
+        assert 285 <= line.y + top - 2 < line.y + bottom + 4 <= 1635
+    pw, ph, px, py = cover.portrait_box("vertical", shifted, (64, 100))
+    assert py == shifted[1] + shifted[3] and py < 1635
+    pixels = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-vf", "crop=1080:1350:0:285",
+                             "-frames:v", "1", "-threads", "1", "-pix_fmt", "rgb24", "-f", "rawvideo", "-"],
+                            capture_output=True, check=True, timeout=30).stdout
+    # A red synthetic face near the cutout's top survives the real 4:5 crop.
+    offset = ((py + min(30, ph // 2) - 285) * 1080 + px + pw // 2) * 3
+    assert pixels[offset] > pixels[offset + 1] + 40
+    assert kt.vertical_clip(cfg, ident, "k01", pid=PID, fields=fields, short=short,
+                            run=lambda _: pytest.fail("cached image rendered")) == path
+    assert len(captured) == 1
+
+
+@pytest.mark.parametrize("box", [[107, 129, 865, 597], [99, 247, 879, 581], [90, 220, 900, 700]])
+def test_vsafe_stretch_preserves_regions_and_smooth_side_scenery(tmp_path, box):
+    x, y, w, h = box
+    stretch = 700 - h
+    source = tmp_path / "scenery.png"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+                    "nullsrc=s=1080x1920,format=rgb24,geq=r='20+Y/10':g='40+Y/20':b='80+Y/40',"
+                    f"drawbox=x={x}:y={y}:w={w}:h={h}:color=0x182030:t=fill",
+                    "-frames:v", "1", "-threads", "1", str(source)], check=True, timeout=30)
+    entry = dict(box=[x, y, w, 700], shift=0, stretch=stretch, palette=("",) * 4, sha256=sha256_file(source))
+    calls = []
+
+    def run(cmd):
+        calls.append(cmd)
+        return _run(cmd)
+
+    output = kt._vertical_background(tmp_path, source, entry, 1, run)
+    if not stretch:
+        assert output == source and calls == []  # Địa Tạng's original pixels are untouched.
+        return
+    assert len(calls) == 1 and output.suffix == ".png"
+    original, stretched = [subprocess.run(
+        ["ffmpeg", "-v", "error", "-i", str(path), "-frames:v", "1", "-threads", "1",
+         "-pix_fmt", "rgb24", "-f", "rawvideo", "-"], capture_output=True, check=True, timeout=30).stdout
+        for path in (source, output)]
+    stride, mid = 1080 * 3, y + h // 2
+    radius = min(150, h // 2 - 120)
+    assert stretched[:(mid - radius) * stride] == original[:(mid - radius) * stride]
+    below = mid + radius + stretch
+    assert stretched[below * stride:] == original[(below - stretch) * stride:(1920 - stretch) * stride]
+    for column in (x // 2, x + w + (1080 - x - w) // 2):
+        red = [stretched[row * stride + column * 3] for row in range(mid, mid + stretch)]
+        assert max(red) - min(red) >= 6  # side scenery keeps its gradient, unlike a stretched thin strip
+        assert max(abs(a - b) for a, b in zip(red, red[1:])) <= 2
+    centre = (x + w // 2) * 3
+    pixel = original[mid * stride + centre:mid * stride + centre + 3]
+    assert all(stretched[row * stride + centre:row * stride + centre + 3] == pixel
+               for row in range(mid - 4, mid + 4 + stretch))
+    assert kt._vertical_background(tmp_path, source, entry, 1, run) == output and len(calls) == 1
+    assert kt._vertical_background(tmp_path, source, dict(entry, stretch=stretch + 1), 1, run) != output
+
+
+def test_vsafe_taller_box_grows_text_and_samples_original_cover(cfg, monkeypatch):
+    original = dict(cover.current(cfg, PID)["kt_vertical"], box=[107, 129, 865, 597])
+    samples = []
+    monkeypatch.setattr(kt, "_vertical_palette", lambda image, sha, box: samples.append(box) or ("",) * 4)
+    entry = kt.vertical_entry(cfg, PID, original)
+    assert samples == [(107, 129, 865, 597)] and original["box"][3] == 597
+    fields = dict(speaker="HT. Tịnh Không", series="Kinh Vô Lượng Thọ", episode="1")
+    # Use a title limited by height: a short title can already be limited by the series line's width.
+    title = "Học kinh không chỉ hiểu mà phải thực hành"
+    old, _ = kt.layout(title, fields, original["box"])
+    new, _ = kt.layout(title, fields, entry["box"])
+    assert new[1].size > old[1].size
+
+
+def test_vsafe_background_blurs_ornament_preserves_highlights_and_caches(cfg, tmp_path):
+    image = source_image(tmp_path)
+    cover.install(cfg, PID, "kt_vertical", image, [107, 129, 865, 597])
+    original = cover.current(cfg, PID)["kt_vertical"]
+    entry = kt.vertical_entry(cfg, PID, original)
+    calls = []
+
+    def run(cmd):
+        calls.append(cmd)
+        return _run(cmd)
+
+    background = kt._vertical_background(tmp_path, image, entry, 1, run)
+    assert kt._vertical_background(tmp_path, image, entry, 1, run) == background and len(calls) == 1
+    assert "gblur=" in calls[0][calls[0].index("-filter_complex") + 1]
+    rotated = [kt._vertical_background(tmp_path, image, entry, n, run) for n in (1, 2, 3, 4, 5, 9)]
+    assert rotated[0] == rotated[4] == rotated[5] and len(calls) == 4
+    assert len({sha256_file(path) for path in rotated}) == 4
+    pixels = subprocess.run(["ffmpeg", "-v", "error", "-i", str(background), "-frames:v", "1", "-threads", "1",
+                             "-pix_fmt", "rgb24", "-f", "rawvideo", "-"],
+                            capture_output=True, check=True, timeout=30).stdout
+    # The old gold rectangle has no sharp visible fragment in the filled band.
+    band = pixels[:1080 * entry["shift"] * 3]
+    for channel in range(3):
+        assert max(band[channel::3]) - min(band[channel::3]) < 10
+    white = source_image(tmp_path, color="white")
+    tinted = kt._vertical_background(tmp_path, white, dict(entry, sha256=sha256_file(white)), 2, run)
+    pixel = subprocess.run(["ffmpeg", "-v", "error", "-i", str(tinted), "-vf", "crop=1:1:500:500:exact=1",
+                            "-frames:v", "1", "-threads", "1", "-pix_fmt", "rgb24", "-f", "rawvideo", "-"],
+                           capture_output=True, check=True, timeout=30).stdout
+    assert min(pixel) >= 254  # highlight channels have no colorbalance adjustment
+
+
+def test_vsafe_short_title_version_stale_reuse_only_and_single_rebuild(cfg, monkeypatch):
+    fields = kt.display_fields(cfg, PID, episode.header(cfg, IDS[0]))
+    original = kt.LAYOUT_VERSION
+    monkeypatch.setattr(kt, "LAYOUT_VERSION", original - 1)
+    old = kt.short_title(cfg, IDS[0], "s01", TITLE, pid=PID, fields=fields)
+    monkeypatch.setattr(kt, "LAYOUT_VERSION", original)
+    draw = kt.draw
+    calls = []
+
+    def capture(*args, **kwargs):
+        calls.append(1)
+        return draw(*args, **kwargs)
+
+    monkeypatch.setattr(kt, "draw", capture)
+    with pytest.raises(PackageError, match="đã cũ"):
+        kt.short_title(cfg, IDS[0], "s01", TITLE, pid=PID, fields=fields, reuse_only=True)
+    assert not calls
+    new = kt.short_title(cfg, IDS[0], "s01", TITLE, pid=PID, fields=fields)
+    assert new != old and calls == [1]
+    assert kt.short_title(cfg, IDS[0], "s01", TITLE, pid=PID, fields=fields, reuse_only=True) == new
+    assert calls == [1]
+
+
 def portrait_manifest(cfg, *, count=2, color="red@0.8", episode_index=None, episode_playlists=None):
     folder = cfg.packaging.asset_dir / "portraits"
     folder.mkdir(parents=True, exist_ok=True)
@@ -119,7 +293,7 @@ def test_cover_box_image_layout_font_and_number_invalidate(cfg, tmp_path, monkey
     kt.build_episode(cfg, ident, pid=PID)
     layout_version = kt.LAYOUT_VERSION
     monkeypatch.setattr(kt, "LAYOUT_VERSION", 999)
-    assert not kt.valid_files(cfg, ident)
+    assert all(set(files) == {"landscape"} for files in kt.valid_files(cfg, ident).values())
     monkeypatch.setattr(kt, "LAYOUT_VERSION", layout_version)
     assert kt.valid_files(cfg, ident)
     monkeypatch.setitem(thumbnail.EPISODE_FONTS, cover.FONT_NAME, thumbnail.EPISODE_FONTS["sans"])
