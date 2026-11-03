@@ -155,6 +155,7 @@ State người dùng, **không** là input stage nào (như `publish.json`, CP8.
 - Thẻ mỗi Short `rendered` (tập Short + khai thị): khu thu gọn "Bài đăng cộng đồng" — chưa có bài: "Soạn bài"; có bài: nhãn `raw` / `stale` / `image_missing`, textarea các đoạn (đoạn cách nhau dòng trống) + "Lưu đoạn" (→ `manual`), ảnh thu nhỏ + "Đổi ảnh" (mở thư viện), ô link + "Lưu link", số ký tự (P4), "Sao chép bài" (dùng fallback clipboard hiện có, CP8.3 W6), "Soạn lại", tick "Đã đăng bài" (tự tick khi sao chép thành công, **sửa đổi POSTCOPY1** P8).
 - Trang tập: nút "Soạn bài cho mọi Short" (ẩn khi không có Short `rendered`), đếm "Bài đăng cộng đồng đã đăng: x/y".
 - Hộp thoại "Thư viện ảnh" (mở từ "Đổi ảnh"): lưới ảnh (kích thước, số bài dùng), "Tải ảnh lên", ô dán link + nút nhanh (`[post] image_sources`) + "Tìm ảnh", "Xóa khỏi thư viện".
+- Trang `/images` (link 'Thư viện ảnh' ở thanh menu): cùng khu thư viện, không có 'Chọn'
 - Route (cookie CP8.3 W2; 422 lỗi dữ liệu; 503 Ollama khi preflight lỗi; 409 khi episode đang có job — kể cả job khác, cùng luật job runner CP8.10):
 - **Sửa đổi FIX-ollama-wait (O4):** `POST /api/episodes/{id}/posts` không trả 503 Ollama nữa (luôn 202 + job).
   - `GET /api/episodes/{id}/posts` → `{posts: [{clip_id, paragraphs, origin, stale, image, image_missing, link, posted, posted_at, text, chars}], post_error}` (`text`/`chars` = bài đầy đủ P4, không phải chỉ `paragraphs`).

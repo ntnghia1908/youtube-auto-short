@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: IN_PROGRESS
 - Type: CHANGE
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -14,7 +14,7 @@
 - Parallel group: —
 - Owned paths: `src/auto_short/web/routes/pages.py` (route `/images`), `src/auto_short/web/static/images.html` (mới), `src/auto_short/web/static/posts.html` (hộp thoại dùng markup chung), `src/auto_short/web/static/app.js` (khu "image library" + `initImages`), `src/auto_short/web/static/style.css` (nếu cần cho bố cục trang), thanh `topnav` của `index.html`, `episode.html`, `playlist.html`, `posts.html`, `monitor.html`, `storage.html`, `sutras.html`, `sutra-edit.html`, `favorites.html` (thêm 1 link), `tests/test_web_image_library_page.py` (mới), `docs/decisions/CP8.15-community-post-contract.md` (P9: 1 gạch đầu dòng), contract này
 - Dependencies: IMG1, IMG2 (đã merge)
-- Base commit / branch: `385a112` (`origin/main`) / `feature/img3-image-library-page`
+- Base commit / branch: `46fda23` (theo delegation HUMAN LEAD 2026-11-03) / `feature/img3-image-library-page`
 - Human Lead approval: accepted — HUMAN LEAD 2026-11-03 "APPROVE IMG3"
 - Implementation authorized: YES
 
@@ -88,11 +88,26 @@ Không chạm database, security model hoặc public API contract → manual tes
 
 ## Result
 
-- Main changes:
+- Main changes: thêm route `/images` trả `images.html` với `Cache-Control: no-cache`; trang thư viện dùng chung một nguồn markup JS với hộp thoại Bài đăng; thêm link sau Đọc Kinh ở cả 9 topnav; P9 thêm đúng một gạch đầu dòng đã duyệt. Không cần sửa CSS.
 - Tests:
-- Diff + / − (app, test):
-- Helper mới (đã tìm, lý do không tái dùng):
-- Review:
-- Important findings / decisions:
-- Known limitations:
-- PR:
+  - PASS: `node --check src/auto_short/web/static/app.js`.
+  - PASS: `timeout 290s env PYTHONPATH=/home/ntnghia/projects/yas-img3/src /home/ntnghia/miniconda3/envs/auto-short/bin/python -m pytest -q tests/test_web_image_library_page.py -k 'not requires_login' tests/test_post_images.py` — **20 passed, 1 deselected** (1.10 s).
+  - BLOCKED môi trường: `timeout 290s env PYTHONPATH=/home/ntnghia/projects/yas-img3/src /home/ntnghia/miniconda3/envs/auto-short/bin/python -m pytest -q tests/test_web_image_library_page.py tests/test_post_images.py tests/test_web_imggen_img1.py tests/test_web_imgsearch_cp830.py` — **exit 124** sau 290 s; in 10 dấu PASS rồi treo tại test route dùng TestClient (sandbox không có socket loopback theo delegation). Không claim PASS AC1 hay hai file HTTP imggen / imgsearch; ORCHESTRATOR cần chạy lại lệnh đầy đủ ngoài sandbox.
+  - PASS: `git diff --check`.
+  - Full suite và browser manual AC4 / AC5: chưa chạy, do ORCHESTRATOR chạy ngoài sandbox theo contract.
+- AC → test:
+
+  | AC | Test / evidence | Kết quả |
+  |---|---|---|
+  | AC1 | `test_images_page_requires_login_and_initializes_library` (cookie, 303 `/login?next=%2Fimages`, HTML, no-cache) | Chờ TestClient ngoài sandbox |
+  | AC2 | `test_topnav_links_to_image_library` (9 trang) | PASS |
+  | AC3 | `test_image_library_markup_has_one_shared_builder` | PASS |
+  | AC4 | Browser `/images`: nút, không Chọn / Đóng, Esc, AI poll | ORCHESTRATOR chưa chạy |
+  | AC5 | Browser Bài đăng: Đổi ảnh / Chọn / Đóng / Esc | ORCHESTRATOR chưa chạy |
+
+- Diff + / − (app, test): app **+97 / −50** (gồm `images.html` mới 24 dòng); test **+54 / −0** (file mới). Tính bằng `git diff --numstat` cộng file mới chưa track; không tính docs.
+- Helper mới (đã tìm, lý do không tái dùng): tìm bằng `rg -n 'initPosts|initImageDialog|return \{|initStorage|image-dialog|imagePickCallback' src/auto_short/web/static/app.js` và `rg -n 'buildImageLibrary|initImages|build.*\(container' src/auto_short/web/static/app.js`. Chưa có hàm dựng thư viện; thêm `buildImageLibrary(container)` để chuyển nguyên khối `.pane` từ posts.html vào một nguồn chung (D1); thêm entry point `initImages()` cho trang mới. Tái dùng `initImageDialog`, `loadImageGrid`, `latestImageGenerate`, `imageCard`; callback null sẵn có bỏ nút Chọn.
+- Review: IMPLEMENTER đã đọc diff đối chiếu Owned paths / AC; không còn bản markup thân thư viện trong HTML; ID giữ nguyên; không thay API / dependency. Review độc lập của ORCHESTRATOR chưa chạy.
+- Important findings / decisions: base thực tế `46fda23` trên đúng nhánh và worktree, sạch trước khi sửa; cập nhật metadata base theo delegation mới nhất. `imageLibraryPage` bảo vệ Esc / close và các nhánh poll / lỗi AI khi trang không có `#image-dialog`; hộp thoại giữ mặc định cũ.
+- Known limitations: chưa đủ bằng chứng required verification để chuyển lifecycle READY; giữ IN_PROGRESS, bàn giao implementation cho ORCHESTRATOR chạy TestClient, full suite và browser manual ngoài sandbox.
+- PR: không tạo; không commit / push / gọi agent / gọi mạng thật.
