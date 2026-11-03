@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import threading
 from contextlib import nullcontext
 from pathlib import Path
@@ -137,6 +138,8 @@ def push_vertical(config: Config, owner: str, *, client=None, busy=None, lock=No
         return {"owner": owner, "pushed": False, "released": False, "busy": True}
     series, source_name = _destination(config, enh.owner_id(owner))
     name = "[HD Mobile] " + source_name.removeprefix("[Goc] ")
+    if "tịnh không" not in name.casefold() and f" - {config.store.speaker_label} - Tập " not in name:
+        name = re.sub(r" - Tập (?=[0-9]+\.mp4$)", lambda _: f" - {config.store.speaker_label} - Tập ", name)
     client = client or StoreClient.from_config(config.store)
     _check_stop(stop)
     client.put(enh.owner_id(owner), "vertical", series, name, path, sha)

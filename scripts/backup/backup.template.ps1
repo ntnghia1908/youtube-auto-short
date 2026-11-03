@@ -18,6 +18,7 @@ param(
     [string]$Dest = 'E:\@@DESTNAME@@',
     [string]$Playlist = '@@PLAYLIST@@',
     [string]$Series = '@@SERIES@@',   # tên bộ kinh trong tên file
+    [string]$SpeakerLabel = '@@SPEAKER@@',
     [int]$Retries = 30,
     [switch]$NoVertical,
     [switch]$ThumbsOnly,     # chỉ tải thumbnail cho video đã có trong thư mục đích
@@ -89,10 +90,32 @@ function Get-RemoteSize($url) {
     return -1
 }
 
-# Tên file backup: "[HD] <bộ kinh> - Tập 1.mp4" / "[HD Mobile] <bộ kinh> - Tập 1.mp4" (bản dọc; trước đây "[HD Dọc]")
-function BackupName([int]$n, [string]$kind) {
+# Tên cũ không giảng sư chỉ dùng để nhận file có sẵn.
+function LegacyBackupName([int]$n, [string]$kind) {
     $tag = if ($kind -eq "Doc") { "[HD Mobile]" } else { "[HD]" }
     return "$tag $Series - Tập $n.mp4"
+}
+
+function BackupName([int]$n, [string]$kind) {
+    $tag = if ($kind -eq "Doc") { "[HD Mobile]" } else { "[HD]" }
+    $label = if ($Series -match "Tịnh Không" -or $Series.EndsWith(" - $SpeakerLabel")) { $Series } else { "$Series - $SpeakerLabel" }
+    return "$tag $label - Tập $n.mp4"
+}
+
+# Giữ tên file đã có để SUMS, CSV, thumbnail và -Release cùng trỏ đúng bản đã kiểm.
+function ExistingBackupName([int]$n, [string]$kind, [string]$videoId) {
+    $name = BackupName $n $kind
+    if (Test-Path -LiteralPath (Join-Path $Dest $name)) { return $name }
+    foreach ($catalog in @("index.csv", "danh-sach.csv")) {
+        $path = Join-Path $Dest $catalog
+        if ($videoId -and (Test-Path -LiteralPath $path)) {
+            $row = Import-Csv -LiteralPath $path -Encoding UTF8 | Where-Object { $_.video_id -eq $videoId -and $_.loai -eq $kind } | Select-Object -Last 1
+            if ($row -and $row.file -and (Test-Path -LiteralPath (Join-Path $Dest $row.file))) { return $row.file }
+        }
+    }
+    $old = LegacyBackupName $n $kind
+    if (Test-Path -LiteralPath (Join-Path $Dest $old)) { return $old }
+    return $name
 }
 
 # POST JSON tới server (cookie đăng nhập đã có); trả @{ code = <HTTP>; body = <chuỗi JSON> }
@@ -204,7 +227,7 @@ foreach ($e in ($pl.entries | Sort-Object { [int]("0" + ($_.episode -replace "\D
         elseif (-not $e.hd_released) { $notReady += "tập $ep Dọc" }
     }
     foreach ($it in $items) {
-        $name = BackupName ([int]$ep) $it[0]
+        $name = ExistingBackupName ([int]$ep) $it[0] $e.video_id
         $file = Join-Path $Dest $name
         $rows += [pscustomobject]@{ tap = $ep; loai = $it[0]; file = $name; video_id = $e.video_id; tieu_de = $e.title }
         # tên cũ (bản script trước): Tap001_<id>_HD.mp4 -> đổi sang tên mới, sha256 đã kiểm giữ nguyên
@@ -262,7 +285,7 @@ foreach ($e in $pl.entries) {
     $epNum = [int]("0" + ($e.episode -replace "\D", ""))
     if ($epNum -lt 1 -or -not $e.video_id) { continue }
     foreach ($pair in @(@("HD", "landscape"), @("Doc", "vertical"))) {
-        $video = Join-Path $Dest (BackupName $epNum $pair[0])
+        $video = Join-Path $Dest (ExistingBackupName $epNum $pair[0] $e.video_id)
         if (-not (Test-Path -LiteralPath $video)) { continue }
         $jpg = [IO.Path]::ChangeExtension($video, ".jpg")
         $url = "/files/episodes/$($e.video_id)/thumbs/$($pair[1]).jpg"

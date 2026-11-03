@@ -357,6 +357,7 @@ class StoreConfig:
     redownload: bool = False
     offload: bool = False
     offload_shorts: bool = False
+    speaker_label: str = "PS. Tịnh Không"
 
 
 @dataclass(frozen=True)
@@ -723,12 +724,17 @@ def _store(data: dict) -> StoreConfig:
     offload_shorts = _bool(st, "offload_shorts", d.offload_shorts, w)
     if offload_shorts and not enabled:
         raise ConfigError("store.offload_shorts = true cần store.enabled = true")
+    speaker_label = _str(st, "speaker_label", d.speaker_label, w).strip()
+    if not speaker_label or ".." in speaker_label or any(c in speaker_label for c in '/\\:<>"|?*') \
+            or any(ord(c) < 32 or ord(c) == 127 for c in speaker_label):
+        raise ConfigError("store.speaker_label phải là nhãn hợp lệ trong tên file")
     return StoreConfig(
         enabled=enabled,
         backup_source=backup_source,
         redownload=redownload,
         offload=offload,
         offload_shorts=offload_shorts,
+        speaker_label=speaker_label,
         url=_str(st, "url", d.url, w),
         timeout_seconds=_number(st, "timeout_seconds", d.timeout_seconds, w, lo=1, hi=3600),
         retry_seconds=_int(st, "retry_seconds", d.retry_seconds, w, lo=5, hi=86400),

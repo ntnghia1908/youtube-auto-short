@@ -109,6 +109,29 @@ def video(ident="uploaded001", *, number=101, shape="HD", series=SERIES):
                 snippet=dict(title="Không dùng tiêu đề để ghép"))
 
 
+@pytest.mark.parametrize("tag,shape", [("HD", "landscape"), ("HD Mobile", "vertical"), ("HD Dọc", "vertical")])
+@pytest.mark.parametrize("speaker", ["", " - PS. Tịnh Không", " - HT. Tịnh Không"])
+def test_store_names_with_optional_speaker_match_thumbnail(episodes, tag, shape, speaker):
+    # Exercise both PUB2 matching modes; packaging/cache validation uses the existing fixture.
+    item = video(shape=tag, series=SERIES + speaker)
+    for journal in (None, {"records": []}):
+        row = thumbs.plan(episodes, [item], pid=PID, journal=journal)[0]
+        assert row["status"] == "sẵn sàng"
+        assert (row["episode"], row["shape"], row["video_id"]) == (101, shape, IDS[0])
+    match = thumbs.FILE_NAME.fullmatch(f"[{tag}] {SERIES}{speaker} - Tập 7.mp4")
+    assert match[3] == "7" and thumbs._same_series(match[2], thumbs._series(SERIES))
+
+
+def test_series_containing_dash_still_matches_with_and_without_speaker():
+    series = "Phật Thuyết Thập Thiện Nghiệp Đạo Kinh - Lão Pháp Sư (biên dịch mới 2023)"
+    expected = thumbs._series(series)
+    for name in (f"[HD] {series} - Tập 3.mp4", f"[HD] {series} - PS. Tịnh Không - Tập 3.mp4"):
+        match = thumbs.FILE_NAME.fullmatch(name)
+        assert match[3] == "3" and thumbs._same_series(match[2], expected)
+    assert not thumbs._same_series("Phật Thuyết Thập Thiện Nghiệp Đạo Kinh", expected)
+    assert not thumbs._same_series(series + "x", expected)
+
+
 def listing(*videos):
     return [dict(items=[dict(contentDetails=dict(relatedPlaylists=dict(uploads="UPLOADS")))]),
             dict(items=[dict(contentDetails=dict(videoId=v["id"])) for v in videos]), dict(items=list(videos))]
