@@ -88,6 +88,85 @@ def listing(*videos):
     return [dict(items=[dict(contentDetails=dict(videoId=v["id"])) for v in videos]), dict(items=list(videos))]
 
 
+@pytest.fixture
+def since_short(workspace, monkeypatch):
+    from auto_short.publish import shorts
+    real_read = khaithi_thumbs.read
+    monkeypatch.setattr(khaithi_thumbs, "read", lambda *a, **kw:
+                        dict(clip_numbers=dict(k01=1)) if kw.get("short") else real_read(*a, **kw))
+    path = workspace.render.output_dir / "fake-short.jpg"
+    path.write_bytes(b"\xff\xd8short")
+    image, calls = dict(sha256=sha256_file(path)), []
+    monkeypatch.setattr(shorts, "_web_thumbnail", lambda *a: calls.append(1) or (image, path))
+    monkeypatch.setattr(shorts, "_thumbnail", lambda *a: (image, path))
+    return calls
+
+
+@pytest.mark.parametrize("command", ["kt-thumbs", "short-thumbs"])
+@pytest.mark.parametrize("privacy,published,publish_at,allowed", [
+    ("public", "2026-10-31T16:59:59Z", None, False),
+    ("public", "2026-10-31T17:00:00Z", None, True),
+    ("public", "2026-11-01T23:59:00+07:00", None, True),
+    ("public", "2026-10-30T00:00:00Z", None, False),
+    ("private", "2026-10-01T00:00:00Z", "2026-10-15T00:00:00Z", True),
+    ("private", "2026-10-01T00:00:00Z", "2026-12-01T00:00:00Z", True),
+    ("private", "2026-10-01T00:00:00Z", None, True),
+])
+def test_since_both_commands_vietnam_midnight_and_private(workspace, monkeypatch, since_short, command,
+                                                          privacy, published, publish_at, allowed):
+    from auto_short.publish import shorts
+    source = video()
+    source["status"] = dict(privacyStatus=privacy)
+    if publish_at:
+        source["status"]["publishAt"] = publish_at
+    source["snippet"]["publishedAt"] = published
+    if command == "short-thumbs":
+        source["fileDetails"]["fileName"] = "T11_S01_Giữ tâm.mp4"
+        source["snippet"]["title"] = "T11 S01 Giữ tâm"
+        calls = since_short
+        planner = shorts.plan
+    else:
+        calls = []
+        real = thumbs._thumbnail
+        monkeypatch.setattr(thumbs, "_thumbnail", lambda *a, **kw: calls.append(1) or real(*a, **kw))
+        planner = kt.plan
+    row = planner(workspace, [source], pid=PID, since="2026-11-01")[0]
+    assert row["status"] == ("sẵn sàng" if allowed else "bỏ qua")
+    assert row["reason"] == ("" if allowed else "đăng trước 2026-11-01")
+    assert len(calls) == int(allowed)
+    # Omitting --since preserves the old behavior even for older publication dates.
+    assert planner(workspace, [source], pid=PID)[0]["status"] == "sẵn sàng"
+
+
+@pytest.mark.parametrize("command", ["kt-thumbs", "short-thumbs"])
+def test_since_cli_skips_public_before_apply_and_logs_private(workspace, cli, wire, since_short, capsys, command):
+    args = [command, *cli[1:], "--since", "2026-11-01", "--apply"]
+    sources = [video(ident=f"uploaded00{n}") for n in range(1, 4)]
+    for source, privacy, timestamp in zip(sources, ("public", "private", "public"),
+                                         ("2026-10-31T16:59:59Z", "2026-09-01T00:00:00Z", "2026-10-31T17:00:00Z")):
+        source["status"] = dict(privacyStatus=privacy)
+        source["snippet"]["publishedAt"] = timestamp
+        if command == "short-thumbs":
+            source["fileDetails"]["fileName"] = "T11_S01_Giữ tâm.mp4"
+            source["snippet"]["title"] = "T11 S01 Giữ tâm"
+    wire.replies.extend([*listing(*sources), dict(items=[]), dict(items=[])])
+    assert main(args, transport=wire.send) == 0
+    captured = capsys.readouterr()
+    rows = json.loads(captured.out[captured.out.index("{\n"):])["rows"]
+    assert rows[0]["reason"] == "đăng trước 2026-11-01" and rows[0]["status"] == "bỏ qua"
+    assert [r["status"] for r in rows[1:]] == ["đã gắn", "đã gắn"]
+    assert [r["youtube_id"] for r in thumbs._journal(workspace)[1]["records"]] == ["uploaded002", "uploaded003"]
+    assert len([c for c in wire.calls if c[0] == "POST"]) == 2 and not wire.replies
+
+
+@pytest.mark.parametrize("command", ["kt-thumbs", "short-thumbs"])
+@pytest.mark.parametrize("value", ["2026-02-30", "20261101", "2026-1-01", "invalid"])
+def test_since_invalid_cli_date_never_calls_http(wire, command, value):
+    with pytest.raises(SystemExit) as exc:
+        main([command, "--playlist", PID, "--yt-playlist", YT_PID, "--since", value], transport=wire.send)
+    assert exc.value.code == 2 and not wire.calls
+
+
 @pytest.mark.parametrize("name,title,number,clip", [
     ("T11_KT01_tên file.mp4", "tiêu đề không mã", 11, "k01"),
     ("", f" T7_KT05_{TITLE} #tag", 7, "m01"),
@@ -104,7 +183,7 @@ def test_code_matching(workspace, name, title, number, clip):
     if number is None:
         assert row["status"] == "bỏ qua" and row["reason"] == "không có mã KT"
     else:
-        assert (row["episode"], row["clip_id"], row["shape"], row["status"]) == (number, clip, "landscape", "sẵn sàng")
+        assert (row["episode"], row["clip_id"], row["shape"], row["status"]) == (number, clip, "vertical", "sẵn sàng")
         assert row["video_id"] == IDS[0 if number == 11 else 1] + ".kt"
         doc = khaithi_thumbs.read(workspace, row["video_id"])
         assert doc["clip_numbers"][clip] == row["clip_number"]
@@ -231,7 +310,7 @@ def test_cli_dry_run_apply_skip_force(workspace, cli, wire, capsys):
             assert journal["schema_version"] == 1 and len(journal["records"]) == 1
             record = journal["records"][0]
             assert record["video_id"] == IDS[0] + ".kt" and record["clip_id"] == "k01"
-            assert record["shape"] == "landscape" and record["sha256"] == result["rows"][0]["sha256"]
+            assert record["shape"] == "vertical" and record["sha256"] == result["rows"][0]["sha256"]
             assert read_json_dict(journal_path) == journal
 
 
@@ -285,7 +364,7 @@ def test_journal_optional_clip_id_must_be_string(workspace, clip_id):
 @pytest.mark.parametrize("shape", [None, "landscape", "vertical"])
 @pytest.mark.parametrize("missing", [False, True])
 def test_shape_selection(workspace, shape, missing):
-    selected = shape or "landscape"
+    selected = shape or "vertical"
     ident = IDS[0] + ".kt"
     path = khaithi_thumbs.directory(workspace, ident) / "thumbs.json"
     if missing:
@@ -306,7 +385,7 @@ def test_shape_selection(workspace, shape, missing):
 
 @pytest.mark.parametrize("shape", [None, "landscape", "vertical"])
 def test_cli_shape_selection(workspace, cli, wire, capsys, shape):
-    selected = shape or "landscape"
+    selected = shape or "vertical"
     extra = ["--shape", shape] if shape is not None else []
     wire.replies.extend([*listing(video()), dict(items=[])])
     assert main([*cli, *extra, "--apply"], transport=wire.send) == 0
@@ -324,8 +403,8 @@ def test_cli_shape_selection(workspace, cli, wire, capsys, shape):
 
 def test_shape_change_reapplies_without_force(workspace, cli, wire, capsys):
     hashes = []
-    for extra, posts, selected in [(["--shape", "vertical"], 1, "vertical"),
-                                    ([], 1, "landscape"), ([], 0, "landscape")]:
+    for extra, posts, selected in [(["--shape", "landscape"], 1, "landscape"),
+                                    ([], 1, "vertical"), ([], 0, "vertical")]:
         wire.calls.clear()
         wire.replies.extend([*listing(video()), *[dict(items=[]) for _ in range(posts)]])
         assert main([*cli, *extra, "--apply"], transport=wire.send) == 0
@@ -335,3 +414,27 @@ def test_shape_change_reapplies_without_force(workspace, cli, wire, capsys):
         hashes.append(record["sha256"])
         assert not capsys.readouterr().err
     assert hashes[0] != hashes[1] == hashes[2]
+
+
+@pytest.mark.parametrize("options,expected", [
+    (["--episodes", "7-7"], ["uploaded002"]),
+    (["--only", " uploaded001,missing "], ["uploaded001"]),
+    (["--episodes", "7-11", "--only", "uploaded002"], ["uploaded002"]),
+    (["--episodes", "1-6"], []),
+])
+def test_cli_episode_and_only_filters(workspace, cli, wire, capsys, options, expected):
+    source = [video(), video("T7_KT05_Giữ tâm.mp4", "", "uploaded002")]
+    wire.replies.extend([*listing(*source), *[dict(items=[]) for _ in expected]])
+    assert main([*cli, *options, "--apply"], transport=wire.send) == 0
+    captured = capsys.readouterr()
+    rows = json.loads(captured.out[captured.out.index("{\n"):])["rows"]
+    assert [r["youtube_id"] for r in rows] == expected
+    assert len([c for c in wire.calls if c[0] == "POST"]) == len(expected) and not wire.replies
+
+
+@pytest.mark.parametrize("command", ["kt-thumbs", "short-thumbs"])
+@pytest.mark.parametrize("value", ["0-9", "9-1", "9", "a-b"])
+def test_cli_rejects_invalid_episode_ranges(wire, command, value):
+    with pytest.raises(SystemExit) as exc:
+        main([command, "--playlist", PID, "--yt-playlist", YT_PID, "--episodes", value], transport=wire.send)
+    assert exc.value.code == 2 and not wire.calls

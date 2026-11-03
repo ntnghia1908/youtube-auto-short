@@ -1852,6 +1852,7 @@ const AutoShort = (() => {
   function initPosts() {
     episodeId = decodeURIComponent(location.pathname.split("/").filter(Boolean)[1] || "");
     postsPage.vid = episodeId.endsWith(".kt") ? episodeId.slice(0, -3) : episodeId;
+    buildImageLibrary($("#image-dialog .modal-box"));
     initImageDialog();
     $("#posts-compose-missing").addEventListener("click", composeMissing);
     initCorrections();
@@ -2149,12 +2150,60 @@ const AutoShort = (() => {
     return card;
   }
 
-  // --- image library (P5, P5a, P5b): a modal shared by every "Đổi ảnh" button --------------------------------
+  // --- image library (P5, P5a, P5b): shared page and "Đổi ảnh" dialog --------------------------------
 
   let imagePickCallback = null;
+  let imageLibraryPage = false;
+
+  function buildImageLibrary(container) {
+    // Fixed markup shared by the standalone page and the post image picker.
+    container.insertAdjacentHTML("beforeend", `
+    <div class="pane">
+      <div class="edit-actions">
+        <label class="btn small" for="image-upload-input">Tải ảnh lên
+          <input id="image-upload-input" type="file" accept="image/jpeg,image/png" hidden></label>
+        <input id="image-search-url" type="url" placeholder="Dán link ảnh hoặc trang có ảnh…" aria-label="Link tìm ảnh">
+        <button id="image-search-btn" class="btn small" type="button">Tìm ảnh</button>
+      </div>
+      <div id="image-quick-links" class="edit-actions" hidden></div>
+      <div class="edit-actions">
+        <input id="image-find-keyword" type="text" placeholder="Tìm ảnh theo từ khóa (vd: Tây Phương Tam Thánh)…" aria-label="Từ khóa tìm ảnh">
+        <button id="image-find-btn" class="btn small primary" type="button">Tìm theo từ khóa</button>
+        <button id="image-generate-btn" class="btn small" type="button" disabled>AI vẽ 10 ảnh</button>
+        <button id="image-generate-cancel" class="btn small" type="button" hidden>Hủy</button>
+        <button id="image-redistribute-btn" class="btn small" type="button">Chia lại ảnh cho bài chưa đăng</button>
+      </div>
+      <p id="image-find-sources" class="muted small"></p>
+      <div id="image-candidates" hidden>
+        <div class="edit-actions">
+          <strong id="image-cand-title"></strong>
+          <button id="image-cand-all" class="btn small" type="button">Chọn tất cả</button>
+          <button id="image-cand-none" class="btn small" type="button">Bỏ chọn</button>
+          <button id="image-cand-add" class="btn small primary" type="button">Thêm vào thư viện</button>
+          <button id="image-cand-dismiss" class="btn small" type="button" hidden>Bỏ các ảnh này</button>
+        </div>
+        <p id="image-cand-skipped" class="muted small"></p>
+        <div id="image-cand-grid" class="img-grid"></div>
+        <hr>
+      </div>
+      <p id="image-msg" class="small" hidden></p>
+      <div id="image-grid" class="img-grid"></div>
+    </div>
+    `);
+  }
+
+  async function initImages() {
+    imageLibraryPage = true;
+    imagePickCallback = null;
+    buildImageLibrary($("#image-library"));
+    initImageDialog();
+    checkDisk();
+    await loadImageGrid();
+    await latestImageGenerate();
+  }
 
   function initImageDialog() {
-    $("#image-close").addEventListener("click", closeImageDialog);
+    $("#image-close")?.addEventListener("click", closeImageDialog);
     $("#image-upload-input").addEventListener("change", (e) => {
       const f = e.target.files[0];
       if (f) uploadImageFile(f);
@@ -2171,11 +2220,12 @@ const AutoShort = (() => {
     $("#image-cand-dismiss").addEventListener("click", dismissImageCandidates);
     $("#image-redistribute-btn").addEventListener("click", redistributeImages);
     document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && !$("#image-dialog").hidden) closeImageDialog();
+      if (e.key === "Escape" && !imageLibraryPage && !$("#image-dialog").hidden) closeImageDialog();
     });
   }
 
   function closeImageDialog() {
+    if (imageLibraryPage) return;
     stopImageGeneratePoll();
     $("#image-dialog").hidden = true;
     document.body.classList.remove("modal-open");
@@ -2327,7 +2377,7 @@ const AutoShort = (() => {
   }
 
   function showImageGenerate(run, seq) {
-    if (seq !== imageGenerateSeq || $("#image-dialog").hidden) return;
+    if (seq !== imageGenerateSeq || (!imageLibraryPage && $("#image-dialog").hidden)) return;
     imageGenerateRun = run;
     updateImageGenerateButtons();
     if (!run) {
@@ -2336,7 +2386,7 @@ const AutoShort = (() => {
       return;
     }
     if (run.status === "running") {
-      imgMsg("Codex đang vẽ… có thể đóng hộp thoại, quay lại sau");
+      imgMsg(imageLibraryPage ? "Codex đang vẽ… có thể quay lại sau" : "Codex đang vẽ… có thể đóng hộp thoại, quay lại sau");
       imageGenerateTimer = setTimeout(() => pollImageGenerate(run.search_id, seq), 3000);
     } else if (run.status === "done") {
       renderCandidates(run);
@@ -2365,12 +2415,12 @@ const AutoShort = (() => {
   }
 
   async function pollImageGenerate(id, seq) {
-    if (seq !== imageGenerateSeq || $("#image-dialog").hidden) return;
+    if (seq !== imageGenerateSeq || (!imageLibraryPage && $("#image-dialog").hidden)) return;
     try {
       const r = await api(`/api/post-images/generate/${encodeURIComponent(id)}`);
       showImageGenerate(r.run, seq);
     } catch (e) {
-      if (seq === imageGenerateSeq && !$("#image-dialog").hidden) {
+      if (seq === imageGenerateSeq && (imageLibraryPage || !$("#image-dialog").hidden)) {
         imgMsg(e.message, "error");
         imageGenerateTimer = setTimeout(() => pollImageGenerate(id, seq), 3000);
       }
@@ -2384,7 +2434,7 @@ const AutoShort = (() => {
       const r = await api("/api/post-images/generate/latest");
       showImageGenerate(r.run, seq);
     } catch (e) {
-      if (seq === imageGenerateSeq && !$("#image-dialog").hidden) imgMsg(e.message, "error");
+      if (seq === imageGenerateSeq && (imageLibraryPage || !$("#image-dialog").hidden)) imgMsg(e.message, "error");
     }
   }
 
@@ -2397,7 +2447,7 @@ const AutoShort = (() => {
       const r = await api("/api/post-images/generate", jsonBody("POST", { keyword }));
       showImageGenerate(r.run, seq);
     } catch (e) {
-      if (seq === imageGenerateSeq && !$("#image-dialog").hidden) {
+      if (seq === imageGenerateSeq && (imageLibraryPage || !$("#image-dialog").hidden)) {
         imgMsg(e.message, "error");
         updateImageGenerateButtons();
       }
@@ -3958,5 +4008,5 @@ const AutoShort = (() => {
   }
   document.addEventListener("DOMContentLoaded", initQueueBar);
 
-  return { initIndex, initEpisode, initStorage, initPlaylist, initPosts, initMonitor, el, api, copyText };
+  return { initIndex, initEpisode, initStorage, initPlaylist, initPosts, initImages, initMonitor, el, api, copyText };
 })();

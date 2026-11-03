@@ -21,7 +21,7 @@ Task `dual-agent` do Claude làm ORCHESTRATOR: ORCHESTRATOR chọn IMPLEMENTER t
 
 Codex CLI làm IMPLEMENTER / reviewer (phân vai: project-profile §7; cài đặt: §8). Mỗi lần giao:
 
-1. Quota: `python3 scripts/codex-usage.py`. Cửa sổ 5 giờ ≥ 85 % hoặc tuần ≥ 80 % → giao subagent `implementer` (Sonnet). Codex hết quota giữa chừng → ORCHESTRATOR kiểm diff dở rồi giao tiếp cho Sonnet, ghi vào Result.
+1. Quota: `python3 scripts/codex-usage.py`. Cửa sổ 5 giờ ≥ 95 % hoặc tuần ≥ 97 % (HUMAN LEAD 2026-11-03: "dùng hết codex cũng không sao") → giao subagent `implementer` (Sonnet). Codex hết quota giữa chừng → ORCHESTRATOR kiểm diff dở rồi giao tiếp cho Sonnet, ghi vào Result.
 2. Chạy nền trong worktree của task, prompt từ file:
 
    ```text

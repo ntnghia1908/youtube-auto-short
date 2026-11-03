@@ -201,8 +201,12 @@ def apply(config, rows, youtube, *, force=False):
             row.update(status="bỏ qua", reason="đã gắn cùng sha256")
             continue
         try:
-            entry, image = _thumbnail(config, row["video_id"], row["playlist_id"], row["shape"],
-                                      clip_id=row.get("clip_id"))
+            if row.get("source") in ("web", "youtube-title"):
+                from . import shorts
+                entry, image = shorts._thumbnail(config, row)
+            else:
+                entry, image = _thumbnail(config, row["video_id"], row["playlist_id"], row["shape"],
+                                          clip_id=row.get("clip_id"))
             if entry["sha256"] != row["sha256"] or str(image) != row["file"]:
                 raise PublishError("thumbnail đã thay đổi; chạy lại lệnh để lập bảng mới")
             body = image.read_bytes()
@@ -218,6 +222,8 @@ def apply(config, rows, youtube, *, force=False):
         record = {k: row[k] for k in ("youtube_id", "video_id", "playlist_id", "shape", "sha256")}
         if "clip_id" in row:
             record["clip_id"] = row["clip_id"]
+        if row.get("source") in ("web", "youtube-title"):
+            record["code"] = row["code"]
         record["set_at"] = utc_now()
         journal["records"] = [r for r in journal["records"] if r["youtube_id"] != row["youtube_id"]] + [record]
         atomic_write_json(path, journal)

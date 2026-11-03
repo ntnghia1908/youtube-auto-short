@@ -246,7 +246,7 @@ def test_upload_pagination_and_video_batches(oauth):
     assert [q.get("pageToken") for q in queries[1:4]] == [None, ["page-50"], ["page-100"]]
     assert all(q["maxResults"] == ["50"] for q in queries[1:4])
     assert [len(q["id"][0].split(",")) for q in queries[4:]] == [50, 50, 3]
-    assert all(q["part"] == ["fileDetails,snippet"] for q in queries[4:]) and not wire.responses
+    assert all(q["part"] == ["fileDetails,snippet,status"] for q in queries[4:]) and not wire.responses
 
 
 def test_match_shapes_normalization_skips_and_duplicates(episodes):
