@@ -1,7 +1,7 @@
 /* TC2.3: one-click thematic compilations on Yêu thích. */
 "use strict";
 const ThemePlan = (() => {
-  const { el, api, fmtDur, copyText, player, busy: playing, onIdle, setVideoCount } = Favorites;
+  const { el, api, fmtDur, copyText, musicBlock, player, busy: playing, onIdle, setVideoCount } = Favorites;
   const $ = (id) => document.getElementById(id);
   const jobs = { queued: "đang chờ", running: "đang ghép", done: "xong", failed: "lỗi", interrupted: "bị ngắt" };
   const REASONS = {
@@ -240,6 +240,7 @@ const ThemePlan = (() => {
       if (current) Object.assign(current, result);
     }));
     if (!broken || output) box.append(editDetails);
+    box.append(musicBlock("theme", decodeURIComponent(base.split("/")[3]), plan.plan_id));
     return box;
   }
   function renderData() {

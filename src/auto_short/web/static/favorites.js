@@ -2,7 +2,7 @@
 "use strict";
 
 const Favorites = (() => {
-  const { el, api, copyText } = AutoShort;
+  const { el, api, copyText, musicBlock } = AutoShort;
   const POLL_MS = 3000;
   const STATE = { queued: "đang chờ", running: "đang ghép", done: "xong", failed: "lỗi" };
   const MODE = { concat: "ghép", loop: "lặp", auto: "tự ghép" };
@@ -234,6 +234,7 @@ const Favorites = (() => {
     if (c.download_url) card.append(el("details", { class: "tp-details" },
       el("summary", { text: "Sửa video & thumbnail" }),
       thumbnailBlock(`/api/playlists/${encodeURIComponent(pid)}/compilations/${c.cid}/thumbs`)));
+    if (c.download_url) card.append(musicBlock("compilation", pid, c.cid));
     return card;
   }
 
@@ -372,6 +373,6 @@ const Favorites = (() => {
     load();
   }
 
-  return { init, el, api, fmtDur, copyText, thumbnailBlock, publishBox, player, busy, onIdle, pauseAll,
+  return { init, el, api, fmtDur, copyText, musicBlock, thumbnailBlock, publishBox, player, busy, onIdle, pauseAll,
     showTab: (name) => showTab(name), scrollToVideo, setVideoCount };
 })();

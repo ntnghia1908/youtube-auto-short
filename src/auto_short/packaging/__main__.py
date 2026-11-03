@@ -20,7 +20,14 @@ def main(argv=None):
     add.add_argument("--source", required=True)
     add.add_argument("--license", default="")
     add.add_argument("--tag", action="append", default=[])
+    for field in ("title", "artist", "attribution"):
+        add.add_argument("--" + field)
+    add.add_argument("--loop-end", type=float)
     library.add_parser("approve").add_argument("id")
+    library.add_parser("unapprove").add_argument("id")
+    music = library.add_parser("import-music")
+    music.add_argument("manifest", type=Path)
+    music.add_argument("--dir", dest="directory", type=Path, required=True)
     library.add_parser("list")
     library.add_parser("import-post-images").add_argument("--license", required=True)
     covers = commands.add_parser("cover").add_subparsers(dest="action", required=True)
@@ -50,9 +57,14 @@ def main(argv=None):
                 result = cover.read(cfg, args.playlist)
         elif args.action == "add":
             result = assets.add(cfg.packaging.asset_dir, args.file, kind=args.kind, source=args.source,
-                                license=args.license, tags=args.tag)
+                                license=args.license, tags=args.tag, title=args.title, artist=args.artist,
+                                attribution=args.attribution, loop_end=args.loop_end)
         elif args.action == "approve":
             result = assets.approve(cfg.packaging.asset_dir, args.id)
+        elif args.action == "unapprove":
+            result = assets.unapprove(cfg.packaging.asset_dir, args.id)
+        elif args.action == "import-music":
+            result = assets.import_music(cfg.packaging.asset_dir, args.manifest, args.directory)
         elif args.action == "import-post-images":
             result = assets.import_post_images(cfg, license=args.license)
         else:

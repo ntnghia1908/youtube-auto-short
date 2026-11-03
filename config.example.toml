@@ -283,3 +283,10 @@ codex_timeout_minutes = 30
 # HDI1: bật từng bộ sau khi duyệt bản test; rỗng = tắt.
 [hd_intro]
 playlists = []
+
+# AUD2: nhạc chỉ dựng theo yêu cầu trên từng video.
+[music]
+default_level_lu = -22
+fade_in = 3
+fade_out = 5
+loop_crossfade = 4

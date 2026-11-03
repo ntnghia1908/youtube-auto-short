@@ -1152,8 +1152,106 @@ const AutoShort = (() => {
         }).catch(() => {});
       }
     }
+    if (lastData?.kind === "khaithi" && s.status === "rendered" && !s.deleted) {
+      body.append(musicBlock("clip", episodeId, s.clip_id));
+    }
     card.append(body);
     return card;
+  }
+
+  // AUD2: shared by clip, favourites and theme cards. Opening controls never creates media.
+  const musicDrafts = new Map();
+  function musicBlock(kind, owner, video) {
+    const endpoint = `/api/music/${kind}/${encodeURIComponent(owner)}/${encodeURIComponent(video)}`;
+    const draft = musicDrafts.get(endpoint) || { open: false, values: { asset_id: "" } };
+    musicDrafts.set(endpoint, draft);
+    const box = el("details", { class: "music-block" }, el("summary", { text: "Nhạc nền" }));
+    const content = el("div", { class: "music-controls" });
+    box.append(content);
+    box.open = draft.open;
+    let loaded = false, polling = false, selected, controls = {}, state;
+    const note = el("p", { class: "small", role: "status" });
+    const results = el("div", { class: "music-results" });
+    const buttons = el("div", { class: "edit-actions" });
+    const button = (text, fn) => {
+      const b = el("button", { class: "btn small", type: "button", text });
+      b.addEventListener("click", async () => { try { await fn(); } catch (e) { note.textContent = e.message; } });
+      return b;
+    };
+    function values() {
+      const spec = { asset_id: selected.value };
+      for (const [key, input] of Object.entries(controls)) spec[key] = Number(input.value);
+      draft.values = spec;
+      return spec;
+    }
+    async function submit(preview) {
+      if (!selected.value) return;
+      await api(endpoint + (preview ? "/preview" : ""), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(values()) });
+      await refresh();
+    }
+    const listen = button("Nghe thử", () => submit(true));
+    const build = button("Dựng bản có nhạc", () => submit(false));
+    const cancel = button("Hủy job nhạc", async () => { await api(endpoint + "/cancel", { method: "POST" }); await refresh(); });
+    function availability() {
+      const active = state?.job && ["queued", "running"].includes(state.job.status);
+      listen.disabled = build.disabled = !selected?.value || !!active;
+      cancel.hidden = !active;
+    }
+    function initialize(data) {
+      selected = el("select", { "aria-label": "Bài nhạc" }, el("option", { value: "", text: "Không nhạc" }));
+      for (const a of data.assets) selected.append(el("option", { value: a.id, text: [a.title || a.id.slice(0, 12), a.artist].filter(Boolean).join(" — ") }));
+      selected.value = draft.values.asset_id || "";
+      selected.addEventListener("change", () => { values(); availability(); });
+      content.append(el("label", {}, "Bài nhạc", selected));
+      if (!data.assets.length) content.append(el("p", { class: "muted small", text: "Chưa có nhạc đã duyệt trong kho" }));
+      for (const [key, label, min, max, step] of [["level_lu", "Mức nhạc (LU so với giọng)", -30, -12, .5],
+        ["fade_in", "Fade vào (giây)", 0, 10, .1], ["fade_out", "Fade ra (giây)", 0, 15, .1],
+        ["loop_crossfade", "Nối vòng (giây)", .5, 8, .1]]) {
+        const input = el("input", { type: key === "level_lu" ? "range" : "number", min, max, step,
+          value: draft.values[key] ?? data.defaults[key], "aria-label": label });
+        const value = el("span", { class: "small", text: input.value });
+        input.addEventListener("input", () => { value.textContent = input.value; values(); });
+        controls[key] = input;
+        content.append(el("label", {}, label, input, value));
+      }
+      buttons.append(listen, build, cancel);
+      content.append(buttons, note, results);
+      loaded = true;
+    }
+    function render(data) {
+      state = data;
+      const active = data.job && ["queued", "running"].includes(data.job.status);
+      note.textContent = active ? (data.job.status === "queued" ? "Nhạc: đang chờ" : "Nhạc: đang dựng…")
+        : data.job?.error || (data.state === "stale" ? "Bản nhạc cũ — dựng lại" : data.state === "ready" ? "Bản có nhạc đã sẵn sàng" : "");
+      availability();
+      results.replaceChildren();
+      for (const [i, p] of data.previews.entries()) results.append(el("label", {},
+        `Nghe thử ${i + 1} · từ ${p.start.toFixed(1)} s`, el("audio", { controls: true, preload: "none", src: p.url })));
+      if (data.state === "ready") {
+        results.append(el("video", { controls: true, playsinline: true, preload: "none", src: data.video_url }),
+          el("a", { class: "btn small", href: data.download_url, download: "", text: "Tải bản có nhạc" }));
+        if (kind !== "clip" || data.attribution) results.append(button(kind === "clip" ? "Copy ghi công" : "Copy mô tả", async () => {
+          const text = kind === "clip" ? `Nhạc: ${data.attribution}` : data.description;
+          note.textContent = await copyText(text) ? "Đã copy" : "Không copy được";
+        }));
+      }
+      if (data.state !== "none" || data.previews.length) {
+        const del = button("Xóa bản nhạc", async () => { await api(endpoint, { method: "DELETE" }); await refresh(); });
+        del.disabled = !!active;
+        results.append(del);
+      }
+      if (active && !polling) {
+        polling = true;
+        setTimeout(() => { polling = false; if (box.isConnected) refresh(); }, 2000);
+      }
+    }
+    async function refresh() {
+      try { const data = await api(endpoint); if (!loaded) initialize(data); render(data); }
+      catch (e) { if (!loaded) content.replaceChildren(note); note.textContent = e.message; }
+    }
+    box.addEventListener("toggle", () => { draft.open = box.open; if (box.open) refresh(); });
+    if (draft.open) setTimeout(refresh, 0);
+    return box;
   }
 
   // CP8.7 (bổ sung HUMAN LEAD): copy the title in the file, to paste into the YouTube app. The site is plain HTTP
@@ -3957,5 +4055,5 @@ const AutoShort = (() => {
   }
   document.addEventListener("DOMContentLoaded", initQueueBar);
 
-  return { initIndex, initEpisode, initStorage, initPlaylist, initPosts, initImages, initMonitor, el, api, copyText };
+  return { initIndex, initEpisode, initStorage, initPlaylist, initPosts, initImages, initMonitor, el, api, copyText, musicBlock };
 })();

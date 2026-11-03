@@ -200,7 +200,7 @@ async function api(path, options={}) {
   output:{download_name:'Tiêu đề render.mp4',description:'Mô tả render',download_url:'/files/theme.mp4'}}]};
  throw Error('unexpected request '+path);
 }
-const ctx={document,AutoShort:{el,api,copyText:async t=>{copies.push(t);return true;}},location:{pathname:'/playlists/PLeligible/favorites'},
+const ctx={document,AutoShort:{el,api,musicBlock:()=>el('details'),copyText:async t=>{copies.push(t);return true;}},location:{pathname:'/playlists/PLeligible/favorites'},
  window:{addEventListener:()=>{},dispatchEvent:()=>{}},localStorage:{getItem:()=>null,setItem:()=>{}},
  setTimeout:(f,ms)=>{timers.push({f,ms});return timers.length;},clearTimeout:()=>{},confirm:()=>true};
 const tick=()=>new Promise(r=>setImmediate(r)), all=n=>[n,...n.children.filter(n=>n instanceof El).flatMap(all)];

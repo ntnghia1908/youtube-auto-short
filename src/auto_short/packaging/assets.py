@@ -40,6 +40,7 @@ def list_assets(asset_dir: Path) -> list[dict]:
                     or not all(type(a.get(k)) in (int, float) and math.isfinite(a[k]) and a[k] >= 0
                                for k in ("width", "height", "duration")):
                 raise PackageError("invalid asset entry")
+            _metadata(a)
             seen.add(a["id"])
         return doc["assets"]
     except (OSError, ValueError, TypeError) as exc:
@@ -50,9 +51,11 @@ def _save(asset_dir, entries):
     atomic_write_json(asset_dir / "library.json", {"schema_version": 1, "assets": entries})
 
 
-def add(asset_dir: Path, file: Path, *, kind: str, source: str, license: str = "", tags=(), run=None) -> dict:
+def add(asset_dir: Path, file: Path, *, kind: str, source: str, license: str = "", tags=(),
+        title=None, artist=None, attribution=None, loop_end=None, run=None, expected_sha=None) -> dict:
     if kind not in KINDS or not source.strip():
         raise PackageError("asset needs a kind and source")
+    metadata = _metadata(dict(title=title, artist=artist, attribution=attribution, loop_end=loop_end))
     ext = file.suffix.lower().lstrip(".")
     if not re.fullmatch(r"[a-z0-9]{1,8}", ext):
         raise PackageError("invalid asset extension")
@@ -62,6 +65,8 @@ def add(asset_dir: Path, file: Path, *, kind: str, source: str, license: str = "
         staged = Path(tmp) / ("media." + ext)
         shutil.copyfile(file, staged)
         digest = sha256_file(staged)
+        if expected_sha is not None and digest != expected_sha:
+            raise PackageError("music sha256 changed during import")
         existing = next((a for a in entries if a["id"] == digest), None)
         if existing is not None:
             return existing  # importing again cannot change provenance or approval
@@ -75,6 +80,9 @@ def add(asset_dir: Path, file: Path, *, kind: str, source: str, license: str = "
         entry = dict(id=digest, file=f"{digest}.{ext}", kind=kind, tags=list(tags), source=source.strip(),
                      license=license.strip(), approved=False, width=int(video["width"]) if video else 0,
                      height=int(video["height"]) if video else 0, duration=duration)
+        if loop_end is not None and loop_end > duration:
+            raise PackageError("loop_end exceeds asset duration")
+        entry.update(metadata)
         os.replace(staged, asset_dir / entry["file"])
         _save(asset_dir, [*entries, entry])
         return entry
@@ -122,3 +130,64 @@ def import_post_images(config, *, license: str, run=None) -> list[dict]:
     return [add(config.packaging.asset_dir, folder / image.name, kind="image", license=license, tags=[Path(image.name).stem],
                 source=sources.get(image.name) or (folder / image.name).absolute().as_uri(), run=run)
             for image in list_images(folder)]
+
+
+def _metadata(values):
+    result = {}
+    for key in ("title", "artist", "attribution"):
+        value = values.get(key)
+        if value is not None:
+            if not isinstance(value, str):
+                raise PackageError(f"{key} must be text")
+            result[key] = value.strip()
+    end = values.get("loop_end")
+    if end is not None:
+        if type(end) not in (int, float) or not math.isfinite(end) or end <= 0:
+            raise PackageError("loop_end must be a positive number")
+        result["loop_end"] = float(end)
+    return result
+
+
+def unapprove(asset_dir: Path, ident: str) -> dict:
+    entries = list_assets(asset_dir)
+    entry = next((a for a in entries if a["id"] == ident), None)
+    if entry is None:
+        raise PackageError("unknown asset id")
+    entry["approved"] = False
+    _save(asset_dir, entries)
+    return entry
+
+
+def import_music(asset_dir: Path, manifest: Path, directory: Path, *, run=None) -> dict:
+    """Refuse pending entries explicitly; preflight all verified files before importing any."""
+    try:
+        doc = json.loads(manifest.read_text(encoding="utf-8"))
+        tracks = doc["tracks"]
+        if doc.get("schema_version") != 1 or not isinstance(tracks, list):
+            raise ValueError
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise PackageError("invalid music manifest") from exc
+    accepted, rejected = [], []
+    for track in tracks:
+        if not isinstance(track, dict):
+            raise PackageError("invalid music track")
+        if track.get("license_status") != "verified":
+            rejected.append(dict(id=track.get("id"), reason="license pending / not verified"))
+            continue
+        name = track.get("filename")
+        if not isinstance(name, str) or Path(name).name != name or "\\" in name or name in (".", ".."):
+            raise PackageError("invalid music filename")
+        path = directory / name
+        if any(p.is_symlink() for p in (path, *path.parents)) or not path.is_file():
+            raise PackageError(f"missing music file: {name}")
+        if sha256_file(path) != track.get("sha256"):
+            raise PackageError(f"music sha256 mismatch: {name}")
+        if not all(isinstance(track.get(k), str) and track[k].strip() for k in ("source", "license")):
+            raise PackageError("verified music needs source + license")
+        _metadata(track)
+        accepted.append((track, path))
+    imported = [add(asset_dir, path, kind="music", source=t["source"], license=t["license"],
+                    tags=[t["id"]] if isinstance(t.get("id"), str) else [], run=run, expected_sha=t["sha256"],
+                    **{k: t.get(k) for k in ("title", "artist", "attribution", "loop_end")})
+                for t, path in accepted]
+    return dict(imported=imported, rejected=rejected)
