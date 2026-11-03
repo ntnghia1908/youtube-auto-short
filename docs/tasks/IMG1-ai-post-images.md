@@ -43,6 +43,8 @@ Trong hộp thoại "Thư viện ảnh": nhập từ khóa, bấm **"AI vẽ 5 �
 - D-IMG1-6: nguồn ảnh trong `sources.tsv` là `codex-ai:<từ khóa urlquote>` (vẫn 2 cột, không khoảng trắng); `origin` ứng viên = `"codex"`.
 - D-IMG1-7: từ khóa là dữ liệu không tin cậy: đặt trong khối dữ liệu JSON `ensure_ascii` với chỉ thị không thực thi, như `cover_suggest.prompt`.
 
+Số ảnh mỗi lượt đổi thành 10: docs/tasks/IMG2-ten-images.md.
+
 ## Implementation approach
 
 `post/imggen.py` (không phụ thuộc web):
