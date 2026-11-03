@@ -1,6 +1,7 @@
 """Per-clip KT thumbnails and Short intro images using approved covers and resolved titles."""
 from __future__ import annotations
 
+import colorsys
 import functools
 import itertools
 import os
@@ -10,7 +11,7 @@ from pathlib import Path
 
 from .. import khaithi
 from ..hashing import config_hash, sha256_file
-from ..render.stage import RenderError, _run, probe_media
+from ..render.stage import RenderError, _last_line, _run, probe_media
 from ..render.text import Font, TextError, _limit_units, check_glyphs, nfc, wrap_balanced
 from ..review.logic import ReviewError, added_entries, read_review, resolve_titles
 from ..titling.logic import TitlingError
@@ -18,11 +19,98 @@ from ..titling.playlist import stored_series
 from ..workspace import atomic_write_json, read_json_dict, utc_now
 from . import PackageError, cover, episode, thumbnail
 
-LAYOUT_VERSION = 6
+LAYOUT_VERSION = 7
+UNCHANGED_LAYOUT_VERSION = 6  # Landscape and THUMB2 retain their approved bytes and keys.
 PORTRAIT_NAME = re.compile(r"[0-9]{2}-[0-9a-f]{12}\.png")
 CLIP_ID = re.compile(r"[km][0-9]{2,}")
 FILE_NAME = re.compile(r"([km][0-9]{2,}-(?:vertical|landscape))-([a-f0-9]{64})\.jpg")
 SHORT_LABEL = "TRÍCH ĐOẠN"
+
+# VSAFE1 D2: order is significant; remove exactly the nearest original hue.
+TINTS = (
+    (5, "rs=.35:gs=-.05:bs=-.3:rm=.15:bm=-.1"),
+    (150, "rs=-.2:gs=.25:bs=-.05:gm=.1:rm=-.05"),
+    (30, "rs=.25:gs=.1:bs=-.35:rm=.1:bm=-.15"),
+    (225, "rs=-.3:gs=-.1:bs=.35:rm=-.1:bm=.15"),
+)
+
+
+@functools.lru_cache(maxsize=32)
+def _vertical_palette(image, digest, box):
+    """Average RGB inside the original box; SHA and box invalidate the small decode cache."""
+    x, y, w, h = box
+    with tempfile.TemporaryDirectory(prefix="kt-color-") as tmp:
+        pixel = Path(tmp) / "average.rgb"
+        proc = _run(["ffmpeg", "-v", "error", "-y", "-i", str(image), "-vf",
+                     f"format=rgb24,crop={w}:{h}:{x}:{y}:exact=1,scale=1:1:flags=area,format=rgb24",
+                     "-frames:v", "1", "-threads", "1", "-f", "rawvideo", str(pixel)])
+        if proc.returncode != 0 or not pixel.is_file() or pixel.stat().st_size != 3:
+            raise PackageError("không đọc được màu nền khai thị")
+        hue = colorsys.rgb_to_hsv(*(c / 255 for c in pixel.read_bytes()))[0] * 360
+    omitted = min(range(len(TINTS)), key=lambda i: abs((hue - TINTS[i][0] + 180) % 360 - 180))
+    return ("", *(tint for i, (_, tint) in enumerate(TINTS) if i != omitted))
+
+
+def vertical_entry(config, pid, entry):
+    """Opt KT/Short into VSAFE1 without changing covers or THUMB2's shared renderer."""
+    x, y, w, h = entry["box"]
+    stretch = max(0, 700 - h)
+    return dict(entry, box=[x, y, w, h + stretch], stretch=stretch, shift=max(0, 330 - y),
+                palette=_vertical_palette(cover.directory(config, pid) / entry["file"],
+                                          entry["sha256"], tuple(entry["box"])))
+
+
+def _stretch_frame(box, stretch):
+    """Extend the flat centre narrowly, but interpolate a broad band in the side scenery."""
+    x, y, w, height = box
+    h = height - stretch  # all sampling coordinates refer to the original cover
+    mid = y + h // 2
+    outside = max(1, min(150, h // 2 - 120))
+    columns = [(left, width, radius) for left, width, radius in
+               ((0, x, outside), (x, w, min(4, max(1, h // 2))), (x + w, 1080 - x - w, outside))
+               if width > 0]
+    graph = f",format=rgb24,split={len(columns)}" + "".join(f"[column{i}]" for i in range(len(columns)))
+    for i, (left, width, radius) in enumerate(columns):
+        top, band = mid - radius, radius * 2
+        graph += (f";[column{i}]crop={width}:1920:{left}:0:exact=1,split=3[a{i}][b{i}][c{i}];"
+                  f"[a{i}]crop={width}:{top}:0:0:exact=1[top{i}];"
+                  f"[b{i}]crop={width}:{band}:0:{top}:exact=1,"
+                  f"scale={width}:{band + stretch}:flags=bilinear[middle{i}];"
+                  f"[c{i}]crop={width}:{1920 - top - band}:0:{top + band}:exact=1[bottom{i}];"
+                  f"[top{i}][middle{i}][bottom{i}]vstack=inputs=3,crop={width}:1920:0:0:exact=1[stretched{i}]")
+    graph += ";" + "".join(f"[stretched{i}]" for i in range(len(columns)))
+    return graph + (f"hstack=inputs={len(columns)}" if len(columns) > 1 else "null")
+
+
+def _vertical_background(work, image, entry, number, run):
+    """Cache a lossless shifted/tinted background only inside this rendering's temporary tree."""
+    shift = entry["shift"]
+    stretch = entry["stretch"]
+    tint = entry["palette"][(int(number) - 1) % 4]
+    if not shift and not stretch and not tint:
+        return image
+    key = config_hash(dict(sha256=entry["sha256"], box=entry["box"], shift=shift, stretch=stretch, tint=tint))
+    destination = work / f"background-{key}.png"
+    if destination.is_file():
+        return destination
+    graph = "[0:v]setsar=1"
+    if stretch:
+        graph += _stretch_frame(entry["box"], stretch)
+    if shift:
+        strip = max(1, min(shift, entry["box"][1] - 60))
+        # Low-pass before enlargement: even a fragment near the frame becomes a smooth wash.
+        graph += (f",split[main][fill];[fill]crop=iw:{strip}:0:0:exact=1,"
+                  f"scale=16:16:flags=area,gblur=sigma=20:steps=3,scale=1080:{shift}[top];"
+                  f"[main]crop=1080:{1920 - shift}:0:0:exact=1[lower];[top][lower]vstack")
+    if tint:
+        graph += ",colorbalance=" + tint
+    graph += "[out]"
+    proc = (run or _run)(["ffmpeg", "-v", "error", "-y", "-filter_complex_threads", "1",
+                         "-i", str(image), "-filter_complex", graph, "-map", "[out]",
+                         "-frames:v", "1", "-threads", "1", str(destination)])
+    if proc.returncode != 0 or not destination.is_file() or not destination.stat().st_size:
+        raise RenderError(f"không dựng được nền dọc khai thị: {_last_line(proc.stderr)}")
+    return destination
 
 
 def directory(config, ident):
@@ -215,6 +303,7 @@ def vertical_clip(config, ident, clip_id, *, pid, fields, run=None, short=False)
     entry = cover.current(config, pid).get("kt_vertical")
     if entry is None:
         raise PackageError(f"Bộ kinh chưa có ảnh bìa khai thị — /playlists/{pid}/thumbs")
+    entry = vertical_entry(config, pid, entry)
     all_titles = titles(config, ident, include_hidden=True, short=short)
     title = next((t for t in all_titles if t.clip_id == clip_id and t.title and not t.rejected), None)
     if title is None:
@@ -260,6 +349,7 @@ def short_title(config, ident, clip_id, title, *, pid, fields, reuse_only=False)
     entry = cover.current(config, pid).get("kt_vertical")
     if entry is None:
         raise PackageError(f"Bộ kinh chưa có ảnh bìa khai thị — /playlists/{pid}/thumbs")
+    entry = vertical_entry(config, pid, entry)
     items = portraits(config)
     portrait, portrait_sha, facing = choose_portrait(items, fields["episode"])
     key = cache_key(title, fields["episode"], entry, "vertical", portrait_sha256=portrait_sha,
@@ -525,21 +615,30 @@ def _fit(title, label, speaker, series, fonts, box, width, height, *, strict):
 
 
 def draw(work, title, fields, entry, shape, image, filename, *, portrait=None, facing="front", run=None,
-         label=DEFAULT_LABEL, series_line=None):
-    lines, styles = layout(title, fields, entry["box"], label=label, series_line=series_line)
+         label=DEFAULT_LABEL, series_line=None, backgrounds=None):
+    box = entry["box"]
+    if shape == "vertical" and "palette" in entry:
+        image = _vertical_background(backgrounds or work, image, entry, fields["episode"], run)
+        x, y, w, h = box
+        box = [x, y + entry["shift"], w, h]
+    lines, styles = layout(title, fields, box, label=label, series_line=series_line)
     return cover.draw_lines(work, lines, image, filename, styles=styles, portrait=portrait,
-                            shape=shape, box=entry["box"], hflip=shape == "landscape" and facing == "left", run=run)
+                            shape=shape, box=box, hflip=shape == "landscape" and facing == "left", run=run)
 
 
 def cache_key(title, number, entry, shape, *, portrait_sha256=None, speaker="", series="", portrait_library=(), hflip=False,
               label=DEFAULT_LABEL, series_line=None):
     extra = {}
+    safe_vertical = shape == "vertical" and "palette" in entry
+    if safe_vertical:
+        extra.update(shift=entry["shift"], stretch=entry["stretch"], tint=entry["palette"][(int(number) - 1) % 4])
     if nfc(label) != DEFAULT_LABEL:
         extra["label"] = nfc(label)
     if series_line is not None and nfc(series_line) != nfc(f"{series} · Tập {number}"):
         extra["series_line"] = nfc(series_line)
     return config_hash(dict(title=nfc(title), episode=number, cover_sha256=entry["sha256"], box=entry["box"],
-                            layout_version=LAYOUT_VERSION, font_sha256=sha256_file(thumbnail.EPISODE_FONTS[cover.FONT_NAME]),
+                            layout_version=LAYOUT_VERSION if safe_vertical else UNCHANGED_LAYOUT_VERSION,
+                            font_sha256=sha256_file(thumbnail.EPISODE_FONTS[cover.FONT_NAME]),
                             sans_sha256=sha256_file(thumbnail.EPISODE_FONTS["sans"]), speaker=nfc(speaker), series=nfc(series),
                             portrait_sha256=portrait_sha256, portrait_library=portrait_library,
                             compounds_sha256=sha256_file(COMPOUNDS),
@@ -594,6 +693,8 @@ def valid_files(config, ident, *, pid=None):
             _, portrait_sha, facing = choose_portrait(items, fields["episode"])
             for shape, entry in doc["clips"].get(title.clip_id, {}).items():
                 c = covers.get("kt_" + shape)
+                if c and shape == "vertical":
+                    c = vertical_entry(config, pid, c)
                 if c and thumbnail.reusable(directory(config, ident), entry,
                         cache_key(title.title, fields["episode"], c, shape, portrait_sha256=portrait_sha,
                                   speaker=fields["speaker"], series=fields["series"],
@@ -613,6 +714,8 @@ def build_episode(config, ident, *, pid, run=None):
     covers = {s: covers["kt_" + s] for s in thumbnail.EPISODE_SIZES if "kt_" + s in covers}
     if not covers:
         return dict(built=0, reused=0, skipped_reason="bộ kinh chưa có ảnh bìa khai thị")
+    if "vertical" in covers:
+        covers["vertical"] = vertical_entry(config, pid, covers["vertical"])
     all_titles = titles(config, ident, include_hidden=True)
     selected = [t for t in all_titles if t.title and not t.rejected]
     if not selected:
@@ -645,7 +748,8 @@ def build_episode(config, ident, *, pid, run=None):
                 work.mkdir()
                 name = f"{title.clip_id}-{shape}-{key}.jpg"
                 image = draw(work, title.title, fields, entry, shape,
-                             cover.directory(config, pid) / entry["file"], name, portrait=portrait, facing=facing, run=run)
+                             cover.directory(config, pid) / entry["file"], name, portrait=portrait, facing=facing,
+                             run=run, backgrounds=Path(tmp))
                 files[shape] = dict(file=name, key=key, sha256=sha256_file(image))
                 staged.append((image, episode._no_symlinks(folder / name)))
                 counts["built"] += 1

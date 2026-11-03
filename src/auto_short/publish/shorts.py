@@ -6,7 +6,7 @@ from ..packaging import PackageError, cover, episode, khaithi_thumbs, thumbnail
 from ..render.stage import RenderError
 from ..render.text import TextError, nfc
 from ..titling.logic import TitlingError
-from . import PublishError, kt, thumbs
+from . import PublishError, kt, thumbs, youtube
 
 CODE = re.compile(r"^T([0-9]+)[ _]S([0-9]{1,3})(?!\d)", re.I)
 
@@ -27,6 +27,7 @@ def _web_thumbnail(config, ident, pid, clip_id):
     entry = cover.current(config, pid).get("kt_vertical")
     if title is None or entry is None:
         raise PublishError("chưa có tiêu đề hoặc bìa Short web hợp lệ")
+    entry = khaithi_thumbs.vertical_entry(config, pid, entry)
     fields = khaithi_thumbs.display_fields(config, pid, episode.header(config, ident))
     items = khaithi_thumbs.portraits(config)
     _, portrait_sha, _ = khaithi_thumbs.choose_portrait(items, fields["episode"])
@@ -55,7 +56,7 @@ def _thumbnail(config, row):
         raise PublishError("không đọc được hồ sơ thumbnail Short") from exc
 
 
-def plan(config, videos, *, pid, episodes=None):
+def plan(config, videos, *, pid, episodes=None, since=None):
     """Plan locally, generating only missing YouTube-title images; episodes is an inclusive pair."""
     numbers = kt._episodes(config, pid)
     rows = []
@@ -70,6 +71,10 @@ def plan(config, videos, *, pid, episodes=None):
         if episodes is not None and (match is None or not episodes[0] <= row["episode"] <= episodes[1]):
             continue
         rows.append(row)
+        reason = youtube.since_reason(video, since)
+        if reason:
+            row["reason"] = reason
+            continue
         if not row["youtube_id"]:
             row["reason"] = "thiếu id video YouTube"
             continue
