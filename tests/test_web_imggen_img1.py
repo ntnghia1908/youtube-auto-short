@@ -38,7 +38,7 @@ def test_generate_serve_pick_and_latest_without_queue(gen_cfg):
         app.state.post_image_gen.thread.join(15)
         run = c.get(f"/api/post-images/generate/{ident}").json()["run"]
         assert set(run) == {"search_id", "keyword", "status", "error", "tokens", "candidates", "skipped", "notes", "sources"}
-        assert run["status"] == "done" and len(run["candidates"]) == 5
+        assert run["status"] == "done" and len(run["candidates"]) == 10
         assert not app.state.runner.jobs()  # separate thread, no prepare job
         assert c.get("/api/post-images").json()["images"] == []
         for cand in run["candidates"]:
@@ -54,7 +54,7 @@ def test_generate_serve_pick_and_latest_without_queue(gen_cfg):
         assert picked.status_code == 200 and picked.json()["added"] == ["01.png", "02.png"]
         library = c.get("/api/post-images").json()["images"]
         assert len(library) == 2 and library[0]["source"] == "codex-ai:hoa%20sen%20T%E1%BB%8Bnh%20Kh%C3%B4ng"
-        assert len(c.get("/api/post-images/generate/latest").json()["run"]["candidates"]) == 3
+        assert len(c.get("/api/post-images/generate/latest").json()["run"]["candidates"]) == 8
         c.post("/api/post-images/candidates/add", json={"search_id": ident, "ids": ids[2:]})
         assert c.get("/api/post-images/generate/latest").json() == {"run": None}
 

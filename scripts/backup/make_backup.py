@@ -62,11 +62,11 @@ def sha_table(workspace: Path, output: Path, ids: list[str], cache_path: Path) -
 
 
 def render(template: str, *, table: dict[str, str], playlist: str, series: str, dest_name: str,
-           today: str) -> str:
+           today: str, speaker_label: str = "PS. Tịnh Không") -> str:
     lines = "\n".join(f'    "{k}" = "{v}"' for k, v in sorted(table.items()))
     return (template.replace("@@SHA@@", lines).replace("@@GENERATED@@", today)
             .replace("@@PLAYLIST@@", ps_quote(playlist)).replace("@@SERIES@@", ps_quote(series))
-            .replace("@@DESTNAME@@", ps_quote(dest_name)))
+            .replace("@@DESTNAME@@", ps_quote(dest_name)).replace("@@SPEAKER@@", ps_quote(speaker_label)))
 
 
 def to_crlf_bom(text: str) -> bytes:
@@ -100,7 +100,8 @@ def main(argv: list[str] | None = None) -> int:
     args.out.mkdir(parents=True, exist_ok=True)
     table = sha_table(workspace, output, ids, args.out / "vertical-sha.cache.json")
     text = render((HERE / "backup.template.ps1").read_text(encoding="utf-8"), table=table, playlist=args.playlist,
-                  series=args.series.strip(), dest_name=args.dest_name, today=datetime.date.today().isoformat())
+                  series=args.series.strip(), dest_name=args.dest_name, today=datetime.date.today().isoformat(),
+                  speaker_label=cfg.store.speaker_label)
     out = args.out / "backup.ps1"
     out.write_bytes(to_crlf_bom(text))
     rename = render((HERE / "rename.template.ps1").read_text(encoding="utf-8"), table={}, playlist=args.playlist,

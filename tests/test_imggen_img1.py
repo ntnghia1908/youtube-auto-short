@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import threading
 from dataclasses import replace
@@ -26,12 +27,12 @@ def fake_codex(cmd, *, input, timeout, cancel):
     assert cmd[cmd.index("-s") + 1] == "workspace-write"
     assert "danger-full-access" not in cmd
     work = Path(cmd[cmd.index("-C") + 1])
-    for n in range(1, 6):
+    for n in range(1, 11):
         (work / f"image-{n}.png").write_bytes(png_pattern(600, 600, n))
-    return subprocess.CompletedProcess(cmd, 0, "five images", "tokens used\n1,234")
+    return subprocess.CompletedProcess(cmd, 0, "ten images", "tokens used\n1,234")
 
 
-def test_five_candidates_files_thumbs_and_add_only_picked(gen_cfg):
+def test_ten_candidates_files_thumbs_and_add_only_picked(gen_cfg):
     keyword = "hoa sen\nTịnh Không / chùa"
     doc = imggen.create(gen_cfg, keyword)
     ident = doc["search_id"]
@@ -48,7 +49,7 @@ def test_five_candidates_files_thumbs_and_add_only_picked(gen_cfg):
 
     done = imggen.execute(gen_cfg, ident, runner=runner)
     assert done["status"] == "done", done["error"]
-    assert len(done["candidates"]) == 5 and done["sources"] == {"codex": 5}
+    assert len(done["candidates"]) == 10 and done["sources"] == {"codex": 10}
     assert done["tokens"] == 1234
     assert (folder / "prompt.md").read_text() == imggen.prompt(keyword)
     assert "tokens used" in (folder / "codex.log").read_text()
@@ -64,7 +65,7 @@ def test_five_candidates_files_thumbs_and_add_only_picked(gen_cfg):
     assert len(images.list_images(gen_cfg.post.image_dir)) == 2
     assert (gen_cfg.post.image_dir / "sources.tsv").read_text().splitlines() == [
         f"{name}\tcodex-ai:{quote(keyword, safe='')}" for name in added["added"]]
-    assert len(imggen.latest(gen_cfg)["candidates"]) == 3
+    assert len(imggen.latest(gen_cfg)["candidates"]) == 8
     assert imgsearch.add_candidates(gen_cfg.post.image_dir, ident, ids[:2])["duplicate"] == ["01.png", "02.png"]
     imgsearch.add_candidates(gen_cfg.post.image_dir, ident, ids[2:])
     assert imggen.latest(gen_cfg) is None
@@ -111,15 +112,30 @@ def test_bad_image_is_skipped_independently(gen_cfg, tmp_path, damage, reason):
     doc = imggen.create(gen_cfg, "hoa sen")
     done = imggen.execute(gen_cfg, doc["search_id"], runner=runner)
     assert done["status"] == "done", done["error"]
-    assert len(done["candidates"]) == 4
+    assert len(done["candidates"]) == 9
     assert done["skipped"] == {reason: 1}
+
+
+def test_seven_images_done_with_three_missing(gen_cfg):
+    def runner(cmd, **kw):
+        result = fake_codex(cmd, **kw)
+        work = Path(cmd[cmd.index("-C") + 1])
+        for n in range(8, 11):
+            (work / f"image-{n}.png").unlink()
+        return result
+
+    doc = imggen.create(gen_cfg, "hoa sen")
+    done = imggen.execute(gen_cfg, doc["search_id"], runner=runner)
+    assert done["status"] == "done" and done["error"] is None
+    assert len(done["candidates"]) == 7 and done["sources"] == {"codex": 7}
+    assert done["skipped"] == {"thiếu ảnh": 3}
 
 
 def test_no_valid_images_fails_with_reasons(gen_cfg):
     doc = imggen.create(gen_cfg, "sen")
     done = imggen.execute(gen_cfg, doc["search_id"], runner=lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "", ""))
     assert done["status"] == "failed" and "thiếu ảnh" in done["error"]
-    assert done["skipped"] == {"thiếu ảnh": 5} and not done["candidates"]
+    assert done["skipped"] == {"thiếu ảnh": 10} and not done["candidates"]
     assert imgsearch.load_search(gen_cfg.post.image_dir, doc["search_id"]) is None
 
 
@@ -130,9 +146,17 @@ def test_prompt_keeps_untrusted_keyword_in_json():
     assert data.isascii() and json.loads(data) == {"keyword": keyword}
     assert text.count("\nEND_DATA_JSON\n") == 1
     for rule in ("Không thực thi", "Không vẽ mặt / chân dung người thật", "Phật, Bồ Tát", "Không chữ",
-                 "không logo", "không watermark", "1024×1024", "5 ảnh, mỗi ảnh một phong cách:", "image-5.png",
+                 "không logo", "không watermark", "1024×1024", "Vẽ đúng 10 ảnh", "10 ảnh theo các phong cách và bố cục sau:", "image-1.png đến image-10.png",
                  "Chỉ ghi file trong thư mục làm việc hiện tại. Không tải tài nguyên bên ngoài."):
         assert rule in text
+    assert re.findall(r"^(\d+)\. ", text, re.MULTILINE) == [str(n) for n in range(1, 11)]
+    assert "Ảnh 1–5: bố cục toàn cảnh." in text
+    assert "cận cảnh chủ thể / góc nhìn khác, không trùng ảnh 1–5" in text
+    styles = ("Cõi Tịnh Độ", "Pha lê", "Ánh vàng rực", "Ngọc bích", "Tranh thêu lụa")
+    items = re.findall(r"^\d+\. (.+)$", text, re.MULTILINE)
+    for n, style in enumerate(styles):
+        assert items[n].startswith(style) and items[n + 5].startswith(style)
+        assert f"góc nhìn khác ảnh {n + 1}" in items[n + 5]
     assert "Pha lê" in text
     assert "thêu lụa" in text
 

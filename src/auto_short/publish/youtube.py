@@ -9,6 +9,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from ..workspace import atomic_write_json, read_json_dict
@@ -20,6 +21,26 @@ API_URL = "https://www.googleapis.com/youtube/v3/"
 UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/thumbnails/set"
 SCOPES = "https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/youtube.upload"
 FULL_SCOPE = "https://www.googleapis.com/auth/youtube"
+
+
+def since_reason(video, since):
+    """VSAFE1 D3: keep all private uploads; compare other publication dates in Vietnam."""
+    if since is None:
+        return ""
+    cutoff = date.fromisoformat(since)
+    status = video.get("status") if isinstance(video, dict) else None
+    status = status if isinstance(status, dict) else {}
+    if status.get("privacyStatus") == "private":
+        return ""  # Scheduled (any publishAt) and unscheduled uploads will go public later.
+    snippet = video.get("snippet") if isinstance(video, dict) else None
+    snippet = snippet if isinstance(snippet, dict) else {}
+    try:
+        published = datetime.fromisoformat(snippet.get("publishedAt", "").replace("Z", "+00:00"))
+        if published.tzinfo is None or status.get("privacyStatus") not in ("public", "unlisted"):
+            raise ValueError
+    except (AttributeError, TypeError, ValueError):
+        return "thiếu trạng thái hoặc ngày đăng YouTube hợp lệ"
+    return f"đăng trước {since}" if published.astimezone(timezone(timedelta(hours=7))).date() < cutoff else ""
 
 
 def default_client():
@@ -214,9 +235,16 @@ class YouTube:
                 raise ValueError
         except (KeyError, IndexError, TypeError, ValueError):
             raise PublishError("không tìm thấy playlist uploads của kênh") from None
+        return self._playlist_videos(uploads, "uploads")
+
+    def playlist_videos(self, playlist_id):
+        """Read only the selected playlist, with the same paging as uploads."""
+        return self._playlist_videos(playlist_id, "playlist")
+
+    def _playlist_videos(self, playlist_id, label):
         ids, seen_ids, seen_pages, page = [], set(), set(), None
         while True:
-            params = dict(part="contentDetails", playlistId=uploads, maxResults=50)
+            params = dict(part="contentDetails", playlistId=playlist_id, maxResults=50)
             if page:
                 params["pageToken"] = page
             doc = self._list("playlistItems", **params)
@@ -229,16 +257,16 @@ class YouTube:
                         ids.append(ident)
                         seen_ids.add(ident)
             except (KeyError, TypeError, ValueError):
-                raise PublishError("danh sách uploads không hợp lệ") from None
+                raise PublishError(f"danh sách {label} không hợp lệ") from None
             page = doc.get("nextPageToken")
             if not page:
                 break
             if not isinstance(page, str) or page in seen_pages:
-                raise PublishError("phân trang uploads không hợp lệ")
+                raise PublishError(f"phân trang {label} không hợp lệ")
             seen_pages.add(page)
         result = []
         for offset in range(0, len(ids), 50):
-            doc = self._list("videos", part="fileDetails,snippet", id=",".join(ids[offset:offset + 50]))
+            doc = self._list("videos", part="fileDetails,snippet,status", id=",".join(ids[offset:offset + 50]))
             if not isinstance(doc.get("items"), list):
                 raise PublishError("danh sách video không hợp lệ")
             result.extend(doc["items"])

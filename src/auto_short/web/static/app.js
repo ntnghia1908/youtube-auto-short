@@ -326,12 +326,13 @@ const AutoShort = (() => {
         const text = el("textarea", { class: "post-textarea", readonly: true,
           "aria-label": `Bài đăng ${p.clip_id}` });
         text.value = p.copy_text;
-        const copy = copyTitleButton(p.copy_text);
-        copy.querySelector("button").style.minHeight = "40px";
-        copy.querySelector("button").title = "Copy bài đăng";
         const tick = el("input", { type: "checkbox", checked: p.posted_at !== null });
         const label = el("label", { class: "publish-label", style: "min-height:40px" }, tick, " Đã đăng bài");
-        tick.addEventListener("change", async () => {
+        // POSTCOPY1: a successful copy ticks "Đã đăng bài" (an already ticked post is left alone).
+        const copy = copyTitleButton(p.copy_text, () => { if (!tick.checked) { tick.checked = true; setPosted(); } });
+        copy.querySelector("button").style.minHeight = "40px";
+        copy.querySelector("button").title = "Copy bài đăng";
+        const setPosted = async () => {
           const value = tick.checked;
           tick.disabled = true;
           try {
@@ -343,7 +344,8 @@ const AutoShort = (() => {
             updateCount();
           } catch (e) { tick.checked = p.posted_at !== null; alert(e.message); }
           finally { tick.disabled = false; }
-        });
+        };
+        tick.addEventListener("change", setPosted);
         card.append(el("strong", { text: `${p.clip_id} · ${p.short_title || "Bài đăng"}` }), text);
         if (p.image && !p.image_missing) {
           const image = el("img", { src: `/files/post-images/${encodeURIComponent(p.image)}`, alt: "Ảnh bài đăng",
@@ -1948,6 +1950,7 @@ const AutoShort = (() => {
   function initPosts() {
     episodeId = decodeURIComponent(location.pathname.split("/").filter(Boolean)[1] || "");
     postsPage.vid = episodeId.endsWith(".kt") ? episodeId.slice(0, -3) : episodeId;
+    buildImageLibrary($("#image-dialog .modal-box"));
     initImageDialog();
     $("#posts-compose-missing").addEventListener("click", composeMissing);
     initCorrections();
@@ -2086,46 +2089,6 @@ const AutoShort = (() => {
       : `Trung bình bạn sửa ${st.avg_changed_pct}% từ mỗi bài (${Math.min(st.saves, 20)} lần lưu gần nhất).`;
   }
 
-  // --- CP8.17 D1/D2: "Đã đăng bài" ticks itself once the post text was copied AND its image downloaded -----------
-  // Marks live in the browser (localStorage, memory fallback): per post ``{copy: <text copied>, image: <image
-  // downloaded>}``; a mark only counts while the post still has that text / image. No image to download -> the
-  // copy alone is enough (D2 = a). The marks of a post are cleared once it ticks, so an un-tick by hand sticks.
-  const POST_MARKS_KEY = "autoShort.postMarks";
-  let postMarksMem = {};
-
-  function readPostMarks() {
-    try {
-      const raw = localStorage.getItem(POST_MARKS_KEY);
-      const v = raw ? JSON.parse(raw) : {};
-      if (v && typeof v === "object" && !Array.isArray(v)) postMarksMem = v;
-    } catch (_) { /* keep the in-memory marks */ }
-    return postMarksMem;
-  }
-
-  function writePostMarks(marks) {
-    postMarksMem = marks;
-    try { localStorage.setItem(POST_MARKS_KEY, JSON.stringify(marks)); } catch (_) { /* memory only */ }
-  }
-
-  function setPostMark(key, kind, value) {
-    const marks = readPostMarks();
-    marks[key] = { ...(marks[key] || {}), [kind]: value };
-    writePostMarks(marks);
-  }
-
-  function clearPostMark(key) {
-    const marks = readPostMarks();
-    if (key in marks) { delete marks[key]; writePostMarks(marks); }
-  }
-
-  // True when the marks of ``key`` cover ``post`` (the stored post: text, image, image_missing).
-  function postMarksDone(key, post) {
-    const mark = readPostMarks()[key] || {};
-    if (!post || typeof post.text !== "string" || mark.copy !== post.text) return false;
-    const hasImage = !!post.image && !post.image_missing;
-    return !hasImage || mark.image === post.image;
-  }
-
   // One Short's post card: title + "Xem Short" + the editor (paragraphs, image, link, copy, "Soạn lại", "Đã đăng bài"),
   // always open. ``cur`` = the stored post (view of ``GET …/posts``) or null (not composed yet).
   function postCard(g, s, cur) {
@@ -2175,7 +2138,6 @@ const AutoShort = (() => {
       const download = cur.image && !cur.image_missing
         ? el("a", { class: "btn small", href: `/files/post-images/${encodeURIComponent(cur.image)}?download=1`,
           text: "Tải ảnh" }) : null;
-      if (download) download.addEventListener("click", () => markPostStep("image", cur.image));
 
       const link = el("input", { type: "url", value: cur.link || "", placeholder: "Dán link Short (tùy chọn)",
         "aria-label": "Link Short" });
@@ -2183,7 +2145,7 @@ const AutoShort = (() => {
       const linkMsg = el("span", { class: "small", hidden: true });
       linkSave.addEventListener("click", () => saveLink(link, linkSave, linkMsg));
 
-      const copyBtn = copyPostButton(cur, () => markPostStep("copy", cur.text));
+      const copyBtn = copyPostButton(cur, tickPostedAfterCopy);
       const composeAgain = el("button", { class: "btn small", type: "button", text: "Soạn lại" });
       const composeMsg = el("p", { class: "error small", hidden: true });
       composeAgain.addEventListener("click", () => compose(composeAgain, composeMsg));
@@ -2258,13 +2220,9 @@ const AutoShort = (() => {
       btn.disabled = false;
     }
 
-    // CP8.17 D1: remember a step of this post (copy / image download); tick "Đã đăng bài" once both are done.
-    async function markPostStep(kind, value) {
+    // POSTCOPY1 (replaces CP8.17 D1/D2): a successful "Sao chép bài" ticks "Đã đăng bài" at once, like Short / khai thị.
+    async function tickPostedAfterCopy() {
       if (!cur || cur.posted) return; // a ticked post is left alone
-      const key = `${g.id}/${s.clip_id}`;
-      setPostMark(key, kind, value);
-      if (!postMarksDone(key, cur)) return;
-      clearPostMark(key);
       try {
         const r = await api(url("/posted"), jsonBody("POST", { value: true }));
         changed({ ...cur, posted: r.posted, posted_at: r.posted_at });
@@ -2290,12 +2248,60 @@ const AutoShort = (() => {
     return card;
   }
 
-  // --- image library (P5, P5a, P5b): a modal shared by every "Đổi ảnh" button --------------------------------
+  // --- image library (P5, P5a, P5b): shared page and "Đổi ảnh" dialog --------------------------------
 
   let imagePickCallback = null;
+  let imageLibraryPage = false;
+
+  function buildImageLibrary(container) {
+    // Fixed markup shared by the standalone page and the post image picker.
+    container.insertAdjacentHTML("beforeend", `
+    <div class="pane">
+      <div class="edit-actions">
+        <label class="btn small" for="image-upload-input">Tải ảnh lên
+          <input id="image-upload-input" type="file" accept="image/jpeg,image/png" hidden></label>
+        <input id="image-search-url" type="url" placeholder="Dán link ảnh hoặc trang có ảnh…" aria-label="Link tìm ảnh">
+        <button id="image-search-btn" class="btn small" type="button">Tìm ảnh</button>
+      </div>
+      <div id="image-quick-links" class="edit-actions" hidden></div>
+      <div class="edit-actions">
+        <input id="image-find-keyword" type="text" placeholder="Tìm ảnh theo từ khóa (vd: Tây Phương Tam Thánh)…" aria-label="Từ khóa tìm ảnh">
+        <button id="image-find-btn" class="btn small primary" type="button">Tìm theo từ khóa</button>
+        <button id="image-generate-btn" class="btn small" type="button" disabled>AI vẽ 10 ảnh</button>
+        <button id="image-generate-cancel" class="btn small" type="button" hidden>Hủy</button>
+        <button id="image-redistribute-btn" class="btn small" type="button">Chia lại ảnh cho bài chưa đăng</button>
+      </div>
+      <p id="image-find-sources" class="muted small"></p>
+      <div id="image-candidates" hidden>
+        <div class="edit-actions">
+          <strong id="image-cand-title"></strong>
+          <button id="image-cand-all" class="btn small" type="button">Chọn tất cả</button>
+          <button id="image-cand-none" class="btn small" type="button">Bỏ chọn</button>
+          <button id="image-cand-add" class="btn small primary" type="button">Thêm vào thư viện</button>
+          <button id="image-cand-dismiss" class="btn small" type="button" hidden>Bỏ các ảnh này</button>
+        </div>
+        <p id="image-cand-skipped" class="muted small"></p>
+        <div id="image-cand-grid" class="img-grid"></div>
+        <hr>
+      </div>
+      <p id="image-msg" class="small" hidden></p>
+      <div id="image-grid" class="img-grid"></div>
+    </div>
+    `);
+  }
+
+  async function initImages() {
+    imageLibraryPage = true;
+    imagePickCallback = null;
+    buildImageLibrary($("#image-library"));
+    initImageDialog();
+    checkDisk();
+    await loadImageGrid();
+    await latestImageGenerate();
+  }
 
   function initImageDialog() {
-    $("#image-close").addEventListener("click", closeImageDialog);
+    $("#image-close")?.addEventListener("click", closeImageDialog);
     $("#image-upload-input").addEventListener("change", (e) => {
       const f = e.target.files[0];
       if (f) uploadImageFile(f);
@@ -2312,11 +2318,12 @@ const AutoShort = (() => {
     $("#image-cand-dismiss").addEventListener("click", dismissImageCandidates);
     $("#image-redistribute-btn").addEventListener("click", redistributeImages);
     document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && !$("#image-dialog").hidden) closeImageDialog();
+      if (e.key === "Escape" && !imageLibraryPage && !$("#image-dialog").hidden) closeImageDialog();
     });
   }
 
   function closeImageDialog() {
+    if (imageLibraryPage) return;
     stopImageGeneratePoll();
     $("#image-dialog").hidden = true;
     document.body.classList.remove("modal-open");
@@ -2468,7 +2475,7 @@ const AutoShort = (() => {
   }
 
   function showImageGenerate(run, seq) {
-    if (seq !== imageGenerateSeq || $("#image-dialog").hidden) return;
+    if (seq !== imageGenerateSeq || (!imageLibraryPage && $("#image-dialog").hidden)) return;
     imageGenerateRun = run;
     updateImageGenerateButtons();
     if (!run) {
@@ -2477,7 +2484,7 @@ const AutoShort = (() => {
       return;
     }
     if (run.status === "running") {
-      imgMsg("Codex đang vẽ… có thể đóng hộp thoại, quay lại sau");
+      imgMsg(imageLibraryPage ? "Codex đang vẽ… có thể quay lại sau" : "Codex đang vẽ… có thể đóng hộp thoại, quay lại sau");
       imageGenerateTimer = setTimeout(() => pollImageGenerate(run.search_id, seq), 3000);
     } else if (run.status === "done") {
       renderCandidates(run);
@@ -2506,12 +2513,12 @@ const AutoShort = (() => {
   }
 
   async function pollImageGenerate(id, seq) {
-    if (seq !== imageGenerateSeq || $("#image-dialog").hidden) return;
+    if (seq !== imageGenerateSeq || (!imageLibraryPage && $("#image-dialog").hidden)) return;
     try {
       const r = await api(`/api/post-images/generate/${encodeURIComponent(id)}`);
       showImageGenerate(r.run, seq);
     } catch (e) {
-      if (seq === imageGenerateSeq && !$("#image-dialog").hidden) {
+      if (seq === imageGenerateSeq && (imageLibraryPage || !$("#image-dialog").hidden)) {
         imgMsg(e.message, "error");
         imageGenerateTimer = setTimeout(() => pollImageGenerate(id, seq), 3000);
       }
@@ -2525,7 +2532,7 @@ const AutoShort = (() => {
       const r = await api("/api/post-images/generate/latest");
       showImageGenerate(r.run, seq);
     } catch (e) {
-      if (seq === imageGenerateSeq && !$("#image-dialog").hidden) imgMsg(e.message, "error");
+      if (seq === imageGenerateSeq && (imageLibraryPage || !$("#image-dialog").hidden)) imgMsg(e.message, "error");
     }
   }
 
@@ -2538,7 +2545,7 @@ const AutoShort = (() => {
       const r = await api("/api/post-images/generate", jsonBody("POST", { keyword }));
       showImageGenerate(r.run, seq);
     } catch (e) {
-      if (seq === imageGenerateSeq && !$("#image-dialog").hidden) {
+      if (seq === imageGenerateSeq && (imageLibraryPage || !$("#image-dialog").hidden)) {
         imgMsg(e.message, "error");
         updateImageGenerateButtons();
       }
@@ -4048,5 +4055,5 @@ const AutoShort = (() => {
   }
   document.addEventListener("DOMContentLoaded", initQueueBar);
 
-  return { initIndex, initEpisode, initStorage, initPlaylist, initPosts, initMonitor, el, api, copyText, musicBlock };
+  return { initIndex, initEpisode, initStorage, initPlaylist, initPosts, initImages, initMonitor, el, api, copyText, musicBlock };
 })();

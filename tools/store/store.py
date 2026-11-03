@@ -24,6 +24,25 @@ COLUMNS = ("tap", "loai", "file", "video_id", "tieu_de")
 KINDS = {"HD": "hd", "Doc": "vertical", "Goc": "source"}
 MAX_BODY = 20 * 1024**3
 CHUNK = 1024 * 1024
+REVISION = re.compile(r" \(r[0-9]+\)(?=\.mp4$)")
+HD_NAME = re.compile(r"^\[(HD|HD Mobile|HD Dọc)\] (.+) - Tập ([0-9]+)\.mp4$")
+DEFAULT_SPEAKER = "PS. Tịnh Không"
+
+
+def hd_name(name: str, speaker: str = DEFAULT_SPEAKER) -> str:
+    """Derive the current HD name from its filename, never from optional CSV fields."""
+    match = HD_NAME.fullmatch(REVISION.sub("", name))
+    if match is None:
+        raise StoreError(400, "HD file name must contain a series and episode number")
+    tag, title, number = match.groups()
+    if "tịnh không" not in title.casefold() and not title.endswith(" - " + speaker):
+        title += " - " + speaker
+    return validate_name(f"[{tag}] {title} - Tập {number}.mp4")
+
+
+def vertical_key(name: str) -> str:
+    # Same convention as PUB2: the optional segment before 'Tập' is the speaker.
+    return re.sub(r" - .+? - Tập (?=[0-9]+\.mp4$)", " - Tập ", REVISION.sub("", name))
 
 
 class StoreError(Exception):
@@ -236,8 +255,11 @@ class Store:
         sums = inside(folder, "SHA256SUMS.txt")
         columns = ("video_id", "clip", "file") if kind == "short" else COLUMNS
         fields = list(columns)
-        if index.exists() and index.stat().st_size:
-            with index.open(encoding="utf-8-sig", newline="") as stream:
+        source = index
+        if kind != "short" and (not source.exists() or not source.stat().st_size):
+            source = inside(folder, "danh-sach.csv")
+        if source.exists() and source.stat().st_size:
+            with source.open(encoding="utf-8-sig", newline="") as stream:
                 fields = next(csv.reader(stream))
             if not set(columns).issubset(fields):
                 raise StoreError(400, "Invalid CSV columns for append")
@@ -295,6 +317,85 @@ class Store:
                 writer.writeheader()
             writer.writerow(row)
         self._cache.pop(folder, None)
+
+    def _archive_plan(self, folder: Path, paths: list[Path]) -> list[tuple[Path, Path]]:
+        """Reserve unique names in _cu without overwriting any previous archive."""
+        archive = no_links(folder / "_cu")
+        if archive.exists() and not archive.is_dir():
+            raise StoreError(409, "Archive must be a directory")
+        moves, reserved = [], set()
+        for path in sorted(set(paths)):
+            inside(folder, path.name)
+            target = inside(archive, path.name)
+            revision = 2
+            while target.exists() or target in reserved:
+                target = inside(archive, f"{path.stem} (r{revision}).mp4")
+                revision += 1
+            reserved.add(target)
+            moves.append((path, target))
+        return moves
+
+    def rename_vertical(self, series: str, *, apply: bool = False,
+                        speaker: str = DEFAULT_SPEAKER,
+                        format: str = "{tag} {title} - Tập {episode}.mp4") -> list[dict]:
+        """Plan HD + vertical renames, append catalogue records and archive older media."""
+        if not SERIES_ID.fullmatch(series):
+            raise StoreError(400, "Invalid series")
+        with self._put_lock, self._lock:
+            folder = self.folders().get(series)
+            if folder is None:
+                raise StoreError(404, "Unknown series")
+            if any(folder.rglob("*.part")):
+                raise StoreError(409, "Partial files exist in series")
+            rows = self._rows(folder)
+            self._metadata(folder)
+            # Retain historical identity attribution even if a previous file used another title.
+            history = {}
+            for filename in ("danh-sach.csv", "index.csv"):
+                index = inside(folder, filename)
+                if index.exists():
+                    with index.open(encoding="utf-8-sig", newline="") as stream:
+                        for row in csv.DictReader(stream):
+                            history[row["file"]] = (row["video_id"], KINDS.get(row["loai"]))
+            current = {r["file"] for r in rows}
+            planned, targets, archived = [], set(), set()
+            media = [inside(folder, p.name) for p in folder.iterdir() if p.suffix == ".mp4"]
+            for row in rows:
+                if row["kind"] not in ("hd", "vertical"):
+                    continue
+                old = inside(folder, row["file"])
+                if not old.is_file():
+                    raise StoreError(409, "Current HD file is missing")
+                canonical = HD_NAME.fullmatch(hd_name(row["file"], speaker))
+                tag, title, number = canonical.groups()
+                name = validate_name(format.format(tag=f"[{tag}]", title=title, episode=number))
+                # A custom format must keep the recognized HD identity and naming convention.
+                if name != hd_name(name, speaker) or vertical_key(name) != vertical_key(row["file"]):
+                    raise StoreError(400, "Format must preserve the HD series, tag and episode")
+                dest = inside(folder, name)
+                if name in targets or (name != row["file"] and name in current):
+                    raise StoreError(409, "Rename target belongs to another current file")
+                targets.add(name)
+                key = (row["video_id"], row["kind"])
+                older = [p for p in media if p.name not in current and
+                         (history.get(p.name) == key or
+                          (p.name not in history and vertical_key(p.name) == vertical_key(row["file"])))]
+                if archived.intersection(older):
+                    raise StoreError(409, "Ambiguous archival identity")
+                if dest.exists() and dest != old and dest not in older:
+                    raise StoreError(409, "Rename destination already exists")
+                archived.update(older)
+                planned.append(dict(row, old=row["file"], file=name, archive=[p.name for p in older]))
+            moves = self._archive_plan(folder, list(archived))
+            if apply:
+                for source, target in moves:
+                    target.parent.mkdir(exist_ok=True)
+                    source.rename(target)
+                for row in planned:
+                    if row["old"] != row["file"]:
+                        inside(folder, row["old"]).rename(inside(folder, row["file"]))
+                        self._publish(folder, row["video_id"], row["kind"], row["file"], row["sha256"])
+            return planned
 
     def _replaced_metadata(self, folder: Path, video_id: str, name: str, sha: str, size: int) -> None:
         index = inside(folder, "index.csv" if (folder / "index.csv").exists() else "danh-sach.csv")
@@ -361,8 +462,9 @@ class Store:
                         current = row
                         continue
                     if same_key and kind in ("short", "vertical"):
-                        base = re.sub(r" \(r[0-9]+\)(?=\.mp4$)", "", row["file"])
-                        if row["series"] != series or name not in (base, row["file"]):
+                        base = REVISION.sub("", row["file"])
+                        matches = (vertical_key(name) == vertical_key(row["file"])) if kind == "vertical" else name in (base, row["file"])
+                        if row["series"] != series or not matches:
                             raise StoreError(409, "Identity already has a different file")
                         current = row
                         continue
@@ -380,8 +482,18 @@ class Store:
                         name = current["file"]
                         dest = inside(folder, name)
                         part = inside(folder, name + ".part")
+                    elif kind == "vertical":
+                        incoming = HD_NAME.fullmatch(REVISION.sub("", name))
+                        # Prefer the sender's explicit speaker; legacy senders retain the current label.
+                        candidate = name if incoming and " - " in incoming[2] else current["file"]
+                        parsed = HD_NAME.fullmatch(REVISION.sub("", candidate))
+                        speaker = (parsed[2].rsplit(" - ", 1)[1] if parsed and " - " in parsed[2]
+                                   else self.config.get("speaker_label", DEFAULT_SPEAKER))
+                        name = hd_name(candidate, speaker)
+                        dest = inside(folder, name)
+                        part = inside(folder, name + ".part")
                     else:
-                        base = re.sub(r" \(r[0-9]+\)(?=\.mp4$)", "", current["file"])
+                        base = REVISION.sub("", current["file"])
                         revision = 2
                         while True:
                             name = f"{base[:-4]} (r{revision}).mp4"
@@ -390,7 +502,11 @@ class Store:
                             if not dest.exists() and not part.exists():
                                 break
                             revision += 1
-            if dest.exists():
+            replacing_vertical = kind == "vertical" and current is not None and current["sha256"] != sha
+            archive_moves = self._archive_plan(folder, [inside(folder, current["file"])]) if replacing_vertical else []
+            if replacing_vertical and dest.exists() and dest.name != current["file"]:
+                raise StoreError(409, "Vertical destination already exists")
+            if dest.exists() and not replacing_vertical:
                 with dest.open("rb") as existing:
                     actual = hashlib.file_digest(existing, "sha256").hexdigest()
                 if replace_sha is not None and actual != replace_sha:
@@ -435,9 +551,20 @@ class Store:
                             actual = hashlib.file_digest(existing, "sha256").hexdigest()
                         if actual != replace_sha:
                             raise StoreError(409, "Replacement file changed during upload")
-                    elif dest.exists():
+                    elif dest.exists() and not (replacing_vertical and dest.name == current["file"]):
                         raise StoreError(409, "Destination appeared during upload")
-                    os.replace(part, dest)
+                    for source, target in archive_moves:
+                        no_links(target.parent).mkdir(exist_ok=True)
+                        inside(target.parent, target.name)
+                        if target.exists():
+                            raise StoreError(409, "Archive destination appeared during upload")
+                        inside(folder, source.name).rename(target)
+                    try:
+                        os.replace(part, dest)
+                    except OSError:
+                        for source, target in reversed(archive_moves):
+                            target.rename(source)
+                        raise
                     if replace_sha is not None:
                         self._replaced_metadata(folder, video_id, name, sha, length)
                     else:
@@ -560,9 +687,23 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=Path("config.json"))
     parser.add_argument("--self-test", action="store_true", help="Validate config/token/folders/index without binding a socket")
+    commands = parser.add_subparsers(dest="command")
+    rename = commands.add_parser("rename-vertical", help="Rename current HD/vertical files; dry run unless --apply")
+    rename.add_argument("--series", required=True)
+    rename.add_argument("--speaker-label", default=DEFAULT_SPEAKER)
+    rename.add_argument("--format", default="{tag} {title} - Tập {episode}.mp4",
+                        help="Filename template: {tag}, {title} (including speaker), {episode}")
+    rename.add_argument("--apply", action="store_true")
     args = parser.parse_args(argv)
     try:
         store = Store(load_config(args.config))
+        if args.command == "rename-vertical":
+            rows = store.rename_vertical(args.series, apply=args.apply, speaker=args.speaker_label, format=args.format)
+            print("Apply" if args.apply else "Dry run")
+            print("Kind\tOld\tNew\tArchive")
+            for row in rows:
+                print(f"{row['kind']}\t{row['old']}\t{row['file']}\t{', '.join(row['archive'])}")
+            return 0
         entries = store.index()
         if args.self_test:
             print(f"Self-test OK: {len(store.folders())} series, {len(entries)} files "
@@ -575,7 +716,7 @@ def main(argv=None) -> int:
             server.serve_forever()
     except KeyboardInterrupt:
         return 0
-    except (OSError, ValueError, StoreError, csv.Error):
+    except (OSError, ValueError, KeyError, IndexError, StoreError, csv.Error):
         # Config/OS exception strings may include private paths or input; keep output generic.
         print("Store check failed: inspect config, token, folders and CSV/SHA256SUMS files", file=sys.stderr)
         return 1
