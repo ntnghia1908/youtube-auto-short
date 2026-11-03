@@ -65,6 +65,7 @@ from . import (
     theme_plan as theme_plan_web,
     packaging as packaging_web,
     episode_thumbs as episode_thumbs_web,
+    post_image_gen as post_image_gen_web,
 )
 from .auth import COOKIE_NAME, SessionSigner, load_or_create_secret
 from .storage import StorageCache, auto_archive_plan, episode_sizes, parse_time, video_id
@@ -261,6 +262,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                post_compose: Callable | None = None,
                post_preflight: Callable[[Config], None] | None = post_stage.preflight,
                post_search: Callable | None = None, keyword_search: Callable | None = None, doc_prepare: Callable | None = None,
+               codex_runner: Callable | None = None,
                auto_archive_interval: float = AUTO_ARCHIVE_INTERVAL,
                enhance_tokens: dict[str, str] | None = None, enhance_service: EnhanceService | None = None,
                proc_dir: str = "/proc", ollama_ps: Callable[[], dict] | None = None,
@@ -919,6 +921,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     theme_plans = theme_plan_web.ThemePlans(config, playlists, runner, preflight=preflight)
     packages = packaging_web.Packages(theme_plans)
     episode_thumbs = episode_thumbs_web.EpisodeThumbs(theme_plans)
+    post_image_gen = post_image_gen_web.PostImageGen(config, codex_runner=codex_runner)
     runner.configure_persistence(Path(config.workspace.dir) / QUEUE_FILE, _rebuild_job)
     runner.priority.attach(Path(config.workspace.dir) / PRIORITY_FILE)  # CP8.26 P1
     auto_vertical.attach(Path(config.workspace.dir) / WISH_FILE)  # CP8.35 D3
@@ -980,6 +983,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     app.state.theme_plans = theme_plans
     app.state.packages = packages
     app.state.episode_thumbs = episode_thumbs
+    app.state.post_image_gen = post_image_gen
     app.state.signer = signer
     download_table = dl_mod.DownloadTable()  # CP8.34 D3: progress of ``?dl=<token>`` downloads (memory only)
     app.state.downloads = download_table
@@ -1010,6 +1014,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         post_preflight=post_preflight,
         post_search=post_search,
         keyword_search=keyword_search,
+        post_image_gen=post_image_gen,
         doc_prepare=doc_prepare,
         render=render,
         titler=titler,

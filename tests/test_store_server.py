@@ -515,3 +515,169 @@ def test_hd_replace_bad_body_and_other_kinds_do_not_change_store(archive):
     assert (folder / NAME).read_bytes() == DATA and service.index()[0]["sha256"] == SHA
     assert request(service, "PUT", route.replace("/hd?", "/vertical?"), headers, DATA)[0] == 400
     assert not list(folder.glob("*.part"))
+
+
+@pytest.mark.parametrize("catalog", ["index.csv", "danh-sach.csv"])
+def test_rename_hd_vertical_dry_run_apply_idempotent(archive, catalog, capsys):
+    service, folder, config = archive
+    fields = ["video_id", "file", "loai", "tap", "tieu_de", "extra"]
+    rows, sums, archived = [], [], {}
+    for number in range(1, 103):
+        vid = f"{number:011d}"
+        for tag, kind in (("HD Mobile", "Doc"), ("HD", "HD")):
+            base = f"[{tag}] Kinh Địa Tạng - Tập {number}.mp4"
+            revision = number <= 64 if kind == "Doc" else number % 2 == 0
+            name = base[:-4] + " (r2).mp4" if revision else base
+            rows.append(dict(video_id=vid, loai=kind, file=name, tap=str(number), tieu_de="title", extra="kept"))
+            data = f"{vid}:{kind}".encode()
+            (folder / name).write_bytes(data)
+            sums.append(f"{hashlib.sha256(data).hexdigest()}  {name}\r\n")
+            if revision:
+                (folder / base).write_bytes(b"archive")
+                archived[base] = b"archive"
+    # G2: title itself already names the speaker; source and Shorts stay untouched.
+    extra = "[HD] Lời Dạy Tịnh Không - Tập 7.mp4"
+    rows.append(dict(video_id=VIDEO, loai="HD", file=extra, tap="7", tieu_de="", extra=""))
+    (folder / extra).write_bytes(DATA)
+    sums.append(f"{SHA}  {extra}\r\n")
+    with (folder / catalog).open("w", encoding="utf-8-sig", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=fields, quoting=csv.QUOTE_ALL)
+        writer.writeheader()
+        writer.writerows(rows)
+    (folder / "SHA256SUMS.txt").write_bytes("".join(sums).encode())
+    assert service.put(VIDEO, "source", PLAYLIST, "[Goc] source.mp4", SHA, io.BytesIO(DATA), len(DATA)) == 201
+    assert service.put(VIDEO, "short", PLAYLIST, "Short.mp4", SHA, io.BytesIO(DATA), len(DATA), "k01.mp4") == 201
+    # Existing archive collision must preserve both copies.
+    (folder / "_cu").mkdir()
+    first = next(iter(archived))
+    (folder / "_cu" / first).write_bytes(b"previous archive")
+    before = {p.relative_to(folder): p.read_bytes() for p in folder.rglob("*") if p.is_file()}
+    old_index = json.loads(request(service)[2])
+    assert store.main(["--config", str(config), "rename-vertical", "--series", PLAYLIST]) == 0
+    assert "Dry run" in capsys.readouterr().out
+    assert {p.relative_to(folder): p.read_bytes() for p in folder.rglob("*") if p.is_file()} == before
+    assert store.main(["--config", str(config), "rename-vertical", "--series", PLAYLIST, "--apply"]) == 0
+    after = json.loads(request(service)[2])
+    assert len(after) == len(old_index)
+    for old, new in zip(old_index, after):
+        assert (old["video_id"], old["kind"], old["sha256"], old["size"]) == (new["video_id"], new["kind"], new["sha256"], new["size"])
+        expected = store.hd_name(old["file"]) if old["kind"] in ("hd", "vertical") else old["file"]
+        assert new["file"] == expected
+    assert (folder / extra).is_file()
+    assert len(list((folder / "_cu").iterdir())) == len(archived) + 1
+    assert (folder / "_cu" / first).read_bytes() == b"previous archive"
+    with (folder / "index.csv").open(encoding="utf-8-sig", newline="") as stream:
+        assert next(csv.reader(stream)) == fields
+    for name in ("index.csv", "SHA256SUMS.txt"):
+        assert b"\n" not in (folder / name).read_bytes().replace(b"\r\n", b"")
+    snapshot = {p.relative_to(folder): (p.read_bytes(), p.stat().st_mtime_ns) for p in folder.rglob("*") if p.is_file()}
+    service.rename_vertical(PLAYLIST, apply=True)
+    assert {p.relative_to(folder): (p.read_bytes(), p.stat().st_mtime_ns) for p in folder.rglob("*") if p.is_file()} == snapshot
+
+
+@pytest.mark.parametrize("failure", ["part", "archive-part", "collision", "symlink", "bad-format", "bad-current"])
+def test_rename_refuses_unsafe_plan_without_changes(archive, failure):
+    service, folder, _ = archive
+    seed(folder)
+    if failure == "part":
+        (folder / "upload.part").touch()
+    elif failure == "archive-part":
+        (folder / "_cu").mkdir()
+        (folder / "_cu" / "upload.part").touch()
+    elif failure == "collision":
+        # A target attributed to a different identity cannot be archived.
+        name = store.hd_name(NAME)
+        (folder / name).write_bytes(b"foreign")
+        with (folder / "index.csv").open("a", newline="") as stream:
+            csv.writer(stream).writerow(["2", "Goc", name, "zyxWVUT9876", "foreign"])
+    elif failure == "symlink":
+        (folder / "_cu").symlink_to(folder.parent, target_is_directory=True)
+    elif failure == "bad-current":
+        service.put(VIDEO, "vertical", PLAYLIST, "unparsed.mp4", SHA, io.BytesIO(DATA), len(DATA))
+    before = {p.name: p.read_bytes() for p in folder.iterdir() if p.is_file()}
+    with pytest.raises(store.StoreError):
+        service.rename_vertical(PLAYLIST, apply=True, format="../bad.mp4" if failure == "bad-format" else "{tag} {title} - Tập {episode}.mp4")
+    assert {p.name: p.read_bytes() for p in folder.iterdir() if p.is_file()} == before
+
+
+@pytest.mark.parametrize("renamed", [False, True])
+def test_vertical_put_accepts_transition_names_and_archives_only_after_validation(archive, renamed):
+    service, folder, _ = archive
+    base = "[HD Mobile] Kinh Địa Tạng - Tập 1.mp4"
+    old = base[:-4] + " (r2).mp4"
+    assert service.put(VIDEO, "vertical", PLAYLIST, old, SHA, io.BytesIO(DATA), len(DATA)) == 201
+    if renamed:
+        service.rename_vertical(PLAYLIST, apply=True)
+    current = service.index()[0]["file"]
+    new_name = "[HD Mobile] Kinh Địa Tạng - PS. Tịnh Không - Tập 1.mp4"
+    before = {p.name: p.read_bytes() for p in folder.iterdir() if p.is_file()}
+    route = f"/files/{VIDEO}/vertical?"
+    for name in (base, old, new_name):
+        assert request(service, "PUT", route + urlencode(dict(series=PLAYLIST, name=name)),
+                       {"Content-Length": str(len(DATA)), "X-Sha256": SHA}, DATA)[0] == 200
+    assert {p.name: p.read_bytes() for p in folder.iterdir() if p.is_file()} == before
+    for name in (base.replace("Tập 1", "Tập 2"), base.replace("Địa Tạng", "Vô Lượng Thọ")):
+        assert request(service, "PUT", route + urlencode(dict(series=PLAYLIST, name=name)),
+                       {"Content-Length": str(len(DATA)), "X-Sha256": SHA}, DATA)[0] == 409
+    data = b"new intro"
+    sha = hashlib.sha256(data).hexdigest()
+    query = urlencode(dict(series=PLAYLIST, name=base))
+    headers = {"Content-Length": str(len(data)), "X-Sha256": sha}
+    assert request(service, "PUT", route + query, {**headers, "X-Sha256": "0" * 64}, data)[0] == 422
+    assert (folder / current).read_bytes() == DATA and not (folder / "_cu").exists()
+    assert request(service, "PUT", route + query, headers, data)[0] == 201
+    assert (folder / "_cu" / current).read_bytes() == DATA
+    assert (folder / new_name).read_bytes() == data
+    assert service.index()[0]["file"] == new_name and service.index()[0]["sha256"] == sha
+    newer = data + b"again"
+    assert service.put(VIDEO, "vertical", PLAYLIST, new_name, hashlib.sha256(newer).hexdigest(), io.BytesIO(newer), len(newer)) == 201
+    assert sorted(p.read_bytes() for p in (folder / "_cu").iterdir()) == sorted([DATA, data])
+    assert list(folder.glob("*.mp4")) == [folder / new_name]
+
+
+def test_hd_replace_after_rename_uses_current_path(archive):
+    service, folder, _ = archive
+    seed(folder, "danh-sach.csv")
+    service.rename_vertical(PLAYLIST, apply=True)
+    name = "[HD] Kinh Địa Tạng - PS. Tịnh Không - Tập 1.mp4"
+    route = f"/files/{VIDEO}/hd?" + urlencode(dict(series=PLAYLIST, name=name))
+    data = b"intro" + DATA
+    sha = hashlib.sha256(data).hexdigest()
+    headers = {"Content-Length": str(len(data)), "X-Sha256": sha, "X-Replace-Sha256": SHA}
+    assert request(service, "PUT", route, headers, data)[0] == 200
+    assert service.lookup(VIDEO, "hd")[0] == dict(video_id=VIDEO, kind="hd", series=PLAYLIST, file=name, size=len(data), sha256=sha)
+    assert request(service, "GET", f"/files/{VIDEO}/hd")[2] == data
+
+
+@pytest.mark.parametrize("failure", [None, "part", "collision", "symlink", "rename-io", "incomplete"])
+def test_vertical_custom_label_and_failed_update_preserve_current(archive, monkeypatch, failure):
+    service, folder, _ = archive
+    old = "[HD Mobile] Bộ thử - Tập 7.mp4"
+    name = "[HD Mobile] Bộ thử - Thầy Thử - Tập 7.mp4"
+    service.put(VIDEO, "vertical", PLAYLIST, old, SHA, io.BytesIO(DATA), len(DATA))
+    data = b"new-intro"
+    sha = hashlib.sha256(data).hexdigest()
+    if failure == "part":
+        (folder / (name + ".part")).write_bytes(b"foreign partial")
+    elif failure == "collision":
+        (folder / name).write_bytes(b"foreign file")
+    elif failure == "symlink":
+        (folder / "_cu").symlink_to(folder.parent, target_is_directory=True)
+    elif failure == "rename-io":
+        def fail(*args):
+            raise OSError("simulated rename failure")
+        monkeypatch.setattr(store.os, "replace", fail)
+    if failure:
+        index_before = service.index()
+        sums_before = (folder / "SHA256SUMS.txt").read_bytes()
+        with pytest.raises(OSError if failure == "rename-io" else store.StoreError):
+            service.put(VIDEO, "vertical", PLAYLIST, name, sha, io.BytesIO(b"" if failure == "incomplete" else data), len(data))
+        assert service.index() == index_before
+        assert (folder / "SHA256SUMS.txt").read_bytes() == sums_before
+        assert (folder / old).read_bytes() == DATA
+    else:
+        assert service.put(VIDEO, "vertical", PLAYLIST, name, sha, io.BytesIO(data), len(data)) == 201
+        assert service.index()[0]["file"] == name
+        newer = data + b"again"
+        assert service.put(VIDEO, "vertical", PLAYLIST, old, hashlib.sha256(newer).hexdigest(), io.BytesIO(newer), len(newer)) == 201
+        assert service.index()[0]["file"] == name and (folder / name).read_bytes() == newer
