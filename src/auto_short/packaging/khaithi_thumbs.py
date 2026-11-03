@@ -251,6 +251,45 @@ def vertical_clip(config, ident, clip_id, *, pid, fields, run=None, short=False)
     return destination
 
 
+def short_title(config, ident, clip_id, title, *, pid, fields, reuse_only=False):
+    """Cache a supplied YouTube title separately from KTI2; reuse_only never renders or writes."""
+    if not re.fullmatch(r"s[0-9]{2,3}", clip_id) or not title.strip():
+        raise PackageError("mã hoặc tiêu đề Short không hợp lệ")
+    folder = episode._no_symlinks(episode.directory(config, ident).parent / "short_yt_thumbs")
+    sidecar = episode._no_symlinks(folder / "thumbs.json")
+    entry = cover.current(config, pid).get("kt_vertical")
+    if entry is None:
+        raise PackageError(f"Bộ kinh chưa có ảnh bìa khai thị — /playlists/{pid}/thumbs")
+    items = portraits(config)
+    portrait, portrait_sha, facing = choose_portrait(items, fields["episode"])
+    key = cache_key(title, fields["episode"], entry, "vertical", portrait_sha256=portrait_sha,
+                    speaker=fields["speaker"], series=fields["series"],
+                    portrait_library=[sha for _, sha, _ in items], label=SHORT_LABEL)
+    old = read_json_dict(sidecar) or {}
+    if old and (old.get("schema_version") != 1 or old.get("video_id") != ident
+                or old.get("playlist_id") != pid or not isinstance(old.get("clips"), dict)
+                or any(not isinstance(files, dict) for files in old["clips"].values())):
+        raise PackageError("hồ sơ thumbnail Short từ tiêu đề YouTube không hợp lệ")
+    previous = old.get("clips", {}).get(clip_id, {}).get("vertical")
+    pattern = re.compile(r"(s[0-9]{2,3}-vertical)-([a-f0-9]{64})\.jpg")
+    if thumbnail.reusable(folder, previous, key, file_pattern=pattern):
+        return folder / previous["file"]
+    if reuse_only:
+        raise PackageError("ảnh Short từ tiêu đề YouTube đã cũ hoặc không hợp lệ")
+    folder.mkdir(parents=True, exist_ok=True)
+    name = f"{clip_id}-vertical-{key}.jpg"
+    with tempfile.TemporaryDirectory(prefix=".short-yt-", dir=folder) as tmp:
+        image = draw(Path(tmp), title, fields, entry, "vertical", cover.directory(config, pid) / entry["file"],
+                     name, portrait=portrait, facing=facing, label=SHORT_LABEL)
+        destination = episode._no_symlinks(folder / name)
+        os.replace(image, destination)
+    doc = dict(old, schema_version=1, video_id=ident, playlist_id=pid, header=fields, updated_at=utc_now())
+    doc.setdefault("clips", {}).setdefault(clip_id, {})["vertical"] = dict(
+        file=name, key=key, sha256=sha256_file(destination), title=title)
+    atomic_write_json(sidecar, doc)
+    return destination
+
+
 def enqueue_intro_rebuild(config, runner, pid, first, last, *, prioritize_first_ten=False, short=False):
     """Queue KTI1 or KTI2 Shorts on the live runner, including already published clips.
 

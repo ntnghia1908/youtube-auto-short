@@ -10,8 +10,8 @@ from . import PublishError, thumbs
 CODE = re.compile(r"^T([0-9]+)[ _]KT([0-9]{1,3})(?!\d)", re.I)
 
 
-def _code(value):
-    return CODE.match(nfc(value.strip())) if isinstance(value, str) else None
+def _code(value, pattern=CODE):
+    return pattern.match(nfc(value.strip())) if isinstance(value, str) else None
 
 
 def _title_key(value):
@@ -19,33 +19,45 @@ def _title_key(value):
     return " ".join(re.sub(r"[\W_]+", " ", thumbs._series(value)).split())
 
 
-def plan(config, videos, *, pid, shape="landscape"):
-    """Plan without HTTP or writes; only source-playlist episodes with khaithi.json qualify."""
+def _episodes(config, pid, *, khai_thi=False):
+    """Index source episodes by the header authority; KT additionally requires its marker."""
     numbers = {}
     for entry in episode.playlist(config, pid)["entries"]:
         try:
             base = entry["video_id"]
-            episode.directory(config, base)  # validate before entering workspace paths
+            episode.directory(config, base)
             if base.endswith(".kt"):
                 continue
-            ident = base + ".kt"
-            marker = episode._no_symlinks(Path(config.workspace.dir) / ident / "khaithi.json")
-            if marker.is_file():
-                number = int(episode.header(config, base)["episode"])
-                numbers.setdefault(number, set()).add(ident)
+            ident = base + ".kt" if khai_thi else base
+            if khai_thi:
+                marker = episode._no_symlinks(Path(config.workspace.dir) / ident / "khaithi.json")
+                if not marker.is_file():
+                    continue
+            number = int(episode.header(config, base)["episode"])
+            numbers.setdefault(number, set()).add(ident)
         except (PackageError, TitlingError, OSError, ValueError, KeyError, TypeError):
             continue
+    return numbers
 
+
+def _video_row(video, pid, shape):
+    details = video.get("fileDetails") if isinstance(video, dict) else None
+    snippet = video.get("snippet") if isinstance(video, dict) else None
+    name = details.get("fileName") if isinstance(details, dict) else None
+    title = snippet.get("title") if isinstance(snippet, dict) else None
+    ident = video.get("id") if isinstance(video, dict) else None
+    row = dict(youtube_id=ident if isinstance(ident, str) else "",
+               file_name=name if isinstance(name, str) else "", playlist_id=pid,
+               code="", shape=shape, status="bỏ qua", reason="", warning="")
+    return row, name, title
+
+
+def plan(config, videos, *, pid, shape="landscape"):
+    """Plan without HTTP or writes; only source-playlist episodes with khaithi.json qualify."""
+    numbers = _episodes(config, pid, khai_thi=True)
     rows = []
     for video in videos:
-        details = video.get("fileDetails") if isinstance(video, dict) else None
-        name = details.get("fileName") if isinstance(details, dict) else None
-        snippet = video.get("snippet") if isinstance(video, dict) else None
-        title = snippet.get("title") if isinstance(snippet, dict) else None
-        youtube_id = video.get("id") if isinstance(video, dict) else None
-        row = dict(youtube_id=youtube_id if isinstance(youtube_id, str) else "",
-                   file_name=name if isinstance(name, str) else "", playlist_id=pid,
-                   code="", shape=shape, status="bỏ qua", reason="", warning="")
+        row, name, title = _video_row(video, pid, shape)
         rows.append(row)
         file_code, title_code = _code(name), _code(title)
         if not row["youtube_id"]:

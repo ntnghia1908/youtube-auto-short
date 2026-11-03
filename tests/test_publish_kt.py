@@ -335,3 +335,27 @@ def test_shape_change_reapplies_without_force(workspace, cli, wire, capsys):
         hashes.append(record["sha256"])
         assert not capsys.readouterr().err
     assert hashes[0] != hashes[1] == hashes[2]
+
+
+@pytest.mark.parametrize("options,expected", [
+    (["--episodes", "7-7"], ["uploaded002"]),
+    (["--only", " uploaded001,missing "], ["uploaded001"]),
+    (["--episodes", "7-11", "--only", "uploaded002"], ["uploaded002"]),
+    (["--episodes", "1-6"], []),
+])
+def test_cli_episode_and_only_filters(workspace, cli, wire, capsys, options, expected):
+    source = [video(), video("T7_KT05_Giữ tâm.mp4", "", "uploaded002")]
+    wire.replies.extend([*listing(*source), *[dict(items=[]) for _ in expected]])
+    assert main([*cli, *options, "--apply"], transport=wire.send) == 0
+    captured = capsys.readouterr()
+    rows = json.loads(captured.out[captured.out.index("{\n"):])["rows"]
+    assert [r["youtube_id"] for r in rows] == expected
+    assert len([c for c in wire.calls if c[0] == "POST"]) == len(expected) and not wire.replies
+
+
+@pytest.mark.parametrize("command", ["kt-thumbs", "short-thumbs"])
+@pytest.mark.parametrize("value", ["0-9", "9-1", "9", "a-b"])
+def test_cli_rejects_invalid_episode_ranges(wire, command, value):
+    with pytest.raises(SystemExit) as exc:
+        main([command, "--playlist", PID, "--yt-playlist", YT_PID, "--episodes", value], transport=wire.send)
+    assert exc.value.code == 2 and not wire.calls
