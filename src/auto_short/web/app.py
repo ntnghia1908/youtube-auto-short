@@ -102,8 +102,20 @@ from .jobs import (
 from .auto_vertical import WISH_FILE, AutoVertical
 from .priority import PRIORITY_FILE
 from .playlists import LIST_TIMEOUT, PlaylistStore, ytdlp_list
+from .post_links import PostLinks
 
 log = logging.getLogger("auto_short")
+
+
+async def _post_link_loop(service: PostLinks, hours: float) -> None:
+    if hours <= 0:
+        return
+    while True:
+        try:
+            await asyncio.to_thread(service.sync_all)
+        except Exception:
+            log.warning("web: quét link bài đăng lỗi; sẽ thử lại")
+        await asyncio.sleep(hours * 3600)
 
 
 def backup_busy(ctx: WebContext, owner: str):
@@ -926,6 +938,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         runner.recheck_parked()  # CP13.1b: "đợi HD" jobs whose HD is ready by now
         sampler.start()
         sweeper = asyncio.create_task(_auto_archive_loop())
+        post_link_sync = asyncio.create_task(_post_link_loop(ctx.post_links, config.post.link_sync_hours))
         store_retry = asyncio.create_task(_store_retry_loop())
         source_backup = asyncio.create_task(_source_backup_loop())
         offload_stop.clear()
@@ -941,6 +954,8 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             shorts_offload.cancel()
             await asyncio.gather(shorts_offload, return_exceptions=True)
             sweeper.cancel()
+            post_link_sync.cancel()
+            await asyncio.gather(post_link_sync, return_exceptions=True)
             store_retry.cancel()
             source_backup.cancel()
             vertical_offload.cancel()
@@ -982,6 +997,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         playlists=playlists,
         publish_lock=publish_lock,
         post_lock=post_lock,
+        post_links=None,
         signer=signer,
         svc=svc,
         sampler=sampler,
@@ -1008,6 +1024,8 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         release_hd=_release_hd,
         restore_target=_restore_target,
     )
+    ctx.post_links = PostLinks(ctx)
+    app.state.post_links = ctx.post_links
     @app.middleware("http")
     async def auth_middleware(request: Request, call_next):
         path = request.url.path

@@ -329,6 +329,7 @@ class PostConfig:
     ollama_host: str = "http://127.0.0.1:11437"
     timeout: float = 600.0
     retry_backoff: tuple[float, ...] = (5.0, 15.0)
+    link_sync_hours: float = 6.0  # LNK1: 0 = manual scans only
 
 
 @dataclass(frozen=True)
@@ -829,6 +830,9 @@ def _music(data):
 def _post(data: dict) -> PostConfig:
     po = _section(data, "post")
     d, w = PostConfig(), "post"
+    link_sync_hours = _number(po, "link_sync_hours", d.link_sync_hours, w, lo=0)
+    if not math.isfinite(link_sync_hours):
+        raise ConfigError("post.link_sync_hours must be finite and >= 0")
     backoff = po.get("retry_backoff", list(d.retry_backoff))
     if not isinstance(backoff, list) or not all(
             isinstance(x, (int, float)) and not isinstance(x, bool) and 0 <= x <= 3600 for x in backoff):
@@ -850,6 +854,7 @@ def _post(data: dict) -> PostConfig:
         search_max_pages=_int(po, "search_max_pages", d.search_max_pages, w, lo=1, hi=50),
         search_max_candidates=_int(po, "search_max_candidates", d.search_max_candidates, w, lo=1, hi=200),
         google_daily_limit=_int(po, "google_daily_limit", d.google_daily_limit, w, lo=0, hi=10000),
+        link_sync_hours=link_sync_hours,
         candidate_ttl_hours=_number(po, "candidate_ttl_hours", d.candidate_ttl_hours, w, lo=0.1, hi=720),
         corrections_path=Path(_str(po, "corrections_path", str(d.corrections_path), w)).expanduser(),
         ollama_host=_str(po, "ollama_host", d.ollama_host, w),

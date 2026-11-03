@@ -69,7 +69,7 @@ Lister = Callable[[str, Config], dict]  # (playlist url, config) -> yt-dlp flat 
 
 
 MAX_HASHTAGS = 15
-USER_FIELDS = ("hashtags", "series", "doc_url", "doc_videos_per_page")
+USER_FIELDS = ("hashtags", "series", "doc_url", "doc_videos_per_page", "link_playlists")
 SAMPLE_TITLE = "Tiêu đề mẫu dài sáu mươi ký tự để xem trước hashtag trên YouTube"[:60]
 
 
@@ -280,6 +280,23 @@ class PlaylistStore:
         return doc, added
 
     # --- hashtags (bổ sung HUMAN LEAD 2026-09-27) -----------------------------------------------------
+
+    def set_link_playlist(self, playlist_id: str, youtube_id: str, *, remove: bool = False) -> dict:
+        """LNK1: edit the attached playlists under the same lock as refresh / other user fields."""
+        if not valid_playlist_id(youtube_id):
+            raise PlaylistError("playlist id không hợp lệ")
+        with self._lock:
+            doc = self.load(playlist_id)
+            if doc is None:
+                raise FileNotFoundError(playlist_id)
+            ids = list(doc.get("link_playlists") or [])
+            if remove:
+                ids = [ident for ident in ids if ident != youtube_id]
+            elif youtube_id not in ids:
+                ids.append(youtube_id)
+            doc["link_playlists"] = ids
+            atomic_write_json(self.path(playlist_id), doc)
+        return doc
 
     def set_hashtags(self, playlist_id: str, values: list[str] | None) -> dict:
         """Store the playlist's full ordered hashtag list (``None`` = back to the default: field removed)."""

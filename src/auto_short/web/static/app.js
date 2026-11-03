@@ -3124,6 +3124,7 @@ const AutoShort = (() => {
     initHashtags();
     initSeries();
     initDoc();
+    initLinkPlaylists();
     $("#pl-delete").addEventListener("click", deletePlaylist);
     initDownloadQueue();
     loadPlaylist();
@@ -3475,6 +3476,55 @@ const AutoShort = (() => {
     });
   }
 
+  function linkPlaylistsLoad(d) {
+    const ids = d.link_playlists || [];
+    $("#lp-state").textContent = `${ids.length} playlist`;
+    $("#lp-list").replaceChildren(...ids.map((id) => {
+      const remove = el("button", { class: "btn small", type: "button", text: "Gỡ" });
+      remove.addEventListener("click", () => linkPlaylistsRequest("DELETE", "/" + encodeURIComponent(id)));
+      return el("li", {}, el("a", { href: `https://youtube.com/playlist?list=${encodeURIComponent(id)}`,
+        target: "_blank", rel: "noopener", text: id }), " ", remove);
+    }));
+    const scan = d.last_scan;
+    const interval = d.link_sync_hours ? `Tự cập nhật mỗi ${d.link_sync_hours} giờ.` : "Chỉ cập nhật bằng tay.";
+    const c = scan ? scan.counts : {};
+    $("#lp-result").textContent = scan
+      ? `Lần quét ${fmtTime(scan.scanned_at)}: đã điền ${c.filled}, không có mã ${c.no_code}, không khớp ${c.unmatched}, trùng ${c.duplicate}, khác link ${c.different}, chờ soạn ${c.waiting}. ${interval}`
+      : `Chưa quét. ${interval}`;
+    $("#lp-errors").replaceChildren(...((scan && scan.errors) || []).map((e) =>
+      el("li", { text: (e.playlist_id ? e.playlist_id + ": " : "") + e.error })));
+    const labels = { no_code: "không có mã", unmatched: "không có Short tương ứng", duplicate: "trùng mã",
+      different: "khác link", waiting: "chờ soạn" };
+    $("#lp-unmatched").replaceChildren(...((scan && scan.rows) || []).filter((r) => labels[r.reason]).map((r) =>
+      el("li", {}, el("a", { href: `https://youtube.com/watch?v=${encodeURIComponent(r.video_id)}`,
+        target: "_blank", rel: "noopener", text: r.title }), ` — ${labels[r.reason]}`)));
+  }
+
+  let linkPlaylistsBusy = false;
+  async function linkPlaylistsRequest(method, suffix = "", body) {
+    if (linkPlaylistsBusy) return;
+    linkPlaylistsBusy = true;
+    $("#lp-add").disabled = $("#lp-sync").disabled = true;
+    $("#lp-msg").textContent = "Đang cập nhật…";
+    try {
+      const d = await api(`/api/playlists/${encodeURIComponent(playlistId)}/link-playlists${suffix}`,
+        body ? jsonBody(method, body) : { method });
+      linkPlaylistsLoad(d);
+      if (body) $("#lp-input").value = "";
+      $("#lp-msg").textContent = "Đã cập nhật";
+    } catch (e) { $("#lp-msg").textContent = e.message; }
+    finally {
+      linkPlaylistsBusy = false;
+      $("#lp-add").disabled = $("#lp-sync").disabled = false;
+    }
+  }
+
+  function initLinkPlaylists() {
+    $("#lp-add").addEventListener("click", () => linkPlaylistsRequest("POST", "", { url: $("#lp-input").value.trim() }));
+    $("#lp-sync").addEventListener("click", () => linkPlaylistsRequest("POST", "/sync"));
+    $("#lp-input").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("#lp-add").click(); } });
+  }
+
   async function processEntry(e, btn) {
     if (e.archived && !confirm(`Xử lý "${e.title || e.video_id}"?\n\n` +
       "Sẽ lấy lại video nguồn từ kho (YouTube dự phòng) rồi chạy các loại đã chọn.")) return;
@@ -3567,6 +3617,7 @@ const AutoShort = (() => {
     if (htTags === null) htLoad(d); // not while the user edits
     srLoad(d);
     dcLoad(d);
+    if (d.post_links) linkPlaylistsLoad(d.post_links);
     const kd = d.khaithi_defaults; // A2.2: server defaults unless the browser remembers the user's minutes
     if (kd && !plDefaultsApplied) {
       plDefaultsApplied = true;

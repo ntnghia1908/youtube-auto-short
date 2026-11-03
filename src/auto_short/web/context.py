@@ -59,6 +59,7 @@ class WebContext:
     playlists: PlaylistStore
     publish_lock: Any
     post_lock: Any
+    post_links: Any
     signer: SessionSigner
     svc: EnhanceService
     sampler: monitor_mod.Sampler

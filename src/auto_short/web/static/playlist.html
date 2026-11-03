@@ -63,6 +63,24 @@
     </details>
   </section>
   <section class="card">
+    <details id="lp-box">
+      <summary>Link bài đăng từ YouTube (<span id="lp-state">chưa gắn</span>)</summary>
+      <p class="muted small">Thêm các playlist Short và khai thị đã upload của bộ kinh này. Nhận cả video lên lịch / riêng tư khi đã đăng nhập kênh bằng auth trên máy chủ. Chỉ điền bài còn trống link; bài chưa soạn chờ lần cập nhật sau.</p>
+      <div class="sr-edit">
+        <input id="lp-input" type="url" maxlength="4096" autocomplete="off" placeholder="https://youtube.com/playlist?list=…" aria-label="Playlist lấy link bài đăng">
+      </div>
+      <div class="edit-actions">
+        <button id="lp-add" class="btn primary small" type="button">Thêm và cập nhật</button>
+        <button id="lp-sync" class="btn small" type="button">Cập nhật ngay</button>
+        <span id="lp-msg" class="small" role="status"></span>
+      </div>
+      <ul id="lp-list" class="small"></ul>
+      <p id="lp-result" class="small" role="status"></p>
+      <ul id="lp-errors" class="small error"></ul>
+      <ul id="lp-unmatched" class="small"></ul>
+    </details>
+  </section>
+  <section class="card">
     <details id="ht-box">
       <summary>Hashtag khi Copy tiêu đề (<span id="ht-state">mặc định</span>)</summary>
       <p class="muted small">Danh sách đầy đủ, theo thứ tự, cho mọi tập của bộ kinh này. Tổng tiêu đề + hashtag ≤ 100 ký tự: hashtag cuối bị bỏ khi quá dài.</p>
