@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: CHANGE
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -96,4 +96,42 @@ Không chạm database, security model, public API của app (chỉ gọi YouTub
 
 ## Result
 
-- Main changes:
+- Main changes (IMPLEMENTER, 2026-11-03):
+  - Thêm `publish/shorts.py`: ghép mã Short qua helper chung từ `kt.py`, dùng số tập của header; ưu tiên ảnh KTI2 hợp lệ, dự phòng ảnh từ tiêu đề YouTube trong `short_yt_thumbs`.
+  - Thêm `khaithi_thumbs.short_title`: layout / nhãn / bìa / chân dung / cache KTI2, sidecar riêng; `reuse_only` kiểm lại trước apply, không vẽ lại trong apply. Không sửa `vertical_clip` hay luồng KTI2.
+  - CLI `short-thumbs`, uploads mặc định / playlist chỉ định, `--episodes`, `--only`, apply / force; KT cũng nhận hai bộ lọc. Nhật ký Short schema 1 có `clip_id`, `code`; ghép tập vẫn bỏ qua bản ghi clip.
+  - Cập nhật decision PUB2 cho lệnh / hai nguồn ảnh / nhật ký Short và giới hạn chạy thật đã duyệt.
+- Reuse / helper mới:
+  - Đã tìm bằng `rg -n '^def (cache_key|draw|read|valid_files|_clip_directory|reusable|directory|header)|FILE_NAME|MAX' src/auto_short/packaging/{khaithi_thumbs,thumbnail,episode}.py`, đọc `publish/kt.py`, `publish/thumbs.py` và fixtures `tests/test_publish_kt.py` trước khi thêm helper.
+  - `_episodes`, `_video_row`: tách logic cũ của KT để Short dùng chung, xóa phần inline cũ; `_code` nhận thêm regex, giữ mặc định KT.
+  - `shorts.plan`, `_title`: điều phối Short / làm sạch tựa giữ dấu câu để vẽ; `_title_key` của KT dùng để so sánh, không phù hợp để tạo tựa hiển thị.
+  - `shorts._web_thumbnail`, `_thumbnail`: kiểm chỉ đọc KTI2 / ảnh tựa trước apply; `khaithi_thumbs.valid_files` hiện chỉ hỗ trợ KT, không sửa để tránh thay đổi KTI2 ngoài boundary. Tái dùng `read(short=True)`, `titles(short=True)`, `cache_key`, `thumbnail.reusable`.
+  - `short_title`: `vertical_clip` cần tiêu đề web / thư mục KTI2, không nhận tựa YouTube; helper mới tái dùng `draw`, `cover.current`, `portraits`, `choose_portrait`, `cache_key`, `thumbnail.reusable`.
+  - `_episode_range`: argparse chưa có bộ lọc khoảng tập ở CLI publish. Test tái dùng fixtures `workspace`, `cli`, `wire`, `listing` hiện có; fixtures mới chỉ dựng bìa tạm / thay renderer khi không kiểm pixel.
+- AC → test (trong `tests/test_publish_shorts.py`, trừ dòng KT):
+
+  | AC | Test |
+  |---|---|
+  | 1 (giả lập) | `test_77_short_dry_run_in_episode_range`: 77 dòng, ảnh (b), không POST |
+  | 2 | `test_code_matching_and_source_episode_authority`: ưu tiên file / NFC / lệch mã / không mã / thiếu hoặc trùng tập / loại `.kt` |
+  | 3 | `test_title_image_jpeg_label_cache_and_invalidation`: JPEG thật 1080×1920 ≤ 2 MB, tựa và nhãn đúng, cache / đổi tựa / bìa |
+  | 4 | `test_web_numbered_image_priority_and_invalid_fallback`: số web không trùng chữ số clip id, dùng ảnh KTI2 đúng, fallback khi thiếu / stale, giữ byte KTI2 |
+  | 5 | `test_cli_filters_apply_journal_skip_force`, `test_apply_revalidates_short_images` (parametrize hai nguồn), KT `test_cli_episode_and_only_filters` / `test_cli_rejects_invalid_episode_ranges` |
+
+- Test budget: AC5 dùng 4 hàm vì gồm hồi quy KT riêng và kiểm khoảng tập lỗi trước HTTP; các nhánh cùng loại dùng parametrize.
+- Diff ứng dụng **+217 / −26**, test **+250 / −0** (`git diff --numstat`, cộng hai file mới chưa tracked).
+- Verification:
+  - Unit publish sau sửa: `PYTHONPATH=/home/ntnghia/projects/yas-pub2s/src /home/ntnghia/miniconda3/envs/auto-short/bin/python -m pytest -q -x --tb=short tests/test_publish_shorts.py tests/test_publish_kt.py tests/test_publish_thumbs.py` → **156 passed in 10.37s**.
+  - Bộ mở rộng theo yêu cầu: `timeout 290s env PYTHONPATH=/home/ntnghia/projects/yas-pub2s/src /home/ntnghia/miniconda3/envs/auto-short/bin/python -m pytest -q tests/test_publish_shorts.py tests/test_publish_kt.py tests/test_publish_thumbs.py tests/test_khaithi_thumbs.py tests/test_khaithi_intro.py` → **254 passed in 200.81s**. Lượt trước có 1 lỗi mất lý do stale do bọc `PackageError` (kế thừa `ValueError`); đã sửa giữ thông báo cụ thể và chạy lại PASS như trên.
+  - `git diff --check` → PASS. Không có lệnh verification được giao trong sandbox nào không chạy được.
+- Review IMPLEMENTER: đối chiếu contract / diff / AC / owned paths; không còn finding blocking trong phần implementation. Review độc lập và các verification còn lại do ORCHESTRATOR thực hiện.
+- Giới hạn bàn giao: không chạy full suite (ORCHESTRATOR ngoài sandbox), không chạy đọc kênh thật / AC6 / xem ảnh từ dữ liệu thật theo yêu cầu không mạng của lượt IMPLEMENTER. Chưa xác nhận 77 Short thật hoặc mức hiển thị trên điện thoại; chưa READY toàn task trước các verification đó. Không commit / push / PR, không gọi agent khác.
+
+### ORCHESTRATOR (2026-11-03)
+
+- Review diff: inventory ⊆ Owned paths; nguồn (a) KTI2 kiểm `clip_numbers` + cache key, nguồn (b) vẽ vào `short_yt_thumbs/`, `apply` kiểm lại sha / không vẽ lại. Codex: 114.515 tokens, 1 vòng.
+- Full suite (ngoài sandbox): **3818 passed, 1 skipped** (lần đầu `-x` dừng ở test chập chờn đã biết `test_lower_thread_priority_…`; chạy riêng PASS, chạy lại cả suite với `--deselect` test đó).
+- AC1 thật (chỉ đọc, kênh Tín Nguyện, `--episodes 1-9`): **74 dòng, 74 "sẵn sàng"** (nguồn `youtube-title`), 0 bỏ qua / lệch mã. Số 77 ở "Bằng chứng đọc thật" là đếm tay sai: kênh thật có T4 = 4 (S01–S04), T5 = 5 (không S01, S04), T7 = 11. Ảnh mẫu T9 S10 / T9 S09 / T7 S09 (tiêu đề 3 dòng) đã gửi HUMAN LEAD: 1080×1920, ~380 KB.
+- AC6 bước 1: `--episodes 9-9 --only llWaKkhboyU,sF6vE8dfHmY --apply` → **2/2 "đã gắn"** 06:51 UTC (13:51 giờ VN), nhật ký có `code` `T9_S10` / `T9_S09`.
+- AC6 bước 2 (2026-11-03 ~15:40 giờ VN): YouTube trả ảnh mới cho cả 2 Short (`i.ytimg.com/vi/<id>/maxresdefault.jpg` = ảnh "TRÍCH ĐOẠN" 9:16 vừa gắn). HUMAN LEAD xem trên điện thoại: "nhìn cũng ổn" → **AC6 PASS**. Ảnh dọc KT T11 KT02 (PUB2K) cũng đã xem, ổn.
+- Phần còn lại T1–T9 (72 Short): chưa gắn, chờ task sửa mẫu vùng an toàn 4:5 hoặc HUMAN LEAD cho chạy (G3=2).
