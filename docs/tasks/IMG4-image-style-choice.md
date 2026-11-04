@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: IN_PROGRESS
 - Type: CHANGE
 - Change class: S2 (sửa D-IMG1-3 trong `docs/decisions/CP8.15-community-post-contract.md`)
 - Owner: HUMAN LEAD
@@ -79,11 +79,11 @@ Không chạm database, security model hay public API ngoài (chỉ thêm tham s
 
 ## Result
 
-- Main changes:
-- Tests:
-- Diff + / − (app, test):
-- Helper mới:
-- Review:
-- Important findings / decisions:
-- Known limitations:
+- Main changes: `imggen.STYLES` 16 phong cách (`tinh-do` = 5 kiểu × 2 bố cục cũ), `LAYOUTS` 10 bố cục; `prompt(keyword, style, extra, recent, rng)` trả prompt + phong cách theo ảnh; `random` chọn 10 kiểu, kiểu chưa dùng / lâu chưa dùng của cùng từ khóa trong cache còn hạn trước (`_recent_styles`). `create` kiểm `style` / `extra`; state / meta có `style`, `styles`, `extra`; ứng viên có `style`, `style_label`. Route `POST /api/post-images/generate` nhận `style`, `extra`; danh mục trả trong `generate.styles`. UI `app.js`: ô chọn phong cách, ô mô tả thêm, nhãn dưới ứng viên. D-IMG1-3 cập nhật.
+- Tests (ORCHESTRATOR, ngoài sandbox, 2026-11-04): `test_imggen_img1.py` + `test_web_imggen_img1.py` 96 passed; full suite `--deselect` test chập chờn đã biết (chạy riêng PASS): **4024 passed, 1 skipped** (26:30).
+- AC → test: AC1 `test_shared_image_ui_style_controls_submission_and_labels`, `test_generate_route_parameters_without_http_transport`; AC2 `test_random_seed_unique_styles_and_least_recent_rotation`, `test_random_uses_same_keyword_cache_within_ttl`; AC3 `test_specific_style_has_ten_distinct_layouts`, `test_tinh_do_prompt_matches_original_verbatim`; AC4 `test_invalid_style_or_extra_creates_nothing`, `test_extra_only_in_untrusted_json_and_persisted`; AC5 `test_ten_candidates_files_thumbs_and_add_only_picked`; AC6 D-IMG1-3 + test IMG1/IMG2 cũ PASS.
+- Diff + / −: app +140 / −30, test +227 / −8, docs +1 / −1.
+- Helper mới: `_recent_styles` (lọc lịch sử phong cách theo từ khóa / TTL; tái dùng `_runs`, `imgsearch.tokens`).
+- Review: ORCHESTRATOR thêm một câu hướng dẫn khi có `extra` (trước đó `extra` chỉ nằm trong khối dữ liệu, không câu nào bảo dùng) + test. Implementer: Codex 1 vòng (effort high, 84.470 tokens).
+- Known limitations: chưa vẽ thật trên 8080 (chờ HUMAN LEAD cho restart).
 - PR:
