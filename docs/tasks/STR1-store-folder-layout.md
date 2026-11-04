@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: CHANGE
 - Change class: S2 (sửa SHO1 G1 "tên phẳng trong thư mục bộ kinh" và cách đặt file của HD2 G1)
 - Owner: HUMAN LEAD
@@ -12,7 +12,7 @@
 - Authorization mode: task
 - Authorization source: HUMAN LEAD 2026-11-04 (chat): "Kho 3090 hoạt động tốt nhưng khá rối: tất cả hình, bản gốc, ngang... đều nằm trong cùng một thư mục, nên structure lại cây thư mục"; chọn phương án "Theo loại + Short theo tập"
 - Parallel group: —
-- Owned paths: `tools/store/store.py`, `tools/store/setup-store.ps1` (nếu cần), script mới `tools/store/sap-xep-kho.ps1`, `scripts/backup/backup.template.ps1`, `scripts/backup/make_backup.py` (nếu cần), `tests/test_store_*.py`, `tests/test_backup*.py`, `docs/guides/store-3090.md`, `docs/decisions/SHO1-short-store-3090.md` (chỉ G1), `docs/decisions/HD2-external-store-3090.md` (chỉ ghi chú G1), `docs/workflow/ops-notes.md` (cách chạy trên 3090), `tests/test_hd_backup.py` (bổ sung khi review: assertion đường dẫn phẳng là "Code bị thay"), file này
+- Owned paths: `tools/store/store.py`, `tools/store/setup-store.ps1` (nếu cần), script mới `tools/store/sap-xep-kho.ps1`, `scripts/backup/backup.template.ps1`, `scripts/backup/make_backup.py` (nếu cần), `tests/test_store_*.py`, `tests/test_backup*.py`, `docs/guides/store-3090.md`, `docs/decisions/SHO1-short-store-3090.md` (chỉ G1), `docs/decisions/HD2-external-store-3090.md` (chỉ ghi chú G1), `docs/workflow/ops-notes.md` (cách chạy trên 3090), `tests/test_vertical_silence_intro.py`, `tests/test_hd_backup.py` (bổ sung khi review: assertion đường dẫn phẳng là "Code bị thay"), file này
 - Dependencies: none (STN1 đã merge)
 - Base commit / branch: `895e7ce` (origin/main) / `feature/str1-store-folder-layout`
 - Human Lead approval: accepted 2026-11-04 (chat: "Duyệt cả hai")
@@ -99,18 +99,15 @@ Chạm dữ liệu thật trên kho 3090 (di chuyển file), không chạm datab
 
 ## Result
 
-- Main changes: `store.py` dùng `subdir` / `media_path` cho vị trí media, đọc cây mới trước / cây phẳng sau; PUT mới + bản dọc thay thế ghi thư mục loại, `.part` cùng thư mục, `_cu` giữ bản trước. HD conditional replace giữ hành vi thay tại file hiện có. `reorganize --series <id|all> [--apply]` preflight cả lượt, giữ metadata / `_cu*`, log mỗi rename vào `backup-log.txt`; wrapper `sap-xep-kho.ps1`. Backup template dùng cây mới / fallback cũ cho tải, thumbnail, CSV cũ, xác nhận `-Release`, đổi `[HD Dọc]` (kèm cập nhật tên CSV / SUMS). Đã cập nhật SHO1 G1, ghi chú HD2 G1, guide, ops-notes; không sửa `src/auto_short/store/*`, không thêm dependency.
-- Tests (IMPLEMENTER, sandbox 2026-11-04):
-  - `PYTHONPATH=/home/ntnghia/projects/yas-str1/src /home/ntnghia/miniconda3/envs/auto-short/bin/python -m pytest tests/test_store_server.py tests/test_backup_stn1.py tests/test_store_backup.py -q -k 'not background_io_uses_thread_and_waits_retry_seconds' --tb=short`: **194 passed, 1 skipped, 1 deselected** (8.03 s). SKIP duy nhất: PowerShell không có trong môi trường; test cấu trúc template + regex/bảng mẫu chung đã PASS. Deselected: test asyncio bị treo ở lượt đầy đủ.
-  - Cùng Python / PYTHONPATH, `-m pytest tests/test_store_client.py -q -k short_client_socket_free_roundtrip --tb=short`: **4 passed, 45 deselected**; client thật + handler thật qua memory transport.
-  - Cùng Python / PYTHONPATH, `-m pytest tests/test_hd_backup.py -q -k 'generator or template' --tb=short`: **1 failed, 5 passed, 14 deselected**. Assertion tĩnh dòng 346 còn yêu cầu đường dẫn media phẳng; file ngoài owned paths nên giữ nguyên, chờ scope cho đúng một assertion sang `BackupPath $old.loai $old.file`.
-  - Lệnh 4 file HUMAN LEAD chỉ định (bọc `timeout 20s`, log `/tmp/str1-verification.log`): **timeout, exit 124**, không claim PASS. Lượt chẩn đoán `-vv` (timeout 45 s, `/tmp/str1-requested-tests.log`) xác định treo tại `tests/test_store_backup.py::test_background_io_uses_thread_and_waits_retry_seconds`; các test HTTP / release trong `test_hd_backup.py` chưa được chạy hết ở lượt này.
-  - `/home/ntnghia/miniconda3/envs/auto-short/bin/python /tmp/str1-cli-smoke.py`: **PASS** — subprocess CLI thật trên kho mẫu local (5 media + 1 jpg), dry-run không đổi đĩa, apply giữ nguyên index, apply lần hai không đổi gì. Không mở socket / không gọi dịch vụ thật.
-  - `git diff --check`: **PASS**.
-- AC → test: AC1 các test HTTP cây phẳng có sẵn (`test_http_read_routes` và kiểm Range), AC2 `test_str1_put_layout_and_http_reads` / `test_str1_flat_vertical_replacement_archives_then_publishes_in_subdir`, AC3–4 `test_str1_reorganize_plan_apply_index_unchanged_and_idempotent` / `test_str1_collision_in_all_stops_before_any_move` / `test_str1_partial_blocks_reorganize`, AC5 `test_path_validation` / `test_str1_media_subdirectory_links_refused`, AC6 `test_str1_powershell_layout_rules_and_call_sites` / generator / shared table (thực thi PS: SKIP); AC7 tài liệu đã sửa, chưa review độc lập.
-- Diff + / − (app, test): app **+286 / −49** (gồm wrapper mới); test **+284 / −18**. Docs tính riêng bằng `git diff --numstat`; chưa stage / commit.
-- Helper mới: đã tìm / tái dùng `no_links`, `inside`, `validate_name`, `_lock`, `_put_lock`, `_cache`, `_archive_plan`, mẫu plan của `rename_vertical`. `subdir` sở hữu quy tắc thư mục; `media_path` thêm lựa chọn cây mới / cũ mà `inside` không có; `media_kind` chỉ nhận diện tên file gốc để migration không chuyển file lạ; `_media_files` thay scan phẳng, kiểm cây và `.part` không đi qua link. PS `StoreSubdir` / `BackupPath` áp dụng cùng quy tắc và có test so source / bảng mẫu; không thể import helper Python trong backup script độc lập. Wrapper dùng lại cách tìm worker Python của setup; không dot-source installer vì sẽ chạy cài đặt.
-- Review: chờ ORCHESTRATOR; chưa claim READY đầy đủ do verification chưa hoàn tất.
-- Important findings / decisions: CLI dùng subcommand như kế hoạch HUMAN LEAD, đã đồng bộ cú pháp trong contract. Khóa chỉ đồng bộ một process; guide yêu cầu dừng server và backup / upload khi chạy CLI. Không sửa test để che assertion đã lỗi thời.
-- Known limitations: chưa chạy full suite (ORCHESTRATOR ngoài sandbox), server socket thật trên VM, PowerShell thực thi và gate manual trên 3090; không chạy `all` trên dữ liệu thật. Cần xử lý scope assertion `test_hd_backup.py:346` trước khi suite liên quan có thể PASS.
-- PR: không commit / push / PR theo yêu cầu; không gọi agent khác / mạng thật.
+- Main changes: `store.py` vị trí media qua `subdir` / `media_path` (thư mục loại trước, gốc phẳng sau); PUT / bản dọc thay thế ghi thư mục con, `_cu\` ở gốc bộ; `reorganize --series <id|all> [--apply]` kiểm toàn bộ trước khi chuyển, log vào `backup-log.txt`; wrapper `tools/store/sap-xep-kho.ps1`. `backup.template.ps1`: `StoreSubdir` / `BackupPath` cho tải, thumbnail (`Hinh\`), CSV cũ, `-Release`, đổi `[HD Dọc]` (cập nhật cả tên trong CSV / SUMS). SHO1 G1, HD2 G1, guide, ops-notes cập nhật. `src/auto_short/store/*` không đổi.
+- Tests (ORCHESTRATOR, ngoài sandbox, 2026-11-04):
+  - Kho + backup (8 file `test_store_*`, `test_backup_stn1`, `test_hd_backup`, …): 367 passed, 1 skipped (thực thi PowerShell — VM không có `pwsh`).
+  - Full suite `--deselect` test chập chờn đã biết (`test_lower_thread_priority…`, chạy riêng PASS): **4010 passed, 2 skipped** (25:58).
+  - Chạy thật: kho mẫu phẳng (6 HD/dọc/gốc, 9 Short/KT, 2 jpg, 1 file lạ, `_cu`) + `store.py` server thật port 18391: dry-run 17 file, không đổi đĩa; `--apply` → cây đúng Goal; `index` trước = sau (15 mục); GET sha + Range 206 đúng trước và sau; lần 2: 0 file; PUT Short mới → `Short\Tap 03\`; file lạ / `_cu` giữ nguyên.
+- AC → test: AC1 `test_http_read_routes` + Range; AC2 `test_str1_put_layout_and_http_reads`, `test_str1_flat_vertical_replacement_archives_then_publishes_in_subdir`, `test_store_revision_roundtrip`; AC3–4 `test_str1_reorganize_plan_apply_index_unchanged_and_idempotent`, `test_str1_collision_in_all_stops_before_any_move`, `test_str1_partial_blocks_reorganize` + chạy thật; AC5 `test_path_validation`, `test_str1_media_subdirectory_links_refused`; AC6 `test_str1_powershell_layout_rules_and_call_sites`, `test_hd_backup` template (thực thi PS: chưa); AC7 docs.
+- Diff + / −: app +286 / −49 (gồm wrapper), test +290 / −20, docs +74 / −13.
+- Helper mới: `subdir`, `media_path`, `media_kind`, `_media_files` (Python), `StoreSubdir`, `BackupPath` (PS, cùng quy tắc, có test bảng mẫu) — `inside` không có lựa chọn cây mới / cũ; backup script độc lập không import được Python.
+- Review: ORCHESTRATOR review diff; sửa 2 test giả định cây phẳng (`test_hd_backup.py:346`, `test_vertical_silence_intro.py::test_store_revision_roundtrip` — `_cu` / SUMS ở gốc bộ), owned paths bổ sung tương ứng. Implementer: Codex 1 vòng (effort high, 141.882 tokens).
+- Important findings / decisions: khóa `reorganize` chỉ trong một process → guide bắt buộc `Stop-ScheduledTask AutoShortStore` + dừng backup trước khi chạy.
+- Known limitations: PowerShell chưa thực thi (chỉ test tĩnh); gate 3090 (1 bộ nhỏ → `all`) do HUMAN LEAD chạy sau merge.
+- PR:

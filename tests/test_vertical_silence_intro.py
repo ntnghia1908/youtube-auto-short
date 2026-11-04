@@ -197,9 +197,12 @@ def test_store_revision_roundtrip(memory_store, tmp_path, kind):
     client.put("zzzDEF12_-3", kind, PLAYLIST, name, path, sha)
     row, stored = service.lookup("zzzDEF12_-3", kind)
     assert row["file"] == "[HD Mobile] Bộ kinh - PS. Tịnh Không - Tập 1.mp4"
-    assert stored.read_bytes() == b"new-version" and (stored.parent / "_cu" / name).read_bytes() == DATA
+    # STR1: vertical media lives in "HD Mobile"; _cu and metadata stay at the series root.
+    assert stored.parent.name == "HD Mobile"
+    series = stored.parent.parent
+    assert stored.read_bytes() == b"new-version" and (series / "_cu" / name).read_bytes() == DATA
     assert client.head("zzzDEF12_-3", kind) == {"sha256": sha, "size": path.stat().st_size}
-    sums = (stored.parent / "SHA256SUMS.txt").read_text(encoding="utf-8-sig")
+    sums = (series / "SHA256SUMS.txt").read_text(encoding="utf-8-sig")
     assert f"{first_sha}  {name}" in sums and f"{sha}  {stored.name}" in sums
     client.put("zzzDEF12_-3", kind, PLAYLIST, name, path, sha)  # same sha, legacy name: no new file
     assert not (stored.parent / other).exists() and len(list(stored.parent.glob("[[]HD Mobile[]]*.mp4"))) == 1
