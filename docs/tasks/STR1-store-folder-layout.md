@@ -110,4 +110,4 @@ Chạm dữ liệu thật trên kho 3090 (di chuyển file), không chạm datab
 - Review: ORCHESTRATOR review diff; sửa 2 test giả định cây phẳng (`test_hd_backup.py:346`, `test_vertical_silence_intro.py::test_store_revision_roundtrip` — `_cu` / SUMS ở gốc bộ), owned paths bổ sung tương ứng. Implementer: Codex 1 vòng (effort high, 141.882 tokens).
 - Important findings / decisions: khóa `reorganize` chỉ trong một process → guide bắt buộc `Stop-ScheduledTask AutoShortStore` + dừng backup trước khi chạy.
 - Known limitations: PowerShell chưa thực thi (chỉ test tĩnh); gate 3090 (1 bộ nhỏ → `all`) do HUMAN LEAD chạy sau merge.
-- PR:
+- PR: #206
