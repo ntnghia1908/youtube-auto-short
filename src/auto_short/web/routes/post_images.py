@@ -10,7 +10,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
-from ...post import images as post_images, imgsearch as post_imgsearch, redistribute as post_redistribute
+from ...post import imggen as post_imggen, images as post_images, imgsearch as post_imgsearch, redistribute as post_redistribute
 from ...review import content_disposition
 from ...packaging import cover_suggest
 from ..context import WebContext
@@ -32,6 +32,11 @@ class PostImageSearchIn(BaseModel):
 
 class PostImageFindIn(BaseModel):
     keyword: str = Field(max_length=200)
+
+
+class PostImageGenerateIn(PostImageFindIn):
+    style: str = "random"
+    extra: str = ""
 
 
 class PostImageAddIn(BaseModel):
@@ -67,12 +72,13 @@ def build(ctx: WebContext) -> APIRouter:
                             "used": used.get(i.name, 0), "source": sources.get(i.name)} for i in infos],
                 "image_sources": list(ctx.config.post.image_sources),
                 "search": post_imgsearch.search_status(ctx.config),
-                "generate": {"unavailable": ctx.post_image_gen.unavailable()}}
+                "generate": {"unavailable": ctx.post_image_gen.unavailable(),
+                             "styles": [{"id": s["id"], "label": s["label"]} for s in post_imggen.STYLES]}}
 
     @router.post("/api/post-images/generate")
-    def api_post_images_generate(body: PostImageFindIn):
+    def api_post_images_generate(body: PostImageGenerateIn):
         try:
-            return JSONResponse({"run": ctx.post_image_gen.start(body.keyword)}, status_code=202)
+            return JSONResponse({"run": ctx.post_image_gen.start(body.keyword, body.style, body.extra)}, status_code=202)
         except post_imgsearch.SearchError as exc:
             return JSONResponse({"detail": str(exc)}, status_code=422)
         except cover_suggest.MissingCodex as exc:

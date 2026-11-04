@@ -19,7 +19,7 @@ class PostImageGen:
     def unavailable(self):
         return cover_suggest.available(self.config)
 
-    def start(self, keyword):
+    def start(self, keyword, style="random", extra=""):
         if not imgsearch.tokens(keyword):
             raise imgsearch.SearchError("nhập từ khóa")
         if not EpisodeThumbs.codex_lock.acquire(blocking=False):
@@ -29,7 +29,7 @@ class PostImageGen:
             problem = self.unavailable()
             if problem:
                 raise cover_suggest.MissingCodex(problem)
-            doc = imggen.create(self.config, keyword)
+            doc = imggen.create(self.config, keyword, style=style, extra=extra)
             cancel = threading.Event()
             self.cancel_event, self.active = cancel, doc["search_id"]
 
@@ -59,7 +59,8 @@ class PostImageGen:
             return None
         keys = ("search_id", "keyword", "status", "error", "tokens", "candidates", "skipped", "notes", "sources")
         out = {k: doc[k] for k in keys}
-        fields = ("id", "width", "height", "bytes", "origin", "page", "url", "flag", "thumb")
+        out.update(style=doc.get("style", "random"), extra=doc.get("extra", ""), styles=doc.get("styles", []))
+        fields = ("id", "width", "height", "bytes", "origin", "page", "url", "flag", "thumb", "style", "style_label")
         out["candidates"] = [{k: c.get(k) for k in fields} for c in doc["candidates"]]
         return out
 
