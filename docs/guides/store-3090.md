@@ -47,3 +47,53 @@ Chạy lại setup giữ cấu hình và token. `-Root` / `-SeriesDir` chỉ áp
 ```
 
 Bỏ `--self-test` để chạy kho ở cửa sổ hiện tại. `setup-store.ps1 -Uninstall` dừng và gỡ task kho, giữ file, token và SSH config. Không đưa token hay `store.env` vào git hoặc ảnh chụp/log chia sẻ.
+
+
+## Sắp xếp thư mục kho (STR1)
+
+Quy tắc vị trí media: [SHO1 G1](../decisions/SHO1-short-store-3090.md). Mỗi bộ kinh có cây:
+
+```text
+<bộ kinh>\
+├─ HD\                 [HD] … - Tập N.mp4
+├─ HD Mobile\          [HD Mobile] … - Tập N.mp4 (hoặc tên cũ [HD Dọc])
+├─ Goc\                [Goc] ….mp4
+├─ Hinh\               thumbnail .jpg
+├─ Short\Tap 05\       [Short] … - Tập 5 - k01.mp4
+├─ KhaiThi\Tap 05\     [KhaiThi] … - Tập 5 - k01.mp4
+├─ Short\Khac\         Short không có số tập (khai thị: KhaiThi\Khac\)
+├─ _cu\, _cu-…\        bản lưu cũ giữ nguyên
+└─ index.csv, index-short.csv, danh-sach.csv, SHA256SUMS.txt, backup-log.txt
+```
+
+CSV / SUMS vẫn chứa tên file, không có thư mục con. Kho tìm media ở thư mục con trước rồi gốc cũ; có thể đọc cả hai cây trong giai đoạn chuyển. `backup.ps1` sinh lại bằng `scripts/backup/make_backup.py` nhận được video ở cả hai cây, kể cả khi xác nhận `-Release`; tải video mới vào thư mục loại, thumbnail vào `Hinh\` (cả `-ThumbsOnly`).
+
+Chép `store.py` mới vào `%LOCALAPPDATA%\AutoShortStore`, chép `sap-xep-kho.ps1` tới thư mục chạy lệnh. Dừng task kho và mọi script backup / upload khi sắp xếp: khóa Python chỉ bảo vệ trong cùng process, không khóa process server khác. Sao lưu metadata và thử trên bản sao trước. Wrapper dùng Python worker như `setup-store.ps1`; có thể chỉ định `-Python <python.exe>` và `-Config <config.json>`.
+
+1. Chọn **một bộ nhỏ** có ID trong `config.json`, chạy thử và xem kế hoạch:
+
+   ```powershell
+   Stop-ScheduledTask -TaskName AutoShortStore
+   .\sap-xep-kho.ps1 -Series "<id-bo-nho>"
+   ```
+
+2. Khi kế hoạch đúng, áp dụng cùng bộ rồi bật kho:
+
+   ```powershell
+   .\sap-xep-kho.ps1 -Series "<id-bo-nho>" -Apply
+   Start-ScheduledTask -TaskName AutoShortStore
+   ```
+
+3. Kiểm Explorer đúng cây; trên web 8080 xem / tải một HD, một dọc, một Short. Chạy lại backup cho bộ đã sắp xếp: không tải lại video đã kiểm, ảnh vào `Hinh\`.
+4. Chỉ sau khi bước trên đạt, dừng kho / backup rồi chạy thử `all`, xem kế hoạch và mới áp dụng:
+
+   ```powershell
+   Stop-ScheduledTask -TaskName AutoShortStore
+   .\sap-xep-kho.ps1 -Series all
+   .\sap-xep-kho.ps1 -Series all -Apply
+   Start-ScheduledTask -TaskName AutoShortStore
+   ```
+
+Không có `-Apply` thì không ghi gì. File lạ được liệt kê và để nguyên; trùng đích hoặc có `.part` trong bộ thì từ chối trước khi chuyển bất kỳ file nào (kể cả khi chọn `all`). File nhận ra được `rename` cùng ổ, không đổi tên / nội dung; `_cu*` và metadata giữ chỗ cũ. Các lần chuyển được ghi vào `backup-log.txt`; chạy lại không còn file cần chuyển. `rename-vertical` vẫn chạy được sau khi sắp xếp.
+
+CLI tương đương: `python store.py --config config.json reorganize --series <id|all> [--apply]`.

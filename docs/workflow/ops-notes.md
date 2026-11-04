@@ -49,6 +49,10 @@ Mặc định chỉ chạy thử. Tên mới lấy tên bộ + số tập từ t
 
 VM 8080: `[store] speaker_label = "PS. Tịnh Không"` là mặc định cho lần đẩy bản dọc và sinh backup script mới. Tên gửi cũ / mới cùng SHA đều được nhận; SHA mới giữ một bản hiện hành không `(rN)`, bản trước vào `_cu\`. Backup nhận tên mới hoặc tên hiện hành trong CSV / tên cũ không giảng sư, giữ tên thực tế cho xác nhận và `-Release`. Sau khởi động lại kho, ORCHESTRATOR kiểm `/index` qua tunnel và HUMAN LEAD xem / tải tập 1, 100 trên 8080; bước này chưa thực hiện trong sandbox STN1.
 
+### STR1 — sắp xếp theo loại / tập (chưa chạy trên 3090)
+
+Sau merge chép `store.py` mới, sinh lại backup script; dùng `tools/store/sap-xep-kho.ps1 -Series <id>` để chạy thử, thêm `-Apply` để chuyển. Dừng task `AutoShortStore` và backup / upload trước mỗi lượt CLI; khóa chỉ có hiệu lực trong process. Chạy một bộ nhỏ → `-Apply` → bật kho, kiểm Explorer + web HD / dọc / Short và backup không tải lại → mới chạy `-Series all`. Chi tiết cây, tham số `-Config` / `-Python`, xử lý file lạ / `.part` / trùng đích và log: [hướng dẫn kho](../guides/store-3090.md#sắp-xếp-thư-mục-kho-str1). Gate 3090 chưa được chạy trong sandbox.
+
 ## Hạ tầng
 
 - VM 32 nhân, 125 GB RAM; IP DHCP, hiện `10.8.102.102` (đổi 2026-10-08; trước đó `.100`, `.101`) — nên xin IP cố định. ssh config máy 3090 / 3050 phải theo IP hiện hành.
