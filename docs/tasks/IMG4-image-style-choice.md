@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: CHANGE
 - Change class: S2 (sửa D-IMG1-3 trong `docs/decisions/CP8.15-community-post-contract.md`)
 - Owner: HUMAN LEAD
@@ -85,5 +85,7 @@ Không chạm database, security model hay public API ngoài (chỉ thêm tham s
 - Diff + / −: app +140 / −30, test +227 / −8, docs +1 / −1.
 - Helper mới: `_recent_styles` (lọc lịch sử phong cách theo từ khóa / TTL; tái dùng `_runs`, `imgsearch.tokens`).
 - Review: ORCHESTRATOR thêm một câu hướng dẫn khi có `extra` (trước đó `extra` chỉ nằm trong khối dữ liệu, không câu nào bảo dùng) + test. Implementer: Codex 1 vòng (effort high, 84.470 tokens).
-- Known limitations: chưa vẽ thật trên 8080 (chờ HUMAN LEAD cho restart).
+- Chạy thật 8080 (`f3c8642`, 2026-11-04): "Trộn ngẫu nhiên" / "A Di Đà Phật" → done 10/10, 10 phong cách khác nhau, 87.428 tokens; "Sơn mài Việt Nam" + mô tả thêm "có bình cam lộ và cành dương liễu" / "Quán Thế Âm Bồ Tát" → done 10/10, 10 bố cục, mô tả thêm được vẽ, 61.835 tokens. Ảnh mẫu đã gửi HUMAN LEAD; theo yêu cầu, 20 ảnh đã thêm vào thư viện (20 added, 0 trùng).
+- Known limitations: không.
+- PR: #205
 - PR:
