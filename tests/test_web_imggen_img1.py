@@ -1,7 +1,10 @@
 """IMG1 HTTP integration; run outside the Codex sandbox (TestClient needs loopback)."""
 from __future__ import annotations
 
+import json
 import threading
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -30,20 +33,25 @@ def test_generate_serve_pick_and_latest_without_queue(gen_cfg):
                              ("post", "/api/post-images/generate/bad/dismiss")):
             assert getattr(c, method)(path).status_code in (302, 303, 401)
         login(c)
-        assert c.get("/api/post-images").json()["generate"] == {"unavailable": None}
+        assert c.get("/api/post-images").json()["generate"] == {
+            "unavailable": None, "styles": [{"id": s["id"], "label": s["label"]} for s in imggen.STYLES]}
         assert c.get("/api/post-images/generate/latest").json() == {"run": None}
         r = c.post("/api/post-images/generate", json={"keyword": "hoa sen Tịnh Không"})
         assert r.status_code == 202, r.text
         ident = r.json()["run"]["search_id"]
         app.state.post_image_gen.thread.join(15)
         run = c.get(f"/api/post-images/generate/{ident}").json()["run"]
-        assert set(run) == {"search_id", "keyword", "status", "error", "tokens", "candidates", "skipped", "notes", "sources"}
+        assert set(run) == {"search_id", "keyword", "status", "error", "tokens", "candidates", "skipped", "notes", "sources", "style", "styles", "extra"}
         assert run["status"] == "done" and len(run["candidates"]) == 10
+        assert run["style"] == "random" and run["extra"] == ""
+        assert len(set(run["styles"])) == 10
         assert not app.state.runner.jobs()  # separate thread, no prepare job
         assert c.get("/api/post-images").json()["images"] == []
-        for cand in run["candidates"]:
-            assert set(cand) == {"id", "width", "height", "bytes", "origin", "page", "url", "flag", "thumb"}
+        for n, cand in enumerate(run["candidates"]):
+            assert set(cand) == {"id", "width", "height", "bytes", "origin", "page", "url", "flag", "thumb", "style", "style_label"}
             assert cand["origin"] == "codex"
+            assert cand["style"] == run["styles"][n]
+            assert cand["style_label"] == imggen.STYLE_BY_ID[cand["style"]]["label"]
             path = f"/files/post-image-candidates/{ident}/{cand['id']}"
             assert c.get(path).headers["content-type"] == "image/png"
             assert c.get(path + "?thumb=1").headers["content-type"] == "image/jpeg"
@@ -143,3 +151,77 @@ def test_dismiss_http_hides_latest_preserves_files_and_does_not_fall_back(gen_cf
         assert c.get(f"/files/post-image-candidates/{ident}/{candidate}").status_code == 200
         assert c.get("/api/post-images").json()["images"] == []
         assert c.post(f"/api/post-images/generate/{ident}/dismiss").status_code == 200
+
+
+@pytest.mark.parametrize("style,extra,error", [
+    ("thuy-mac", "sắc mực nhẹ", None), ("tinh-do", "", None),
+    ("unknown", "", "phong cách"), ("random", "x" * 201, "200 ký tự"),
+    ("random", "màu\nnhạt", "ký tự điều khiển"),
+])
+def test_generate_style_extra_validation_and_view(gen_cfg, style, extra, error):
+    app = make_app(gen_cfg, codex_runner=fake_codex)
+    with TestClient(app, follow_redirects=False) as c:
+        login(c)
+        r = c.post("/api/post-images/generate", json={"keyword": "hoa sen", "style": style, "extra": extra})
+        if error:
+            assert r.status_code == 422 and error in r.json()["detail"]
+            assert imggen.latest(gen_cfg) is None
+            return
+        assert r.status_code == 202, r.text
+        app.state.post_image_gen.thread.join(15)
+        run = c.get(f"/api/post-images/generate/{r.json()['run']['search_id']}").json()["run"]
+        assert run["status"] == "done", run["error"]
+        assert run["style"] == style and run["extra"] == extra
+        assert run["styles"] == [style] * 10
+        assert all(cand["style_label"] == imggen.STYLE_BY_ID[style]["label"] for cand in run["candidates"])
+
+
+def test_shared_image_ui_style_controls_submission_and_labels():
+    # Both the library page and the post picker use this markup and request handler.
+    static = Path(__file__).parents[1] / "src/auto_short/web/static"
+    js = (static / "app.js").read_text()
+    assert '<label for="image-generate-style">Phong cách</label>' in js
+    assert '<option value="random">Trộn ngẫu nhiên</option>' in js
+    assert '<label for="image-generate-extra">Mô tả thêm</label>' in js
+    assert 'id="image-generate-extra" type="text" maxlength="200"' in js
+    assert '...(d.generate?.styles || []).map' in js
+    assert 'keyword, style: $("#image-generate-style").value, extra: $("#image-generate-extra").value' in js
+    assert 'text: c.style_label' in js
+
+
+@pytest.mark.parametrize("payload,error", [
+    ({"keyword": "sen"}, None),
+    ({"keyword": "sen", "style": "thuy-mac", "extra": "mực nhạt"}, None),
+    ({"keyword": "sen", "style": "unknown"}, "phong cách"),
+    ({"keyword": "sen", "extra": "x" * 201}, "200 ký tự"),
+    ({"keyword": "sen", "extra": "mực\t nhạt"}, "ký tự điều khiển"),
+])
+def test_generate_route_parameters_without_http_transport(gen_cfg, payload, error):
+    # Exercise the real endpoints/service without TestClient's blocked sandbox transport.
+    from auto_short.web.post_image_gen import PostImageGen
+    from auto_short.web.routes.post_images import build, PostImageGenerateIn
+
+    service = PostImageGen(gen_cfg, codex_runner=fake_codex)
+    routes = build(SimpleNamespace(config=gen_cfg, post_image_gen=service)).routes
+    generate = next(r.endpoint for r in routes if r.path == "/api/post-images/generate" and "POST" in r.methods)
+    listing = next(r.endpoint for r in routes if r.path == "/api/post-images" and "GET" in r.methods)
+    assert listing()["generate"] == {
+        "unavailable": None, "styles": [{"id": s["id"], "label": s["label"]} for s in imggen.STYLES]}
+    response = generate(PostImageGenerateIn(**payload))
+    data = json.loads(response.body)
+    if error:
+        assert response.status_code == 422 and error in data["detail"]
+        assert service.latest() is None
+        assert EpisodeThumbs.codex_lock.acquire(blocking=False)
+        EpisodeThumbs.codex_lock.release()
+        return
+    assert response.status_code == 202
+    service.thread.join(15)
+    assert not service.thread.is_alive()
+    run = service.get(data["run"]["search_id"])
+    assert run["status"] == "done", run["error"]
+    assert run["style"] == payload.get("style", "random") and run["extra"] == payload.get("extra", "")
+    assert len(run["styles"]) == len(run["candidates"]) == 10
+    for n, candidate in enumerate(run["candidates"]):
+        assert candidate["style"] == run["styles"][n]
+        assert candidate["style_label"] == imggen.STYLE_BY_ID[candidate["style"]]["label"]

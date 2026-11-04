@@ -2267,6 +2267,10 @@ const AutoShort = (() => {
       <div class="edit-actions">
         <input id="image-find-keyword" type="text" placeholder="Tìm ảnh theo từ khóa (vd: Tây Phương Tam Thánh)…" aria-label="Từ khóa tìm ảnh">
         <button id="image-find-btn" class="btn small primary" type="button">Tìm theo từ khóa</button>
+        <label for="image-generate-style">Phong cách</label>
+        <select id="image-generate-style"><option value="random">Trộn ngẫu nhiên</option></select>
+        <label for="image-generate-extra">Mô tả thêm</label>
+        <input id="image-generate-extra" type="text" maxlength="200" placeholder="Mô tả thêm (tùy chọn)">
         <button id="image-generate-btn" class="btn small" type="button" disabled>AI vẽ 10 ảnh</button>
         <button id="image-generate-cancel" class="btn small" type="button" hidden>Hủy</button>
         <button id="image-redistribute-btn" class="btn small" type="button">Chia lại ảnh cho bài chưa đăng</button>
@@ -2354,6 +2358,11 @@ const AutoShort = (() => {
       renderImageGrid(d.images);
       renderQuickLinks(d.image_sources || []);
       imageGenerateUnavailable = (d.generate || {}).unavailable || null;
+      const styles = $("#image-generate-style");
+      const selected = styles.value;
+      styles.replaceChildren(el("option", { value: "random", text: "Trộn ngẫu nhiên" }),
+        ...(d.generate?.styles || []).map((s) => el("option", { value: s.id, text: s.label })));
+      styles.value = [...styles.options].some((s) => s.value === selected) ? selected : "random";
       updateImageGenerateButtons();
       const g = (d.search || {}).google || {};
       $("#image-find-sources").textContent = "Nguồn: các trang đã biết (niemphatanvui.vn, hwadzan, amtb, sachphat, ph.tinhtong)" +
@@ -2542,7 +2551,9 @@ const AutoShort = (() => {
     const seq = imageGenerateSeq;
     $("#image-generate-btn").disabled = true;
     try {
-      const r = await api("/api/post-images/generate", jsonBody("POST", { keyword }));
+      const r = await api("/api/post-images/generate", jsonBody("POST", {
+        keyword, style: $("#image-generate-style").value, extra: $("#image-generate-extra").value,
+      }));
       showImageGenerate(r.run, seq);
     } catch (e) {
       if (seq === imageGenerateSeq && (imageLibraryPage || !$("#image-dialog").hidden)) {
@@ -2626,6 +2637,7 @@ const AutoShort = (() => {
       const card = el("div", { class: "img-card cand", "data-id": c.id, title: c.url });
       card.append(el("img", { src: `/files/post-image-candidates/${r.search_id}/${c.id}?thumb=1`, alt: "", loading: "lazy" }));
       card.append(el("p", { class: "muted small", text: `${c.width}×${c.height} · ${c.origin}` }));
+      if (c.style_label) card.append(el("p", { class: "muted small", text: c.style_label }));
       if (c.flag) card.append(el("p", { class: "small flag", text: c.flag }));
       card.addEventListener("click", () => {
         const on = !pickedCandidates.has(c.id);
