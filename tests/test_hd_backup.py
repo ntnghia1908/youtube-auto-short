@@ -343,7 +343,7 @@ def test_template_merges_existing_index_and_keeps_fixed_columns():
     assert "Import-Csv -LiteralPath $Index -Encoding UTF8 -ErrorAction Stop" in merge
     assert '$key = "$($old.tap)|$($old.loai)"' in merge
     assert "-not $newKeys.ContainsKey($key)" in merge
-    assert "Test-Path -LiteralPath (Join-Path $Dest $old.file)" in merge
+    assert "Test-Path -LiteralPath (BackupPath $old.loai $old.file)" in merge
     assert "$keptRows += $old" in merge
     fallback = merge.split("} catch {", 1)[1]
     assert 'Log "Cảnh báo:' in fallback and "$keptRows = @()" in fallback

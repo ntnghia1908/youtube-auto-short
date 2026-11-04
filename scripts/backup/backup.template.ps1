@@ -102,19 +102,51 @@ function BackupName([int]$n, [string]$kind) {
     return "$tag $label - Tập $n.mp4"
 }
 
+# STR1: cùng quy tắc với tools/store/store.py subdir; metadata chỉ lưu tên file.
+function StoreSubdir([string]$kind, [string]$name) {
+    $name = $name -replace '\.part$', ''
+    if ($name.EndsWith(".jpg")) { return "Hinh" }
+    if ($kind -eq "short") {
+        $category = if ($name.StartsWith("[KhaiThi] ")) { "KhaiThi" } else { "Short" }
+        $episode = [regex]::Match($name, ' - Tập ([0-9]+)(?= - |\.mp4$| \(r[0-9]+\)\.mp4$)')
+        $group = if ($episode.Success) { "Tap {0:D2}" -f [int]$episode.Groups[1].Value } else { "Khac" }
+        return Join-Path $category $group
+    }
+    switch ($kind) {
+        "HD" { return "HD" }
+        "Doc" { return "HD Mobile" }
+        "vertical" { return "HD Mobile" }
+        "Goc" { return "Goc" }
+        "source" { return "Goc" }
+        default { throw "Loai media khong hop le: $kind" }
+    }
+}
+
+function BackupPath([string]$kind, [string]$name, [switch]$New, [switch]$Create) {
+    if ([IO.Path]::GetFileName($name) -ne $name -or $name.Contains(":") -or $name.Contains("..")) {
+        throw "Ten media khong hop le: $name"
+    }
+    $parent = Join-Path $Dest (StoreSubdir $kind $name)
+    $target = Join-Path $parent $name
+    $legacy = Join-Path $Dest $name
+    if (-not $New -and -not (Test-Path -LiteralPath $target) -and (Test-Path -LiteralPath $legacy)) { return $legacy }
+    if ($Create) { [IO.Directory]::CreateDirectory($parent) | Out-Null }
+    return $target
+}
+
 # Giữ tên file đã có để SUMS, CSV, thumbnail và -Release cùng trỏ đúng bản đã kiểm.
 function ExistingBackupName([int]$n, [string]$kind, [string]$videoId) {
     $name = BackupName $n $kind
-    if (Test-Path -LiteralPath (Join-Path $Dest $name)) { return $name }
+    if (Test-Path -LiteralPath (BackupPath $kind $name)) { return $name }
     foreach ($catalog in @("index.csv", "danh-sach.csv")) {
         $path = Join-Path $Dest $catalog
         if ($videoId -and (Test-Path -LiteralPath $path)) {
             $row = Import-Csv -LiteralPath $path -Encoding UTF8 | Where-Object { $_.video_id -eq $videoId -and $_.loai -eq $kind } | Select-Object -Last 1
-            if ($row -and $row.file -and (Test-Path -LiteralPath (Join-Path $Dest $row.file))) { return $row.file }
+            if ($row -and $row.file -and (Test-Path -LiteralPath (BackupPath $kind $row.file))) { return $row.file }
         }
     }
     $old = LegacyBackupName $n $kind
-    if (Test-Path -LiteralPath (Join-Path $Dest $old)) { return $old }
+    if (Test-Path -LiteralPath (BackupPath $kind $old)) { return $old }
     return $name
 }
 
@@ -135,24 +167,34 @@ function Post-Json($path, $obj) {
 
 # Đổi tên file "[HD Dọc] ..." cũ trong thư mục đích sang "[HD Mobile] ..." (cả .jpg, .part); dòng sha đã kiểm được giữ nguyên
 function Rename-LegacyMobile {
-    $n = 0
-    Get-ChildItem -LiteralPath $Dest -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "[[]HD Dọc[]] *" } | ForEach-Object {
-        $new = "[HD Mobile] " + $_.Name.Substring("[HD Dọc] ".Length)
-        $target = Join-Path $Dest $new
-        if (Test-Path -LiteralPath $target) { Log "Bỏ qua $($_.Name): đã có '$new'"; return }
-        Move-Item -LiteralPath $_.FullName -Destination $target
-        Log "Đổi tên $($_.Name) -> $new"
-        $n++
+    $renamed = @{}
+    foreach ($parent in @($Dest, (Join-Path $Dest "HD Mobile"), (Join-Path $Dest "Hinh"))) {
+        Get-ChildItem -LiteralPath $parent -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "[[]HD Dọc[]] *" } | ForEach-Object {
+            $new = "[HD Mobile] " + $_.Name.Substring("[HD Dọc] ".Length)
+            $existing = BackupPath "Doc" $new
+            if (Test-Path -LiteralPath $existing) { Log "Bỏ qua $($_.Name): đã có '$new'"; return }
+            $target = BackupPath "Doc" $new -New -Create
+            Move-Item -LiteralPath $_.FullName -Destination $target
+            Log "Đổi tên $($_.Name) -> $new"
+            $renamed[$_.Name] = $new
+        }
     }
-    if ($n -and (Test-Path -LiteralPath $Sums)) {
+    if ($renamed.Count -and (Test-Path -LiteralPath $Sums)) {
         $lines = Get-Content -LiteralPath $Sums -Encoding UTF8 | ForEach-Object {
             $p = $_ -split "  ", 2
-            if ($p.Count -eq 2 -and $p[1].StartsWith("[HD Dọc] ")) {
-                $new = "[HD Mobile] " + $p[1].Substring("[HD Dọc] ".Length)
-                if (Test-Path -LiteralPath (Join-Path $Dest $new)) { "{0}  {1}" -f $p[0], $new } else { $_ }
-            } else { $_ }
+            if ($p.Count -eq 2 -and $renamed.ContainsKey($p[1])) { "{0}  {1}" -f $p[0], $renamed[$p[1]] } else { $_ }
         }
         Set-Content -LiteralPath $Sums -Value $lines -Encoding UTF8
+    }
+    foreach ($catalog in @("index.csv", "danh-sach.csv")) {
+        $path = Join-Path $Dest $catalog
+        if ($renamed.Count -and (Test-Path -LiteralPath $path)) {
+            $catalogRows = @(Import-Csv -LiteralPath $path -Encoding UTF8)
+            foreach ($row in $catalogRows) {
+                if ($renamed.ContainsKey($row.file)) { $row.file = $renamed[$row.file] }
+            }
+            $catalogRows | Export-Csv -NoTypeInformation -Encoding UTF8 -LiteralPath $path
+        }
     }
 }
 
@@ -228,18 +270,23 @@ foreach ($e in ($pl.entries | Sort-Object { [int]("0" + ($_.episode -replace "\D
     }
     foreach ($it in $items) {
         $name = ExistingBackupName ([int]$ep) $it[0] $e.video_id
-        $file = Join-Path $Dest $name
+        $file = BackupPath $it[0] $name -Create
         $rows += [pscustomobject]@{ tap = $ep; loai = $it[0]; file = $name; video_id = $e.video_id; tieu_de = $e.title }
+        $flatPart = BackupPath $it[0] ($name + ".part")
+        if ($flatPart -ne "$file.part" -and (Test-Path -LiteralPath $flatPart) -and -not (Test-Path -LiteralPath "$file.part")) {
+            Move-Item -LiteralPath $flatPart -Destination "$file.part"
+        }
         # tên cũ (bản script trước): Tap001_<id>_HD.mp4 -> đổi sang tên mới, sha256 đã kiểm giữ nguyên
         $legacy = "Tap{0}_{1}_{2}.mp4" -f $ep, $e.video_id, $it[0]
-        $legacyFile = Join-Path $Dest $legacy
+        $legacyFile = BackupPath $it[0] $legacy
         if ($done[$legacy] -and (Test-Path -LiteralPath $legacyFile) -and -not (Test-Path -LiteralPath $file)) {
             Move-Item -LiteralPath $legacyFile -Destination $file
             Log "Đổi tên $legacy -> $name"
         }
         # file dở của bản cũ: đổi tên .part để tải tiếp thay vì tải lại từ đầu
-        if ((Test-Path -LiteralPath "$legacyFile.part") -and -not (Test-Path -LiteralPath "$file.part")) {
-            Move-Item -LiteralPath "$legacyFile.part" -Destination "$file.part"
+        $legacyPart = BackupPath $it[0] ($legacy + ".part")
+        if ((Test-Path -LiteralPath $legacyPart) -and -not (Test-Path -LiteralPath "$file.part")) {
+            Move-Item -LiteralPath $legacyPart -Destination "$file.part"
         }
         if ((Test-Path -LiteralPath $file) -and ($done[$name] -or $done[$legacy])) { $skip++; continue }
         $todo += [pscustomobject]@{ ep = [int]$ep; kind = $it[0]; url = $it[1]; orig = $it[2]; file = $file; name = $name; key = "$($e.video_id)|$($it[0])"; size = 0 }
@@ -279,15 +326,15 @@ foreach ($t in $todo) {
     $eta = if ($speed -gt 0) { $ts = [TimeSpan]::FromSeconds($left / $speed); "{0}:{1:D2}" -f [math]::Floor($ts.TotalHours), $ts.Minutes } else { "?" }
     Log ("  TỔNG: {0:N1} / {1:N1} GB ({2:N0}%), {3}/{4} file, tốc độ TB {5:N1} MB/s, còn khoảng {6} (giờ:phút)" -f ($doneBytes / 1GB), ($total / 1GB), (100.0 * $doneBytes / [math]::Max([double]1, [double]$total)), $n, $todo.Count, ($speed / 1MB), $eta)
 }
-# Thumbnail cạnh video: "[HD] ... - Tập N.jpg" (16:9) / "[HD Mobile] ... - Tập N.jpg" (9:16), chỉ cho video đã có
+# Thumbnail trong Hinh: "[HD] ... - Tập N.jpg" (16:9) / "[HD Mobile] ... - Tập N.jpg" (9:16), chỉ cho video đã có
 $thumbOk = 0; $thumbMissing = @()
 foreach ($e in $pl.entries) {
     $epNum = [int]("0" + ($e.episode -replace "\D", ""))
     if ($epNum -lt 1 -or -not $e.video_id) { continue }
     foreach ($pair in @(@("HD", "landscape"), @("Doc", "vertical"))) {
-        $video = Join-Path $Dest (ExistingBackupName $epNum $pair[0] $e.video_id)
+        $video = BackupPath $pair[0] (ExistingBackupName $epNum $pair[0] $e.video_id)
         if (-not (Test-Path -LiteralPath $video)) { continue }
-        $jpg = [IO.Path]::ChangeExtension($video, ".jpg")
+        $jpg = BackupPath $pair[0] ([IO.Path]::ChangeExtension((Split-Path $video -Leaf), ".jpg")) -New -Create
         $url = "/files/episodes/$($e.video_id)/thumbs/$($pair[1]).jpg"
         $got = $false
         for ($i = 1; $i -le 3 -and -not $got; $i++) {
@@ -310,7 +357,7 @@ if (-not $ThumbsOnly) {
     if (Test-Path -LiteralPath $Sums) { Get-Content -LiteralPath $Sums -Encoding UTF8 | ForEach-Object { $p = $_ -split "  ", 2; if ($p.Count -eq 2) { $shaOf[$p[1]] = $p[0] } } }
     $okFiles = @{}   # "<video_id>|HD" / "<video_id>|Doc" đã được VM xác nhận -> dung lượng file
     foreach ($r in $rows) {
-        $f = Join-Path $Dest $r.file
+        $f = BackupPath $r.loai $r.file
         $sha = $shaOf[$r.file]
         if (-not (Test-Path -LiteralPath $f) -or -not $sha) { continue }
         $kind = if ($r.loai -eq "Doc") { "vertical" } else { "hd" }
@@ -357,7 +404,7 @@ if (Test-Path -LiteralPath $Index) {
         $oldRows = @(Import-Csv -LiteralPath $Index -Encoding UTF8 -ErrorAction Stop)
         foreach ($old in $oldRows) {
             $key = "$($old.tap)|$($old.loai)"
-            if (-not $newKeys.ContainsKey($key) -and $old.file -and (Test-Path -LiteralPath (Join-Path $Dest $old.file))) {
+            if (-not $newKeys.ContainsKey($key) -and $old.file -and (Test-Path -LiteralPath (BackupPath $old.loai $old.file))) {
                 $keptRows += $old
             }
         }

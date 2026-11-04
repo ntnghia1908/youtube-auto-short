@@ -91,6 +91,7 @@ def test_source_put_index_head_get_and_bad_sha(archive):
     bad = f"/files/zyxWVUT9876/source?" + urlencode(dict(series=PLAYLIST, name="[Goc] bad.mp4"))
     assert request(service, "PUT", bad, {**headers, "X-Sha256": "0" * 64}, DATA)[0] == 422
     assert not (folder / "[Goc] bad.mp4").exists()
+    assert not (folder / "Goc" / "[Goc] bad.mp4").exists()
     assert len(service.index()) == 1
 
 
@@ -242,7 +243,7 @@ def test_put_stream_hash_atomic_publish(archive, monkeypatch, scenario, status):
     else:
         before = {p: p.read_bytes() for p in folder.iterdir()} if folder.exists() else {}
         assert service.put(video_id, "hd", series, name, sha, stream, length) == status
-        assert (folder / name).read_bytes() == DATA
+        assert (folder / "HD" / name if scenario in ("new", "new_series") else folder / name).read_bytes() == DATA
         assert service.index()[0]["sha256"] == SHA
         if scenario == "same":
             assert stream.tell() == 0
@@ -256,11 +257,12 @@ def test_put_stream_hash_atomic_publish(archive, monkeypatch, scenario, status):
     if scenario == "stale_part":
         assert part.read_bytes() == b"previous upload"
     else:
-        assert not part.exists()
+        assert not list(folder.rglob("*.part"))
     if scenario == "unindexed_conflict":
         assert (folder / name).read_bytes() == b"keep original"
     if scenario in ("bad_sha", "truncated", "limit", "interrupted", "bad_series"):
         assert not (folder / name).exists()
+        assert not (folder / "HD" / name).exists()
         assert not (folder / "index.csv").exists()
         assert not (folder / "SHA256SUMS.txt").exists()
 
@@ -345,14 +347,15 @@ def test_http_put(archive, scenario, expected):
     status, _, _ = request(service, "PUT", f"/files/{VIDEO}/hd?{query}", headers, DATA)
     assert status == expected
     if scenario == "new":
-        assert (folder / NAME).read_bytes() == DATA
+        assert (folder / "HD" / NAME).read_bytes() == DATA
         assert request(service, "GET", f"/files/{VIDEO}/hd")[2] == DATA
         # Repeat the exact request: no duplicate metadata.
         assert request(service, "PUT", f"/files/{VIDEO}/hd?{query}", headers, DATA)[0] == 200
         assert len(service.index()) == 1
     else:
         assert not (folder / NAME).exists()
-        assert not (folder / (NAME + ".part")).exists()
+        assert not (folder / "HD" / NAME).exists()
+        assert not list(folder.rglob("*.part"))
 
 
 def test_self_test_config_validation_and_loopback_binding(archive, capsys, monkeypatch):
@@ -472,15 +475,15 @@ def test_short_revisions_keep_history_and_current_index(archive, video_id):
             assert list(csv.DictReader(stream)) == [dict(video_id=video_id, clip="k01.mp4", file=version)]
         sums = (folder / "SHA256SUMS.txt").read_text(encoding="utf-8-sig")
         for old_sha, old_name, old_data in copies:
-            assert (folder / old_name).read_bytes() == old_data
+            assert (folder / "Short" / "Khac" / old_name).read_bytes() == old_data
             assert f"{old_sha}  {old_name}" in sums
-    assert len(list(folder.glob("[[]Short]*.mp4"))) == 3
+    assert len(list((folder / "Short" / "Khac").glob("[[]Short]*.mp4"))) == 3
     assert (folder / "index.csv").read_bytes() == original_index
-    assert not list(folder.glob("*.part"))
+    assert not list(folder.rglob("*.part"))
     # Failed upload cannot switch the current pointer or consume the next revision.
     assert request(service, "PUT", route + query,
                    {"Content-Length": "3", "X-Sha256": "0" * 64}, b"bad")[0] == 422
-    assert not (folder / (name[:-4] + " (r4).mp4")).exists()
+    assert not (folder / "Short" / "Khac" / (name[:-4] + " (r4).mp4")).exists()
     assert request(service, "GET", route)[2] == b"third"
 
 
@@ -503,7 +506,7 @@ def test_hd_conditional_replace_preserves_identity_csv_and_rejects_conflicts(arc
     assert len(rows) == 1 and rows[0]["tap"] == "001" and rows[0]["tieu_de"] == "Địa Tạng, tập 1"
     assert request(service, "PUT", route, {**headers, "X-Replace-Sha256": SHA}, new)[0] == 409
     assert request(service, "PUT", route, headers, new)[0] == 200
-    assert not list(folder.glob("*.part"))
+    assert not list(folder.rglob("*.part"))
 
 
 def test_hd_replace_bad_body_and_other_kinds_do_not_change_store(archive):
@@ -514,7 +517,7 @@ def test_hd_replace_bad_body_and_other_kinds_do_not_change_store(archive):
     assert request(service, "PUT", route, headers, DATA)[0] == 422
     assert (folder / NAME).read_bytes() == DATA and service.index()[0]["sha256"] == SHA
     assert request(service, "PUT", route.replace("/hd?", "/vertical?"), headers, DATA)[0] == 400
-    assert not list(folder.glob("*.part"))
+    assert not list(folder.rglob("*.part"))
 
 
 @pytest.mark.parametrize("catalog", ["index.csv", "danh-sach.csv"])
@@ -624,15 +627,15 @@ def test_vertical_put_accepts_transition_names_and_archives_only_after_validatio
     query = urlencode(dict(series=PLAYLIST, name=base))
     headers = {"Content-Length": str(len(data)), "X-Sha256": sha}
     assert request(service, "PUT", route + query, {**headers, "X-Sha256": "0" * 64}, data)[0] == 422
-    assert (folder / current).read_bytes() == DATA and not (folder / "_cu").exists()
+    assert (folder / "HD Mobile" / current).read_bytes() == DATA and not (folder / "_cu").exists()
     assert request(service, "PUT", route + query, headers, data)[0] == 201
     assert (folder / "_cu" / current).read_bytes() == DATA
-    assert (folder / new_name).read_bytes() == data
+    assert (folder / "HD Mobile" / new_name).read_bytes() == data
     assert service.index()[0]["file"] == new_name and service.index()[0]["sha256"] == sha
     newer = data + b"again"
     assert service.put(VIDEO, "vertical", PLAYLIST, new_name, hashlib.sha256(newer).hexdigest(), io.BytesIO(newer), len(newer)) == 201
     assert sorted(p.read_bytes() for p in (folder / "_cu").iterdir()) == sorted([DATA, data])
-    assert list(folder.glob("*.mp4")) == [folder / new_name]
+    assert list((folder / "HD Mobile").glob("*.mp4")) == [folder / "HD Mobile" / new_name]
 
 
 def test_hd_replace_after_rename_uses_current_path(archive):
@@ -658,9 +661,9 @@ def test_vertical_custom_label_and_failed_update_preserve_current(archive, monke
     data = b"new-intro"
     sha = hashlib.sha256(data).hexdigest()
     if failure == "part":
-        (folder / (name + ".part")).write_bytes(b"foreign partial")
+        (folder / "HD Mobile" / (name + ".part")).write_bytes(b"foreign partial")
     elif failure == "collision":
-        (folder / name).write_bytes(b"foreign file")
+        (folder / "HD Mobile" / name).write_bytes(b"foreign file")
     elif failure == "symlink":
         (folder / "_cu").symlink_to(folder.parent, target_is_directory=True)
     elif failure == "rename-io":
@@ -674,10 +677,196 @@ def test_vertical_custom_label_and_failed_update_preserve_current(archive, monke
             service.put(VIDEO, "vertical", PLAYLIST, name, sha, io.BytesIO(b"" if failure == "incomplete" else data), len(data))
         assert service.index() == index_before
         assert (folder / "SHA256SUMS.txt").read_bytes() == sums_before
-        assert (folder / old).read_bytes() == DATA
+        assert (folder / "HD Mobile" / old).read_bytes() == DATA
     else:
         assert service.put(VIDEO, "vertical", PLAYLIST, name, sha, io.BytesIO(data), len(data)) == 201
         assert service.index()[0]["file"] == name
         newer = data + b"again"
         assert service.put(VIDEO, "vertical", PLAYLIST, old, hashlib.sha256(newer).hexdigest(), io.BytesIO(newer), len(newer)) == 201
-        assert service.index()[0]["file"] == name and (folder / name).read_bytes() == newer
+        assert service.index()[0]["file"] == name and (folder / "HD Mobile" / name).read_bytes() == newer
+
+
+# Shared by the Python and generated PowerShell checks in test_backup_stn1.py.
+SUBDIR_CASES = [
+    ("hd", "[HD] Bộ thử - Tập 5.mp4", "HD"),
+    ("vertical", "[HD Mobile] Bộ thử - Tập 5.mp4", "HD Mobile"),
+    ("vertical", "[HD Dọc] Bộ thử - Tập 5.mp4", "HD Mobile"),
+    ("source", "[Goc] Bộ thử - Tập 5.mp4", "Goc"),
+    ("short", "[Short] Bộ thử - Tập 5 - k01.mp4", "Short/Tap 05"),
+    ("short", "[KhaiThi] Bộ thử - Tập 105 - k01 (r2).mp4", "KhaiThi/Tap 105"),
+    ("short", "[Short] abcDEF12_-3 - k01.mp4", "Short/Khac"),
+    ("short", "[KhaiThi] abcDEF12_-3.kt - k01.mp4", "KhaiThi/Khac"),
+    ("short", "[Short] Bộ thử - Tập 001 - k01.mp4", "Short/Tap 01"),
+    ("hd", "[HD] Bộ thử - Tập 5.jpg", "Hinh"),
+    ("vertical", "[HD Dọc] Bộ thử - Tập 5.jpg", "Hinh"),
+]
+
+
+@pytest.mark.parametrize("kind,name,expected", SUBDIR_CASES)
+def test_str1_subdir_table(kind, name, expected):
+    assert store.subdir(kind, name) == Path(expected)
+
+
+@pytest.mark.parametrize("kind,name,relative", [case for case in SUBDIR_CASES if not case[1].endswith('.jpg')])
+def test_str1_put_layout_and_http_reads(archive, kind, name, relative):
+    service, folder, _ = archive
+    clip = "k01.mp4" if kind == "short" else None
+    assert service.put(VIDEO, kind, PLAYLIST, name, SHA, io.BytesIO(DATA), len(DATA), clip) == 201
+    assert (folder / relative / name).read_bytes() == DATA
+    assert not (folder / name).exists()
+    row, path = service.lookup(VIDEO, kind, clip)
+    assert path == folder / relative / name and row["sha256"] == SHA
+    route = f"/files/{VIDEO}/{kind}" + (f"/{clip}" if clip else "")
+    assert request(service, "GET", route)[2] == DATA
+    code, headers, body = request(service, "HEAD", route)
+    assert code == 200 and headers["X-Sha256"] == SHA and body == b""
+    assert request(service, "GET", route, {"Range": "bytes=2-5"})[2] == DATA[2:6]
+    assert not list(folder.rglob("*.part"))
+
+
+def test_str1_reorganize_plan_apply_index_unchanged_and_idempotent(archive, capsys):
+    service, folder, config = archive
+    # Construct a flat legacy catalogue for all recognized types, plus historical revisions.
+    for number, (kind, name, relative) in enumerate(SUBDIR_CASES):
+        if name.endswith('.jpg'):
+            (folder / name).write_bytes(b"thumbnail")
+            continue
+        clip = "k01.mp4" if kind == "short" else None
+        service.put(f"{number:011d}", kind, PLAYLIST, name, SHA, io.BytesIO(DATA), len(DATA), clip)
+        (folder / relative / name).rename(folder / name)
+    (folder / "notes.txt").write_bytes(b"unknown")
+    (folder / "mystery.mp4").write_bytes(b"unknown media")
+    for archive_name in ("_cu", "_cu-2026"):
+        (folder / archive_name).mkdir()
+        (folder / archive_name / NAME).write_bytes(b"archived")
+    before = {p.relative_to(folder): p.read_bytes() if p.is_file() else None for p in folder.rglob('*')}
+    index_before = service.index()
+    # Same cached instance must read both flat files and the files after migration.
+    assert store.main(["--config", str(config), "reorganize", "--series", PLAYLIST]) == 0
+    output = capsys.readouterr().out
+    assert "Dry run" in output and " -> " in output and "Unknown (unchanged):" in output
+    assert {p.relative_to(folder): p.read_bytes() if p.is_file() else None for p in folder.rglob('*')} == before
+    moves, unknown = service.reorganize(PLAYLIST)
+    assert len(moves) == len(SUBDIR_CASES) and {p.name for p in unknown} == {"notes.txt", "mystery.mp4"}
+    assert store.main(["--config", str(config), "reorganize", "--series", PLAYLIST, "--apply"]) == 0
+    assert service.index() == index_before
+    for _, name, relative in SUBDIR_CASES:
+        assert (folder / relative / name).exists() and not (folder / name).exists()
+    for name in ("index.csv", "index-short.csv", "SHA256SUMS.txt"):
+        assert (folder / name).read_bytes() == before[Path(name)]
+    assert "reorganize:" in (folder / "backup-log.txt").read_text()
+    after = {p.relative_to(folder): (p.read_bytes(), p.stat().st_mtime_ns) for p in folder.rglob('*') if p.is_file()}
+    assert service.reorganize(PLAYLIST, apply=True)[0] == []
+    assert {p.relative_to(folder): (p.read_bytes(), p.stat().st_mtime_ns) for p in folder.rglob('*') if p.is_file()} == after
+    # STN1 must still find and rename HD / vertical files, including historical files in subfolders.
+    service.rename_vertical(PLAYLIST, apply=True)
+    assert len(service.index()) == len(index_before)
+    assert service.lookup("00000000000", "hd")[1].parent == folder / "HD"
+
+
+@pytest.mark.parametrize("apply", [False, True])
+def test_str1_collision_in_all_stops_before_any_move(archive, apply, capsys):
+    service, folder, config = archive
+    seed(folder)
+    other = service.root / "ZZother"
+    (other / "HD").mkdir(parents=True)
+    (other / NAME).write_bytes(DATA)
+    (other / "HD" / NAME).write_bytes(b"collision")
+    before = {p: p.read_bytes() for base in (folder, service.root) for p in base.rglob('*') if p.is_file()}
+    args = ["--config", str(config), "reorganize", "--series", "all"] + (["--apply"] if apply else [])
+    assert store.main(args) == 1
+    assert "destination already exists" in capsys.readouterr().err
+    assert {p: p.read_bytes() for base in (folder, service.root) for p in base.rglob('*') if p.is_file()} == before
+    assert not (folder / "HD").exists()
+
+
+@pytest.mark.parametrize("part_dir", ["", "Short/Tap 01", "_cu"])
+def test_str1_partial_blocks_reorganize(archive, part_dir):
+    service, folder, _ = archive
+    seed(folder)
+    parent = folder / part_dir
+    parent.mkdir(parents=True, exist_ok=True)
+    (parent / "upload.part").write_bytes(b"unfinished")
+    with pytest.raises(store.StoreError, match="Partial files"):
+        service.reorganize(PLAYLIST, apply=True)
+    assert (folder / NAME).read_bytes() == DATA
+    assert not (folder / "HD").exists()
+
+
+@pytest.mark.parametrize("relative,reparse", [("HD", False), ("HD", True), ("Short", False), ("Short/Tap 05", False)])
+def test_str1_media_subdirectory_links_refused(archive, tmp_path, monkeypatch, relative, reparse):
+    service, folder, _ = archive
+    kind, name = ("short", "[Short] Bộ thử - Tập 5 - k01.mp4") if relative.startswith("Short") else ("hd", NAME)
+    clip = "k01.mp4" if kind == "short" else None
+    service._publish(folder, VIDEO, kind, name, SHA, clip)
+    (folder / name).write_bytes(DATA)
+    assert service.index()  # Warm the catalogue cache before installing the link.
+    link = folder / relative
+    link.parent.mkdir(parents=True, exist_ok=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    if reparse:
+        link.mkdir()
+        original = Path.lstat
+        def fake_lstat(path, *args, **kwargs):
+            info = original(path, *args, **kwargs)
+            return SimpleNamespace(st_mode=info.st_mode, st_file_attributes=0x400) if path == link else info
+        monkeypatch.setattr(Path, "lstat", fake_lstat)
+    else:
+        link.symlink_to(outside, target_is_directory=True)
+    for action in (service.index, lambda: service.lookup(VIDEO, kind, clip),
+                   lambda: service.put(VIDEO, kind, PLAYLIST, name, SHA, io.BytesIO(DATA), len(DATA), clip),
+                   lambda: service.reorganize(PLAYLIST, apply=True)):
+        with pytest.raises(store.StoreError, match="Symlinks/reparse"):
+            action()
+    assert not list(outside.iterdir()) and (folder / name).read_bytes() == DATA
+
+
+def test_str1_new_layout_precedes_flat_copy_even_with_cached_index(archive):
+    service, folder, _ = archive
+    seed(folder)
+    assert service.index()[0]["size"] == len(DATA)
+    (folder / "HD").mkdir()
+    (folder / "HD" / NAME).write_bytes(b"new layout")
+    assert service.lookup(VIDEO, "hd")[1] == folder / "HD" / NAME
+    assert request(service, "GET", f"/files/{VIDEO}/hd")[2] == b"new layout"
+
+
+def test_str1_flat_vertical_replacement_archives_then_publishes_in_subdir(archive, monkeypatch):
+    service, folder, _ = archive
+    name = "[HD Mobile] Bộ thử - PS. Tịnh Không - Tập 7.mp4"
+    (folder / name).write_bytes(DATA)
+    service._publish(folder, VIDEO, "vertical", name, SHA)
+    data = b"replacement"
+    sha = hashlib.sha256(data).hexdigest()
+    replace = store.os.replace
+    renames = []
+    def atomic(source, dest):
+        if dest.suffix == ".mp4":
+            assert source.parent == dest.parent == folder / "HD Mobile"
+            assert source.name == name + ".part"
+            renames.append((source, dest))
+        return replace(source, dest)
+    monkeypatch.setattr(store.os, "replace", atomic)
+    assert service.put(VIDEO, "vertical", PLAYLIST, name, sha, io.BytesIO(data), len(data)) == 201
+    assert len(renames) == 1
+    assert (folder / "_cu" / name).read_bytes() == DATA
+    assert (folder / "HD Mobile" / name).read_bytes() == data
+    assert not (folder / name).exists()
+    assert service.lookup(VIDEO, "vertical")[0]["sha256"] == sha
+
+
+def test_str1_rename_archives_historical_hd_from_reorganized_subdir(archive):
+    service, folder, _ = archive
+    seed(folder)
+    revision = NAME[:-4] + " (r2).mp4"
+    (folder / revision).write_bytes(b"latest")
+    sha = hashlib.sha256(b"latest").hexdigest()
+    service._publish(folder, VIDEO, "hd", revision, sha)
+    service.reorganize(PLAYLIST, apply=True)
+    service.rename_vertical(PLAYLIST, apply=True)
+    assert (folder / "_cu" / NAME).read_bytes() == DATA
+    name = store.hd_name(revision)
+    assert (folder / "HD" / name).read_bytes() == b"latest"
+    assert not (folder / "HD" / revision).exists()
+    assert service.lookup(VIDEO, "hd")[0]["sha256"] == sha

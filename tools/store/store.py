@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import datetime
 import hashlib
 import hmac
 import json
@@ -27,6 +28,40 @@ CHUNK = 1024 * 1024
 REVISION = re.compile(r" \(r[0-9]+\)(?=\.mp4$)")
 HD_NAME = re.compile(r"^\[(HD|HD Mobile|HD Dọc)\] (.+) - Tập ([0-9]+)\.mp4$")
 DEFAULT_SPEAKER = "PS. Tịnh Không"
+MEDIA_DIRS = ("HD", "HD Mobile", "Goc", "Hinh", "Short", "KhaiThi")
+
+
+def subdir(kind: str, name: str) -> Path:
+    """Fixed directory names; only the numeric episode is derived from the filename."""
+    if name.endswith(".jpg"):
+        return Path("Hinh")
+    if kind == "short":
+        category = "KhaiThi" if name.startswith("[KhaiThi] ") else "Short"
+        episode = re.search(r" - Tập ([0-9]+)(?= - |\.mp4$| \(r[0-9]+\)\.mp4$)", name)
+        return Path(category) / (f"Tap {int(episode[1]):02d}" if episode else "Khac")
+    return Path({"hd": "HD", "vertical": "HD Mobile", "source": "Goc"}[kind])
+
+
+def media_path(folder: Path, kind: str, name: str, *, existing: bool = True) -> Path:
+    """Find media in the new layout first, then the flat legacy tree; otherwise its new path."""
+    validate_name(name[:-4] + ".mp4" if name.endswith(".jpg") else name)
+    parent = no_links(folder / subdir(kind, name))
+    if parent.exists() and not parent.is_dir():
+        raise StoreError(400, "Media directory must be a directory")
+    target = inside(parent, name)
+    # Validate both locations even when the new file exists.
+    legacy = inside(folder, name)
+    return legacy if existing and not target.exists() and legacy.exists() else target
+
+
+def media_kind(name: str) -> str | None:
+    """Recognize files safe to reorganize; unknown files stay where they are."""
+    tag = re.match(r"^\[(HD|HD Mobile|HD Dọc|Goc|Short|KhaiThi)\] ", name)
+    if tag is None or not name.endswith((".mp4", ".jpg")):
+        return None
+    validate_name(name[:-4] + ".mp4")
+    return {"HD": "hd", "HD Mobile": "vertical", "HD Dọc": "vertical",
+            "Goc": "source", "Short": "short", "KhaiThi": "short"}[tag[1]]
 
 
 def hd_name(name: str, speaker: str = DEFAULT_SPEAKER) -> str:
@@ -220,7 +255,7 @@ class Store:
             entries = {}
             for series, folder in sorted(self.folders().items()):
                 for row in self._rows(folder):
-                    path = inside(folder, row["file"])
+                    path = media_path(folder, row["kind"], row["file"])
                     if path.is_file():
                         key = (row["video_id"], row["kind"], row.get("clip", ""))
                         if key in entries:
@@ -233,7 +268,7 @@ class Store:
         if kind != "short":
             for row in self.index():
                 if (row["video_id"], row["kind"]) == (video_id, kind):
-                    return row, inside(self.folders()[row["series"]], row["file"])
+                    return row, media_path(self.folders()[row["series"]], kind, row["file"])
             raise StoreError(404, "Unknown file")
         # Read cached catalogues, stat only the requested identity (thousands of Shorts per series).
         found = []
@@ -241,7 +276,7 @@ class Store:
             for series, folder in self.folders().items():
                 for row in self._rows(folder):
                     if (row["video_id"], row["kind"], row.get("clip")) == (video_id, kind, clip):
-                        path = inside(folder, row["file"])
+                        path = media_path(folder, kind, row["file"])
                         if path.is_file():
                             found.append((dict(row, series=series, size=path.stat().st_size), path))
         if len(found) > 1:
@@ -325,7 +360,9 @@ class Store:
             raise StoreError(409, "Archive must be a directory")
         moves, reserved = [], set()
         for path in sorted(set(paths)):
-            inside(folder, path.name)
+            if not no_links(path).resolve().is_relative_to(no_links(folder).resolve()):
+                raise StoreError(400, "Path outside series folder")
+            inside(path.parent, path.name)
             target = inside(archive, path.name)
             revision = 2
             while target.exists() or target in reserved:
@@ -334,6 +371,66 @@ class Store:
             reserved.add(target)
             moves.append((path, target))
         return moves
+
+    def _media_files(self, folder: Path) -> list[Path]:
+        """Check the tree without following links; refuse pending uploads before any move."""
+        def fail(error):
+            raise error
+
+        media = []
+        for base, dirs, files in os.walk(no_links(folder), onerror=fail):
+            parent = no_links(Path(base))
+            for name in dirs:
+                no_links(parent / name)
+            for name in files:
+                path = inside(parent, name)
+                if name.endswith(".part"):
+                    raise StoreError(409, "Partial files exist in series")
+                relative = path.relative_to(folder)
+                if len(relative.parts) == 1 or relative.parts[0] in MEDIA_DIRS:
+                    if name.endswith((".mp4", ".jpg")):
+                        media.append(path)
+        return media
+
+    def reorganize(self, series: str, *, apply: bool = False) -> tuple[list[tuple[Path, Path]], list[Path]]:
+        """Preflight every selected series before moving anything, including for 'all'."""
+        if series != "all" and not SERIES_ID.fullmatch(series):
+            raise StoreError(400, "Invalid series")
+        with self._put_lock, self._lock:
+            folders = self.folders()
+            if series != "all":
+                if series not in folders:
+                    raise StoreError(404, "Unknown series")
+                folders = {series: folders[series]}
+            moves, unknown, reserved = [], [], set()
+            metadata = {"index.csv", "index-short.csv", "danh-sach.csv", "SHA256SUMS.txt", "backup-log.txt"}
+            for folder in folders.values():
+                self._media_files(folder)
+                for path in sorted(folder.iterdir()):
+                    if path.name.startswith("_cu") or path.name in metadata or path.is_dir():
+                        continue
+                    source = inside(folder, path.name)
+                    kind = media_kind(path.name)
+                    if kind is None:
+                        unknown.append(source)
+                        continue
+                    target = media_path(folder, kind, path.name, existing=False)
+                    if target.exists() or target in reserved:
+                        raise StoreError(409, f"Reorganize destination already exists: {source} -> {target}")
+                    reserved.add(target)
+                    moves.append((source, target))
+                inside(folder, "backup-log.txt")
+            if apply:
+                for source, target in moves:
+                    no_links(target.parent).mkdir(parents=True, exist_ok=True)
+                    inside(source.parent, source.name).rename(inside(target.parent, target.name))
+                    # Log each completed move, without changing the media catalogues.
+                    with inside(source.parent, "backup-log.txt").open("a", encoding="utf-8") as log:
+                        log.write(f"{datetime.datetime.now().isoformat(timespec='seconds')} reorganize: "
+                                  f"{source.name} -> {target.relative_to(source.parent)}\n")
+                for folder in folders.values():
+                    self._cache.pop(folder, None)
+            return moves, unknown
 
     def rename_vertical(self, series: str, *, apply: bool = False,
                         speaker: str = DEFAULT_SPEAKER,
@@ -345,8 +442,7 @@ class Store:
             folder = self.folders().get(series)
             if folder is None:
                 raise StoreError(404, "Unknown series")
-            if any(folder.rglob("*.part")):
-                raise StoreError(409, "Partial files exist in series")
+            media = [p for p in self._media_files(folder) if p.suffix == ".mp4"]
             rows = self._rows(folder)
             self._metadata(folder)
             # Retain historical identity attribution even if a previous file used another title.
@@ -359,11 +455,10 @@ class Store:
                             history[row["file"]] = (row["video_id"], KINDS.get(row["loai"]))
             current = {r["file"] for r in rows}
             planned, targets, archived = [], set(), set()
-            media = [inside(folder, p.name) for p in folder.iterdir() if p.suffix == ".mp4"]
             for row in rows:
                 if row["kind"] not in ("hd", "vertical"):
                     continue
-                old = inside(folder, row["file"])
+                old = media_path(folder, row["kind"], row["file"])
                 if not old.is_file():
                     raise StoreError(409, "Current HD file is missing")
                 canonical = HD_NAME.fullmatch(hd_name(row["file"], speaker))
@@ -372,7 +467,7 @@ class Store:
                 # A custom format must keep the recognized HD identity and naming convention.
                 if name != hd_name(name, speaker) or vertical_key(name) != vertical_key(row["file"]):
                     raise StoreError(400, "Format must preserve the HD series, tag and episode")
-                dest = inside(folder, name)
+                dest = media_path(folder, row["kind"], name)
                 if name in targets or (name != row["file"] and name in current):
                     raise StoreError(409, "Rename target belongs to another current file")
                 targets.add(name)
@@ -393,7 +488,10 @@ class Store:
                     source.rename(target)
                 for row in planned:
                     if row["old"] != row["file"]:
-                        inside(folder, row["old"]).rename(inside(folder, row["file"]))
+                        old = media_path(folder, row["kind"], row["old"])
+                        dest = media_path(folder, row["kind"], row["file"])
+                        no_links(dest.parent).mkdir(parents=True, exist_ok=True)
+                        old.rename(dest)
                         self._publish(folder, row["video_id"], row["kind"], row["file"], row["sha256"])
             return planned
 
@@ -448,14 +546,14 @@ class Store:
         with self._put_lock:
             folder = no_links(self.config["series"].get(series, self.root / series))
             folder.mkdir(parents=True, exist_ok=True)
-            dest = inside(folder, name)
-            part = inside(folder, name + ".part")
+            dest = media_path(folder, kind, name)
+            part = inside(dest.parent, name + ".part")
             with self._lock:
                 entries = self.index()
                 current = None
                 for row in entries:
                     same_key = (row["video_id"], row["kind"], row.get("clip")) == (video_id, kind, clip)
-                    same_path = inside(self.folders()[row["series"]], row["file"]) == dest
+                    same_path = media_path(self.folders()[row["series"]], row["kind"], row["file"]) == dest
                     if same_key and replace_sha is not None:
                         if not same_path or row["sha256"] != replace_sha:
                             raise StoreError(409, "Replacement sha256 or path does not match")
@@ -480,8 +578,8 @@ class Store:
                 if current is not None and replace_sha is None:
                     if current["sha256"] == sha:
                         name = current["file"]
-                        dest = inside(folder, name)
-                        part = inside(folder, name + ".part")
+                        dest = media_path(folder, kind, name)
+                        part = inside(dest.parent, name + ".part")
                     elif kind == "vertical":
                         incoming = HD_NAME.fullmatch(REVISION.sub("", name))
                         # Prefer the sender's explicit speaker; legacy senders retain the current label.
@@ -490,22 +588,25 @@ class Store:
                         speaker = (parsed[2].rsplit(" - ", 1)[1] if parsed and " - " in parsed[2]
                                    else self.config.get("speaker_label", DEFAULT_SPEAKER))
                         name = hd_name(candidate, speaker)
-                        dest = inside(folder, name)
-                        part = inside(folder, name + ".part")
+                        dest = media_path(folder, kind, name)
+                        part = inside(dest.parent, name + ".part")
                     else:
                         base = REVISION.sub("", current["file"])
                         revision = 2
                         while True:
                             name = f"{base[:-4]} (r{revision}).mp4"
-                            dest = inside(folder, name)
-                            part = inside(folder, name + ".part")
+                            dest = media_path(folder, kind, name)
+                            part = inside(dest.parent, name + ".part")
                             if not dest.exists() and not part.exists():
                                 break
                             revision += 1
             replacing_vertical = kind == "vertical" and current is not None and current["sha256"] != sha
-            archive_moves = self._archive_plan(folder, [inside(folder, current["file"])]) if replacing_vertical else []
+            archive_moves = self._archive_plan(folder, [media_path(folder, kind, current["file"])]) if replacing_vertical else []
             if replacing_vertical and dest.exists() and dest.name != current["file"]:
                 raise StoreError(409, "Vertical destination already exists")
+            if replacing_vertical:
+                dest = media_path(folder, kind, name, existing=False)
+                part = inside(dest.parent, name + ".part")
             if dest.exists() and not replacing_vertical:
                 with dest.open("rb") as existing:
                     actual = hashlib.file_digest(existing, "sha256").hexdigest()
@@ -520,6 +621,11 @@ class Store:
                     return 200
             elif replace_sha is not None:
                 raise StoreError(409, "Replacement file disappeared")
+            # Refuse legacy partials too; a new upload must not silently abandon them.
+            legacy_part = inside(folder, name + ".part")
+            if legacy_part.exists() and legacy_part != part:
+                raise StoreError(409, "Partial file already exists")
+            no_links(dest.parent).mkdir(parents=True, exist_ok=True)
             owned_part = False
             try:
                 # Exclusive creation refuses stale/foreign .part files rather than overwriting them.
@@ -544,8 +650,8 @@ class Store:
                     os.fsync(output.fileno())
                 # Recheck immediately before the atomic rename and metadata writes.
                 with self._lock:
-                    inside(folder, name)
-                    inside(folder, name + ".part")
+                    inside(dest.parent, name)
+                    inside(part.parent, part.name)
                     if replace_sha is not None:
                         with dest.open("rb") as existing:
                             actual = hashlib.file_digest(existing, "sha256").hexdigest()
@@ -558,7 +664,7 @@ class Store:
                         inside(target.parent, target.name)
                         if target.exists():
                             raise StoreError(409, "Archive destination appeared during upload")
-                        inside(folder, source.name).rename(target)
+                        inside(source.parent, source.name).rename(target)
                     try:
                         os.replace(part, dest)
                     except OSError:
@@ -573,7 +679,7 @@ class Store:
             finally:
                 # Only clean up a part created by this request.
                 if owned_part and part.exists():
-                    inside(folder, name + ".part").unlink()
+                    inside(part.parent, part.name).unlink()
 
 
 class StoreHandler(BaseHTTPRequestHandler):
@@ -694,9 +800,25 @@ def main(argv=None) -> int:
     rename.add_argument("--format", default="{tag} {title} - Tập {episode}.mp4",
                         help="Filename template: {tag}, {title} (including speaker), {episode}")
     rename.add_argument("--apply", action="store_true")
+    reorganize = commands.add_parser("reorganize", help="Move media into type/episode folders; dry run unless --apply")
+    reorganize.add_argument("--series", required=True, help="Configured series id or all")
+    reorganize.add_argument("--apply", action="store_true")
     args = parser.parse_args(argv)
     try:
         store = Store(load_config(args.config))
+        if args.command == "reorganize":
+            print("Apply" if args.apply else "Dry run")
+            try:
+                moves, unknown = store.reorganize(args.series, apply=args.apply)
+            except StoreError as exc:
+                print(str(exc), file=sys.stderr)
+                return 1
+            for source, target in moves:
+                print(f"{source} -> {target}")
+            for path in unknown:
+                print(f"Unknown (unchanged): {path}")
+            print(f"{len(moves)} file(s) {'moved' if args.apply else 'to move'}")
+            return 0
         if args.command == "rename-vertical":
             rows = store.rename_vertical(args.series, apply=args.apply, speaker=args.speaker_label, format=args.format)
             print("Apply" if args.apply else "Dry run")
