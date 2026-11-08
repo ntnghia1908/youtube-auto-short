@@ -17,6 +17,7 @@ from ..theme_render.sources import _owner, _positive, cache_dir, cached_source, 
 from ..workspace import WorkspaceError, atomic_write_json, iter_manifests, read_json_dict
 from ..youtube_url import canonical_url
 from .backup import _destination, _local_source, _matches, _source
+from .cancellation import OffloadStopped, cancellable, check_stop
 from . import index_cache
 from .client import StoreClient, StoreError, StoreMismatch, StoreUnavailable
 
@@ -68,7 +69,8 @@ def local_pending(config: Config) -> list[str]:
     return [vid for videos in local_groups(config).values() for vid in videos]
 
 
-def pending(config: Config, *, client=None, groups: dict | None = None) -> list[str]:
+@cancellable
+def pending(config: Config, *, client=None, groups: dict | None = None, stop=None) -> list[str]:
     """One index request per inventory; optionally return each group's pending IDs for background counters."""
     if not config.store.enabled:
         raise StoreUnavailable("kho 3090 đang tắt")
@@ -109,8 +111,9 @@ def _publish_cache(config: Config, video_id: str, path: Path, meta: dict) -> Pat
     return final / meta["file"]
 
 
+@cancellable
 def step(config: Config, video_id: str, *, downloader=ytdlp_download, client=None, clock=time.time,
-         disk_usage=shutil.disk_usage) -> dict:
+         disk_usage=shutil.disk_usage, stop=None) -> dict:
     """Download one verified file, PUT those exact bytes, HEAD them, then retain only favorites."""
     video_id = _owner(video_id)
     result = {"video_id": video_id, "status": "paused"}
@@ -139,6 +142,7 @@ def step(config: Config, video_id: str, *, downloader=ytdlp_download, client=Non
             client.put(video_id, "source", series, name, path, meta["sha256"])
             if not _matches(client.head(video_id, "source"), meta["sha256"], meta["size"]):
                 raise StoreMismatch("kho chưa xác nhận đúng sha256 / kích thước sau khi gửi")
+            check_stop()
             index_cache.invalidate()
             cached = reference is None and video_id in favorite_videos(config)
             if cached:
@@ -146,6 +150,8 @@ def step(config: Config, video_id: str, *, downloader=ytdlp_download, client=Non
             return {**result, "status": "done", "cached": cached, "sha256": meta["sha256"],
                     "size": meta["size"], **({"differs_from_ingest": meta["differs_from_ingest"]}
                                            if "differs_from_ingest" in meta else {})}
+    except OffloadStopped:
+        raise
     except YoutubeBlocked as exc:
         return {**result, "status": "blocked", "reason": str(exc)}
     except DownloadError as exc:

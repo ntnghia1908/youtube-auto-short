@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import faulthandler
 import logging
 import random
 import shutil
@@ -21,6 +22,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .. import khaithi
 from ..config import Config, whisper_threads_per_job
+from ..store.cancellation import OffloadStopped, check_stop, stop_scope
 from ..enhance import state as enh_state
 from ..enhance.service import EnhanceService
 from ..enhance.tokens import tokens_from_env
@@ -107,15 +109,46 @@ from .post_links import PostLinks
 log = logging.getLogger("auto_short")
 
 
-async def _post_link_loop(service: PostLinks, hours: float) -> None:
+async def _post_link_loop(service: PostLinks, hours: float, call=asyncio.to_thread) -> None:
     if hours <= 0:
         return
     while True:
         try:
-            await asyncio.to_thread(service.sync_all)
+            await call(service.sync_all)
         except Exception:
             log.warning("web: quét link bài đăng lỗi; sẽ thử lại")
         await asyncio.sleep(hours * 3600)
+
+
+class _ShutdownWatchdog:
+    """Also kept alive by serve() while asyncio joins its default executor."""
+    def __init__(self, delay=15.0, interval=60.0):
+        self.delay, self.interval = delay, interval
+        self.done = threading.Event()
+        self.thread = None
+        self.started = None
+
+    def start(self):
+        if self.thread is not None and self.thread.is_alive():
+            return
+        self.done.clear()
+        self.started = time.monotonic()
+        self.thread = threading.Thread(target=self._run, name="web-shutdown-watchdog", daemon=True)
+        self.thread.start()
+
+    def _run(self):
+        if self.done.wait(self.delay):
+            return
+        while not self.done.is_set():
+            log.warning("tắt: chưa thoát sau %.1f s; stack mọi thread", time.monotonic() - self.started)
+            faulthandler.dump_traceback(all_threads=True)
+            if self.done.wait(self.interval):
+                return
+
+    def close(self):
+        self.done.set()
+        if self.thread is not None:
+            self.thread.join(timeout=.2)
 
 
 def backup_busy(ctx: WebContext, owner: str):
@@ -375,15 +408,41 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     svc.on_complete = _enhance_complete
     runner.on_parked = _recheck_parked
 
+    background_stop = threading.Event()
+    background_workers = {}
+    shutdown_started = None
+    watchdog = _ShutdownWatchdog()
+
+    async def _background_call(function):
+        def run():
+            with stop_scope(background_stop):
+                return function()
+
+        worker = asyncio.create_task(asyncio.to_thread(run), name=function.__name__)
+        background_workers[worker] = function.__name__
+
+        def finished(task):
+            name = background_workers.pop(task)
+            if shutdown_started is not None:
+                log.info("tắt: %s xong sau %.3f s", name, time.monotonic() - shutdown_started)
+            # A cancelled outer loop no longer retrieves the worker's exception.
+            if not task.cancelled():
+                task.exception()
+
+        worker.add_done_callback(finished)
+        return await asyncio.shield(worker)
+
     def auto_archive_pass() -> list[str]:
         """W9 S5 / D4: remove the source video of every video whose parts are all "Xong" for at least the grace
         period (``[storage] auto_archive``). A video with a queued / running job on any part waits. Returns the
         episode ids archived."""
+        check_stop()
         if not config.storage.auto_archive:
             return []
         done: list[str] = []
         rows = episode_sizes(config, {j.episode_id for j in runner.jobs() if j.active})
         for item in auto_archive_plan(rows, clock(), config.storage.auto_archive_grace_minutes * 60):
+            check_stop()
             with submit_lock:
                 parts = [r["id"] for r in rows if r["state"] != "orphan" and video_id(r["id"]) == item["video_id"]]
                 if any((j := runner.latest(eid)) is not None and j.active for eid in parts) \
@@ -396,6 +455,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
                        for t in restored_times):
                     continue
                 for eid in item["episodes"]:
+                    check_stop()
                     if enh_state.has_hd(Path(config.workspace.dir) / eid) \
                             or enh_state.is_pending(enh_state.read(Path(config.workspace.dir) / eid)):
                         continue  # CP13.1 E5: an enhanced / enhancing video keeps its source (never automatic)
@@ -420,6 +480,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         from ..store.backup import backup_order, push_source
         from ..store.client import StoreClient, StoreError
 
+        check_stop()
         if not config.store.enabled or not config.store.backup_source:
             return []
 
@@ -445,6 +506,8 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             storage.update_source_backup(states)
             log.info("web: đã sao lưu nguồn %s lên 3090", vid)
             return [vid]
+        except OffloadStopped:
+            return []
         except StoreError as exc:
             if vid is not None:
                 source_backup_failed.add(vid)
@@ -454,7 +517,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     async def _source_backup_loop() -> None:
         while config.store.enabled and config.store.backup_source:
             try:
-                await asyncio.to_thread(source_backup_pass)
+                await _background_call(source_backup_pass)
             except Exception:
                 log.exception("web: sao lưu nguồn: lỗi")
             await asyncio.sleep(config.store.retry_seconds)
@@ -524,7 +587,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         while config.store.enabled and config.store.offload and not offload_stop.is_set():
             done = []
             try:
-                done = await asyncio.to_thread(offload_pass)
+                done = await _background_call(offload_pass)
             except Exception:
                 log.exception("web: đẩy bản dọc: lỗi")
             await asyncio.sleep(5 if done else config.store.retry_seconds)
@@ -574,14 +637,15 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             log.warning("web: đẩy Short %s: %s", owner, exc)
             return []
         finally:
-            storage.update_shorts_offload(shorts.offload_snapshot(
-                config, busy=busy, now=clock(), failed=shorts_errors, last_error=shorts_last_error))
+            if not shorts_stop.is_set():
+                storage.update_shorts_offload(shorts.offload_snapshot(
+                    config, busy=busy, now=clock(), failed=shorts_errors, last_error=shorts_last_error))
 
     async def _shorts_offload_loop() -> None:
         while config.store.enabled and config.store.offload_shorts and not shorts_stop.is_set():
             done = []
             try:
-                done = await asyncio.to_thread(shorts_offload_pass)
+                done = await _background_call(shorts_offload_pass)
             except Exception:
                 log.exception("web: đẩy Short: lỗi")
             await asyncio.sleep(5 if done else config.store.retry_seconds)
@@ -616,6 +680,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             lanes = runner.monitor_queue(limit=1)["lanes"]
             return any(lanes.get(lane, {}).get("pending_total", 0) for lane in ("prepare", "serial"))
 
+        check_stop()
         if not config.store.enabled or not config.store.redownload:
             return publish("paused", reason="chưa bật tải lại nguồn")
         if clock() < redownload_next:
@@ -672,6 +737,8 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             redownload_next = clock() + rng.uniform(600, 1200)
             return publish("waiting" if status == "done" else "paused", video_id=vid,
                            reason=result.get("reason"), retry_at=redownload_next)
+        except OffloadStopped:
+            return dict(redownload_snapshot)
         except StoreError as exc:
             redownload_next = clock() + config.store.retry_seconds
             log.warning("web: tải lại nguồn: %s", exc)
@@ -685,7 +752,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
 
     async def _redownload_loop() -> None:
         while config.store.enabled and config.store.redownload:
-            await asyncio.to_thread(redownload_pass)
+            await _background_call(redownload_pass)
             await asyncio.sleep(max(1, redownload_next - clock()) if redownload_next > clock()
                                 else config.store.retry_seconds)
 
@@ -696,6 +763,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         from ..store.borrow import WAIT_PREFIX, released_hd_sha
         from ..store.client import StoreClient, StoreError
         from ..store.backup import _matches
+        check_stop()
         if not config.store.enabled:
             return []
         waiting = []
@@ -713,6 +781,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         client = client or StoreClient.from_config(config.store)
         done = []
         for job in waiting:
+            check_stop()
             released = (read_json_dict(Path(config.render.output_dir) / job.episode_id / "store.json") or {}).get("released")
             try:
                 if job.kind == KIND_RENDER and isinstance(released, dict) and released:
@@ -729,6 +798,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             except StoreError:
                 break  # the store is still down: nothing else will answer either
             with submit_lock:
+                check_stop()
                 newest = runner.latest_vertical(job.episode_id) if job.kind == KIND_VERTICAL else runner.latest(job.episode_id)
                 if newest is not job:
                     continue  # a newer edit may have arrived while HEAD was in flight
@@ -741,14 +811,14 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         while config.store.enabled:
             await asyncio.sleep(config.store.retry_seconds)
             try:
-                await asyncio.to_thread(store_retry_pass)
+                await _background_call(store_retry_pass)
             except Exception:  # never stop the loop
                 log.exception("web: thử lại việc đợi 3090: lỗi")
 
     async def _auto_archive_loop() -> None:
         while True:
             try:
-                await asyncio.to_thread(auto_archive_pass)
+                await _background_call(auto_archive_pass)
             except Exception:  # never stop the loop (disk errors, a half-written workspace)
                 log.exception("web: tự dọn nguồn: lỗi")
             if auto_archive_interval <= 0:
@@ -929,6 +999,9 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        nonlocal shutdown_started
+        shutdown_started = None
+        background_stop.clear()
         runner.restore()  # CP8.22 Q2: before the lanes start and before the auto clean-up sweeps
         await asyncio.to_thread(app_sweep)  # CP8.32 K2: re-downloaded originals left by jobs that no longer exist
         await asyncio.to_thread(_sweep_store_temps)
@@ -937,35 +1010,64 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             _enhance_complete(eid)
         runner.recheck_parked()  # CP13.1b: "đợi HD" jobs whose HD is ready by now
         sampler.start()
-        sweeper = asyncio.create_task(_auto_archive_loop())
-        post_link_sync = asyncio.create_task(_post_link_loop(ctx.post_links, config.post.link_sync_hours))
-        store_retry = asyncio.create_task(_store_retry_loop())
-        source_backup = asyncio.create_task(_source_backup_loop())
+        sweeper = asyncio.create_task(_auto_archive_loop(), name="sweeper")
+        post_link_sync = asyncio.create_task(
+            _post_link_loop(ctx.post_links, config.post.link_sync_hours, _background_call), name="post_link_sync")
+        store_retry = asyncio.create_task(_store_retry_loop(), name="store_retry")
+        source_backup = asyncio.create_task(_source_backup_loop(), name="source_backup")
         offload_stop.clear()
-        vertical_offload = asyncio.create_task(_offload_loop())
+        vertical_offload = asyncio.create_task(_offload_loop(), name="vertical_offload")
         shorts_stop.clear()
-        shorts_offload = asyncio.create_task(_shorts_offload_loop())
-        source_redownload = asyncio.create_task(_redownload_loop())
+        shorts_offload = asyncio.create_task(_shorts_offload_loop(), name="shorts_offload")
+        source_redownload = asyncio.create_task(_redownload_loop(), name="source_redownload")
         try:
             yield
         finally:
+            shutdown_started = time.monotonic()
+            watchdog.start()
+            deadline = shutdown_started + 9.5
+            background_stop.set()
             offload_stop.set()
             shorts_stop.set()
-            shorts_offload.cancel()
-            await asyncio.gather(shorts_offload, return_exceptions=True)
-            sweeper.cancel()
-            post_link_sync.cancel()
-            await asyncio.gather(post_link_sync, return_exceptions=True)
-            store_retry.cancel()
-            source_backup.cancel()
-            vertical_offload.cancel()
-            await asyncio.gather(vertical_offload, return_exceptions=True)
-            source_redownload.cancel()
-            await asyncio.gather(source_redownload, return_exceptions=True)
-            await asyncio.to_thread(sampler.stop)
-            await asyncio.to_thread(runner.stop)
+            runner.begin_stop()
+            log.info("tắt: đặt mọi cờ dừng xong sau %.3f s", time.monotonic() - shutdown_started)
+            loops = (sweeper, post_link_sync, store_retry, source_backup, vertical_offload,
+                     shorts_offload, source_redownload)
+            def loop_stopped(task):
+                log.info("tắt: %s xong sau %.3f s", task.get_name(), time.monotonic() - shutdown_started)
+
+            for task in loops:
+                task.add_done_callback(loop_stopped)
+                task.cancel()
+
+            async def stop_step(name, function):
+                start = time.monotonic()
+                try:
+                    await asyncio.to_thread(function)
+                finally:
+                    log.info("tắt: %s xong sau %.3f s", name, time.monotonic() - start)
+
+            # These joins share one deadline. runner.stop already has its own bounded child cleanup.
+            joins = {asyncio.create_task(stop_step("sampler.stop", sampler.stop)): "sampler.stop",
+                     asyncio.create_task(stop_step("runner.stop", lambda: runner.stop(timeout=5))): "runner.stop"}
+            pending = set(loops) | set(background_workers) | set(joins)
+            names = {task: task.get_name() for task in loops} | dict(background_workers) | joins
+            try:
+                _, overdue = await asyncio.wait(pending, timeout=max(0, deadline - time.monotonic()))
+                for task in overdue:
+                    log.warning("tắt: %s quá hạn sau %.3f s", names[task], time.monotonic() - shutdown_started)
+                for task in pending - overdue:
+                    if not task.cancelled():
+                        error = task.exception()
+                        if error is not None and not isinstance(error, OffloadStopped):
+                            log.warning("tắt: %s: %s", names[task], type(error).__name__)
+                log.info("tắt: lifespan xong sau %.3f s", time.monotonic() - shutdown_started)
+            finally:
+                if not getattr(_app.state, "server_owns_watchdog", False):
+                    watchdog.close()
 
     app = FastAPI(title="auto-short web", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+    app.state.shutdown_watchdog = watchdog
     app.state.runner = runner
     app.state.auto_vertical = auto_vertical  # CP8.35
     app.state.hd_ready = _hd_ready

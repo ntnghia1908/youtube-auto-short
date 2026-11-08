@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import json
 import re
+import tempfile
 import sys
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Protocol
 
 from ..config import IngestConfig
+from ..store.cancellation import current_stop, run_process
 
 # Subset of yt-dlp info kept in metadata.json.
 INFO_KEYS = ("id", "title", "channel", "upload_date", "webpage_url", "duration")
@@ -59,6 +62,8 @@ def youtube_info(info: dict) -> dict:
 
 def ytdlp_download(url: str, dest_dir: Path, config: IngestConfig) -> Download:
     """Download ``url`` into ``dest_dir/source.<ext>`` (mp4 when merged)."""
+    if current_stop() is not None:
+        return _ytdlp_process(url, dest_dir, config)
     import yt_dlp
 
     opts = {
@@ -85,3 +90,31 @@ def ytdlp_download(url: str, dest_dir: Path, config: IngestConfig) -> Download:
     if len(files) != 1:
         raise DownloadError(f"expected one downloaded file in {dest_dir}, found {len(files)}")
     return Download(files[0], info)
+
+
+def _ytdlp_process(url: str, dest_dir: Path, config: IngestConfig) -> Download:
+    # The existing library downloader still owns options, metadata and error classification.
+    # Only background redownloads need a separate process, including yt-dlp's ffmpeg children.
+    with tempfile.TemporaryDirectory(prefix=".ytdlp-", dir=dest_dir) as temporary:
+        result = Path(temporary) / "result.json"
+        args = json.dumps([url, str(dest_dir), asdict(config), str(result)])
+        code = run_process([sys.executable, "-c",
+                            "from auto_short.ingest.youtube import _download_worker; _download_worker()", args])
+        if code != 0 or not result.is_file():
+            raise DownloadError(f"yt-dlp download failed: exit {code}")
+        doc = json.loads(result.read_text(encoding="utf-8"))
+        if doc.get("blocked"):
+            raise YoutubeBlocked(doc["error"])
+        if doc.get("error"):
+            raise DownloadError(doc["error"])
+        return Download(Path(doc["path"]), doc["info"])
+
+
+def _download_worker():
+    url, dest, config, result = json.loads(sys.argv[1])
+    try:
+        got = ytdlp_download(url, Path(dest), IngestConfig(**config))
+        doc = {"path": str(got.path), "info": got.info}
+    except DownloadError as exc:
+        doc = {"error": str(exc), "blocked": isinstance(exc, YoutubeBlocked)}
+    Path(result).write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")

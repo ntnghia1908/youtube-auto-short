@@ -421,8 +421,8 @@ def test_background_io_uses_thread_and_waits_retry_seconds(bcfg, monkeypatch):
     monkeypatch.setattr(StoreClient, "from_config", lambda cfg: client)
     app = create_app(bcfg, "pw", preflight=None, post_preflight=None)
     for name in ("start", "stop"):
-        monkeypatch.setattr(app.state.runner, name, lambda: None)
-        monkeypatch.setattr(app.state.monitor_sampler, name, lambda: None)
+        monkeypatch.setattr(app.state.runner, name, lambda **kwargs: None)
+        monkeypatch.setattr(app.state.monitor_sampler, name, lambda **kwargs: None)
     real_sleep = asyncio.sleep
 
     async def run():
