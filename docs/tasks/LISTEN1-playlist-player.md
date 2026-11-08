@@ -268,3 +268,9 @@ Bằng chứng: "3. Ok rồi" (nghe ở app khác bằng màn hình nhỏ / toà
 
 28. Sửa: thẻ đếm ngược 3 s (AC 25) phải hiện khi hết bài (tab Nghe và `/watch`) — tìm vì sao không render (kiểm `advance_at` / timer / CSS `hidden`).
 29. Sửa: tự chuyển bài (và đổi bài do đếm ngược) không cuộn trang tới dòng danh sách; nếu cần cuộn thì cuộn lên khung video như AC 23 (chỉ khi trang visible), danh sách chỉ cuộn bên trong khung của nó.
+
+### Amendment E — IMPLEMENTER 2026-11-08 (base a355e6c)
+
+- Nguyên nhân AC 28/29 (cùng gốc): mô phỏng Node (DOM giả) cho thấy logic đếm ngược đúng, thẻ có hiện (không phải lỗi `advance_at` / `hidden` / CSS / server). Nhưng mỗi lần đổi bài `renderCurrent` gọi `button.scrollIntoView({block:"nearest"})` cho dòng đang phát → cuộn cả trang xuống danh sách (`.listen-queue` không có khung cuộn riêng). Sang bài sau, khung nhìn nằm ở danh sách nên thẻ đếm ngược (dưới video) nằm ngoài màn hình. Chưa kiểm trên trình duyệt thật; đây là nguyên nhân hợp lý nhất từ code.
+- Sửa: `listen.js` bỏ `scrollIntoView`, dùng helper mới `AutoShortPlayer.scrollWithin(container, item)` (chỉnh `scrollTop` của khung); `style.css` `.listen-queue { max-height: 28rem; overflow: auto }` để có khung cuộn. `player.js`: khi hết bài gọi `scrollToVideo()` (thẻ đếm ngược hiện trong tầm nhìn), và sau khi đổi bài do hết bài (tự chuyển / "Phát ngay", cả `/watch`) cuộn lại lên video qua `scrollToVideo()` (chỉ khi visible + active), cờ `endedKey`. Không dùng `focus()`.
+- Test: `tests/test_web_listen.py::test_auto_advance_never_scrolls_page_to_list` (assert tĩnh); mô phỏng Node ngoài repo xác nhận `scrollIntoView` chỉ gọi trên video. Verification: pytest 3 file 122 PASS; `node --check` 4 file OK. Chưa chạy thật trên trình duyệt.

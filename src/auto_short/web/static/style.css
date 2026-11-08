@@ -414,6 +414,7 @@ body.modal-open { overflow: hidden; }
 .listen-room .actions { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; }
 .listen-room .actions label { max-width: 100%; min-width: 0; }
 .listen-room select { width: 100%; max-width: 100%; min-width: 0; min-height: 40px; font-size: 1rem; }
+.listen-queue { max-height: 28rem; overflow: auto; }
 .listen-queue details { margin-top: .75rem; }
 .listen-queue summary { padding: .5rem 0; font-weight: 600; color: var(--text); }
 .listen-queue ol { list-style: none; padding: 0; }

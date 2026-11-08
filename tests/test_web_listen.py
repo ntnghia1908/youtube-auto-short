@@ -142,3 +142,16 @@ def test_http_listen_auth_404_and_queue(library):  # AC1,2: full middleware path
         response = client.get(path)
         assert response.status_code == 200
         assert response.json() == playlist_listen(library, document(), [])
+
+
+def test_auto_advance_never_scrolls_page_to_list():  # AC 28 / 29 (static guard)
+    static = Path(__file__).parents[1] / "src/auto_short/web/static"
+    listen, player = (static / "listen.js").read_text(), (static / "player.js").read_text()
+    css = (static / "style.css").read_text()
+    # The list scrolls only inside its own box; the page moves only up to the video.
+    assert "button.scrollIntoView" not in listen and "AutoShortPlayer.scrollWithin($(\"queue\")" in listen
+    assert ".listen-queue { max-height: 28rem; overflow: auto; }" in css
+    assert player.count("scrollIntoView") == 1 and "focus()" not in player
+    # The countdown card is brought into view when a track ends, and the page returns to the video after the switch.
+    assert "this.renderAdvance(); this.scrollToVideo();" in player
+    assert "this.endedKey = null; this.scrollToVideo();" in player

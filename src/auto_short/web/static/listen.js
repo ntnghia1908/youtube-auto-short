@@ -75,7 +75,7 @@
     $("queue").querySelectorAll("button[data-index]").forEach((button) => {
       if (Number(button.dataset.index) === index) {
         button.setAttribute("aria-current", "true");
-        if (scrollItem && document.visibilityState === "visible" && player.active) button.scrollIntoView({ block: "nearest" });
+        if (scrollItem && document.visibilityState === "visible" && player.active) AutoShortPlayer.scrollWithin($("queue"), button);
       } else button.removeAttribute("aria-current");
     });
   }

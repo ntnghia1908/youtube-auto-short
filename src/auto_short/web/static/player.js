@@ -36,14 +36,14 @@
       }
       current.addEventListener("ended", () => {
         if (!this.active || !current.ended || this.loading || !this.state?.video_url || this.finishedKey === this.sourceKey) return;
-        this.finishedKey = this.sourceKey;
+        this.finishedKey = this.endedKey = this.sourceKey;
         this.cancelRecovery(); this.clearProgressChecks();
         if (this.onEnded) this.onEnded(current.currentTime);
         else {
           this.onAction("pause", { position: current.currentTime }, true);
           this.localAdvanceAt = this.state.auto && this.getNext() ? performance.now() + 3000 : null;
         }
-        this.renderAdvance();
+        this.renderAdvance(); this.scrollToVideo();
       });
       for (const event of ["stalled", "waiting"]) current.addEventListener(event, () => {
         if (this.active && this.isHidden()) this.record(event);
@@ -155,6 +155,12 @@
       }
       this.video.style.scrollMarginTop = `${offset}px`;
       this.video.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+    // Scroll only inside the list box; never move the page (AC 29).
+    static scrollWithin(container, item) {
+      const box = container.getBoundingClientRect(), row = item.getBoundingClientRect();
+      if (row.top < box.top) container.scrollTop += row.top - box.top;
+      else if (row.bottom > box.bottom) container.scrollTop += row.bottom - box.bottom;
     }
     episode(entry) {
       if (!entry) return null;
@@ -370,7 +376,7 @@
       this.video.load();
     }
     setState(state, sync = true, blocked = false, remote = false) {
-      const previous = this.state;
+      const previous = this.state, oldKey = this.sourceKey, advanced = this.endedKey != null && this.endedKey === oldKey;
       if (previous?.paused && !state.paused && state.advance_at == null) this.hideNotice();
       if (previous && remote && previous.version !== state.version) {
         const expected = previous.position + (previous.paused ? 0 : Math.max(0, state.updated_at - previous.updated_at) * previous.rate);
@@ -397,6 +403,8 @@
       } else if (sync) this.sync();
       if (!state.auto && this.localAdvanceAt != null) this.localAdvanceAt = null;
       this.render(); this.renderAdvance();
+      // Track changed after the end of a track (auto or "Phát ngay"): bring the video back into view.
+      if (advanced && key !== null && key !== oldKey) { this.endedKey = null; this.scrollToVideo(); }
     }
     render() {
       const s = this.state, active = !!s?.video_url;
