@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Xem chung — Auto Short</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="/static/watch.js" defer></script>
+</head>
+<body>
+<header class="topbar"><a class="brand" href="/">← Auto Short</a></header>
+<main id="watch-room" class="container watch-room">
+  <h1>Xem chung</h1>
+  <h2 id="watch-title">Chưa có phòng xem chung</h2>
+  <p id="watch-viewers">Đang xem: 0 người</p>
+  <p id="watch-message" role="status" aria-live="polite"></p>
+  <video id="watch-video" controls playsinline preload="metadata" hidden></video>
+  <audio id="watch-audio" controls preload="metadata" hidden></audio>
+  <button id="watch-play" class="btn primary" type="button" hidden>Bấm để phát</button>
+  <div class="actions">
+    <button id="watch-favorite" class="btn icon-btn heart" type="button" hidden aria-label="Yêu thích" aria-pressed="false">♡</button>
+    <label class="inline"><input id="watch-background" type="checkbox"> Nghe nền</label>
+    <button id="watch-prev" class="btn icon-btn" type="button" title="Trước" aria-label="Trước" disabled>⏮</button>
+    <button id="watch-next" class="btn icon-btn" type="button" title="Tiếp" aria-label="Tiếp" disabled>⏭</button>
+    <button id="watch-end" class="btn danger" type="button" disabled>Kết thúc xem chung</button>
+  </div>
+  <ol id="watch-queue" class="watch-queue" aria-label="Danh sách phát"></ol>
+</main>
+</body>
+</html>
