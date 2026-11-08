@@ -262,6 +262,37 @@ Không chạm database / security model / API hiện có → manual test là đi
 - Diff so với `d7c969e`, không tính contract/Amendment D có sẵn: app **+311 / −101**, test **+120 / −0**, tổng **+431 / −101**.
 - Review / lifecycle: sẵn sàng ORCHESTRATOR review vòng 5; giữ IN_PROGRESS tới khi required verification/code mới và AC27 thực tế được hoàn tất. Không commit/push/PR, gọi agent khác, thêm dependency hoặc sửa ngoài Owned paths.
 
+### Amendment J (HUMAN LEAD 2026-11-08, chạy thật `ef40827`) — đã implement, chờ review / verification ngoài sandbox
+
+Bằng chứng: "Khai thị cho 15 tập 1 phần. Nút đã rõ chữ. 3. Có nhớ" (PASS AC 42, AC 44). "Top playlist trong trang yêu thích thay thế luôn cho tab yêu thích và ghép tay vì cái này tôi không dùng đến".
+
+46. Cỡ phần khai thị (AC 43): 15 bài / phần (thay 12).
+47. Trang Yêu thích: trình phát (khối `listen-*`, hiện ở đầu trang) chuyển thành tab **"Nghe yêu thích"**, tab đầu tiên và mặc định, **thay tab "Yêu thích & ghép tay"** (gỡ pane `fv-pane-manual` và JS chỉ phục vụ pane đó trong `favorites.js`). Còn 3 tab: Nghe yêu thích · Gợi ý chủ đề (AI) · Video đã ghép. Rời tab Nghe → trình phát tạm dừng (`suspend` sẵn có), quay lại → tiếp tục được. Backend / API ghép tay và video đã ghép giữ nguyên (không xóa route / dữ liệu). Bỏ tim qua ♡ của trình phát.
+48. Chạy thật: Android Chrome — trang Yêu thích mở vào tab Nghe, đổi tab dừng phát, khai thị 15 bài / phần.
+
+#### Result — Amendment J (IMPLEMENTER 2026-11-08, base `a127081`)
+
+- **Chạy thật HUMAN LEAD tại `ef40827`: PASS AC 42 (chữ nút đọc được) và AC 44 (nhớ chỗ nghe)**, theo xác nhận delegation / bằng chứng Amendment J; không phải kết quả chạy thật do IMPLEMENTER thực hiện. ORCHESTRATOR báo 185 test web PASS ngoài sandbox ở baseline; chưa suy ra PASS cho code J.
+- AC 46: đổi duy nhất `AutoShortPlayer.favoritePartSizes.khaithi` thành **15**. Short 35 và Cả hai 4 tập giữ nguyên; phòng nhận nhóm từ client theo cơ chế I.
+- AC 47: `favorites.html` có tab đầu / mặc định **Nghe yêu thích**, rồi AI và Video đã ghép. Khối trình phát cũ nằm trong `fv-pane-listen`; gỡ `fv-pane-manual` / `fv-tab-manual`. `favorites.js` luôn mở Nghe kể cả browser có lựa chọn tab cũ, vẫn giữ chuyển tab bằng phím và `Favorites.showTab("videos")` dùng bởi kế hoạch chủ đề. `favorites-tab` nối vào helper `switchTab` tách từ listener `episode-tab` sẵn có trong `listen.js`: rời Nghe lưu vị trí rồi suspend; quay lại activate, một mình có thể bấm phát tiếp đúng bài / giây, phòng đồng bộ lại timeline mà không dừng phòng của người khác. Guard khởi tạo cũng xét pane tổ tiên nếu đang ẩn.
+- Code bị xóa: chọn nhiều / checkbox / bộ lọc riêng của ghép tay, `autoPreview`, `unheart`, `create`, `loopBox`, `row`, `updateConcat`, `updateAuto`, state `ticked/openLoop/kindFilter`, lưu lựa chọn tab/filter cũ và listener phục vụ pane manual trong `favorites.js`. `listen.js` bỏ `refreshFavorites`, hàng đợi `favoriteRefresh`, listener refresh từ manual pane, sự kiện `listen-favorite-changed` và source marker không còn cần. Giữ `favorites-changed` cho `theme_plan.js`; bỏ tim và lọc queue phòng trong trình phát giữ nguyên. Giữ card video ghép cũ, phát / tải / copy / xóa, đã đăng, ảnh bìa và nhạc; không sửa backend / route / API / dữ liệu ghép tay.
+- Tìm bằng `rg -n 'fv-pane-manual|fv-tab-manual|ghép tay' tests/`: chỉ test UI trong `tests/test_web_theme_plan.py` kiểm pane cũ. Cập nhật file này theo yêu cầu delegation (test tương ứng của Amendment J); không sửa / xóa test backend `tests/test_web_compilation.py`. Test Node từng bấm nút ghép để kích reload nay dùng callback polling thật của module; vẫn kiểm video đã ghép, publish, thumbnail và các ca theme. Các test sự kiện từ manual pane trong `test_web_listen.py` thay bằng test lifecycle tab; không giữ test cho UI đã gỡ.
+- Helper mới duy nhất: `switchTab` là phần body của listener cũ, dùng chung cho trang tập / Yêu thích; không thêm module / dependency.
+
+| AC | Test / evidence |
+|---|---|
+| 46 | `test_favorites_part_sizes_and_sparse_episode_groups` (parametrize 15/35/4); `test_favorites_tab_suspends_and_can_resume_same_track` (phần có 15 khai thị cả một mình/phòng) |
+| 47, tab / UI còn lại | `test_js_favorites_tabs_and_existing_compilations` (default/legacy saved/blocked storage, keyboard, video, published); `test_favorites_ui_tab_panel_ownership` (thứ tự tab, ownership, pane và JS manual đã gỡ) |
+| 47, suspend / nghe tiếp | `test_favorites_tab_suspends_and_can_resume_same_track` (một mình/phòng, hidden không phát sau poll, trở lại đúng bài / giây, sự kiện tim cho theme vẫn có và không tải lại list) |
+| 48 | Chưa chạy Android Chrome; ORCHESTRATOR / HUMAN LEAD xác nhận |
+
+- Verification đã chạy, cwd worktree:
+  - `PYTHONPATH=/home/ntnghia/projects/yas-listen1/src conda run --no-capture-output -n auto-short pytest tests/test_web_listen.py tests/test_web_watch_party.py tests/test_web_theme_plan.py -q -k 'not test_http and (not test_web_theme_plan or test_js_favorites_tabs_and_existing_compilations or test_favorites_ui_tab_panel_ownership or test_js_smoke_and_text_only)' -x --tb=short` → **165 passed, 77 deselected, 1 warning in 9.23s** (warning deprecation từ import TestClient; không khởi tạo TestClient). Gồm 126 test listen/phòng và 39 test JS/theme tĩnh; test HTTP / socket không chạy.
+  - `node --check` cho `player.js`, `listen.js`, `favorites.js` → **PASS** (mọi JS đổi); `git diff --check` → **PASS**.
+  - `git diff --exit-code a127081 -- src/auto_short/compilation src/auto_short/web/compilations.py src/auto_short/web/routes/compilations.py tests/test_web_compilation.py` → **PASS, diff rỗng**.
+- Không chạy bộ đủ 5 file web của delegation, phần HTTP/server trong `test_web_theme_plan.py`, full suite hoặc Android/two-browser thật vì giới hạn sandbox không có loopback; ORCHESTRATOR chạy ngoài sandbox. Không claim PASS AC 48.
+- Diff so với `a127081`, không tính contract (bao gồm Amendment J do ORCHESTRATOR soạn sẵn): app **+57 / −249**, test **+67 / −71**, tổng **+124 / −320**. Sẵn sàng review; lifecycle giữ **IN_PROGRESS** tới khi review / required verification ngoài sandbox hoàn tất. Không commit / push / PR / gọi agent khác / gọi mạng thật / restart server.
+
 ### Amendment I (HUMAN LEAD 2026-11-08, chạy thật `fdd6d39`) — đã implement, chờ review / verification ngoài sandbox
 
 Bằng chứng: "1,2 đều ổn nhưng chữ trên nút bị tệp màu ko thấy" (thẻ đè video: PASS AC 28 / 31 vị trí). "Khi sử dụng playlist ở yêu thích càng về sau video càng nhiều như vậy tôi sẽ không thể nào coi được hết nên có cách phân ra nhiều [phần] và nên thêm có chức năng chọn bài trong playlist của yêu thích". Cỡ phần: "10-15 bài khai thị, short 30-40 shorts vì short nhiều hơn khai thị, nếu cả hai thì 3,5 tập lớn" → ORCHESTRATOR chốt giữa khoảng: lọc chỉ khai thị 12 bài / phần; chỉ Short 35 bài / phần; cả hai: 4 tập / phần (bài yêu thích của 4 tập liền nhau có bài yêu thích).

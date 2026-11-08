@@ -213,7 +213,7 @@
       return { id: id.replace(/\.kt$/, ""), label: `Tập ${entry.ep_label || entry.ep_index || id.replace(/\.kt$/, "")}` };
     }
     // Sizes live here only; the server uses the group metadata sent with the queue.
-    static favoritePartSizes = Object.freeze({ khaithi: 12, short: 35, both: 4 });
+    static favoritePartSizes = Object.freeze({ khaithi: 15, short: 35, both: 4 });
     static groupFavorites(items, filter) {
       const size = AutoShortPlayer.favoritePartSizes[filter], parts = [];
       let episodes = 0, lastEpisode;

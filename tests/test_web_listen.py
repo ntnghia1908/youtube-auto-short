@@ -257,10 +257,13 @@ const $ = (name) => {
   if (!elements.has(name)) elements.set(name, new Element(name === "video" ? "video" : "div"));
   return elements.get(name);
 };
+const documentEvents = {};
 global.document = {visibilityState: "visible", pictureInPictureEnabled: false,
   getElementById: id => $(id.replace(/^listen-/, "")), createElement: tag => new Element(tag),
   createTextNode: text => {const e = new Element("text"); e.textContent = text; return e;},
-  addEventListener() {}, querySelectorAll: () => []};
+  addEventListener: (name, fn) => (documentEvents[name] ||= []).push(fn),
+  dispatchEvent: event => {for (const fn of documentEvents[event.type] || []) fn(event); return true;},
+  querySelectorAll: () => []};
 const windowEvents = {};
 global.addEventListener = (name, fn) => (windowEvents[name] ||= []).push(fn);
 global.dispatchEvent = event => { for (const fn of windowEvents[event.type] || []) fn(event); return true; };
@@ -294,17 +297,19 @@ function item(ep, n, kind = "short") {
 // Stateful transport double: set preserves the previous room's auto, as WatchRoom does.
 let serverRoom;
 function useRoom(oldAuto = false) {
-  serverRoom = {auto: oldAuto, queue: [], index: 0, position: 0, rate: 1, paused: true, version: 0};
+  serverRoom = {auto: oldAuto, queue: [], index: 0, position: 0, rate: 1, paused: true, version: 0, updated_at: now / 1000};
   function publish() {
     const entry = serverRoom.queue[serverRoom.index];
     const original = sourceItems.find(item => item.video_url === entry?.url);
     const data = structuredClone({...serverRoom, video_url: entry?.url || null, title: entry?.title,
-      fav: original?.fav, server_time: now / 1000, updated_at: now / 1000, by: "a"});
+      fav: original?.fav, server_time: now / 1000, by: "a"});
     AutoShortWatch.room.handler(data, true);
     return data;
   }
   AutoShortWatch.command = async (action, data) => {
     commands.push(structuredClone({action, ...data}));
+    if (!serverRoom.paused) serverRoom.position += (now / 1000 - serverRoom.updated_at) * serverRoom.rate;
+    serverRoom.updated_at = now / 1000;
     if (action === "set") Object.assign(serverRoom, structuredClone(data));
     else if (action === "auto") serverRoom.auto = data.auto;
     else if (action === "next") {serverRoom.index++; serverRoom.position = 0; serverRoom.paused = false;}
@@ -327,7 +332,7 @@ async function end() { $("video").ended = true; $("video").paused = true; $("vid
     return run
 
 
-@pytest.mark.parametrize("kind,size", [("khaithi", 12), ("short", 35), ("both", 4)])
+@pytest.mark.parametrize("kind,size", [("khaithi", 15), ("short", 35), ("both", 4)])
 def test_favorites_part_sizes_and_sparse_episode_groups(run_player_js, kind, size):  # AC 43
     run_player_js(f'''
 const kind = {json.dumps(kind)}, size = {size};
@@ -501,35 +506,31 @@ assert.ok(!$("queue").querySelectorAll("button[data-index]").some(b => b.textCon
 
 
 @pytest.mark.parametrize("room", [False, True])
-@pytest.mark.parametrize("paused", [False, True])
-def test_manual_unheart_event_refreshes_player_without_loop(run_player_js, room, paused):  # finding 3 / AC 40,43
+def test_favorites_tab_suspends_and_can_resume_same_track(run_player_js, room):  # AC 47
     run_player_js(r'''
-sourceItems = Array.from({length: 38}, (_, n) => item(1, n));
-storage.set("auto-short-listen-filter", '"short"');
-const room = ROOM, paused = PAUSED;
-storage.set("auto-short-listen-position:PLtest:fav", JSON.stringify({episode_id: "ep1", clip_id: "k1", position: 17}));
+sourceItems = Array.from({length: 17}, (_, n) => item(1, n, "khaithi"));
+storage.set("auto-short-listen-filter", '"khaithi"');
+const room = ROOM;
 if (room) useRoom();
-await boot(); await metadata();
-if (!paused) await $("play").fire("click");
+await boot(); await metadata(); await $("play").fire("click");
 if (room) {await $("watch").fire("click"); await settled(); await metadata();}
+if (room) tick(17000); // the room clock and the media have both progressed 17 seconds
 $("video").currentTime = 17;
-sourceItems[0].fav.favorite = false; // favorites.js removes a preceding item: the index changes, but identity/time must not.
-window.dispatchEvent(new Event("favorites-changed")); await settled(); await metadata();
-assert.equal($("video").src, sourceItems[1].video_url);
-assert.equal($("video").currentTime, 17); assert.equal($("video").paused, paused);
-assert.equal($("count").textContent, "1 / 37");
-assert.equal(requests.filter(p => p.includes("/listen")).length, 2);
-if (room) {
-  assert.equal(serverRoom.queue.length, 37); assert.equal(serverRoom.position, 17);
-  assert.ok(!serverRoom.queue.some(e => e.url === sourceItems[0].video_url));
-}
-// Removing the playing item in the manual tab still lets it finish before removing it.
-sourceItems[1].fav.favorite = false;
-window.dispatchEvent(new Event("favorites-changed")); await settled(); await metadata();
-assert.equal($("video").src, sourceItems[1].video_url); assert.equal($("video").currentTime, 17);
-assert.equal($("favorite").textContent, "♡");
-await $("next").fire("click"); await settled(); await metadata();
-assert.equal($("video").src, sourceItems[2].video_url);
-assert.equal($("count").textContent, "1 / 36");
-assert.equal(requests.filter(p => p.includes("/listen")).length, 3);
-'''.replace("ROOM", json.dumps(room)).replace("PAUSED", json.dumps(paused)))
+assert.equal($("queue").firstChild.textContent, "Phần 1 · 15 bài");
+window.addEventListener("favorites-changed", () => { globalThis.themeRefreshes = (globalThis.themeRefreshes || 0) + 1; });
+await $("favorite").fire("click"); await settled();
+assert.equal(themeRefreshes, 1); // theme planner still hears heart changes
+assert.equal(requests.filter(p => p.includes("/listen")).length, 1); // manual-pane refresh is gone
+const count = commands.length;
+document.dispatchEvent(new CustomEvent("favorites-tab", {detail: "ai"}));
+assert.equal($("video").paused, true);
+if (room) {await AutoShortWatch.poll(true); await settled(); assert.equal($("video").paused, true);}
+// Suspend blocks media controls and does not pause the whole room for other participants.
+await $("play").fire("click");
+assert.equal(commands.length, count); assert.equal($("video").paused, true);
+document.dispatchEvent(new CustomEvent("favorites-tab", {detail: "listen"}));
+await settled(); await metadata();
+if (!room) await $("play").fire("click");
+assert.equal($("video").src, sourceItems[0].video_url);
+assert.equal($("video").currentTime, 17); assert.equal($("video").paused, false);
+'''.replace("ROOM", json.dumps(room)))

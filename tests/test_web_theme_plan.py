@@ -1284,18 +1284,17 @@ if(mode==='saved')values.set('autoShort.fvTab','manual');
 if(mode==='saved-videos')values.set('autoShort.fvTab','videos');
 if(mode==='invalid')values.set('autoShort.fvTab','unknown');
 const get=id=>{if(!els[id]){els[id]=new El();els[id].root=true;}return els[id];};
-const tabs=['ai','manual','videos'].map(name=>{const n=get('fv-tab-'+name);n.dataset.fvTab=name;return n;});
-const filters=['all','short','khaithi'].map(kind=>{const n=new El('button');n.dataset.kind=kind;return n;});
-get('fv-auto-min').value='60';
-const favorites=[{episode_id:'ep1',clip:'k1',code:'KT01',kind:'khaithi',usable:true,duration:350},
- {episode_id:'ep2',clip:'s1',code:'S01',kind:'short',usable:true,duration:50}];
+const tabs=['listen','ai','videos'].map(name=>{const n=get('fv-tab-'+name);n.dataset.fvTab=name;return n;});
 let compilations=['players','published'].includes(mode)?[{cid:'c1',mode:'concat',state:'done',download_url:'/files/manual.mp4',duration:600,segments:2},
  {cid:'c2',mode:'loop',state:'done',download_url:'/files/loop.mp4',duration:600,repeat:2}]:[];
+if(compilations.length)compilations[0].state='running'; // seed one real polling callback
+const tabEvents=[];
 const document={querySelector:s=>get(s.slice(1)),getElementById:get,createElement:tag=>new El(tag),
- querySelectorAll:s=>s==='[data-fv-tab]'?tabs:filters,addEventListener:(k,f)=>events[k]=f,activeElement:null};
+ querySelectorAll:s=>s==='[data-fv-tab]'?tabs:[],addEventListener:(k,f)=>events[k]=f,
+ dispatchEvent:e=>tabEvents.push(e.detail),activeElement:null};
 const published=new Map(), fields=(kind,id)=>published.get(kind+':'+id)||{published:false,published_at:null,published_stale:false};
 let publishFail=false,publishWait=null;
-const ctx={document,location:{pathname:'/playlists/PLeligible/favorites'},localStorage:{getItem:k=>{if(mode==='blocked')throw Error('denied');return values.get(k);},setItem:(k,v)=>{if(mode==='blocked')throw Error('denied');values.set(k,v);}},
+const ctx={CustomEvent:class {constructor(type,opts){this.type=type;this.detail=opts.detail;}},document,location:{pathname:'/playlists/PLeligible/favorites'},localStorage:{getItem:k=>{if(mode==='blocked')throw Error('denied');return values.get(k);},setItem:(k,v)=>{if(mode==='blocked')throw Error('denied');values.set(k,v);}},
  fetch:async(path,opts)=>{
   calls.push({path,opts});let result;
   if(path.endsWith('/videos/published')) {
@@ -1307,7 +1306,7 @@ const ctx={document,location:{pathname:'/playlists/PLeligible/favorites'},localS
    plans:[{plan_id:'plan1234',revision:2,title:'Theme',clips:[],check:{state:'approved'},render_job:null,
     output:{download_url:'/files/theme.mp4'},...fields('theme','plan1234')}]};
   else result=path.endsWith('/thumbs')?{state:'ready',files:{}}:opts.method==='POST'?{created:true}:
-   {series:'Bộ kinh',max_minutes:720,favorites,compilations:compilations.map(c=>({...c,...fields('compilation',c.cid)}))};
+   {series:'Bộ kinh',max_minutes:720,favorites:[],compilations:compilations.map(c=>({...c,...fields('compilation',c.cid)}))};
   return {ok:true,status:200,json:async()=>JSON.parse(JSON.stringify(result))};
  },
  window:{dispatchEvent:()=>{},addEventListener:()=>{}},setTimeout:(f,ms)=>{timers.push({f,ms});return timers.length;},clearTimeout:()=>{},confirm:()=>true};
@@ -1316,28 +1315,17 @@ const tick=()=>new Promise(r=>setImmediate(r));
  vm.createContext(ctx);  // favorites.html loads app.js (AutoShort helpers) before favorites.js
  vm.runInContext(fs.readFileSync(require('path').join(require('path').dirname(process.argv[1]),'app.js'),'utf8'),ctx);
  vm.runInContext(fs.readFileSync(process.argv[1],'utf8')+'\nFavorites.init();globalThis.fv=Favorites;',ctx);await tick();
- const initial=mode==='saved'?'manual':mode==='saved-videos'?'videos':'ai';
- for(const name of ['ai','manual','videos'])assert.equal(get('fv-pane-'+name).hidden,name!==initial);
- assert.equal(tabs[['ai','manual','videos'].indexOf(initial)]['aria-selected'],'true');
- tabs[1].listeners.click();assert.equal(get('fv-pane-manual').hidden,false);
- if(mode!=='blocked')assert.equal(values.get('autoShort.fvTab'),'manual');
+ if(compilations.length)compilations[0].state='done';
+ for(const name of ['listen','ai','videos'])assert.equal(get('fv-pane-'+name).hidden,name!=='listen');
+ assert.equal(tabs[0]['aria-selected'],'true');assert.equal(tabEvents.at(-1),'listen');
+ tabs[1].listeners.click();assert.equal(get('fv-pane-ai').hidden,false);assert.equal(tabEvents.at(-1),'ai');
  let prevented=false;tabs[1].listeners.keydown({key:'ArrowRight',preventDefault:()=>prevented=true});
  assert.ok(prevented);assert.equal(get('fv-pane-videos').hidden,false);assert.ok(tabs[2].focused);
- if(mode!=='blocked')assert.equal(values.get('autoShort.fvTab'),'videos');
- tabs[2].listeners.keydown({key:'ArrowRight',preventDefault:()=>{}});assert.equal(get('fv-pane-ai').hidden,false);
- assert.equal(get('fv-count').textContent,'2');
- // Existing manual concat and duration-based creation still use their CP8.33 payloads.
- get('fv-all').listeners.change({target:{checked:true}});
- get('fv-concat').listeners.click({target:get('fv-concat')});await tick();
- const concat=calls.find(c=>c.opts.method==='POST');
- assert.deepEqual(JSON.parse(concat.opts.body),{mode:'concat',items:[{episode_id:'ep1',clip:'k1'},{episode_id:'ep2',clip:'s1'}]});
- filters[2].listeners.click();get('fv-auto').listeners.click({target:get('fv-auto')});await tick();
- assert.deepEqual(JSON.parse(calls.filter(c=>c.opts.method==='POST').at(-1).opts.body),{mode:'auto',minutes:60,kinds:['khaithi']});
+ tabs[2].listeners.keydown({key:'ArrowRight',preventDefault:()=>{}});assert.equal(get('fv-pane-listen').hidden,false);
+ assert.equal(tabEvents.at(-1),'listen');
  const all=n=>[n,...n.children.filter(c=>typeof c!=='string').flatMap(all)];
- await all(get('fv-list')).find(n=>n.textContent==='Lặp').listeners.click();
- const loop=all(get('fv-list')).find(n=>n.type==='number');loop.value='30';
- all(get('fv-list')).find(n=>n.textContent==='Tạo').listeners.click();await tick();
- assert.deepEqual(JSON.parse(calls.filter(c=>c.opts.method==='POST').at(-1).opts.body),{mode:'loop',item:{episode_id:'ep1',clip:'k1'},minutes:30});
+ // Reuse the polling callback scheduled for the initially running compilation.
+ const reload=async()=>{await timers.find(t=>t.ms===3000).f();await tick();};
  if(mode==='published') {
   vm.runInContext(fs.readFileSync(require('path').join(require('path').dirname(process.argv[1]),'theme_plan.js'),'utf8')+'\nThemePlan.init();',ctx);await tick();
   const box=id=>all(get(id)).find(n=>n.className==='publish');
@@ -1352,7 +1340,7 @@ const tick=()=>new Promise(r=>setImmediate(r));
    assert.equal(input.disabled,true);
    // A poll replaces data while the card stays mounted. The successful POST must update that new object.
    if(kind==='theme')await get('tp-refresh').listeners.click();
-   else {await get('fv-auto').listeners.click({target:get('fv-auto')});await tick();}
+   else await reload();
    release();await pending;
    assert.equal(get(id).children[0],card);assert.equal(input.checked,true);assert.equal(input.disabled,false);
    assert.equal(video.currentTime,37);assert.equal(video.paused,false);
@@ -1362,7 +1350,7 @@ const tick=()=>new Promise(r=>setImmediate(r));
    const next=get(id).children[0];input=checkbox(id);input.checked=false;await input.listeners.change();
    assert.equal(input.checked,false);assert.equal(get(id).children[0],next);
    if(kind==='theme')await all(get(id)).find(n=>n.tagName==='BUTTON' && n.textContent==='Tải lại bản đã lưu').listeners.click();
-   else get('fv-all').listeners.change({target:{checked:false}});
+   else ctx.fv.pauseAll();
    assert.equal(checkbox(id).checked,false); // rerender from data, without GET
   }
   published.set('theme:plan1234',{published:true,published_at:'old',published_stale:true});
@@ -1380,14 +1368,12 @@ const tick=()=>new Promise(r=>setImmediate(r));
   assert.equal(get('fv-comps').children[0].children[0],v);
   assert.ok(!all(get('fv-comps')).some(n=>n.tagName==='A' && n.textContent==='Xem'));
   fv.setVideoCount('plans',3);assert.equal(get('fv-videos-count').textContent,'5');
-  const reload=async()=>{await get('fv-auto').listeners.click({target:get('fv-auto')});await tick();};
   fv.showTab('videos');v.currentTime=23;await reload();assert.equal(videos()[0],v);assert.equal(v.currentTime,23);
   v.play();assert.equal(fv.busy(),true);
   const old=get('fv-comps').children[0];compilations[0].download_name='Updated';
   document.activeElement=new El('input');document.activeElement.type='number';
   await reload();assert.equal(get('fv-comps').children[0],old);assert.equal(videos()[0],v);
-  // Render paths triggered by manual controls must also defer the video list.
-  filters[0].listeners.click();assert.equal(get('fv-comps').children[0],old);
+  assert.equal(get('fv-comps').children[0],old); // polling defers updates while playing
   v.pause();assert.notEqual(get('fv-comps').children[0],old);assert.ok(get('fv-comps').textContent.includes('Updated'));
   assert.equal(videos()[0],v);assert.equal(v.currentTime,23);document.activeElement=null;
   document.fullscreenElement=v;const fullCard=get('fv-comps').children[0];await reload();
@@ -1396,7 +1382,7 @@ const tick=()=>new Promise(r=>setImmediate(r));
   v.play();other.play();assert.equal(v.paused,true);assert.equal(other.paused,false);
   const playingCard=get('fv-comps').children[0];await reload();other.ended=true;other.listeners.ended();
   assert.notEqual(get('fv-comps').children[0],playingCard);other.pause();
-  v.play();fv.showTab('manual');assert.equal(v.paused,true);assert.equal(fv.busy(),false);
+  v.play();fv.showTab('listen');assert.equal(v.paused,true);assert.equal(fv.busy(),false);
   fv.scrollToVideo('123');assert.equal(get('vd-plan-123').scrolled.block,'start');
   // Thumbnail warnings reveal the nearest details immediately.
   let warned=false;
@@ -1413,7 +1399,7 @@ const tick=()=>new Promise(r=>setImmediate(r));
 
 
 @pytest.mark.parametrize("storage", ["default", "saved", "saved-videos", "invalid", "blocked", "players", "published"])
-def test_js_favorites_tabs_and_manual_compilation(storage):
+def test_js_favorites_tabs_and_existing_compilations(storage):
     if shutil.which("node") is None:
         pytest.skip("node unavailable")
     result = subprocess.run(["node", "-e", NODE_TABS, str(STATIC / "favorites.js"), storage],
@@ -1445,14 +1431,23 @@ def test_favorites_ui_tab_panel_ownership():
     parser = Panels()
     parser.feed(html)
     nodes = parser.nodes
-    assert "hidden" not in nodes["fv-pane-ai"][0]
-    assert "hidden" in nodes["fv-pane-manual"][0]
-    assert nodes["fv-tab-ai"][0]["aria-selected"] == "true"
-    assert html.index('id="fv-pane-ai"') < html.index('id="fv-pane-manual"')
+    assert "hidden" not in nodes["fv-pane-listen"][0]
+    assert "hidden" in nodes["fv-pane-ai"][0]
+    assert nodes["fv-tab-listen"][0]["aria-selected"] == "true"
+    assert html.index('id="fv-tab-listen"') < html.index('id="fv-tab-ai"') < html.index('id="fv-tab-videos"')
+    assert "fv-pane-listen" in nodes["episode-listen"][1]
+    assert "fv-pane-manual" not in nodes and "fv-tab-manual" not in nodes
     for name in ("tp-generate", "tp-proposals"):
         assert "fv-pane-ai" in nodes[name][1]
     for name in ("fv-list", "fv-filters", "fv-concat", "fv-all", "fv-auto", "fv-max"):
-        assert "fv-pane-manual" in nodes[name][1]
+        assert name not in nodes
+    js = (STATIC / "favorites.js").read_text()
+    for obsolete in ("autoPreview", "unheart", "loopBox", "updateConcat", "kindFilter", "ticked"):
+        assert obsolete not in js
+    listen = (STATIC / "listen.js").read_text()
+    assert "refreshFavorites" not in listen and "favoriteRefresh" not in listen
+    assert 'window.addEventListener("favorites-changed"' not in listen
+    assert 'window.dispatchEvent(new Event("favorites-changed"))' in listen
 
     assert "hidden" in nodes["fv-pane-videos"][0]
     assert nodes["fv-tab-videos"][0]["data-fv-tab"] == "videos"

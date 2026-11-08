@@ -29,7 +29,7 @@
   let storageKey, lastSave = 0;
   let inRoom = false, rstate = null, lastRoomIndex = -1;
   const removedFavorites = new Set();
-  let pruningRoom = false, favoriteRefresh = Promise.resolve();
+  let pruningRoom = false;
   let pauseTimer = null, lastHiddenAt = -Infinity, roomHidden = false;
   let auto = read("auto-short-listen-auto", true) !== false;
   let filter = read("auto-short-listen-filter", "both");
@@ -75,8 +75,7 @@
           item.fav.favorite = favorite;
           if (favorite) removedFavorites.delete(item.video_url); else removedFavorites.add(item.video_url);
         }
-        window.dispatchEvent(new Event("listen-favorite-changed"));
-        window.dispatchEvent(new CustomEvent("favorites-changed", { detail: { source: "listen" } }));
+        window.dispatchEvent(new Event("favorites-changed"));
       }
       if (inRoom) return W.poll(true);
       player.render();
@@ -112,7 +111,7 @@
     save();
   }
   renderFilter();
-  if (document.getElementById("episode-listen").hidden) player.suspend();
+  if (document.getElementById("episode-listen").hidden || (favPid && document.getElementById("fv-pane-listen")?.hidden)) player.suspend();
   const epLabel = (item) => `Tập ${item.ep_label || item.ep_index || "—"}`;
   const kindLabel = (item) => item.kind === "khaithi" ? "Khai thị" : "Short";
   function save() {
@@ -249,38 +248,6 @@
     } catch (error) { message(error.message); }
     finally { pruningRoom = false; }
   }
-  function refreshFavorites() {
-    // Serialize external changes; a slow earlier response cannot overwrite a later refresh.
-    favoriteRefresh = favoriteRefresh.catch(() => {}).then(async () => {
-      const data = await request("GET", null, `/api/playlists/${encodeURIComponent(favPid)}/listen?favorites=1`);
-      const present = new Set(data.items.map((item) => item.video_url));
-      const previous = currentItem;
-      for (const item of all) {
-        if (present.has(item.video_url)) removedFavorites.delete(item.video_url);
-        else removedFavorites.add(item.video_url);
-      }
-      const position = player.loading ? player.targetPosition() : player.media().currentTime;
-      const playing = player.active && !player.media().paused;
-      // Keep a removed playing item in its original place so it can finish before disappearing.
-      const oldIndex = all.findIndex((item) => same(item, previous));
-      if (previous && !present.has(previous.video_url)) {
-        previous.fav.favorite = false;
-        data.items.splice(Math.max(0, Math.min(oldIndex, data.items.length)), 0, previous);
-      }
-      all = data.items;
-      currentItem = all.find((item) => same(item, previous)) || null;
-      rebuildItems();
-      if (inRoom) { await syncFavoriteRoom(); await W.poll(true); }
-      else {
-        const found = items.findIndex((item) => same(item, previous));
-        choose(found < 0 ? startingIndex() : found, playing, position);
-      }
-    }).catch((error) => message(error.message));
-    return favoriteRefresh;
-  }
-  if (favPid) window.addEventListener("favorites-changed", (event) => {
-    if (event.detail?.source !== "listen") return refreshFavorites();
-  });
   // Back to solo at the item / position the room was on.
   function exitRoom() {
     const last = rstate, playing = !player.media().paused;
@@ -336,8 +303,8 @@
   player.video.addEventListener("timeupdate", () => {
     if (performance.now() - lastSave > 3000) { lastSave = performance.now(); save(); }
   });
-  document.addEventListener("episode-tab", (event) => {
-    if (event.detail === "listen") { player.activate(); renderCurrent(); if (inRoom) player.sync(); }
+  function switchTab(name) {
+    if (name === "listen") { player.activate(); renderCurrent(); if (inRoom) player.sync(); }
     else {
       save();
       if (state && !inRoom) {
@@ -347,7 +314,9 @@
       }
       player.suspend();
     }
-  });
+  }
+  document.addEventListener("episode-tab", (event) => switchTab(event.detail));
+  if (favPid) document.addEventListener("favorites-tab", (event) => switchTab(event.detail));
   document.addEventListener("visibilitychange", () => {
     save();
     if (document.visibilityState === "visible" && player.active) renderCurrent();
