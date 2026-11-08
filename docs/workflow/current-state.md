@@ -10,9 +10,9 @@ Ngân sách token: `docs/ai/workflow.md` §10.
 
 ## Current focus
 
-Cập nhật 2026-11-08.
+Cập nhật 2026-11-09.
 
-- Web 8080 (tmux `youtube:web`, worktree `~/projects/youtube-auto-short-web`): chạy `origin/main` `8020108` (detached; restart 2026-11-08 23:23 giờ VN sau #207 WATCH1 Xem chung, #208 LISTEN1 tab Nghe, #209 tắt server nhanh — tắt hết 1,4 s, trước 7–8 phút); `[store]` bật (kho 3090 qua tunnel 18090, chi tiết ops-notes), `offload = true` (bản dọc tự lên kho + giải phóng). Script restart từ chối khi làn bận; mật khẩu `~/.local/share/auto-short/web.env`.
+- Web 8080 (tmux `youtube:web`, worktree `~/projects/youtube-auto-short-web`): chạy `origin/main` `68e4463` (detached; restart 2026-11-09 01:27 giờ VN sau #211 FIX-title-evidence-retry, #212 PCX1 Codex dịch bài đăng); `[store]` bật (kho 3090 qua tunnel 18090, chi tiết ops-notes), `offload = true` (bản dọc tự lên kho + giải phóng). Script restart từ chối khi làn bận (làn `codex` của PCX1 có thể chạy nhiều giờ); mật khẩu `~/.local/share/auto-short/web.env`.
 - Kinh Địa Tạng 41 tập đã giải phóng bản HD (HD1, bản ở kho 3090 `E:\KinhDiaTang_HD`); HUMAN LEAD chạy định kỳ trên 3090 `backup.ps1 -Release` (#161: mặc định `-Dest` ổ E:, `danh-sach.csv` giữ dòng tập đã giải phóng). Chạy thật 2026-10-26 (#161 PASS): giữ 22 dòng CSV cũ, kho vẫn 52 bản dọc + 102 HD, E: còn 1.642 GB. 12 tập 21–26, 29–34: bản dọc đã render, HD2b đẩy lên kho + giải phóng HD + dọc 2026-10-26. Chưa giải phóng: 38 tập (35 trở đi trừ đã giải phóng, và 100) mới có HD, chưa xử lý Short.
 - 2026-10-26 xếp "Xử lý" (Short + khai thị 4–7 phút, không bản dọc) tới tập 50: Vô Lượng Thọ 31–50, Cảm Ứng Thiên 31–50, Thập Thiện Nghiệp 34–39 + 41–50 (56 tập, 112 job prepare, xen kẽ theo số tập). 26 tập (47 job) fail ingest vì YouTube timeout (đêm 25 → 26), xếp lại lần 2 sau #169 (2026-10-26, giờ timeout thì đợi thay vì fail).
 - Dự án ở `~/projects/` từ 2026-10-19; backup JSON: ops-notes. `config.toml` `[storage]`: `auto_archive = true`, `auto_archive_grace_minutes = 7200`.
@@ -25,6 +25,8 @@ Cập nhật 2026-11-08.
 - CL1 đã gỡ (#107); quy ước host C0 / C1 vẫn hiệu lực.
 
 ## Next proposed action
+
+0. PCX1 (#212): hàng đợi Codex tự động đang dịch 192 bài ai/raw chưa đăng (85 khai thị ~85–100 k token / ~8 phút, 107 Short ~15–20 k token / ~1,5 phút; ước ~9 M token, nhiều giờ, tự đợi hạn mức). Theo dõi `GET /api/posts/codex`. HUMAN LEAD đọc vài bài "Codex dịch"; VLT 25 k01 (đã đăng 06/11) đã có bản Codex — sửa bài trên YouTube nếu muốn. 4 Short untitled (#211) đã đặt tiêu đề + render lại.
 
 1. HUMAN LEAD đăng 13 bài tập 10 Thập Thiện `W2d-xS4ttTw` (xử lý lại 2026-10-24).
 2. Đóng gói (`docs/decisions/PKG-video-packaging-authorization.md` ACCEPTED): PKG1, PKG2, VIS1, PKG2.1, PKG2.2, PKG3, PKG3.1, PUB2, FIX-theme-index-summary, AUD1 đã merge; HD1, HD2a cũng vậy. PKG3.1: HUMAN LEAD đã bấm "Ghép lại" video ghép Thái Thượng stale (2026-10-26).
