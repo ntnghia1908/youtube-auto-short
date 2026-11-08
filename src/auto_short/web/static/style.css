@@ -478,3 +478,5 @@ body.modal-open { overflow: hidden; }
 @media (min-width: 640px) { .listen-toolbar { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: end; } }
 
 .player-track > * { min-width: 0; }
+.player-episode-head { margin: .5rem 0; font-weight: 600; }
+.player-notice select { display: block; margin-top: .5rem; padding: .55rem; border: 1px solid var(--border); border-radius: 8px; background: var(--card); max-width: 100%; }

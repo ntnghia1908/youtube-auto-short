@@ -149,9 +149,18 @@ def test_auto_advance_never_scrolls_page_to_list():  # AC 28 / 29 (static guard)
     listen, player = (static / "listen.js").read_text(), (static / "player.js").read_text()
     css = (static / "style.css").read_text()
     # The list scrolls only inside its own box; the page moves only up to the video.
-    assert "button.scrollIntoView" not in listen and "AutoShortPlayer.scrollWithin($(\"queue\")" in listen
+    assert "button.scrollIntoView" not in listen and "AutoShortPlayer.scrollWithin(container, current)" in player
     assert ".listen-queue { max-height: 28rem; overflow: auto; }" in css
     assert player.count("scrollIntoView") == 1 and "focus()" not in player
     # The countdown card is brought into view when a track ends, and the page returns to the video after the switch.
     assert "this.renderAdvance(); this.scrollToVideo();" in player
     assert "this.endedKey = null; this.scrollToVideo();" in player
+
+
+def test_list_shows_only_playing_episode_in_both_pages():  # AC 30 / 31 (static guard)
+    static = Path(__file__).parents[1] / "src/auto_short/web/static"
+    listen, watch, player = [(static / n).read_text() for n in ("listen.js", "watch.js", "player.js")]
+    assert "<details" not in listen and "createElement(\"details\")" not in listen
+    assert "player.renderEpisodeList($(\"queue\")" in listen and "player.renderEpisodeList($(\"watch-queue\")" in watch
+    assert "nextInEpisode()" in player and "onEpisode" in listen and "onEpisode" in watch
+    assert 'command("episode"' in watch

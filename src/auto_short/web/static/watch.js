@@ -18,7 +18,7 @@
     if (player?.inPiP()) return false;
     return pageHidden || (player ? player.isHidden() : document.visibilityState === "hidden") || performance.now() - lastHiddenAt < 1500;
   }
-  let state = null, queueKey = "";
+  let state = null;
   let sending = Promise.resolve(), pending = 0, pollTimer, pollGeneration = 0;
 
   async function request(method = "GET", body, path = "/api/watch") {
@@ -59,18 +59,10 @@
     $("watch-meta").textContent = active && state.ep_label ? `Tập ${state.ep_label} · ${state.kind === "khaithi" ? "Khai thị" : "Short"} ${state.number} / ${state.total}` : "";
     $("watch-viewers").textContent = `Đang xem: ${Object.keys(state.viewers).length} người`;
     $("watch-end").disabled = !active;
-    const signature = JSON.stringify([state.queue, state.index]);
-    if (queueKey !== signature) {
-      queueKey = signature;
-      $("watch-queue").replaceChildren(...state.queue.map((entry, index) => {
-        const li = document.createElement("li"), button = AutoShortPlayer.queueButton(entry, () => {
-          player.hideNotice();
-          command("goto", { index }, true).then(() => player.scrollToVideo()).catch(() => {});
-        });
-        if (index === state.index) button.setAttribute("aria-current", "true");
-        li.append(button); return li;
-      }));
-    }
+    player.renderEpisodeList($("watch-queue"), state.queue, state.index, (index) => {
+      player.hideNotice();
+      command("goto", { index }, true).then(() => player.scrollToVideo()).catch(() => {});
+    }, false);
   }
   const invite = document.createElement("div");
   if (!inRoom) { invite.className = "watch-invite"; invite.hidden = true; document.body.prepend(invite); }
@@ -173,6 +165,7 @@
       onEnded: (position) => { cancelPause(); command("ended", { expect_version: state.version, position }, true).catch(() => {}); },
       onAdvance: () => command("advance_now", { expect_version: state.version }, true).catch(() => {}),
       onCancelAdvance: () => command("cancel_advance", { expect_version: state.version }, true).catch(() => {}),
+      onEpisode: (episode) => { player.hideNotice(); command("episode", { episode }, true).then(() => player.scrollToVideo()).catch(() => {}); },
       onFavorite: () => poll(true),
       onAuto: (auto) => { command("auto", { auto }).catch(() => poll(true)); },
       onAction(action, extra, force = false) {

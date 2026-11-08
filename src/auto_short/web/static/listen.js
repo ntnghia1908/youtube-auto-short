@@ -21,6 +21,11 @@
   const episode = (id) => request("GET", null, `/api/episodes/${encodeURIComponent(id)}`);
   const player = new AutoShortPlayer("listen", {
     client: AutoShortWatch.client, request, message, onNavigate: (action) => navigate(action), getNext: () => items[index + 1],
+    getItems: () => items,
+    onEpisode(id) {
+      const n = items.findIndex((item) => item.base_episode_id === id);
+      if (n >= 0) choose(n, true, 0, true);
+    },
     onAuto(value) {
       auto = value; write("auto-short-listen-auto", auto);
       if (state) { state = { ...state, auto }; player.setState(state, false); }
@@ -40,8 +45,6 @@
   });
   let all = [], items = [], index = -1, currentItem = null, state = null, version = 0, started = false;
   let storageKey, lastSave = 0;
-  let groups = new Map();
-  const manuallyOpen = new Set();
   let auto = read("auto-short-listen-auto", true) !== false;
   let filter = read("auto-short-listen-filter", "both");
   if (!["both", "short", "khaithi"].includes(filter)) filter = "both";
@@ -66,18 +69,7 @@
     $("watch").disabled = !item;
     $("next").disabled = !item || index === items.length - 1;
     if (item) $("jump").value = item.base_episode_id;
-    for (const [base, group] of groups) {
-      const open = base === item?.base_episode_id || manuallyOpen.has(base);
-      if (group.details.open !== open) {
-        group.expectedToggle = open; group.details.open = open;
-      }
-    }
-    $("queue").querySelectorAll("button[data-index]").forEach((button) => {
-      if (Number(button.dataset.index) === index) {
-        button.setAttribute("aria-current", "true");
-        if (scrollItem && document.visibilityState === "visible" && player.active) AutoShortPlayer.scrollWithin($("queue"), button);
-      } else button.removeAttribute("aria-current");
-    });
+    player.renderEpisodeList($("queue"), items, index, (n) => choose(n, true, 0, true), scrollItem);
   }
   function choose(next, autoplay = false, position = 0, scroll = false) {
     save(); index = next; started = autoplay;
@@ -107,30 +99,15 @@
     return start < 0 ? (items.length ? 0 : -1) : start;
   }
   function buildList() {
-    groups = new Map();
-    $("queue").replaceChildren(); $("jump").replaceChildren();
-    items.forEach((item, n) => {
-      if (!groups.has(item.base_episode_id)) {
-        const details = document.createElement("details"), summary = document.createElement("summary"), list = document.createElement("ol");
-        const group = { details, summary, list, item, count: 0, userToggle: false };
-        details.append(summary, list); $("queue").append(details);
-        // Native toggle events are asynchronous and also fire for .open changes.
-        summary.addEventListener("click", () => { group.userToggle = true; });
-        details.addEventListener("toggle", () => {
-          const automatic = !group.userToggle && group.expectedToggle === details.open;
-          group.expectedToggle = undefined; group.userToggle = false;
-          if (automatic) return;
-          if (details.open) manuallyOpen.add(item.base_episode_id);
-          else manuallyOpen.delete(item.base_episode_id);
-        });
-        const option = document.createElement("option"); option.value = item.base_episode_id; option.textContent = epLabel(item);
-        $("jump").append(option); groups.set(item.base_episode_id, group);
-      }
-      const li = document.createElement("li"), button = AutoShortPlayer.queueButton(item, () => choose(n, true, 0, true));
-      button.dataset.index = n; li.append(button);
-      const group = groups.get(item.base_episode_id); group.list.append(li); group.count++;
-    });
-    for (const group of groups.values()) group.summary.textContent = `${epLabel(group.item)} · ${group.count} bài`;
+    $("jump").replaceChildren();
+    const seen = new Set();
+    for (const item of items) {
+      if (seen.has(item.base_episode_id)) continue;
+      seen.add(item.base_episode_id);
+      const option = document.createElement("option"); option.value = item.base_episode_id; option.textContent = epLabel(item);
+      $("jump").append(option);
+    }
+    $("queue").dataset.signature = "";
     $("jump").disabled = !items.length;
   }
   function renderFilter() {
@@ -150,7 +127,7 @@
     $("watch").disabled = true;
     try {
       const queue = items.slice(index, index + 300).map((item) => ({ url: item.video_url,
-        title: Array.from(item.title || "Video").slice(0, 200).join("") }));
+        title: Array.from(item.title || "Video").slice(0, 200).join(""), ep_label: String(item.ep_label || "").slice(0, 40) || undefined }));
       save(); await AutoShortWatch.start(queue, player.loading ? state.position : player.media().currentTime);
     } catch (error) { message(error.message); }
     finally { $("watch").disabled = false; }

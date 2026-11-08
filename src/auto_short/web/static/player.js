@@ -2,11 +2,11 @@
 (() => {
   "use strict";
   window.AutoShortPlayer = class AutoShortPlayer {
-    constructor(prefix, { client, request, onAction, onNavigate, onFavorite, message, onAuto, onEnded, onAdvance, onCancelAdvance, getNext = () => this.state?.queue?.[this.state.index + 1] }) {
+    constructor(prefix, { client, request, onAction, onNavigate, onFavorite, message, onAuto, onEnded, onAdvance, onCancelAdvance, onEpisode, getItems = () => this.state?.queue || [], getNext = () => this.state?.queue?.[this.state.index + 1] }) {
       const $ = (name) => document.getElementById(`${prefix}-${name}`);
       this.$ = $; this.request = request; this.onAction = onAction;
       this.onNavigate = onNavigate; this.onFavorite = onFavorite; this.message = message;
-      this.video = $("video"); this.getNext = getNext;
+      this.video = $("video"); this.getNext = getNext; this.getItems = getItems; this.onEpisode = onEpisode;
       this.onEnded = onEnded; this.onAdvance = onAdvance; this.onCancelAdvance = onCancelAdvance;
       this.client = client; this.page = prefix; this.events = []; this.lastLogAt = -Infinity; this.logMarks = new Map();
       this.programmed = new Map(); this.sourceKey = null; this.active = true;
@@ -41,7 +41,7 @@
         if (this.onEnded) this.onEnded(current.currentTime);
         else {
           this.onAction("pause", { position: current.currentTime }, true);
-          this.localAdvanceAt = this.state.auto && this.getNext() ? performance.now() + 3000 : null;
+          this.localAdvanceAt = this.state.auto && this.nextInEpisode() ? performance.now() + 3000 : null;
         }
         this.renderAdvance(); this.scrollToVideo();
       });
@@ -162,6 +162,40 @@
       if (row.top < box.top) container.scrollTop += row.top - box.top;
       else if (row.bottom > box.bottom) container.scrollTop += row.bottom - box.bottom;
     }
+    currentEntry() { return this.getItems()[this.state?.index] || this.state; }
+    nextInEpisode() {
+      const next = this.getNext(), now = this.episode(this.currentEntry()), then = this.episode(next);
+      return next && (now?.id ?? null) === (then?.id ?? null) ? next : null;
+    }
+    // Distinct episodes of the list, in order.
+    episodes() {
+      const seen = new Map();
+      for (const entry of this.getItems()) { const e = this.episode(entry); if (e && !seen.has(e.id)) seen.set(e.id, e); }
+      return [...seen.values()];
+    }
+    // List box shows only the episode of the playing item (AC 30); it scrolls inside itself only.
+    renderEpisodeList(container, items, index, onPick, scroll = true) {
+      const here = this.episode(items[index]), key = here?.id ?? null;
+      const members = [];
+      items.forEach((entry, n) => { if ((this.episode(entry)?.id ?? null) === key) members.push(n); });
+      const signature = JSON.stringify([key, here?.label, members, items.map((e) => e.code || e.title || e.url || "")]);
+      if (container.dataset.signature !== signature) {
+        container.dataset.signature = signature;
+        const head = document.createElement("p"), list = document.createElement("ol");
+        head.className = "player-episode-head"; head.textContent = items.length ? `${here?.label || "Danh sách"} · ${members.length} bài` : "";
+        for (const n of members) {
+          const li = document.createElement("li"), button = AutoShortPlayer.queueButton(items[n], () => onPick(n));
+          button.dataset.index = n; li.append(button); list.append(li);
+        }
+        container.replaceChildren(head, list);
+      }
+      let current = null;
+      container.querySelectorAll("button[data-index]").forEach((button) => {
+        if (Number(button.dataset.index) === index) { button.setAttribute("aria-current", "true"); current = button; }
+        else button.removeAttribute("aria-current");
+      });
+      if (current && scroll && document.visibilityState === "visible" && this.active) AutoShortPlayer.scrollWithin(container, current);
+    }
     episode(entry) {
       if (!entry) return null;
       const match = (entry.video_url || entry.url || "").split("?")[0].match(/^\/files\/([^/]+)\/[^/]+\.mp4$/);
@@ -185,9 +219,9 @@
       clearTimeout(this.advanceTimer);
       if (!this.active || !this.state?.video_url) return;
       const at = this.onEnded ? this.state.advance_at : this.localAdvanceAt;
-      if (at != null) this.finishedKey = this.sourceKey;
+      if (at != null || (this.onEnded && this.state.finished)) this.finishedKey = this.sourceKey;
       if (this.finishedKey !== this.sourceKey) { this.$("notice").hidden = true; return; }
-      const next = this.getNext(), current = this.episode(this.state), upcoming = this.episode(next);
+      const next = this.getNext(), current = this.episode(this.currentEntry()), upcoming = this.episode(next);
       const boundary = current && (!next || (upcoming && upcoming.id !== current.id));
       const signature = JSON.stringify([this.sourceKey, at ?? null, next?.code, next?.title, boundary]);
       if (signature !== this.advanceSignature) {
@@ -195,12 +229,12 @@
         const notice = this.$("notice"), end = document.createElement("strong"), title = document.createElement("p"), count = document.createElement("span");
         if (boundary) end.textContent = `Đã hết ${current.label}.`;
         end.hidden = !boundary;
-        title.textContent = next ? `Bài tiếp theo: ${AutoShortPlayer.heading(next)}` : "Đã hết danh sách";
+        title.textContent = next ? `${boundary ? "Tiếp theo" : "Bài tiếp theo"}: ${AutoShortPlayer.heading(next)}` : "Đã hết danh sách";
         title.className = "player-up-next"; count.className = "small muted"; this.advanceCount = count;
         notice.replaceChildren(end, title, count);
         if (next) {
           const actions = document.createElement("div"), play = document.createElement("button");
-          actions.className = "actions"; play.type = "button"; play.className = "btn primary small"; play.textContent = "Phát ngay";
+          actions.className = "actions"; play.type = "button"; play.className = "btn primary small"; play.textContent = boundary ? `Nghe ${upcoming.label}` : "Phát ngay";
           const key = this.sourceKey;
           play.addEventListener("click", () => { if (key === this.sourceKey) this.advanceNow(); }); actions.append(play);
           if (at != null) {
@@ -209,9 +243,20 @@
           }
           notice.append(actions);
         }
+        const others = this.episodes();
+        if (boundary && this.onEpisode && others.length > 1) {
+          const pick = document.createElement("select");
+          pick.setAttribute("aria-label", "Chọn tập khác");
+          const option = (value, text) => { const o = document.createElement("option"); o.value = value; o.textContent = text; return o; };
+          pick.append(option("", "Chọn tập khác…"));
+          for (const e of others) if (e.id !== current.id) pick.append(option(e.id, e.label));
+          const key = this.sourceKey;
+          pick.addEventListener("change", () => { if (pick.value && key === this.sourceKey) this.onEpisode(pick.value); });
+          notice.append(pick);
+        }
         notice.hidden = false;
       }
-      if (at == null) { this.advanceCount.textContent = next ? "Tự chuyển đã dừng." : ""; return; }
+      if (at == null) { this.advanceCount.textContent = next && !boundary ? "Tự chuyển đã dừng." : ""; return; }
       const left = this.onEnded ? at - (this.state.server_time + (performance.now() - this.receivedAt) / 1000) : (at - performance.now()) / 1000;
       const label = left > 0 ? `Sau ${Math.ceil(left)} s` : "Đang chuyển bài…";
       if (this.advanceCount.textContent !== label) this.advanceCount.textContent = label;

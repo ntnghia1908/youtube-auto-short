@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 import threading
 import time
 import unicodedata
@@ -44,6 +45,15 @@ def _client(value) -> str:
     return value
 
 
+_FILE_URL = re.compile(r"^/files/([^/]+)/[^/]+\.mp4$")
+
+
+def episode_of(entry) -> str | None:
+    """Episode id from a /files/<id>/x.mp4 url (a .kt khai thi belongs to its base episode)."""
+    match = _FILE_URL.match(entry["url"].split("?")[0])
+    return match.group(1).removesuffix(".kt") if match else None
+
+
 class WatchRoom:
     def __init__(self, *, clock=time.time):
         self._clock = clock
@@ -62,11 +72,16 @@ class WatchRoom:
         self._by = None
         self._viewers = {}
 
+    def _same_episode_next(self, index):
+        """Auto-advance never crosses an episode boundary (AC 31)."""
+        nxt = index + 1
+        return nxt < len(self._queue) and episode_of(self._queue[nxt]) == episode_of(self._queue[index])
+
     def _apply_advance(self, now):
         if self._advance_at is None or now < self._advance_at:
             return
         at, self._advance_at = self._advance_at, None
-        if self._auto and self._index + 1 < len(self._queue):
+        if self._auto and self._same_episode_next(self._index):
             self._index += 1
             self._position, self._paused = 0.0, False
             self._finished = False
@@ -80,7 +95,7 @@ class WatchRoom:
         current = self._queue[self._index] if self._queue else None
         return dict(queue=[dict(e) for e in self._queue], index=self._index,
                     video_url=current["url"] if current else None, title=current["title"] if current else "",
-                    paused=self._paused, auto=self._auto, advance_at=self._advance_at,
+                    paused=self._paused, auto=self._auto, finished=self._finished, advance_at=self._advance_at,
                     position=self._position, rate=self._rate,
                     updated_at=self._updated_at, version=self._version, by=self._by,
                     viewers=dict(self._viewers), server_time=now)
@@ -126,7 +141,7 @@ class WatchRoom:
                     raise ValueError("Chưa có phòng xem chung")
                 ended_version, position, paused = expected, end_position, True
                 finished = True
-                advance_at = now + 3 if auto and index + 1 < len(self._queue) else None
+                advance_at = now + 3 if auto and self._same_episode_next(index) else None
             elif action in ("advance_now", "cancel_advance"):
                 if "expect_version" in data:
                     if type(data["expect_version"]) is not int:
@@ -136,7 +151,7 @@ class WatchRoom:
                 if advance_at is None:
                     return self._snapshot(now)
                 advance_at = None
-                if action == "advance_now" and auto and index + 1 < len(self._queue):
+                if action == "advance_now" and auto and self._same_episode_next(index):
                     index, position, paused = index + 1, 0.0, False
                     finished = False
                 else:
@@ -155,7 +170,13 @@ class WatchRoom:
                     title = entry.get("title", "")
                     if not isinstance(title, str) or len(title) > 200:
                         raise ValueError("Tiêu đề tối đa 200 ký tự")
-                    clean.append(dict(url=url, title=title))
+                    item = dict(url=url, title=title)
+                    label = entry.get("ep_label")
+                    if label is not None:
+                        if not isinstance(label, str) or len(label) > 40:
+                            raise ValueError("Nhãn tập tối đa 40 ký tự")
+                        item["ep_label"] = label
+                    clean.append(item)
                 queue = clean
                 index = _index(data.get("index", 0), len(queue))
                 position = _number(data.get("position", 0), "position")
@@ -178,9 +199,9 @@ class WatchRoom:
                     raise ValueError("Chưa có phòng xem chung")
                 if not auto:
                     advance_at = None
-            elif action in ("play", "pause", "seek", "rate", "goto", "next", "prev"):
+            elif action in ("play", "pause", "seek", "rate", "goto", "episode", "next", "prev"):
                 advance_at = None
-                if action in ("play", "seek", "goto", "next", "prev"):
+                if action in ("play", "seek", "goto", "episode", "next", "prev"):
                     finished = False
                 if not self._queue:
                     raise ValueError("Chưa có phòng xem chung")
@@ -198,6 +219,15 @@ class WatchRoom:
                 elif action == "goto":
                     index = _index(data.get("index"), len(self._queue))
                     position, paused = 0.0, False
+                elif action == "episode":
+                    # Everyone in the room moves to the first item of the chosen episode.
+                    wanted = data.get("episode")
+                    if not isinstance(wanted, str):
+                        raise ValueError("episode không hợp lệ")
+                    found = [n for n, e in enumerate(self._queue) if episode_of(e) == wanted]
+                    if not found:
+                        raise ValueError("Không có tập này trong danh sách")
+                    index, position, paused = found[0], 0.0, False
                 elif action == "seek":
                     position = _number(data.get("position"), "position")
                 elif action == "rate":

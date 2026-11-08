@@ -262,6 +262,15 @@ Không chạm database / security model / API hiện có → manual test là đi
 - Diff so với `d7c969e`, không tính contract/Amendment D có sẵn: app **+311 / −101**, test **+120 / −0**, tổng **+431 / −101**.
 - Review / lifecycle: sẵn sàng ORCHESTRATOR review vòng 5; giữ IN_PROGRESS tới khi required verification/code mới và AC27 thực tế được hoàn tất. Không commit/push/PR, gọi agent khác, thêm dependency hoặc sửa ngoài Owned paths.
 
+### Amendment F (HUMAN LEAD 2026-11-08, trước khi thử `cdf3b81`) — chưa làm
+
+Bằng chứng: "Sửa lại một chút cho cả hai trang xem chung cũng như trang nghe là phần cuộn chỉ hiện đúng tập các tập hiện tại khi xem hết các tập nhỏ ở trong tập đó thì báo cho người dùng biết là hết tập và hỏi người dùng chuyển sang tập khác khi chuyển sang tập khác thì Trang chỉ hiện các tập nhỏ trong đúng tập đó thôi cho gọn".
+
+30. **Danh sách chỉ của tập đang phát** (tab Nghe và `/watch`): khung danh sách chỉ hiện các mục (Short + khai thị) của tập chứa mục đang phát, tiêu đề "Tập N · k bài". Thay AC 21 (không còn `<details>` cho các tập khác). Đổi tập → danh sách thay bằng mục của tập mới. `/watch`: tập suy như AC 12 (`episode_id` từ url mục); danh sách phòng chỉ một tập thì như cũ.
+31. **Hết tập thì hỏi, không tự sang tập khác**: tự chuyển / đếm ngược (AC 11 / 25) chỉ trong cùng tập. Hết mục cuối của tập → dừng, hiện thẻ (role="status", không tự ẩn) "Đã hết Tập N" + nút "Nghe Tập N+1" (nếu có) và cách chọn tập khác (tái dùng chọn tập sẵn có của trang nếu có); hết danh sách → "Đã hết danh sách". `/watch`: thẻ và lựa chọn đồng bộ hai máy theo trạng thái phòng (một người bấm là cả phòng sang tập đó). Thay phần "hết tập" của AC 12 / 25.
+32. ⏮ / ⏭ ở mục đầu / cuối tập vẫn sang tập trước / sau (người dùng tự bấm), danh sách đổi theo AC 30.
+33. Chạy thật: Android Chrome — danh sách chỉ một tập; hết tập thấy thẻ hỏi, bấm sang tập sau thì danh sách đổi; `/watch` hai máy thấy cùng.
+
 ### Amendment E (HUMAN LEAD 2026-11-08, chạy thật `9c5cf63`) — chưa làm
 
 Bằng chứng: "3. Ok rồi" (nghe ở app khác bằng màn hình nhỏ / toàn màn hình: PASS AC 18 / 22). "Hết bài không thấy đếm ngược 3 giây. Ở trang nghe khi hết bài tự chuyển sang bài tiếp theo thì nhảy xuống tab tiêu đề, không cuộn lên video."
@@ -274,3 +283,10 @@ Bằng chứng: "3. Ok rồi" (nghe ở app khác bằng màn hình nhỏ / toà
 - Nguyên nhân AC 28/29 (cùng gốc): mô phỏng Node (DOM giả) cho thấy logic đếm ngược đúng, thẻ có hiện (không phải lỗi `advance_at` / `hidden` / CSS / server). Nhưng mỗi lần đổi bài `renderCurrent` gọi `button.scrollIntoView({block:"nearest"})` cho dòng đang phát → cuộn cả trang xuống danh sách (`.listen-queue` không có khung cuộn riêng). Sang bài sau, khung nhìn nằm ở danh sách nên thẻ đếm ngược (dưới video) nằm ngoài màn hình. Chưa kiểm trên trình duyệt thật; đây là nguyên nhân hợp lý nhất từ code.
 - Sửa: `listen.js` bỏ `scrollIntoView`, dùng helper mới `AutoShortPlayer.scrollWithin(container, item)` (chỉnh `scrollTop` của khung); `style.css` `.listen-queue { max-height: 28rem; overflow: auto }` để có khung cuộn. `player.js`: khi hết bài gọi `scrollToVideo()` (thẻ đếm ngược hiện trong tầm nhìn), và sau khi đổi bài do hết bài (tự chuyển / "Phát ngay", cả `/watch`) cuộn lại lên video qua `scrollToVideo()` (chỉ khi visible + active), cờ `endedKey`. Không dùng `focus()`.
 - Test: `tests/test_web_listen.py::test_auto_advance_never_scrolls_page_to_list` (assert tĩnh); mô phỏng Node ngoài repo xác nhận `scrollIntoView` chỉ gọi trên video. Verification: pytest 3 file 122 PASS; `node --check` 4 file OK. Chưa chạy thật trên trình duyệt.
+
+### Amendment F — IMPLEMENTER 2026-11-08 (base 25af39f)
+
+- Cách làm: `player.js` thêm `renderEpisodeList` (khung danh sách chỉ mục của tập đang phát, tiêu đề "Tập N · k bài", cuộn trong khung), `nextInEpisode`, `episodes`, `currentEntry`; tự chuyển / đếm ngược chỉ trong cùng tập; hết tập thẻ không tự ẩn: "Đã hết Tập N", nút "Nghe Tập N+1", `<select>` "Chọn tập khác…" (`onEpisode`). `listen.js` / `watch.js` dùng chung hàm này (`watch.html` `<ol>` → `<div>`). `watch_party.py`: `episode_of(url)` (tập suy từ `/files/<id>/…`, `.kt` về tập gốc), tự chuyển / `advance_now` / `ended` không vượt tập; snapshot thêm `finished` (thẻ đồng bộ hai máy); lệnh mới `episode` (cả phòng sang mục đầu của tập); `set` nhận thêm `ep_label` tùy chọn (≤ 40 ký tự) để nhãn "Tập N" đúng trong `/watch`. ⏮ / ⏭ vẫn vượt tập.
+- Code bị xóa: nhóm `<details>` nhiều tập, `groups` / `manuallyOpen` / toggle trong `listen.js`; `queueKey` và dựng danh sách phẳng trong `watch.js`.
+- Helper mới: `renderEpisodeList`, `nextInEpisode`, `episodes`, `currentEntry` (player), `episode_of`, `_same_episode_next` (server).
+- AC → test: AC 31 `test_auto_advance_stops_at_episode_end_and_card_is_shared`, `test_episode_command_moves_whole_room_to_first_item` (AC 32 ⏭ vượt tập cũng ở test đầu); AC 30 `test_list_shows_only_playing_episode_in_both_pages` (assert tĩnh); mô phỏng Node: danh sách 1 tập, hết tập hiện thẻ không ẩn. API listen không đổi. Chưa chạy thật trình duyệt (AC 33).

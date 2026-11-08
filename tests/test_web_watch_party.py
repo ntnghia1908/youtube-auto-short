@@ -552,3 +552,39 @@ def test_http_log_auth_validation_rate_and_records(web, caplog):
         assert web.post("/api/watch/log", json=log_batch()).status_code == 200
         assert web.post("/api/watch/log", json=log_batch()).status_code == 429
     assert len([r for r in caplog.records if r.name == "auto_short.web.watch"]) == 1
+
+
+EPISODES = [dict(url="/files/ep1/a.mp4", title="a"), dict(url="/files/ep1/b.mp4?v=1", title="b"),
+            dict(url="/files/ep1.kt/c.mp4", title="c"), dict(url="/files/ep2/d.mp4", title="d"),
+            dict(url="/files/ep3/e.mp4", title="e")]
+
+
+def test_auto_advance_stops_at_episode_end_and_card_is_shared(room):  # AC 31
+    r, now = room
+    r.command("a", "set", queue=EPISODES, index=1)
+    wait = r.command("a", "ended", expect_version=r.snapshot()["version"])
+    assert wait["advance_at"] is not None and wait["finished"]
+    now[0] += 3
+    assert r.snapshot()["index"] == 2  # b -> ep1.kt (same base episode)
+    end = r.command("a", "ended", expect_version=r.snapshot()["version"])
+    assert end["advance_at"] is None and end["paused"] and end["finished"] and end["index"] == 2
+    now[0] += 60
+    assert r.snapshot(client="b")["index"] == 2 and r.snapshot()["finished"]
+    # advance_now cannot cross either; the prev/next buttons still can (AC 32).
+    assert r.command("b", "advance_now")["index"] == 2
+    nxt = r.command("b", "next", expect_version=r.snapshot()["version"])
+    assert nxt["index"] == 3 and not nxt["paused"] and not nxt["finished"]
+
+
+def test_episode_command_moves_whole_room_to_first_item(room):  # AC 31
+    r, _ = room
+    r.command("a", "set", queue=EPISODES, index=2)
+    chosen = r.command("b", "episode", episode="ep3")
+    assert chosen["index"] == 4 and not chosen["paused"] and chosen["position"] == 0
+    assert r.snapshot(client="a")["index"] == 4
+    assert r.command("a", "episode", episode="ep1")["index"] == 0
+    for bad in ("nope", 5):
+        with pytest.raises(ValueError):
+            r.command("a", "episode", episode=bad)
+    labelled = r.command("a", "set", queue=[dict(url="/files/ep1/a.mp4", title="a", ep_label="20")])
+    assert labelled["queue"][0]["ep_label"] == "20"
