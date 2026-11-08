@@ -1,5 +1,6 @@
 """SHO1b: render/retry, compilation and storage through the real store handler, without sockets."""
 import hashlib
+import contextlib
 import io
 import json
 import os
@@ -64,7 +65,13 @@ def memory_store(archive, monkeypatch):
         response.status, response.headers = code, fields
         return response
 
+    @contextlib.contextmanager
+    def scoped_urlopen(req, timeout, *, handlers=()):  # same seam inside a background stop scope
+        with urlopen(req, timeout) as response:
+            yield response
+
     monkeypatch.setattr("urllib.request.urlopen", urlopen)
+    monkeypatch.setattr("auto_short.store.client.urlopen", scoped_urlopen)
     monkeypatch.setattr(StoreClient, "from_config", lambda config: state.client)
     return state
 

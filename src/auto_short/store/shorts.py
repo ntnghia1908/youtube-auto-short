@@ -13,6 +13,7 @@ from ..render.stage import RENDER_MANIFEST_NAME
 from ..web import episodes as ep
 from ..web.storage import episode_sizes, short_offload_plan
 from ..workspace import atomic_write_json, read_json_dict, utc_now
+from .cancellation import cancellable, check_stop
 from . import index_cache
 from .backup import _destination, _matches
 from .client import StoreClient, StoreError, StoreMismatch, StoreUnavailable
@@ -127,6 +128,7 @@ def candidates(config: Config, *, busy=None, now: float | None = None, stop=None
     return [item for item in plan if busy is None or not busy(item["video_id"])]
 
 
+@cancellable
 def push_video(config: Config, video_id: str, *, client=None, busy=None, lock=None, stop=None,
                clock=time.time) -> dict:
     """No deletion until ALL current files (both parts) pass HEAD and every release record is durable.

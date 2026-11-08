@@ -311,8 +311,8 @@ def test_background_thread_sleep_snapshot_and_lifespan_cancellation(background, 
     monkeypatch.setattr(StoreClient, "from_config", lambda cfg: client)
     for obj in (app.state.runner, app.state.monitor_sampler):
         for name in ("start", "stop"):
-            monkeypatch.setattr(obj, name, lambda: None)
-    threads, sleeps, snapshots, tasks = [], [], [], []
+            monkeypatch.setattr(obj, name, lambda **kwargs: None)
+    threads, sleeps, snapshots = [], [], []
     main_thread = threading.get_ident()
 
     def step(cfg, vid, **kwargs):
@@ -320,58 +320,24 @@ def test_background_thread_sleep_snapshot_and_lifespan_cancellation(background, 
         snapshots.append(app.state.storage.report()["redownload"])
         return dict(status="store_unavailable", reason="kho tắt")
     monkeypatch.setattr(rd, "step", step)
+    real_sleep = asyncio.sleep
 
-    # Drive lifecycle coroutines at their sleep boundary without an event loop/socketpair.
-    # The to_thread stand-in still executes every blocking callable on a real worker.
-    async def to_thread(fn, *args):
-        result, errors = [], []
-        def work():
-            try:
-                result.append(fn(*args))
-            except BaseException as exc:
-                errors.append(exc)
-        worker = threading.Thread(target=work)
-        worker.start()
-        worker.join(3)
-        assert not worker.is_alive()
-        if errors:
-            raise errors[0]
-        return result[0]
+    async def run():
+        waiting = asyncio.Event()
 
-    class Sleep:
-        def __init__(self, delay):
-            self.delay = delay
-        def __await__(self):
-            sleeps.append(self.delay)
-            yield self.delay
+        async def sleep(delay):
+            if asyncio.current_task().get_coro().__name__ == "_redownload_loop":
+                sleeps.append(delay)
+                waiting.set()
+            await real_sleep(delay)
 
-    class Task:
-        def __init__(self, coro):
-            self.coro, self.cancelled = coro, False
-            tasks.append(self)
-        def cancel(self):
-            self.cancelled = True
-            self.coro.close()
+        monkeypatch.setattr(asyncio, "sleep", sleep)
+        async with app.router.lifespan_context(app):
+            await asyncio.wait_for(waiting.wait(), 3)
+            monkeypatch.setattr(StoreClient, "from_config", forbidden)
+            assert app.state.storage.report()["redownload"]["reason"] == "kho tắt"
 
-    async def gather(*items, **kwargs):
-        assert all(item.cancelled for item in items)
-
-    monkeypatch.setattr(asyncio, "to_thread", to_thread)
-    monkeypatch.setattr(asyncio, "sleep", Sleep)
-    monkeypatch.setattr(asyncio, "create_task", Task)
-    monkeypatch.setattr(asyncio, "gather", gather)
-    context = app.router.lifespan_context(app)
-    with pytest.raises(StopIteration):
-        context.__aenter__().send(None)
-    task = next(t for t in tasks if t.coro.__name__ == "_redownload_loop")
-    try:
-        assert task.coro.send(None) == rcfg.store.retry_seconds
-        monkeypatch.setattr(StoreClient, "from_config", forbidden)
-        assert app.state.storage.report()["redownload"]["reason"] == "kho tắt"
-    finally:
-        with pytest.raises(StopIteration):
-            context.__aexit__(None, None, None).send(None)
-    assert task.cancelled and all(t.cancelled for t in tasks)
+    asyncio.run(run())
     assert threads and all(t != main_thread for t in threads)
     assert sleeps == [rcfg.store.retry_seconds]
     assert snapshots[0]["status"] == "downloading"

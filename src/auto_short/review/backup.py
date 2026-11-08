@@ -21,6 +21,7 @@ from pathlib import Path
 from ..config import Config
 from ..enhance import state as enh
 from ..hashing import sha256_file
+from ..store.cancellation import check_stop, current_stop, sha256_file as _stoppable_sha
 from ..khaithi import SUFFIX
 from ..render import full as render_full
 from ..workspace import WorkspaceError, atomic_write_json, utc_now, validate_episode_id
@@ -98,7 +99,7 @@ def vertical_sha(config: Config, owner: str, doc: dict) -> tuple[str, int, int] 
     if isinstance(cache, dict) and cache.get("size") == st.st_size and cache.get("mtime_ns") == st.st_mtime_ns \
             and isinstance(cache.get("sha256"), str):
         return cache["sha256"], st.st_size, st.st_mtime_ns
-    sha = sha256_file(path)
+    sha = sha256_file(path) if current_stop() is None else _stoppable_sha(path)
     after = path.stat()
     if (after.st_size, after.st_mtime_ns) != (st.st_size, st.st_mtime_ns):
         raise BackupError("bản dọc đã đổi trong lúc tính sha256; thử lại sau", 409)
@@ -147,6 +148,7 @@ def confirm(config: Config, episode_id: str, kind: str, sha256: str, *, now: str
             have, size, mtime_ns = got
         if sha != have:
             raise BackupError("sha256 không khớp file hiện có trên VM; không ghi xác nhận")
+        check_stop()
         entry = {"sha256": have, "size": size, "confirmed_at": now or utc_now()}
         doc.update(episode_id=owner)
         doc["confirmed"][kind] = entry
@@ -218,6 +220,7 @@ def release(config: Config, episode_id: str, *, allow_no_vertical: bool = False,
                 problems.append("sha bản dọc không khớp file hiện tại")
         if problems:
             raise BackupError("; ".join(problems))
+        check_stop()
         stamp = now or utc_now()
         # HD2b D2: vertical-only release keeps any earlier released HD identity.
         removed_doc = dict(doc.get("released") or {})

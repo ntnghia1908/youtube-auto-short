@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .. import hashing
+from ..store import cancellation
 from ..compilation import store
 from ..compilation.spec import CompilationError
 from ..config import Config, ConfigError, load
@@ -23,6 +24,13 @@ from ..ingest.youtube import DownloadError, YoutubeBlocked, ytdlp_download
 from ..render.stage import RenderError
 from ..workspace import WorkspaceError, atomic_write_json, validate_episode_id
 from ..youtube_url import parse_youtube_url
+
+
+def _sha256(path: Path) -> str:
+    """Plain hashing normally; block-wise stop checks inside a background stop scope."""
+    if cancellation.current_stop() is None:
+        return hashing.sha256_file(path)
+    return cancellation.sha256_file(path)
 
 
 def cache_dir(config: Config) -> Path:
@@ -78,7 +86,7 @@ def workspace_source(config: Config, video_id: str) -> Path | None:
         folder = (Path(config.workspace.dir) / _owner(video_id)).resolve()
         source = _source(config, video_id)
         path = (folder / source["path"]).resolve()
-        if path.is_relative_to(folder) and path.is_file() and hashing.sha256_file(path) == source.get("sha256"):
+        if path.is_relative_to(folder) and path.is_file() and _sha256(path) == source.get("sha256"):
             return path
     except (RenderError, OSError, KeyError, TypeError, ValueError):
         pass
@@ -116,7 +124,7 @@ def cached_source(config: Config, video_id: str, *, reference: dict | None = Non
             return None
         datetime.strptime(meta["downloaded_at"], "%Y-%m-%dT%H:%M:%SZ")
         if path.parent == folder and path.is_file() and path.stat().st_size == meta["size"] \
-                and hashing.sha256_file(path) == meta["sha256"]:
+                and _sha256(path) == meta["sha256"]:
             return path
     except (RenderError, OSError, KeyError, TypeError, ValueError):
         pass
@@ -162,7 +170,7 @@ def download_verified(config: Config, video_id: str, dest_dir: Path, downloader=
         raise RenderError(f"video tải lại dài {info.get('duration')} s, bản gốc {expected} s; không dùng")
     if not _positive(info.get("height")) or path.stat().st_size <= 0:
         raise RenderError("video tải lại không có kích thước hợp lệ")
-    sha = hashing.sha256_file(path)
+    sha = _sha256(path)
     meta = {"schema_version": 1, "video_id": video_id, "file": f"source{path.suffix}", "uri": uri,
             "downloaded_at": datetime.fromtimestamp(clock(), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "size": path.stat().st_size, "sha256": sha, "duration": info["duration"], "height": info["height"]}

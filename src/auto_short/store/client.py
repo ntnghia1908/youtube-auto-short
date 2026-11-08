@@ -12,10 +12,12 @@ import os
 import re
 import urllib.error
 import urllib.request
+from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import urlencode
 
 from ..config import StoreConfig
+from .cancellation import OffloadStopped, check_stop, urlopen
 
 TOKEN_ENV = "AUTO_SHORT_STORE_TOKEN"
 KINDS = ("hd", "vertical", "source", "short")
@@ -44,6 +46,20 @@ class StoreRangeError(StoreMismatch):
         self.content_range = content_range
 
 
+class _UploadStream:
+    def __init__(self, stream):
+        self.stream = stream
+
+    def fileno(self):
+        return self.stream.fileno()
+
+    def read(self, size=-1):
+        check_stop()
+        data = self.stream.read(size)
+        check_stop()
+        return data
+
+
 class StoreClient:
     def __init__(self, url: str, token: str | None, timeout: float = 30.0):
         self.url, self.token, self.timeout = url.rstrip("/"), token, timeout
@@ -53,13 +69,15 @@ class StoreClient:
         token = (os.environ if env is None else env).get(TOKEN_ENV)
         return cls(cfg.url, token.strip() if token else None, cfg.timeout_seconds)
 
+    @contextmanager
     def _open(self, path: str, *, method: str = "GET", headers: dict | None = None, data=None):
         if not self.token:
             raise StoreUnavailable(f"thiếu token kho (env {TOKEN_ENV})")
         req = urllib.request.Request(self.url + path, data=data, method=method,
                                      headers={"Authorization": f"Bearer {self.token}", **(headers or {})})
         try:
-            return urllib.request.urlopen(req, timeout=self.timeout)
+            with urlopen(req, self.timeout) as response:
+                yield response
         except urllib.error.HTTPError as exc:
             content_range = exc.headers.get("Content-Range") if exc.headers else None
             exc.close()
@@ -134,7 +152,8 @@ class StoreClient:
                 if kind not in ("short", "vertical"):
                     raise StoreMismatch("kho đã có file khác sha256 / kích thước")
             route += "?" + urlencode({"series": series, "name": name})
-            with Path(path).open("rb") as stream:
+            with Path(path).open("rb") as raw:
+                stream = _UploadStream(raw)
                 headers = {"Content-Length": str(os.fstat(stream.fileno()).st_size), "X-Sha256": want,
                            "Content-Type": "application/octet-stream"}
                 with self._open(route, method="PUT", headers=headers, data=stream) as resp:
@@ -158,7 +177,8 @@ class StoreClient:
             if info["sha256"] != current_sha256:
                 raise StoreMismatch("sha hiện có trên kho đã đổi; không thay HD")
             route += "?" + urlencode({"series": series, "name": name})
-            with Path(path).open("rb") as stream:
+            with Path(path).open("rb") as raw:
+                stream = _UploadStream(raw)
                 headers = {"Content-Length": str(os.fstat(stream.fileno()).st_size), "X-Sha256": sha256,
                            "X-Replace-Sha256": current_sha256, "Content-Type": "application/octet-stream"}
                 with self._open(route, method="PUT", headers=headers, data=stream) as resp:
@@ -170,14 +190,18 @@ class StoreClient:
     def open_stream(self, video_id: str, kind: str, range_header: str | None = None,
                     *, clip: str | None = None):
         """HD2b G5: (status, public headers, closable chunk iterator); never buffer the full file."""
-        resp = self._open(self._path(video_id, kind, clip), headers={"Range": range_header} if range_header else {})
+        context = self._open(self._path(video_id, kind, clip),
+                             headers={"Range": range_header} if range_header else {})
+        resp = context.__enter__()
         if resp.status not in (200, 206):
-            resp.close()
+            context.__exit__(None, None, None)
             raise StoreUnavailable("kho trả trạng thái tải không hợp lệ")
         headers = {name: resp.headers[name] for name in ("Content-Length", "Content-Range", "Accept-Ranges")
                    if resp.headers.get(name) is not None}
 
         class Chunks:
+            closed = False
+
             def __iter__(self):
                 return self
 
@@ -193,7 +217,9 @@ class StoreClient:
                 raise StopIteration
 
             def close(self):
-                resp.close()
+                if not self.closed:
+                    self.closed = True
+                    context.__exit__(None, None, None)
 
         return resp.status, headers, Chunks()
 
@@ -221,8 +247,15 @@ class StoreClient:
                     have = 0
                 try:
                     with part.open("ab" if have else "wb") as out:
-                        while chunk := resp.read(_CHUNK):
+                        while True:
+                            check_stop()
+                            chunk = resp.read(_CHUNK)
+                            check_stop()
+                            if not chunk:
+                                break
                             out.write(chunk)
+                except OffloadStopped:
+                    raise
                 except Exception as exc:  # reset / timeout / IncompleteRead: the part stays for the next try
                     raise StoreUnavailable(f"đứt kết nối khi tải: {type(exc).__name__}") from None
         got = part.stat().st_size
@@ -230,10 +263,16 @@ class StoreClient:
             raise StoreUnavailable("tải chưa đủ byte, sẽ thử tiếp")
         digest = hashlib.sha256()
         with part.open("rb") as fh:
-            while chunk := fh.read(_CHUNK):
+            while True:
+                check_stop()
+                chunk = fh.read(_CHUNK)
+                check_stop()
+                if not chunk:
+                    break
                 digest.update(chunk)
         if digest.hexdigest() != want:
             part.unlink(missing_ok=True)
             raise StoreMismatch("sha256 file tải về không khớp")
+        check_stop()
         os.replace(part, dest)
         return dest

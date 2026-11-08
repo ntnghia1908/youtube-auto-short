@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
-import subprocess
 from fractions import Fraction
 from pathlib import Path
+
+from ..store.cancellation import run_captured
 
 
 class ProbeError(Exception):
@@ -28,7 +29,7 @@ def probe(path: Path, ffprobe: str = "ffprobe") -> dict:
     """Return duration, width, height, fps and codecs of a video file."""
     cmd = [ffprobe, "-v", "error", "-print_format", "json", "-show_format", "-show_streams", str(path)]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        proc = run_captured(cmd)
     except FileNotFoundError as exc:
         raise ProbeError(f"'{ffprobe}' not found on PATH; install ffmpeg") from exc
     if proc.returncode != 0:

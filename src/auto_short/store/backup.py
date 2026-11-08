@@ -18,6 +18,7 @@ from ..theme_render.sources import _owner, cached_source, favorite_videos, works
 from ..titling.logic import match_title
 from ..titling.playlist import stored_series
 from ..workspace import iter_manifests, read_json_dict
+from .cancellation import cancellable, check_stop, current_stop, sha256_file as _stoppable_sha
 from . import index_cache
 from .client import StoreClient, StoreMismatch, StoreUnavailable
 
@@ -56,7 +57,7 @@ def _local_source(config: Config, video_id: str) -> tuple[Path, str, int] | None
     if folder.name != video_id and isinstance(name, str) and re.fullmatch(r"source\.[A-Za-z0-9]+", name):
         path = folder / name
         if not folder.is_symlink() and not path.is_symlink() and path.is_file() \
-                and sha256_file(path) == source.get("sha256"):
+                and (sha256_file(path) if current_stop() is None else _stoppable_sha(path)) == source.get("sha256"):
             return path, source["sha256"], path.stat().st_size
     path = cached_source(config, video_id)
     if path is not None:
@@ -109,7 +110,8 @@ def _matches(remote: dict, sha, size) -> bool:
                 and remote.get("sha256") == sha and remote.get("size") == size)
 
 
-def backup_state(config: Config, video_id: str, *, client=None, path: Path | None = None) -> dict:
+@cancellable
+def backup_state(config: Config, video_id: str, *, client=None, path: Path | None = None, stop=None) -> dict:
     """A scheduling snapshot accepts ingest or the current local copy; memoize unchanged validation/confirmation.
 
     ``path`` pins an archive deletion: always HEAD then hash that exact file afresh, without any memo.
@@ -141,12 +143,15 @@ def backup_state(config: Config, video_id: str, *, client=None, path: Path | Non
         local = Path(path)
         if local.is_symlink() or not local.is_file():
             raise StoreMismatch("không có file nguồn cục bộ hợp lệ")
-        sha, size = sha256_file(local), local.stat().st_size
+        sha = sha256_file(local) if current_stop() is None else _stoppable_sha(local)
+        check_stop()
+        size = local.stat().st_size
         return {"backed_up": _matches(remote, sha, size), "sha256": sha, "size": size, "path": local}
     if _matches(remote, source.get("sha256"), source.get("size")):
         state.update(backed_up=True, sha256=remote["sha256"], size=remote["size"])
     else:
         state["backed_up"] = _matches(remote, state["sha256"], state["size"])
+    check_stop()
     with _MEMO_LOCK:
         entry.confirmed = (remote["sha256"], remote["size"]) if state["backed_up"] else None
     return state
@@ -184,7 +189,8 @@ def _destination(config: Config, video_id: str) -> tuple[str, str]:
     return series, name
 
 
-def push_source(config: Config, video_id: str, *, client=None) -> dict:
+@cancellable
+def push_source(config: Config, video_id: str, *, client=None, stop=None) -> dict:
     """Upload the intact ingest source, else the verified TC3 cache (which may have different bytes)."""
     if not config.store.enabled:
         raise StoreUnavailable("kho 3090 đang tắt")
@@ -202,6 +208,7 @@ def push_source(config: Config, video_id: str, *, client=None) -> dict:
         if not _matches(remote, state["sha256"], state["size"]):
             raise StoreMismatch("kho chưa xác nhận đúng sha256 / kích thước sau khi gửi")
         index_cache.invalidate()
+        check_stop()
         state["backed_up"] = True
         key = (str(Path(config.workspace.dir).resolve()), config.store.url, video_id)
         with _MEMO_LOCK:
@@ -211,7 +218,8 @@ def push_source(config: Config, video_id: str, *, client=None) -> dict:
     return state
 
 
-def backup_order(config: Config, *, client=None, states: dict | None = None, now: float | None = None) -> list[str]:
+@cancellable
+def backup_order(config: Config, *, client=None, states: dict | None = None, now: float | None = None, stop=None) -> list[str]:
     """Due/approaching auto archive, then favorites, then others. ``states`` receives the pass's HEAD results."""
     from ..web.storage import auto_archive_plan, episode_sizes
 
@@ -226,6 +234,7 @@ def backup_order(config: Config, *, client=None, states: dict | None = None, now
     favorites = set(favorite_videos(config))
     pending = []
     for video_id in source_inventory(config):
+        check_stop()
         state = backup_state(config, video_id, client=client)
         states[video_id] = state
         if not state["backed_up"] and state["path"] is not None:

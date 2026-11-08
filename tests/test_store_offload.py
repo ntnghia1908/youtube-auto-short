@@ -415,7 +415,7 @@ def test_loop_uses_thread_and_short_success_delay(ocfg, monkeypatch):
     monkeypatch.setattr(StoreClient, "from_config", lambda cfg: client)
     for obj in (app.state.runner, app.state.monitor_sampler):
         for name in ("start", "stop"):
-            monkeypatch.setattr(obj, name, lambda: None)
+            monkeypatch.setattr(obj, name, lambda **kwargs: None)
     real_sleep = asyncio.sleep
     async def run():
         waited = asyncio.Event()
@@ -534,7 +534,7 @@ def test_lifespan_stops_hash_worker(ocfg, monkeypatch):
     monkeypatch.setattr(StoreClient, "from_config", lambda cfg: pytest.fail("stopped hash reached PUT"))
     for obj in (app.state.runner, app.state.monitor_sampler):
         for name in ("start", "stop"):
-            monkeypatch.setattr(obj, name, lambda: None)
+            monkeypatch.setattr(obj, name, lambda **kwargs: None)
     with TestClient(app):
         assert entered.wait(3)
         started = time.monotonic()

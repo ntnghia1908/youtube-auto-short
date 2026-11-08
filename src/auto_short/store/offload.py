@@ -1,9 +1,7 @@
 """HD2b G6: send current verticals to the store, confirm exact bytes, then apply HD1 release rules."""
 from __future__ import annotations
 
-import hashlib
 import re
-import threading
 from contextlib import nullcontext
 from pathlib import Path
 
@@ -12,32 +10,11 @@ from ..enhance import state as enh
 from ..render import full
 from ..review import backup
 from ..workspace import atomic_write_json, iter_manifests
+from .cancellation import OffloadStopped, check_stop as _check_stop, sha256_file as _sha256_file
+from .cancellation import cancellable
 from . import index_cache
 from .backup import _destination, _matches
 from .client import StoreClient, StoreMismatch
-
-
-class OffloadStopped(Exception):
-    """The web lifespan requested a cooperative stop; this is not an upload failure."""
-
-
-def _check_stop(stop: threading.Event | None) -> None:
-    if stop is not None and stop.is_set():
-        raise OffloadStopped()
-
-
-def _sha256_file(path: Path, stop: threading.Event | None) -> str:
-    """Bound cancellation latency to one read, including the final block."""
-    h = hashlib.sha256()
-    with path.open("rb") as fh:
-        while True:
-            _check_stop(stop)
-            chunk = fh.read(1024 * 1024)
-            _check_stop(stop)
-            if not chunk:
-                break
-            h.update(chunk)
-    return h.hexdigest()
 
 
 def _vertical_snapshot(config: Config, owner: str, *, stop=None) -> tuple[tuple[str, int, int], dict] | None:
@@ -118,6 +95,7 @@ def next_candidate(config: Config, rows: list[dict], *, errors: dict, stop=None)
     return None
 
 
+@cancellable
 def push_vertical(config: Config, owner: str, *, client=None, busy=None, lock=None, stop=None) -> dict:
     """D2: HEAD + unchanged stat authorize confirm; a missing HD confirmation only postpones release."""
     if not config.store.enabled or not config.store.offload:
