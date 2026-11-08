@@ -60,7 +60,7 @@ Hai người đăng nhập web 8080 (hai máy / điện thoại) xem cùng một
 
 ## Code bị thay / xóa
 
-- Không có (chỉ thêm mới).
+- Vòng 3 theo Amendment B: gỡ UI `watch-rate`, `_fav` / action phòng `favorite`, metadata `data-watch-fav`; `app.js` và `favorites.js` trở về đúng base `bc2ee68`. Tim được suy ra trong router, audio dùng cache tách tiếng mới.
 
 ## Acceptance Criteria
 
@@ -83,6 +83,18 @@ Owned paths thêm: `static/app.js` và `static/favorites.js` — chỉ gắn `da
 12. **Chế độ nghe nền**: công tắc "Nghe nền" trên `/watch` (nhớ trong `localStorage`): phát bằng một `<audio>` dùng cùng `src` (ẩn video), cùng logic đồng bộ / tự chuyển video; Media Session (`metadata` = tên video, handler play / pause / previoustrack / nexttrack gửi lệnh phòng). Điện thoại khóa màn hình / chuyển app vẫn nghe và tự chuyển video kế; tắt công tắc → quay về video tại vị trí hiện tại.
 13. Chạy thật: điện thoại bật "Nghe nền", chuyển sang app khác 1 phút → vẫn nghe, máy tính không dừng, hết video cả hai cùng sang video kế; mở lại trình duyệt → khớp phòng.
 
+### Amendment B (HUMAN LEAD 2026-11-08, chạy thật vòng 2)
+
+Bằng chứng: "Bỏ nút tốc độ trong trang xem chung"; "Nút nghe nền tôi đã thấy nhưng khi chuyển app thì không nghe được tiếng dù vẫn chạy số giây trên player"; "Tôi chưa thấy nút trái tim trên trang xem chung" — phòng lúc đó (8080) có 7 khai thị `-9AytPxmjLc.kt`, mọi mục `fav = None`, dù `/api/episodes/-9AytPxmjLc.kt` có `favorites` (tab tạo phòng mở từ trước restart → `app.js` cũ, không có `data-watch-fav`).
+
+Owned paths thêm: `src/auto_short/web/watch_audio.py` (mới), `routes/watch.py`; bỏ phần `data-watch-fav` khỏi `app.js` / `favorites.js` (trả 2 file về như base).
+
+14. Bỏ ô chọn tốc độ trên `/watch` (đồng bộ `rate` phía server giữ nguyên, không có UI đổi).
+15. Tim do **server tự suy ra**: với mục có url dạng `/files/<episode_id>/<clip>.mp4[?…]` (id hợp lệ), `GET /api/watch` trả `fav` cho mục hiện tại từ `ctx.compilations.episode_favorites(episode_id)` (trạng thái mới nhất, không lưu trong phòng); không thuộc bộ kinh → không có tim. Client không gửi `fav` nữa (server bỏ qua nếu có). Bỏ action `favorite`: sau khi bấm tim, poll kế tiếp tự thấy trạng thái mới ở cả hai máy.
+16. Nghe nền bằng **file chỉ có tiếng**: `GET /api/watch/audio/<episode_id>/<clip>` → m4a (`ffmpeg -vn -c:a copy -movflags +faststart`, không encode lại), cache `work/_watch_audio/<sha256 manifest>.m4a` (ghi file tạm + rename; giới hạn tổng 2 GB, xóa cũ nhất theo mtime). Nguồn: file local từ `ep.short_locations`; nếu là `StoredShort` thì `StoreClient.fetch` về file tạm (kiểm sha256) rồi tách, kho tắt → 503. Range được hỗ trợ (FileResponse). `<audio>` dùng url này; lỗi tải thì báo trên trang và dùng lại mp4.
+17. Nghe nền: `navigator.mediaSession.playbackState` theo trạng thái thật của phần tử đang phát (sự kiện play / pause), không theo phòng; trang ẩn thì không gọi `play()` lặp lại mỗi giây khi bị trình duyệt chặn (chỉ thử lại khi trang hiện lại hoặc có lệnh mới từ phòng).
+18. Nút Trước / Tiếp là biểu tượng ⏮ / ⏭ (`icon-btn`, có `title` + `aria-label`) — HUMAN LEAD 2026-11-08: "nút trước và tiếp nên đổi thành icon mũi tên cho gọn" (ORCHESTRATOR sửa trực tiếp, 2 dòng watch.html).
+
 ## Required verification
 
 - `PYTHONPATH=~/projects/yas-watch1/src conda run -n auto-short pytest tests/test_web_watch_party.py -q` — AC 1–5, 8 (TestClient; ORCHESTRATOR chạy ngoài sandbox).
@@ -102,26 +114,25 @@ Không chạm database / security model / public API hiện có (chỉ thêm end
 
 ## Result
 
-- Vòng 1: ORCHESTRATOR đã commit implementation và sửa wiring router / lọc key `self` ở HEAD `980feee`. HUMAN LEAD báo chạy thật trên 8080 bằng hai máy: "Hoạt động rất tốt"; Amendment A bổ sung tim và nghe nền sau lượt này.
-- Main changes vòng 2 (IMPLEMENTER 2026-11-08, chỉ AC10–12):
-  - `watch_party.py`: queue nhận `fav` tùy chọn, validate bằng `valid_playlist_id` / `valid_episode_id` / `valid_clip_id` sẵn có và bool nghiêm ngặt; action `favorite` cập nhật đúng index, tăng version; snapshot sao chép sâu metadata để không lộ state qua tham chiếu.
-  - `static/app.js`, `static/favorites.js`: chỉ bổ sung `data-watch-fav` và cập nhật khi tim đổi. Dòng yêu thích hiện dùng link Xem, không tạo video; metadata trong favorites.js chỉ gắn vào player sẵn có khớp nguồn, không tạo thêm player / đổi hành vi card.
-  - `watch.js`: đọc metadata (JSON hỏng bỏ qua), tim ♡/♥ gọi API yêu thích hiện có rồi gửi action `favorite` cho phòng. Video thiếu `fav` ẩn tim.
-  - `watch.js`: theo dõi visibility/pagehide, không gửi pause khi hidden / trong cửa sổ 1,5 s. Pause native khi trang còn hiện được giữ 1,5 s để hủy nếu điện thoại gửi pause trước sự kiện hidden; Media Session là thao tác rõ ràng và gửi ngay. Khi hiện lại force poll/sync kể cả trạng thái có `by` là mình; pagehide vẫn leave, dừng vòng polling cũ.
-  - `watch.html`, `watch.js`, `style.css`: công tắc Nghe nền nhớ localStorage, một audio và một video, hàm `media()` chọn phần tử hiện hành; đổi chế độ giữ vị trí / rate / trạng thái phát, dỡ nguồn phần tử cũ, dùng chung listener / đồng bộ / ended CAS. Media Session có tên video và play/pause/previoustrack/nexttrack khi trình duyệt hỗ trợ.
-- AC → verification vòng 2:
-  - AC10 server: `test_favorite_metadata_and_action_preserve_playback`, `test_favorite_metadata_invalid_is_atomic_422`, `test_favorite_invalid_command_is_atomic_422` trong `tests/test_web_watch_party.py` (22 ca mới). Có route-factory call trực tiếp để kiểm status 422, không dùng socket hay TestClient.
-  - AC10 client: `entryFor`, listener `watch-favorite`, metadata trong `shortCard` / `heartButton` / favorites `watchFav`; smoke DOM/media giả kiểm parse fav, bỏ JSON hỏng và chuỗi gọi API yêu thích → action phòng → đổi tim.
-  - AC11: `hiddenPause`, `cancelPause`, listener pause/visibilitychange/pagehide/pageshow; smoke kiểm pause trước/sau hidden, force resume khi `by=self`, pagehide vẫn beacon leave và không pause phòng.
-  - AC12: `media`, `loadMedia`, `syncPlayback`, `updateSession`, listener `watch-background` và Media Session; smoke kiểm chuyển video ↔ audio giữ vị trí/rate/paused, localStorage, audio ended gửi next kèm version, audio nhận cập nhật từ máy khác, các handler Media Session gửi lệnh phòng.
-- Lệnh đã chạy vòng 2:
-  - `PYTHONPATH=/home/ntnghia/projects/yas-watch1/src conda run -n auto-short pytest tests/test_web_watch_party.py -q -k 'not test_http'`: **61 passed, 3 deselected in 2.92s**.
-  - Nạp `/home/ntnghia/.nvm/nvm.sh`, chạy `node --check` cho `src/auto_short/web/static/watch.js`, `app.js`, `favorites.js`: **PASS cả 3**.
-  - `node /tmp/watch1-round2-dom.cjs` và `node /tmp/watch1-round2-player.cjs`: **PASS** (DOM/media giả; không thay thế trình duyệt thật).
+- Context: vòng 1 HUMAN LEAD báo chạy thật hai máy "Hoạt động rất tốt"; vòng 2 đã commit ở `e73f634`. Bằng chứng vòng 2 và thay đổi được duyệt ở Amendment B được giữ nguyên; vòng 3 không claim đã sửa xong trên điện thoại thật khi chưa chạy lại.
+- Main changes vòng 3 (IMPLEMENTER 2026-11-08, AC14–17):
+  - AC14: gỡ select `watch-rate` và code UI; `WatchRoom` / player vẫn đồng bộ `rate`.
+  - AC15: `routes/watch.py` suy ra `snapshot.fav` từ URL video hiện tại (bỏ query, kiểm ID bằng helper `ep` sẵn có) và `episode_favorites`. Mỗi snapshot đọc trạng thái favorites mới, không tăng version phòng khi chỉ đổi tim. `WatchRoom` chỉ giữ url/title, bỏ qua fav từ client và không còn action `favorite`. Tim trên trang gọi API yêu thích có sẵn rồi `poll(true)`. `app.js` / `favorites.js` khôi phục đúng base `bc2ee68`.
+  - AC16: thêm `watch_audio.AudioCache` thuần stdlib, subprocess/fetch tiêm được, remux `-map 0:a:0 -vn -c:a copy -movflags +faststart`. Cache `work/_watch_audio/<sha>.m4a`, SHA từ manifest / StoredShort, ghi trong thư mục tạm rồi `os.replace`, lock theo SHA và quota 2 GiB xóa mtime cũ nhất. Route audio dùng `ep.short_locations`; local đưa thẳng cho ffmpeg, StoredShort dùng `StoreClient.fetch(episode_id, "short", dest, sha, clip=stored.clip)` có kiểm SHA; kho tắt / không available trả 503. Trả FileResponse audio/mp4 để hỗ trợ Range. Client dùng endpoint audio cho clip phù hợp, lỗi audio thì giữ timeline và fallback MP4 kèm thông báo.
+  - AC17: Media Session playbackState đọc paused của media hiện hành và cập nhật ngay theo play/pause, kể cả sự kiện bị chặn gửi lên phòng. `playPending` ngăn gọi chồng; sau khi play bị từ chối trong hidden, không thử lại mỗi poll; reset khi visible hoặc version phòng đổi.
+- AC → test vòng 3 (`tests/test_web_watch_party.py`):
+  - AC15: `test_client_fav_is_ignored_and_favorite_action_removed`, `test_fav_derived_and_refreshed_from_real_favorites`, `test_fav_only_for_valid_clip_and_owned_episode` (make_app + favorites thật/giả, gọi route trực tiếp, không socket); `test_http_watch_fav_is_fresh_without_client_metadata` đã viết, chờ chạy HTTP ngoài sandbox. Bỏ các test fav/action cũ theo Code bị thay.
+  - AC16: `test_audio_route_local_remux_cache_and_changed_manifest`, `test_audio_route_stored_short_offline_and_fetch_parameters`; `test_audio_cache_concurrent_requests_remux_once`, `test_audio_cache_failure_is_atomic_and_cleans_temp`, `test_audio_cache_evicts_oldest_mtime`; `test_audio_real_remux_has_only_aac_and_faststart` dùng video AAC nhỏ từ fixture hiện có và ffmpeg/ffprobe thật. `test_http_auth` bổ sung path audio; `test_http_audio_range_auth_and_cache` kiểm 401 / 404 / 206 Range và cache, chờ HTTP ngoài sandbox.
+  - AC14/15/16/17 client: smoke DOM/media giả `/tmp/watch1-round3-player.cjs` kiểm không còn rate UI, tim từ snapshot cập nhật sau API mà không gửi action favorite, audio URL / fallback, giữ rate, playbackState thực khi bị OS pause, chỉ retry hidden một lần mỗi version và retry khi visible kể cả by=self.
+- Lệnh đã chạy vòng 3:
+  - `PYTHONPATH=/home/ntnghia/projects/yas-watch1/src conda run --no-capture-output -n auto-short pytest tests/test_web_watch_party.py -q -k 'not test_http' -x --tb=short`: **51 passed, 5 deselected in 2.32s** (sau khi sửa helper test duyệt router lồng theo mẫu `test_store_download.py`, và dùng ID thực sự không hợp lệ theo validator hiện hành).
+  - Lệnh cả file `PYTHONPATH=/home/ntnghia/projects/yas-watch1/src conda run --no-capture-output -n auto-short pytest tests/test_web_watch_party.py -q`, bọc `timeout --signal=TERM --kill-after=5s 120s`: exit **124**, dừng tại TestClient sau 39 dấu chấm unit. Không claim PASS HTTP.
+  - Nạp `/home/ntnghia/.nvm/nvm.sh`, `node --check src/auto_short/web/static/watch.js`: **PASS**; `node /tmp/watch1-round3-player.cjs`: **PASS** (mock, không thay thế trình duyệt thật).
+  - `git diff --exit-code bc2ee68 -- src/auto_short/web/static/app.js src/auto_short/web/static/favorites.js`: **PASS, diff rỗng**.
   - `git diff --check`: **PASS**.
-- Lệnh không chạy vòng 2: TestClient và full suite theo phân công HUMAN LEAD (ORCHESTRATOR chạy ngoài sandbox); chưa chạy thật AC13. Không claim PASS HTTP/full suite hay nghe nền trên điện thoại.
-- Helper mới (đã tìm): tái dùng 3 validator ID, API `/api/playlists/{pl}/favorites`, router factory và helper web test sẵn có. Thêm `_fav` để validate/copy metadata; `watchFav` chỉ gắn data attribute ở favorites.js. Helper nội bộ watch.js (`media`, `playMedia`, `loadMedia`, `hiddenPause`, `cancelPause`, `updateSession`) gom logic mới cho hai media, không thêm global / dependency.
-- Diff vòng 2 so với `980feee`, không tính contract: app **+215 / −50**, tests **+61 / −0**, tổng code **+276 / −50**. Amendment A đã có sẵn trong working tree trước lượt này và được giữ nguyên.
-- Review / lifecycle: đã rà diff và verification cục bộ, sẵn sàng ORCHESTRATOR review vòng 2. Giữ Status IN_PROGRESS; task chưa được đánh dấu READY khi HTTP/full suite và chạy thật bổ sung chưa hoàn tất. Không commit / push / PR / gọi agent khác / gọi mạng thật.
-- Known limitations: trạng thái phòng mất khi restart; nền / khóa màn hình phụ thuộc trình duyệt và cần xác nhận AC13 trên điện thoại thật. Pause native có cửa sổ chờ 1,5 s như mô tả trên.
+- Chưa chạy vòng 3: full suite và chạy thật 8080 / điện thoại; ORCHESTRATOR cần chạy TestClient ngoài sandbox, xác nhận Range và âm thanh nền / khóa màn hình thực tế.
+- Helper mới (đã tìm): tái dùng `ep.short_locations`, `ep.render_manifest`, `ep.valid_episode_id` / `valid_clip_id`, `episode_favorites`, `StoreClient.fetch` kiểm SHA, `FileResponse`, `make_app` / `login` / `write_episode` và fixture video ffmpeg. Đã xem helper audio / artifact trong `packaging/music.py`: chúng phục vụ mix/normalize/preview, chưa có cache remux theo SHA với quota byte phù hợp; thêm `AudioCache`, `WatchAudioError`, router decorator và helper JS `audioUrl` / `updatePlaybackState`. Helper test `endpoint` duyệt router lồng dùng pattern có sẵn trong tests.
+- Diff so với `e73f634`, không tính contract: app **+177 / −94**, test **+222 / −54**, tổng code **+399 / −148**, gồm `watch_audio.py` mới **73 dòng**. Amendment B đã có sẵn trong working tree trước lượt này.
+- Review / lifecycle: đã rà Owned paths và verification cục bộ; sẵn sàng ORCHESTRATOR review vòng 3. Giữ Status IN_PROGRESS vì HTTP/full suite và chạy thật chưa hoàn tất. Không commit / push / PR / gọi agent khác / gọi dịch vụ thật / thêm dependency.
+- Known limitations: trạng thái phòng mất khi restart; cache chỉ remux, không encode lại; khi nguồn không có tiếng/container không hỗ trợ copy sẽ trả 503 và client fallback MP4. Khả năng nghe khi chuyển app / khóa màn hình cần kiểm tra lại trên điện thoại thật.
 - PR: chưa tạo theo chỉ dẫn HUMAN LEAD.

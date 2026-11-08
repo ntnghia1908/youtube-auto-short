@@ -1110,8 +1110,6 @@ const AutoShort = (() => {
     let video = null;
     if (s.status === "rendered") {
       video = el("video", { controls: true, preload: "metadata", playsinline: true, src: s.video_url });
-      if (lastData?.favorites) video.dataset.watchFav = JSON.stringify({
-        playlist_id: lastData.favorites.playlist_id, episode_id: episodeId, clip: s.clip_id, favorite: !!s.favorite });
       media.append(video);
     } else if (s.deleted) {
       card.classList.add("deleted");
@@ -1353,9 +1351,6 @@ const AutoShort = (() => {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ episode_id: episodeId, clip: s.clip_id, favorite: !s.favorite }) });
         s.favorite = r.favorite;
-        const video = cards.get(s.clip_id)?.node.querySelector("video");
-        if (video) video.dataset.watchFav = JSON.stringify({
-          playlist_id: pl, episode_id: episodeId, clip: s.clip_id, favorite: s.favorite });
         lastData.favorites_count = Math.max(0, (lastData.favorites_count || 0) + (r.favorite ? 1 : -1));
         const entry = cards.get(s.clip_id);
         if (entry) entry.key = cardKey(s);

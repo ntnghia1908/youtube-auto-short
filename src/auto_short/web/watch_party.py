@@ -6,10 +6,6 @@ import math
 import threading
 import time
 import unicodedata
-from copy import deepcopy
-
-from .episodes import valid_clip_id, valid_episode_id
-from .urls import valid_playlist_id
 
 
 class WatchConflict(ValueError):
@@ -48,18 +44,6 @@ def _client(value) -> str:
     return value
 
 
-def _fav(value) -> dict:
-    if not isinstance(value, dict):
-        raise ValueError("fav không hợp lệ")
-    for key, check in (("playlist_id", valid_playlist_id), ("episode_id", valid_episode_id),
-                       ("clip", valid_clip_id)):
-        if not isinstance(value.get(key), str) or not check(value[key]):
-            raise ValueError(f"fav.{key} không hợp lệ")
-    if type(value.get("favorite")) is not bool:
-        raise ValueError("fav.favorite phải là bool")
-    return {key: value[key] for key in ("playlist_id", "episode_id", "clip", "favorite")}
-
-
 class WatchRoom:
     def __init__(self, *, clock=time.time):
         self._clock = clock
@@ -77,7 +61,7 @@ class WatchRoom:
     def _snapshot(self, now):
         self._viewers = {c: t for c, t in self._viewers.items() if now - t < 10}
         current = self._queue[self._index] if self._queue else None
-        return dict(queue=deepcopy(self._queue), index=self._index,
+        return dict(queue=[dict(e) for e in self._queue], index=self._index,
                     video_url=current["url"] if current else None, title=current["title"] if current else "",
                     paused=self._paused, position=self._position, rate=self._rate,
                     updated_at=self._updated_at, version=self._version, by=self._by,
@@ -119,8 +103,6 @@ class WatchRoom:
                     if not isinstance(title, str) or len(title) > 200:
                         raise ValueError("Tiêu đề tối đa 200 ký tự")
                     clean.append(dict(url=url, title=title))
-                    if "fav" in entry:
-                        clean[-1]["fav"] = _fav(entry["fav"])
                 queue = clean
                 index = _index(data.get("index", 0), len(queue))
                 position = _number(data.get("position", 0), "position")
@@ -130,13 +112,6 @@ class WatchRoom:
                     raise ValueError("paused không hợp lệ")
             elif action == "end":
                 queue, index, position, rate, paused = [], 0, 0.0, 1.0, True
-            elif action == "favorite":
-                target = _index(data.get("index"), len(self._queue))
-                favorite = data.get("favorite")
-                if "fav" not in self._queue[target] or type(favorite) is not bool:
-                    raise ValueError("Video cần có fav và favorite phải là bool")
-                queue = deepcopy(self._queue)
-                queue[target]["fav"]["favorite"] = favorite
             elif action in ("play", "pause", "seek", "rate", "goto", "next", "prev"):
                 if not self._queue:
                     raise ValueError("Chưa có phòng xem chung")

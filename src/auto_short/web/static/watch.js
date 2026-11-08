@@ -14,6 +14,11 @@
   let background = false;
   try { background = inRoom && localStorage.getItem("auto-short-watch-background") === "true"; } catch (_) { /* Private mode. */ }
   const media = () => background ? audio : video;
+  let hiddenPlayBlocked = false, playPending = null, audioFallback = false, audioWarning = "";
+  function audioUrl(url) {
+    const match = url?.split("?")[0].match(/^\/files\/([^/]+)\/([^/]+)\.mp4$/);
+    return match ? `/api/watch/audio/${encodeURIComponent(match[1])}/${encodeURIComponent(match[2])}` : null;
+  }
   let handoff = null, pauseTimer = null, lastHiddenAt = -Infinity, pageHidden = false, favoriteBusy = false;
   function cancelPause() { clearTimeout(pauseTimer); pauseTimer = null; }
   function hiddenPause() {
@@ -36,7 +41,7 @@
     }
     return data;
   }
-  function message(text) { if (inRoom) $("watch-message").textContent = text; }
+  function message(text) { if (inRoom) $("watch-message").textContent = text || (background ? audioWarning : ""); }
   function command(action, extra = {}, force = false) {
     pending++;
     // Serialize this client's controls; polling cannot overwrite an unacknowledged local gesture.
@@ -75,13 +80,18 @@
       state.server_time - state.updated_at + (performance.now() - receivedAt) / 1000) * state.rate);
   }
   function playMedia(current) {
-    const playMark = arm("play", false), key = sourceKey;
+    if (playPending || (document.visibilityState === "hidden" && hiddenPlayBlocked)) return;
+    const playMark = arm("play", false), attempt = { current, key: sourceKey, version: state.version };
+    playPending = attempt;
+    const stillCurrent = () => playPending === attempt && current === media() && attempt.key === sourceKey;
     current.play().then(() => {
-      if (current === media() && key === sourceKey) $("watch-play").hidden = true;
+      if (stillCurrent()) $("watch-play").hidden = true;
     }).catch(() => {
       if (programmed.get("play") === playMark) programmed.delete("play");
-      if (current === media() && key === sourceKey && state?.video_url && !state.paused) $("watch-play").hidden = false;
-    });
+      if (!stillCurrent()) return;
+      if (document.visibilityState === "hidden" && attempt.version === state?.version) hiddenPlayBlocked = true;
+      if (state?.video_url && !state.paused) $("watch-play").hidden = false;
+    }).finally(() => { if (playPending === attempt) playPending = null; });
   }
   function syncPlayback(transfer = null) {
     const current = media();
@@ -99,9 +109,10 @@
     } else if (current.paused && !current.ended) playMedia(current);
   }
   function loadMedia(transfer = null) {
-    loading = true; programmed.clear(); handoff = transfer;
+    loading = true; programmed.clear(); handoff = transfer; playPending = null;
     const current = media();
-    current.src = state.video_url; current.load();
+    current.src = background && !audioFallback ? (audioUrl(state.video_url) || state.video_url) : state.video_url;
+    current.load();
     // Calling play during the checkbox gesture preserves mobile playback permission.
     if (transfer && !transfer.paused) playMedia(current);
   }
@@ -109,7 +120,11 @@
     if (!("mediaSession" in navigator)) return;
     if (typeof MediaMetadata === "function") navigator.mediaSession.metadata = state.video_url
       ? new MediaMetadata({ title: state.title || "Video", artist: "Auto Short" }) : null;
-    navigator.mediaSession.playbackState = state.video_url ? (state.paused ? "paused" : "playing") : "none";
+    updatePlaybackState();
+  }
+  function updatePlaybackState() {
+    if ("mediaSession" in navigator) navigator.mediaSession.playbackState = state?.video_url
+      ? (media().paused ? "paused" : "playing") : "none";
   }
   function renderRoom() {
     const active = !!state.video_url;
@@ -117,7 +132,7 @@
     $("watch-viewers").textContent = `Đang xem: ${Object.keys(state.viewers).length} người`;
     video.hidden = !active || background;
     audio.hidden = !active || !background;
-    const fav = state.queue[state.index]?.fav, heart = $("watch-favorite");
+    const fav = state.fav, heart = $("watch-favorite");
     heart.hidden = !fav; heart.disabled = favoriteBusy;
     heart.textContent = fav?.favorite ? "♥" : "♡";
     heart.classList.toggle("on", !!fav?.favorite);
@@ -128,14 +143,6 @@
     $("watch-prev").disabled = !active || state.index === 0;
     $("watch-next").disabled = !active;
     $("watch-end").disabled = !active;
-    $("watch-rate").disabled = !active;
-    // Keep custom native playback rates visible as well.
-    if (active && !Array.from($("watch-rate").options).some((o) => Number(o.value) === state.rate)) {
-      const option = document.createElement("option");
-      option.value = String(state.rate); option.textContent = `${state.rate}×`;
-      $("watch-rate").append(option);
-    }
-    $("watch-rate").value = String(state.rate);
     const signature = JSON.stringify([state.queue, state.index]);
     if (queueKey !== signature) {
       queueKey = signature;
@@ -152,7 +159,9 @@
   if (!inRoom) { invite.className = "watch-invite"; invite.hidden = true; document.body.prepend(invite); }
   function accept(data, force = false) {
     if (state && data.version < state.version) return;
-    if (state && data.version !== state.version) cancelPause();
+    if (state && data.version !== state.version) {
+      cancelPause(); hiddenPlayBlocked = false; playPending = null;
+    }
     state = data; receivedAt = performance.now();
     if (!inRoom) {
       invite.hidden = !data.video_url || data.by === client;
@@ -166,7 +175,7 @@
     const key = data.video_url ? JSON.stringify([data.index, data.video_url]) : null;
     if (key !== sourceKey) {
       sourceKey = key;
-      programmed.clear(); handoff = null;
+      programmed.clear(); handoff = null; playPending = null; audioFallback = false; audioWarning = "";
       if (key === null) {
         loading = true;
         for (const current of [video, audio]) { current.pause(); current.removeAttribute("src"); current.load(); }
@@ -208,15 +217,9 @@
     if (!title) {
       try { title = decodeURIComponent(url.pathname.split("/").pop()); } catch (_) { title = url.pathname.split("/").pop(); }
     }
-    const entry = { url: url.pathname + url.search, title: Array.from(title || "Video").slice(0, 200).join("") };
-    try {
-      const fav = JSON.parse(v.dataset.watchFav);
-      if (fav && ["playlist_id", "episode_id", "clip"].every((key) => typeof fav[key] === "string") && typeof fav.favorite === "boolean") {
-        entry.fav = { playlist_id: fav.playlist_id, episode_id: fav.episode_id, clip: fav.clip, favorite: fav.favorite };
-      }
-    } catch (_) { /* Missing or malformed metadata does not prevent sharing the video. */ }
-    return entry;
+    return { url: url.pathname + url.search, title: Array.from(title || "Video").slice(0, 200).join("") };
   }
+
   const buttons = new Map();
   function scan() {
     for (const [v, b] of buttons) {
@@ -256,6 +259,7 @@
       });
       for (const [event, action] of [["play", "play"], ["pause", "pause"], ["seeked", "seek"], ["ratechange", "rate"]]) {
         current.addEventListener(event, () => {
+          if (current === media() && (event === "play" || event === "pause")) updatePlaybackState();
           if (current !== media() || isProgrammed(event) || !state?.video_url || (event === "pause" && current.ended)) return;
           if (event === "pause") {
             if (hiddenPause()) return;
@@ -290,19 +294,27 @@
       cancelPause();
       previous.pause(); previous.removeAttribute("src"); previous.load();
       if (state) renderRoom();
+      message("");
       if (transfer) loadMedia(transfer);
     });
+    audio.addEventListener("error", () => {
+      if (audio !== media() || !state?.video_url) return;
+      if (!audioFallback && audioUrl(state.video_url)) {
+        const transfer = handoff || { position: audio.currentTime || targetPosition(), paused: state.paused,
+          rate: state.rate, version: state.version, at: performance.now() };
+        audioFallback = true;
+        audioWarning = "Không tải được file tiếng; đang dùng âm thanh từ video MP4.";
+        message(""); loadMedia(transfer);
+      } else message("Không phát được tiếng. Hãy thử lại khi nguồn / kho sẵn sàng.");
+    });
     $("watch-favorite").addEventListener("click", async () => {
-      const index = state?.index, fav = state?.queue[index]?.fav;
+      const fav = state?.fav;
       if (!fav || favoriteBusy) return;
       favoriteBusy = true; renderRoom();
       try {
-        const saved = await request("POST", { episode_id: fav.episode_id, clip: fav.clip, favorite: !fav.favorite },
+        await request("POST", { episode_id: fav.episode_id, clip: fav.clip, favorite: !fav.favorite },
           `/api/playlists/${encodeURIComponent(fav.playlist_id)}/favorites`);
-        const latest = state?.queue[index]?.fav;
-        if (latest && ["playlist_id", "episode_id", "clip"].every((key) => latest[key] === fav[key])) {
-          await command("favorite", { index, favorite: saved.favorite });
-        }
+        await poll(true);
       } catch (error) { message(error.message); }
       finally { favoriteBusy = false; renderRoom(); }
     });
@@ -311,9 +323,6 @@
     };
     $("watch-prev").addEventListener("click", () => navigate("prev"));
     $("watch-next").addEventListener("click", () => navigate("next"));
-    $("watch-rate").addEventListener("change", () => {
-      command("rate", { rate: Number($("watch-rate").value), position: media().currentTime }, true).catch(() => {});
-    });
     $("watch-play").addEventListener("click", () => {
       media().play().then(() => { $("watch-play").hidden = true; }).catch(() => { message("Không phát được video. Hãy thử lại."); });
     });
@@ -335,13 +344,16 @@
     const leave = () => navigator.sendBeacon("/api/watch/leave", new Blob([JSON.stringify({ client })], { type: "application/json" }));
     document.addEventListener("visibilitychange", () => {
       lastHiddenAt = performance.now(); cancelPause();
-      if (document.visibilityState !== "hidden") sending.then(() => poll(true));
+      if (document.visibilityState !== "hidden") {
+        hiddenPlayBlocked = false; playPending = null;
+        sending.then(() => poll(true));
+      }
     });
     window.addEventListener("pagehide", () => {
       pageHidden = true; pollGeneration++; lastHiddenAt = performance.now(); cancelPause(); clearTimeout(pollTimer); leave();
     });
     window.addEventListener("pageshow", (event) => {
-      if (event.persisted) { pageHidden = false; lastHiddenAt = performance.now(); tick(true); }
+      if (event.persisted) { pageHidden = false; hiddenPlayBlocked = false; playPending = null; lastHiddenAt = performance.now(); tick(true); }
     });
   } else {
     let scheduled = false;

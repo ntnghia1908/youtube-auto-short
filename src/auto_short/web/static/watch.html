@@ -20,15 +20,8 @@
   <div class="actions">
     <button id="watch-favorite" class="btn icon-btn heart" type="button" hidden aria-label="Yêu thích" aria-pressed="false">♡</button>
     <label class="inline"><input id="watch-background" type="checkbox"> Nghe nền</label>
-    <button id="watch-prev" class="btn" type="button" disabled>Trước</button>
-    <button id="watch-next" class="btn" type="button" disabled>Tiếp</button>
-    <label>Tốc độ <select id="watch-rate" disabled aria-label="Tốc độ phát">
-      <option value="0.25">0.25×</option><option value="0.5">0.5×</option>
-      <option value="0.75">0.75×</option><option value="1" selected>1×</option>
-      <option value="1.25">1.25×</option><option value="1.5">1.5×</option>
-      <option value="1.75">1.75×</option><option value="2">2×</option>
-      <option value="3">3×</option><option value="4">4×</option>
-    </select></label>
+    <button id="watch-prev" class="btn icon-btn" type="button" title="Trước" aria-label="Trước" disabled>⏮</button>
+    <button id="watch-next" class="btn icon-btn" type="button" title="Tiếp" aria-label="Tiếp" disabled>⏭</button>
     <button id="watch-end" class="btn danger" type="button" disabled>Kết thúc xem chung</button>
   </div>
   <ol id="watch-queue" class="watch-queue" aria-label="Danh sách phát"></ol>

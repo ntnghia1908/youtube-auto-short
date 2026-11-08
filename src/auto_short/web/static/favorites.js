@@ -37,10 +37,6 @@ const Favorites = (() => {
       video.addEventListener("ended", flush);
     }
     video.className = cls;
-    const favorite = data?.favorites.find((f) => f.video_url &&
-      new URL(f.video_url, location.href).pathname === new URL(src, location.href).pathname);
-    if (favorite) video.dataset.watchFav = JSON.stringify({
-      playlist_id: pid, episode_id: favorite.episode_id, clip: favorite.clip, favorite: true });
     return video;
   }
   function setVideoCount(source, n) {
@@ -120,20 +116,9 @@ const Favorites = (() => {
     return { n, rounds: Math.ceil(n / list.length), total };
   }
 
-  function watchFav(f, favorite) {
-    if (!f.video_url) return;
-    for (const video of document.querySelectorAll("video")) {
-      const src = video.getAttribute("src");
-      if (src && new URL(src, location.href).pathname === new URL(f.video_url, location.href).pathname) {
-        video.dataset.watchFav = JSON.stringify({ playlist_id: pid, episode_id: f.episode_id, clip: f.clip, favorite });
-      }
-    }
-  }
-
   async function unheart(f) {
     try {
       await post(`/api/playlists/${encodeURIComponent(pid)}/favorites`, { episode_id: f.episode_id, clip: f.clip, favorite: false });
-      watchFav(f, false);
       ticked.delete(keyOf(f));
       await load();
       window.dispatchEvent(new Event("favorites-changed"));
@@ -168,7 +153,6 @@ const Favorites = (() => {
   }
 
   function row(f) {
-    watchFav(f, true);
     const k = keyOf(f);
     const box = el("input", { type: "checkbox", "aria-label": `Chọn ${f.code}` });
     box.checked = ticked.has(k);
