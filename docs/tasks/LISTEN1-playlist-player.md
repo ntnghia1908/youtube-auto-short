@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: DONE (chờ merge PR)
 - Type: FEATURE
 - Change class: S1 — 1 endpoint đọc mới sau login, trang tập thêm tab; không dependency, không đổi security model / API hiện có
 - Owner: HUMAN LEAD
@@ -420,3 +420,12 @@ Bằng chứng: "3. Ok rồi" (nghe ở app khác bằng màn hình nhỏ / toà
 - AC → test: AC 34/30/31 `test_listen_and_watch_share_one_module` (tĩnh, 3 trang cùng khối `listen-*`, một nơi dựng player); AC 35 trần `test_*` chứa 1000/1001 trong `test_watch_party` (đã sửa) + lệnh `episode` từ F; AC 39 `test_favorites_only_keeps_order_and_marks_all_hearted`, `test_http_listen_favorites_query`, `test_continuous_room_crosses_episodes_and_shows_flag`; AC 40 kiểm tĩnh (`item === currentItem`). Mô phỏng Node DOM giả (`/tmp/claude-1000/h/sim2.js`, không thuộc repo) chạy: một mình → Xem chung (`set`) → chọn tập (`episode`) → Kết thúc → về một mình, ở trang tập và trang Yêu thích (`continuous: true`). Chưa chạy thật trình duyệt (AC 36–38, 41).
 - Sửa sau review G + H (tải poll): snapshot có `queue_version` (`"<epoch>.<n>"`, epoch ngẫu nhiên mỗi lần server chạy để cache cũ không khớp nhầm; n tăng khi `set` / `end`). Client (`watch.js`) gửi `queue_version` đã giữ (query ở GET, body ở POST / DELETE); server chỉ gửi `queue` (và chỉ decorate cả queue) khi khác, còn không thì bỏ field `queue` và chỉ decorate mục hiện tại; client giữ cache và gán lại `queue`. Máy mới / link mời không có version nên nhận đủ. Đo (400 mục, tiêu đề ~40 ký tự, `-s`): có queue 36 089 B, không queue 403 B (≈ 90 lần nhỏ hơn). Test: `test_http_queue_sent_only_when_version_changes_and_size`. Fav cấp mục không dùng nên không cần version riêng (fav của mục hiện tại vẫn tính mỗi lần).
 - Sửa AC 28 lần 2 (chạy thật Android Chrome: thẻ có render nhưng nằm ngoài tầm nhìn): `episode.html` / `watch.html` / `favorites.html` bọc video + `#listen-notice` trong `.player-stage` (`position: relative`); thẻ `position: absolute`, cách đáy 3,5 rem (chừa thanh điều khiển gốc của video), nền tối rgba(20,20,20,.92) chữ trắng, `max-height` giới hạn và cuộn trong thẻ, `left/right .5rem` nên vừa 360 px. Thẻ ẩn (`hidden`) không chiếm chỗ, không chặn video; hết tập thẻ che phần dưới video cho tới khi chọn tiếp. Logic đếm ngược không đổi. Test: `test_countdown_card_overlays_the_video_on_all_pages`. Chưa kiểm trên máy thật.
+
+### Kết thúc (ORCHESTRATOR 2026-11-08)
+
+- Chạy thật HUMAN LEAD trên 8080 (bản ghép tạm `tmp/8080-listen1-shutdown` = LISTEN1 + FIX-web-shutdown-slow), Android Chrome: Amendment E (AC 28 đếm ngược thấy được sau khi thẻ đè lên video, AC 29), F (AC 30–33), G (AC 34–38, hai máy), H (AC 39–41), I (AC 42 "Nút đã rõ chữ", AC 43, AC 44 "Có nhớ"), J (AC 46–48): "Ok tất cả ổn" (d73046a).
+- Review thứ hai: Codex read-only trên `51f4af6` (G + H) — 3 finding P2 đều được ORCHESTRATOR xác nhận và sửa ở `a127081` (Xem chung giữ Tự chuyển; bỏ tim cập nhật phòng / danh sách Yêu thích; nghe sự kiện bỏ tim từ tab khác). Tab ghép tay sau đó bị gỡ ở J.
+- Full suite bản ghép `d73046a`: **4214 passed, 2 skipped** (lần trước đó `fbb823c`: 6 fail `tests/test_web_packaging.py` do harness VM thiếu `CustomEvent`, sửa harness ở `HEAD` trước bản ghép, không đổi code ứng dụng).
+- Implementer: Sonnet (E, F, G, H, sửa thẻ đè video) khi Codex hết quota; Codex (I, sửa review, J, harness) — ~103k + tokens các lần resume.
+- Ops sau merge: xóa `work/_watch_audio/` trên 8080 (chế độ âm thanh đã gỡ).
+- Manual checklist cũ (Nghe nền / công tắc Khai thị): thay bằng các AC chạy thật ở trên (Nghe nền đã bỏ — Amendment B / D; bộ lọc Short / Khai thị / cả hai PASS trong I).
