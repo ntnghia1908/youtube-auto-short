@@ -5,26 +5,51 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Xem chung — Auto Short</title>
 <link rel="stylesheet" href="/static/style.css">
+<script src="/static/player.js" defer></script>
 <script src="/static/watch.js" defer></script>
+<script src="/static/listen.js" defer></script>
 </head>
 <body>
 <header class="topbar"><a class="brand" href="/">← Auto Short</a></header>
-<main id="watch-room" class="container watch-room">
-  <h1>Xem chung</h1>
-  <h2 id="watch-title">Chưa có phòng xem chung</h2>
-  <p id="watch-viewers">Đang xem: 0 người</p>
-  <p id="watch-message" role="status" aria-live="polite"></p>
-  <video id="watch-video" controls playsinline preload="metadata" hidden></video>
-  <audio id="watch-audio" controls preload="metadata" hidden></audio>
-  <button id="watch-play" class="btn primary" type="button" hidden>Bấm để phát</button>
-  <div class="actions">
-    <button id="watch-favorite" class="btn icon-btn heart" type="button" hidden aria-label="Yêu thích" aria-pressed="false">♡</button>
-    <label class="inline"><input id="watch-background" type="checkbox"> Nghe nền</label>
-    <button id="watch-prev" class="btn icon-btn" type="button" title="Trước" aria-label="Trước" disabled>⏮</button>
-    <button id="watch-next" class="btn icon-btn" type="button" title="Tiếp" aria-label="Tiếp" disabled>⏭</button>
-    <button id="watch-end" class="btn danger" type="button" disabled>Kết thúc xem chung</button>
-  </div>
-  <ol id="watch-queue" class="watch-queue" aria-label="Danh sách phát"></ol>
+<main class="container">
+  <section id="episode-listen" class="card listen-room">
+    <h1 id="listen-series">Xem chung</h1>
+    <div class="listen-toolbar">
+      <div id="listen-filter" class="player-segments" role="group" aria-label="Loại bài">
+        <button class="btn" type="button" data-kind="short" aria-pressed="false">Short</button>
+        <button class="btn" type="button" data-kind="khaithi" aria-pressed="false">Khai thị</button>
+        <button class="btn" type="button" data-kind="both" aria-pressed="true">Cả hai</button>
+      </div>
+      <label class="player-jump">Tới tập <select id="listen-jump" aria-label="Nhảy tới tập"></select></label>
+    </div>
+    <button id="listen-resume" class="btn player-soft-card player-resume" type="button" hidden></button>
+    <div class="player-stage">
+      <video id="listen-video" class="player-video" controls playsinline preload="metadata" hidden></video>
+      <div id="listen-notice" class="player-notice player-soft-card" role="status" aria-live="polite" hidden></div>
+    </div>
+    <div class="player-now">
+      <h2 id="listen-title" class="player-now-title"></h2>
+      <p id="listen-meta" class="small muted"></p>
+      <p id="listen-lecture" class="small muted player-lecture"></p>
+      <span id="listen-count" class="badge"></span>
+    </div>
+    <button id="listen-play" class="btn primary" type="button" hidden>Bấm để phát</button>
+    <div id="listen-controls" class="player-controls">
+      <span class="player-heart"><button id="listen-favorite" class="btn icon-btn heart" type="button" hidden aria-label="Yêu thích" aria-pressed="false" title="Yêu thích">♡</button></span>
+      <button id="listen-prev" class="btn icon-btn" type="button" title="Trước" aria-label="Trước" disabled>⏮</button>
+      <button id="listen-next" class="btn icon-btn" type="button" title="Tiếp" aria-label="Tiếp" disabled>⏭</button>
+    </div>
+    <p id="listen-pip-hint" class="small muted player-pip-hint" hidden></p>
+    <label class="player-switch"><input id="listen-auto" type="checkbox" role="switch" checked><span class="player-switch-track" aria-hidden="true"></span> Tự chuyển bài</label>
+    <div class="actions">
+      <button id="listen-watch" class="btn" type="button" disabled>Xem chung</button>
+      <button id="listen-end" class="btn small danger" type="button" hidden disabled>Kết thúc xem chung</button>
+    </div>
+    <p id="listen-viewers" class="small" hidden></p>
+    <p id="listen-invite" class="small" hidden></p>
+    <p id="listen-message" class="small muted" role="status" aria-live="polite"></p>
+    <div id="listen-queue" class="listen-queue" aria-label="Danh sách theo tập"></div>
+  </section>
 </main>
 </body>
 </html>

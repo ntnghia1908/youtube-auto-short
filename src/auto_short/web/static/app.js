@@ -487,6 +487,36 @@ const AutoShort = (() => {
 
   function initEpisode() {
     episodeId = decodeURIComponent(location.pathname.split("/").filter(Boolean)[1] || "");
+    // LISTEN1: keep the existing management DOM and handlers intact across tab changes.
+    let episodeTab = "listen";
+    try { if (localStorage.getItem("auto-short-episode-tab") === "manage") episodeTab = "manage"; } catch (_) { /* Private mode. */ }
+    function selectEpisodeTab(tab) {
+      const listening = tab === "listen";
+      if (listening) {
+        document.querySelectorAll("video, audio").forEach((media) => {
+          if (!media.closest("#episode-listen") && !["dq-awake", "awake"].includes(media.id)) media.pause();
+        });
+        $("#source-float").hidden = true;
+        $("#add-dialog").hidden = true;
+      }
+      $("#episode-listen").hidden = !listening;
+      $("#episode-manage").hidden = listening;
+      for (const name of ["listen", "manage"]) {
+        const button = $("#episode-tab-" + name);
+        button.classList.toggle("active", name === tab);
+        button.setAttribute("aria-selected", String(name === tab));
+      }
+      try { localStorage.setItem("auto-short-episode-tab", tab); } catch (_) { /* Private mode. */ }
+      document.dispatchEvent(new CustomEvent("episode-tab", { detail: tab }));
+    }
+    for (const tab of ["listen", "manage"]) $("#episode-tab-" + tab).addEventListener("click", () => selectEpisodeTab(tab));
+    document.addEventListener("play", (event) => {
+      const media = event.target;
+      if (!["VIDEO", "AUDIO"].includes(media.tagName) || ["dq-awake", "awake"].includes(media.id)) return;
+      const fromListen = !!media.closest("#episode-listen");
+      if (fromListen === $("#episode-listen").hidden) media.pause();
+    }, true);
+    selectEpisodeTab(episodeTab);
     $("#resubmit").addEventListener("click", resubmit);
     $("#delete-episode").addEventListener("click", deleteEpisode);
     $("#kt-create").addEventListener("click", createKhaithi);

@@ -179,9 +179,9 @@ class El {paused=true;
  set textContent(v) {this._text=String(v);this.children=[];}
  get textContent() {return this._text+this.children.map(n=>n instanceof El?n.textContent:String(n)).join('');}
 }
-const els={}, get=id=>els[id] ||= new El(), timers=[], calls=[], copies=[];
+const els={}, get=id=>els[id] ||= new El(), timers=[], calls=[], copies=[], tabEvents=[];
 const mode=process.argv[2], jobs=new Map();
-const document={querySelector:s=>get(s.slice(1)),getElementById:get,querySelectorAll:()=>[],addEventListener:()=>{},activeElement:null};
+const document={querySelector:s=>get(s.slice(1)),getElementById:get,querySelectorAll:()=>[],addEventListener:()=>{},dispatchEvent:event=>{tabEvents.push(event);return true;},activeElement:null};
 function el(tag, attrs={}, ...children) {const n=new El(tag);for(const [k,v] of Object.entries(attrs)) {if(k==='text')n.textContent=v;else n.setAttribute(k,v);}n.append(...children);return n;}
 async function api(path, options={}) {
  calls.push([path,options.method || 'GET']);
@@ -200,7 +200,7 @@ async function api(path, options={}) {
   output:{download_name:'Tiêu đề render.mp4',description:'Mô tả render',download_url:'/files/theme.mp4'}}]};
  throw Error('unexpected request '+path);
 }
-const ctx={document,AutoShort:{el,api,musicBlock:()=>el('details'),copyText:async t=>{copies.push(t);return true;}},location:{pathname:'/playlists/PLeligible/favorites'},
+const ctx={CustomEvent:class {constructor(type,opts){this.type=type;this.detail=opts.detail;}},document,AutoShort:{el,api,musicBlock:()=>el('details'),copyText:async t=>{copies.push(t);return true;}},location:{pathname:'/playlists/PLeligible/favorites'},
  window:{addEventListener:()=>{},dispatchEvent:()=>{}},localStorage:{getItem:()=>null,setItem:()=>{}},
  setTimeout:(f,ms)=>{timers.push({f,ms});return timers.length;},clearTimeout:()=>{},confirm:()=>true};
 const tick=()=>new Promise(r=>setImmediate(r)), all=n=>[n,...n.children.filter(n=>n instanceof El).flatMap(all)];
@@ -209,6 +209,7 @@ function button(root,text) {const b=all(root).find(n=>n.tagName==='BUTTON' && n.
  get('fv-auto-min').value='60';vm.createContext(ctx);
  for(const name of ['favorites.js','theme_plan.js'])vm.runInContext(fs.readFileSync(process.argv[1]+'/'+name,'utf8'),ctx);
  vm.runInContext('Favorites.init(); ThemePlan.init();',ctx);await tick();
+ assert.equal(tabEvents[0].type,'favorites-tab');assert.equal(tabEvents[0].detail,'listen');
  for(const t of timers.filter(t=>t.ms===0))await t.f();await tick();
  const blocks=[get('fv-comps'),get('tp-plans')].map(root=>{
   const texts=all(root).map(n=>n.textContent);

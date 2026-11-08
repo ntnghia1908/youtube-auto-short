@@ -24,12 +24,52 @@
     <p class="small"><a id="fv-back" href="/">&larr; Về bộ kinh</a></p>
     <p id="fv-msg" class="small" hidden></p>
   </section>
-  <nav class="tabs fv-tabs" role="tablist" aria-label="Cách ghép video">
-    <button id="fv-tab-ai" class="btn tab active" type="button" role="tab" aria-selected="true" aria-controls="fv-pane-ai" data-fv-tab="ai">Gợi ý chủ đề (AI)</button>
-    <button id="fv-tab-manual" class="btn tab" type="button" role="tab" aria-selected="false" aria-controls="fv-pane-manual" data-fv-tab="manual" tabindex="-1">Yêu thích &amp; ghép tay</button>
+  <nav class="tabs fv-tabs" role="tablist" aria-label="Yêu thích">
+    <button id="fv-tab-listen" class="btn tab active" type="button" role="tab" aria-selected="true" aria-controls="fv-pane-listen" data-fv-tab="listen">Nghe yêu thích</button>
+    <button id="fv-tab-ai" class="btn tab" type="button" role="tab" aria-selected="false" aria-controls="fv-pane-ai" data-fv-tab="ai" tabindex="-1">Gợi ý chủ đề (AI)</button>
     <button id="fv-tab-videos" class="btn tab" type="button" role="tab" aria-selected="false" aria-controls="fv-pane-videos" data-fv-tab="videos" tabindex="-1">Video đã ghép (<span id="fv-videos-count">0</span>)</button>
   </nav>
-  <div id="fv-pane-ai" class="fv-pane" role="tabpanel" aria-labelledby="fv-tab-ai">
+  <div id="fv-pane-listen" class="fv-pane" role="tabpanel" aria-labelledby="fv-tab-listen">
+    <section id="episode-listen" class="card listen-room">
+      <h1 id="listen-series">Nghe yêu thích</h1>
+      <div class="listen-toolbar">
+        <div id="listen-filter" class="player-segments" role="group" aria-label="Loại bài">
+          <button class="btn" type="button" data-kind="short" aria-pressed="false">Short</button>
+          <button class="btn" type="button" data-kind="khaithi" aria-pressed="false">Khai thị</button>
+          <button class="btn" type="button" data-kind="both" aria-pressed="true">Cả hai</button>
+        </div>
+        <label class="player-jump">Tới tập <select id="listen-jump" aria-label="Nhảy tới tập"></select></label>
+      </div>
+      <button id="listen-resume" class="btn player-soft-card player-resume" type="button" hidden></button>
+      <div class="player-stage">
+        <video id="listen-video" class="player-video" controls playsinline preload="metadata" hidden></video>
+        <div id="listen-notice" class="player-notice player-soft-card" role="status" aria-live="polite" hidden></div>
+      </div>
+      <div class="player-now">
+        <h2 id="listen-title" class="player-now-title"></h2>
+        <p id="listen-meta" class="small muted"></p>
+        <p id="listen-lecture" class="small muted player-lecture"></p>
+        <span id="listen-count" class="badge"></span>
+      </div>
+      <button id="listen-play" class="btn primary" type="button" hidden>Bấm để phát</button>
+      <div id="listen-controls" class="player-controls">
+        <span class="player-heart"><button id="listen-favorite" class="btn icon-btn heart" type="button" hidden aria-label="Yêu thích" aria-pressed="false" title="Yêu thích">♡</button></span>
+        <button id="listen-prev" class="btn icon-btn" type="button" title="Trước" aria-label="Trước" disabled>⏮</button>
+        <button id="listen-next" class="btn icon-btn" type="button" title="Tiếp" aria-label="Tiếp" disabled>⏭</button>
+      </div>
+      <p id="listen-pip-hint" class="small muted player-pip-hint" hidden></p>
+      <label class="player-switch"><input id="listen-auto" type="checkbox" role="switch" checked><span class="player-switch-track" aria-hidden="true"></span> Tự chuyển bài</label>
+      <div class="actions">
+        <button id="listen-watch" class="btn" type="button" disabled>Xem chung</button>
+        <button id="listen-end" class="btn small danger" type="button" hidden disabled>Kết thúc xem chung</button>
+      </div>
+      <p id="listen-viewers" class="small" hidden></p>
+      <p id="listen-invite" class="small" hidden></p>
+      <p id="listen-message" class="small muted" role="status" aria-live="polite"></p>
+      <div id="listen-queue" class="listen-queue" aria-label="Danh sách theo tập"></div>
+    </section>
+  </div>
+  <div id="fv-pane-ai" class="fv-pane" role="tabpanel" aria-labelledby="fv-tab-ai" hidden>
     <section class="card">
       <h3>Ghép theo chủ đề (AI)</h3>
       <p class="small muted">AI gợi ý từ khai thị yêu thích đã index. Chọn hoặc sửa tiêu đề rồi bấm Ghép video. Mở danh sách khai thị để xem trước nội dung và thứ tự; thời lượng gợi ý 30–40 phút.</p>
@@ -41,33 +81,6 @@
       <p id="tp-job" class="small" role="status"></p>
       <p id="tp-msg" class="small" role="status"></p>
       <div id="tp-proposals"></div>
-    </section>
-  </div>
-  <div id="fv-pane-manual" class="fv-pane" role="tabpanel" aria-labelledby="fv-tab-manual" hidden>
-    <section class="card">
-      <p class="muted small">Tick nhiều mục (Short và / hoặc khai thị) rồi bấm "Ghép" để nối liền theo thứ tự tập; bấm "Lặp" để lặp một mục cho đủ thời lượng; hoặc để máy tự ghép các mục yêu thích (theo bộ lọc đang chọn) cho đủ thời lượng. Tổng tối đa <span id="fv-max">720</span> phút.</p>
-    </section>
-    <section class="card">
-      <h3>Yêu thích (<span id="fv-count">0</span>)</h3>
-      <div id="fv-filters" class="filters">
-        <button class="btn small" type="button" data-kind="all">Tất cả</button>
-        <button class="btn small" type="button" data-kind="short">Short</button>
-        <button class="btn small" type="button" data-kind="khaithi">Khai thị</button>
-      </div>
-      <ul id="fv-list" class="fv-list"><li class="muted">Đang tải…</li></ul>
-      <div class="actions">
-        <label class="inline"><input id="fv-all" type="checkbox"> Chọn tất cả</label>
-        <button id="fv-concat" class="btn primary small" type="button" disabled>Ghép</button>
-      </div>
-    </section>
-    <section class="card">
-      <h3>Tự ghép theo thời lượng</h3>
-      <p class="muted small">Lấy các mục yêu thích dùng được (theo bộ lọc Tất cả / Short / Khai thị) theo thứ tự tập, hết thì lặp vòng lại, dừng khi đủ thời lượng (không cắt dở khai thị cuối).</p>
-      <div class="actions">
-        <input id="fv-auto-min" type="number" min="1" step="1" value="60" inputmode="numeric" aria-label="Tổng thời lượng (phút)"> phút
-        <span id="fv-auto-preview" class="small muted"></span>
-        <button id="fv-auto" class="btn small" type="button">Tạo</button>
-      </div>
     </section>
   </div>
   <div id="fv-pane-videos" class="fv-pane" role="tabpanel" aria-labelledby="fv-tab-videos" hidden>
@@ -82,7 +95,9 @@
   </div>
 </main>
 <script src="/static/app.js"></script>
+<script src="/static/player.js" defer></script>
 <script src="/static/watch.js" defer></script>
+<script src="/static/listen.js" defer></script>
 <script src="/static/favorites.js"></script>
 <script src="/static/theme_plan.js"></script>
 <script>Favorites.init();ThemePlan.init();</script>

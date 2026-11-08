@@ -1,15 +1,11 @@
 """WATCH1: pure room invariants and authenticated HTTP integration, no real services."""
 from __future__ import annotations
 
-import hashlib
+import asyncio
 import json
-import os
-import subprocess
-import threading
+import logging
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import replace
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -64,7 +60,7 @@ def test_reject_urls_atomically(room, url):  # AC2,8
 
 
 @pytest.mark.parametrize("data", [
-    {"queue": []}, {"queue": QUEUE * 101}, {"queue": [{"url": "/v", "title": "x" * 201}]},
+    {"queue": []}, {"queue": QUEUE * 334}, {"queue": [{"url": "/v", "title": "x" * 201}]},
     {"queue": [None]}, {"queue": "oops"}, {"index": -1}, {"index": 3}, {"index": True},
     {"position": -1}, {"position": 10 ** 400}, {"position": float("inf")}, {"position": True}, {"rate": .24},
     {"rate": 4.01}, {"rate": float("nan")}, {"rate": "1"}, {"paused": "false"},
@@ -110,8 +106,10 @@ def test_queue_cas_navigation_and_end(room):  # AC8
     assert end["index"] == 2 and end["paused"]
     assert r.command("a", "prev", expect_version=end["version"])["index"] == 1
     # Maximum accepted queue, title and URL boundaries.
-    r.command("a", "set", queue=[{"url": "/" + "a" * 2047, "title": "t" * 200}] * 300, index=299)
-    assert len(r.snapshot()["queue"]) == 300
+    r.command("a", "set", queue=[{"url": "/" + "a" * 2047, "title": "t" * 200}] * 1000, index=999)
+    assert len(r.snapshot()["queue"]) == 1000
+    with pytest.raises(ValueError):  # AC 35: one whole series fits; beyond the cap is refused
+        r.command("a", "set", queue=[{"url": "/a", "title": "t"}] * 1001)
 
 
 def test_simultaneous_ended_only_advances_once(room):  # AC8
@@ -126,6 +124,126 @@ def test_simultaneous_ended_only_advances_once(room):  # AC8
     with ThreadPoolExecutor(max_workers=2) as workers:
         assert sorted(workers.map(ended, ["a", "b"])) == ["conflict", "ok"]
     assert r.snapshot()["index"] == 1
+
+
+def test_auto_defaults_updates_preserve_playback_and_reset(room):  # LISTEN1 AC11
+    r, now = room
+    assert r.snapshot()["auto"] is True
+    first = r.command("a", "set", queue=QUEUE, position=12)
+    now[0] += 3
+    manual = r.command("b", "auto", auto=False)
+    assert manual["auto"] is False and not manual["paused"]
+    assert manual["position"] == 15 and manual["index"] == 0 and manual["queue"] == QUEUE
+    assert manual["version"] == first["version"] + 1 and manual["by"] == "b"
+    assert r.snapshot("a")["auto"] is False
+    assert r.command("a", "next", expect_version=manual["version"])["index"] == 1
+    assert r.command("a", "set", queue=QUEUE)["auto"] is False
+    assert r.command("b", "auto", auto=True)["auto"] is True
+    r.command("a", "auto", auto=False)
+    assert r.command("a", "end")["auto"] is True
+
+
+@pytest.mark.parametrize("value", [None, 0, 1, "true", "false", [], {}])
+def test_auto_rejects_non_bool_atomically(room, value):  # LISTEN1 AC11
+    r, _ = room
+    r.command("a", "set", queue=QUEUE)
+    before = r.snapshot()
+    with pytest.raises(ValueError):
+        r.command("b", "auto", auto=value)
+    assert r.snapshot() == before
+    with pytest.raises(ValueError):
+        r.command("b", "auto")
+    assert r.snapshot() == before
+
+
+def test_auto_change_invalidates_stale_ended_version(room):
+    r, _ = room
+    playing = r.command("a", "set", queue=QUEUE)
+    manual = r.command("b", "auto", auto=False)
+    with pytest.raises(WatchConflict):
+        r.command("a", "next", expect_version=playing["version"])
+    assert r.snapshot()["index"] == 0 and r.snapshot()["auto"] is False
+    assert r.command("a", "next", expect_version=manual["version"])["index"] == 1
+
+
+def test_ended_countdown_is_shared_idempotent_and_advances_on_read(room):
+    r, now = room
+    first = r.command("a", "set", queue=QUEUE)
+    ended = r.command("a", "ended", expect_version=first["version"], position=60)
+    assert ended["index"] == 0 and ended["paused"] and ended["advance_at"] == now[0] + 3
+    assert r.command("b", "ended", expect_version=first["version"], position=60) == ended
+    now[0] += 2.999
+    assert r.snapshot()["index"] == 0
+    now[0] += .001
+    advanced = r.snapshot()
+    assert advanced["index"] == 1 and not advanced["paused"] and advanced["advance_at"] is None
+    assert advanced["updated_at"] == now[0] and advanced["version"] == ended["version"] + 1
+    # A late duplicate of the old ended never starts a countdown on the new video.
+    assert r.command("b", "ended", expect_version=first["version"])["advance_at"] is None
+    assert r.snapshot()["index"] == 1
+
+
+def test_ended_simultaneous_only_creates_one_deadline(room):
+    r, _ = room
+    version = r.command("a", "set", queue=QUEUE)["version"]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda client: r.command(client, "ended", expect_version=version), ["a", "b"]))
+    assert results[0]["version"] == results[1]["version"] == version + 1
+    assert results[0]["advance_at"] == results[1]["advance_at"]
+
+
+def test_late_peer_ended_with_fresh_version_does_not_extend_or_restart_wait(room):
+    r, now = room
+    first = r.command("a", "set", queue=QUEUE)
+    wait = r.command("a", "ended", expect_version=first["version"])
+    now[0] += 1
+    late = r.command("b", "ended", expect_version=wait["version"])
+    assert late["advance_at"] == wait["advance_at"] and late["version"] == wait["version"]
+    cancel = r.command("a", "cancel_advance")
+    late = r.command("b", "ended", expect_version=cancel["version"])
+    assert late["advance_at"] is None and late["version"] == cancel["version"]
+    replay = r.command("a", "play", position=0)
+    assert r.command("a", "ended", expect_version=replay["version"])["advance_at"] == now[0] + 3
+
+
+def test_countdown_cancel_now_auto_and_last_item(room):
+    r, now = room
+    def end():
+        return r.command("a", "ended", expect_version=r.snapshot()["version"], position=60)
+    r.command("a", "set", queue=QUEUE)
+    wait = end()
+    cancelled = r.command("b", "cancel_advance", expect_version=wait["version"])
+    now[0] += 4
+    assert r.snapshot()["index"] == 0 and r.snapshot()["advance_at"] is None and r.snapshot()["paused"]
+    r.command("a", "play", position=0)
+    wait = end()
+    quick = r.command("b", "advance_now", expect_version=wait["version"])
+    assert quick["index"] == 1 and not quick["paused"] and quick["advance_at"] is None
+    assert r.command("b", "advance_now")["index"] == 1
+    wait = end()
+    r.command("b", "auto", auto=False)
+    now[0] += 4
+    assert r.snapshot()["index"] == 1 and r.snapshot()["advance_at"] is None
+    r.command("a", "play", position=0)
+    assert end()["advance_at"] is None
+    r.command("b", "auto", auto=True)
+    r.command("b", "goto", index=2)
+    last = end()
+    assert last["paused"] and last["advance_at"] is None and last["index"] == 2
+
+
+def test_due_countdown_is_applied_before_commands_and_navigation_cancels(room):
+    r, now = room
+    first = r.command("a", "set", queue=QUEUE)
+    r.command("a", "ended", expect_version=first["version"])
+    now[0] += 5
+    paused = r.command("b", "pause")
+    assert paused["index"] == 1 and paused["position"] == 2
+    r.command("b", "play", position=0)
+    wait = r.command("a", "ended", expect_version=r.snapshot()["version"])
+    r.command("b", "prev", expect_version=wait["version"])
+    now[0] += 4
+    assert r.snapshot()["index"] == 0 and r.snapshot()["advance_at"] is None
 
 
 @pytest.mark.parametrize("action,data", [
@@ -151,8 +269,8 @@ def web(cfg):
 
 
 def test_http_auth(web):  # AC3
-    calls = [("GET", "/api/watch"), ("GET", "/api/watch/audio/youtube0001/k01"), ("POST", "/api/watch"),
-             ("POST", "/api/watch/leave"), ("DELETE", "/api/watch")]
+    calls = [("GET", "/api/watch"), ("POST", "/api/watch"),
+             ("POST", "/api/watch/leave"), ("POST", "/api/watch/log"), ("DELETE", "/api/watch")]
     for method, path in calls:
         assert web.request(method, path, json={"client": "a", "action": "set", "queue": QUEUE}).status_code == 401
     response = web.get("/watch")
@@ -177,7 +295,7 @@ def test_http_room_lifecycle_and_validation(web):  # AC1,2,4,8
     for url in BAD_URLS:
         response = web.post("/api/watch", json={"client": "a", "action": "set", "video_url": url})
         assert response.status_code == 422
-    for queue in [QUEUE * 101, [{"url": "/v", "title": "x" * 201}], [QUEUE[0], {"url": "//evil/x"}]]:
+    for queue in [QUEUE * 334, [{"url": "/v", "title": "x" * 201}], [QUEUE[0], {"url": "//evil/x"}]]:
         assert web.post("/api/watch", json={"client": "a", "action": "set", "queue": queue}).status_code == 422
     assert web.get("/api/watch").json()["version"] == view["version"]
     assert web.post("/api/watch", json={"client": "a", "action": "next", "expect_version": first["version"]}).status_code == 409
@@ -217,6 +335,52 @@ def endpoint(app, path, method="GET"):
 def set_room(app, url):
     return json.loads(endpoint(app, "/api/watch", "POST")(
         {"client": "old-tab", "action": "set", "queue": [{"url": url, "title": "Video"}]}).body)
+
+
+def test_auto_route_defaults_fresh_snapshot_and_422(cfg):  # no TestClient/socket
+    from web_helpers import make_app
+    app = make_app(cfg)
+    assert set_room(app, "/files/youtube0001/k01.mp4")["auto"] is True
+    post, get = endpoint(app, "/api/watch", "POST"), endpoint(app, "/api/watch")
+    response = post({"client": "a", "action": "auto", "auto": False})
+    assert response.status_code == 200 and json.loads(response.body)["auto"] is False
+    current = json.loads(get("b").body)
+    assert current["auto"] is False
+    for value in [None, 0, 1, "true", "false", [], {}]:
+        invalid = post({"client": "a", "action": "auto", "auto": value})
+        assert invalid.status_code == 422
+        assert json.loads(get().body)["version"] == current["version"]
+    assert post({"client": "a", "action": "auto"}).status_code == 422
+
+
+def test_watch_codes_are_derived_from_download_manifest_not_client(cfg):
+    from web_helpers import make_app, write_episode
+    eid = "youtube0001"
+    write_episode(cfg, eid)
+    (Path(cfg.workspace.dir) / eid / "titles.json").write_text(json.dumps({"header": {"fields": {"episode": "20"}}}))
+    path = Path(cfg.render.output_dir) / eid / "render_manifest.json"
+    manifest = json.loads(path.read_text())
+    manifest["shorts"].insert(0, {"clip_id": "gone", "status": "skipped", "skip_reason": "rejected"})
+    path.write_text(json.dumps(manifest))
+    app = make_app(cfg)
+    response = endpoint(app, "/api/watch", "POST")({"client": "a", "action": "set", "queue": [
+        {"url": f"/files/{eid}/k01.mp4?v=abc", "title": "wrong", "code": "wrong"},
+        {"url": f"/files/{eid}/k02.mp4", "title": "wrong"}, {"url": "/unknown.mp4", "title": "Other"}]})
+    data = json.loads(response.body)
+    assert data["code"] == "T20_S02" and data["number"] == 2 and data["total"] == 3
+    assert data["title"] == "Tiêu đề k01"
+    assert data["queue"][1]["code"] == "T20_S03" and data["queue"][1]["duration"] == 61
+    assert "code" not in data["queue"][2]
+
+
+def test_http_auto_sync_and_validation(web):
+    from web_helpers import login
+    login(web)
+    assert web.post("/api/watch", json={"client": "a", "action": "set", "queue": QUEUE}).json()["auto"] is True
+    assert web.post("/api/watch", json={"client": "a", "action": "auto", "auto": False}).json()["auto"] is False
+    assert web.get("/api/watch?client=b").json()["auto"] is False
+    for value in [None, 0, 1, "true", [], {}]:
+        assert web.post("/api/watch", json={"client": "b", "action": "auto", "auto": value}).status_code == 422
 
 
 def test_client_fav_is_ignored_and_favorite_action_removed(room):  # AC15
@@ -261,136 +425,6 @@ def test_fav_only_for_valid_clip_and_owned_episode(cfg, monkeypatch, url):  # AC
     assert seen == ([EID] if url.startswith(f"/files/{EID}/k02") else [])
 
 
-@pytest.fixture
-def fake_ffmpeg(monkeypatch):
-    from auto_short.web import watch_audio
-    calls = []
-    def run(args, **kwargs):
-        calls.append((args, kwargs))
-        assert args[0] == "ffmpeg"
-        assert args[args.index("-c:a") + 1] == "copy" and "-vn" in args
-        assert args[args.index("-map") + 1] == "0:a:0"
-        assert args[args.index("-movflags") + 1] == "+faststart"
-        assert kwargs["check"] is True
-        Path(args[-1]).write_bytes(b"m4a-data")
-        return SimpleNamespace(returncode=0)
-    monkeypatch.setattr(watch_audio.subprocess, "run", run)
-    return calls
-
-
-def test_audio_route_local_remux_cache_and_changed_manifest(cfg, fake_ffmpeg):  # AC16
-    from web_helpers import make_app, write_episode
-    write_episode(cfg, EID)
-    app = make_app(cfg)
-    get = endpoint(app, "/api/watch/audio/{episode_id}/{clip}")
-    assert get("invalid/path", "k01").status_code == 404
-    assert get(EID, "invalid.clip").status_code == 404
-    assert get(EID, "missing").status_code == 404
-    first = get(EID, "k01")
-    assert first.status_code == 200 and first.media_type == "audio/mp4"
-    assert Path(first.path).name == "0" * 64 + ".m4a"
-    args, _ = fake_ffmpeg[0]
-    assert args[args.index("-i") + 1] == str(Path(cfg.render.output_dir) / EID / "shorts/k01.mp4")
-    assert Path(first.path).read_bytes() == b"m4a-data"
-    assert get(EID, "k01").path == first.path and len(fake_ffmpeg) == 1
-    manifest = Path(cfg.render.output_dir) / EID / "render_manifest.json"
-    doc = json.loads(manifest.read_text())
-    doc["shorts"][0]["sha256"] = "a" * 64
-    manifest.write_text(json.dumps(doc))
-    assert Path(get(EID, "k01").path).name == "a" * 64 + ".m4a" and len(fake_ffmpeg) == 2
-
-
-def test_audio_route_stored_short_offline_and_fetch_parameters(cfg, monkeypatch, fake_ffmpeg):  # AC16
-    from auto_short.config import StoreConfig
-    from auto_short.web.routes import watch
-    from web_helpers import make_app, write_episode
-    files = write_episode(cfg, EID)
-    out = Path(cfg.render.output_dir) / EID
-    source = out / "shorts/k01.mp4"
-    stat = source.stat()
-    (out / "store.json").write_text(json.dumps({"released": {"k01": {
-        "sha256": "0" * 64, "size": stat.st_size, "mtime_ns": stat.st_mtime_ns}}}))
-    source.unlink()
-    off = endpoint(make_app(cfg), "/api/watch/audio/{episode_id}/{clip}")
-    assert off(EID, "k01").status_code == 503 and not fake_ffmpeg
-    fetched = []
-    class Store:
-        up = False
-        def available(self):
-            return self.up
-        def fetch(self, video_id, kind, dest, sha256, *, clip):
-            assert (video_id, kind, sha256, clip) == (EID, "short", "0" * 64, "k01.mp4")
-            assert dest.parent.parent == Path(cfg.workspace.dir) / "_watch_audio"
-            fetched.append(dest)
-            dest.write_bytes(files["k01"])
-    client = Store()
-    monkeypatch.setattr(watch.StoreClient, "from_config", lambda config: client)
-    online_cfg = replace(cfg, store=StoreConfig(enabled=True))
-    get = endpoint(make_app(online_cfg), "/api/watch/audio/{episode_id}/{clip}")
-    assert get(EID, "k01").status_code == 503 and not fake_ffmpeg
-    client.up = True
-    response = get(EID, "k01")
-    assert response.status_code == 200 and len(fake_ffmpeg) == len(fetched) == 1
-    assert not fetched[0].exists()  # temporary original is cleaned after remux
-    assert get(EID, "k01").path == response.path and len(fetched) == 1
-
-
-def test_audio_cache_concurrent_requests_remux_once(tmp_path):  # AC16
-    from auto_short.web.watch_audio import AudioCache
-    started, release = threading.Event(), threading.Event()
-    calls = []
-    def run(args, **kwargs):
-        calls.append(args)
-        started.set()
-        assert release.wait(5)
-        Path(args[-1]).write_bytes(b"m4a")
-    cache = AudioCache(tmp_path / "cache", run=run)
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        first = pool.submit(cache.get, "a" * 64, tmp_path / "source.mp4")
-        assert started.wait(5)
-        second = pool.submit(cache.get, "a" * 64, tmp_path / "source.mp4")
-        release.set()
-        assert first.result(timeout=5) == second.result(timeout=5)
-    assert len(calls) == 1
-
-
-def test_audio_cache_failure_is_atomic_and_cleans_temp(tmp_path):  # AC16
-    from auto_short.web.watch_audio import AudioCache, WatchAudioError
-    def run(args, **kwargs):
-        Path(args[-1]).write_bytes(b"partial")
-        raise subprocess.CalledProcessError(1, args)
-    cache = AudioCache(tmp_path / "cache", run=run)
-    with pytest.raises(WatchAudioError):
-        cache.get("a" * 64, tmp_path / "source.mp4")
-    assert list(cache.root.iterdir()) == []
-    with pytest.raises(WatchAudioError):
-        cache.get("../escape", tmp_path / "source.mp4")
-
-
-def test_audio_cache_evicts_oldest_mtime(tmp_path):  # AC16; small injected quota instead of 2 GB
-    from auto_short.web.watch_audio import AudioCache
-    def run(args, **kwargs):
-        Path(args[-1]).write_bytes(b"1234")
-    cache = AudioCache(tmp_path / "cache", run=run, max_bytes=8)
-    a = cache.get("a" * 64, tmp_path / "source.mp4")
-    b = cache.get("b" * 64, tmp_path / "source.mp4")
-    os.utime(a, (10, 10))
-    os.utime(b, (20, 20))
-    c = cache.get("c" * 64, tmp_path / "source.mp4")
-    assert not a.exists() and b.exists() and c.exists()
-    assert sum(p.stat().st_size for p in cache.root.glob("*.m4a")) == 8
-
-
-def test_audio_real_remux_has_only_aac_and_faststart(video, tmp_path):  # AC16, tiny local ffmpeg fixture
-    from auto_short.web.watch_audio import AudioCache
-    result = AudioCache(tmp_path / "cache").get(hashlib.sha256(video.read_bytes()).hexdigest(), video)
-    streams = json.loads(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,codec_name",
-        "-of", "json", str(result)], check=True, capture_output=True, text=True).stdout)["streams"]
-    assert streams == [{"codec_name": "aac", "codec_type": "audio"}]
-    data = result.read_bytes()
-    assert data.index(b"moov") < data.index(b"mdat")
-
-
 def test_http_watch_fav_is_fresh_without_client_metadata(web, monkeypatch):  # AC15
     from web_helpers import login
     login(web)
@@ -404,17 +438,254 @@ def test_http_watch_fav_is_fresh_without_client_metadata(web, monkeypatch):  # A
     assert web.post("/api/watch", json={"client": "a", "action": "favorite", "index": 0, "favorite": False}).status_code == 422
 
 
-def test_http_audio_range_auth_and_cache(cfg, fake_ffmpeg):  # AC16
-    from fastapi.testclient import TestClient
-    from web_helpers import login, make_app, write_episode
-    write_episode(cfg, EID)
-    with TestClient(make_app(cfg), follow_redirects=False) as client:
-        path = f"/api/watch/audio/{EID}/k01"
-        assert client.get(path).status_code == 401
-        login(client)
-        assert client.get(f"/api/watch/audio/{EID}/bad.clip").status_code == 404
-        response = client.get(path)
-        assert response.status_code == 200 and response.headers["content-type"].startswith("audio/mp4")
-        partial = client.get(path, headers={"Range": "bytes=0-3"})
-        assert partial.status_code == 206 and partial.content == response.content[:4]
-        assert len(fake_ffmpeg) == 1
+def log_request(payload, *, raw=False):
+    from starlette.requests import Request
+    data = payload if raw else json.dumps(payload, ensure_ascii=False).encode()
+    chunks = iter(((data[:20], True), (data[20:], False)))
+
+    async def receive():
+        chunk, more = next(chunks)
+        return {"type": "http.request", "body": chunk, "more_body": more}
+
+    return Request({"type": "http", "method": "POST", "path": "/api/watch/log", "headers": [],
+                    "query_string": b""}, receive)
+
+
+def log_batch(**changes):
+    return {"client": "phone", "page": "watch", "events": [{"type": "pause_hidden", "t": 21.5, "hidden": True}], **changes}
+
+
+def test_log_route_records_sanitized_events_and_limits_rate(cfg, monkeypatch, caplog):  # LISTEN1 AC16
+    from auto_short.web.routes import watch
+    from web_helpers import make_app
+    now = [100.0]
+    monkeypatch.setattr(watch.time, "monotonic", lambda: now[0])
+    app = make_app(cfg)
+    post = endpoint(app, "/api/watch/log", "POST")
+    before = json.loads(endpoint(app, "/api/watch")().body)
+    payload = log_batch(client="pho\nne\x00", events=[
+        {"type": "pause_hidden", "t": 21.5, "hidden": True},
+        {"type": "retry_blocked", "err": "NotAllowed\r\nError\x1b\u2028", "hidden": True},
+        {"type": "seek_skipped_hidden", "drift": -3.25},
+    ])
+    with caplog.at_level(logging.INFO, logger="auto_short.web.watch"):
+        assert asyncio.run(post(log_request(payload))).status_code == 200
+        # Same client across pages shares one rate limit; another client is independent.
+        assert asyncio.run(post(log_request(log_batch(page="listen")))).status_code == 429
+        assert asyncio.run(post(log_request(log_batch(client="desktop")))).status_code == 200
+        now[0] += 4.999
+        assert asyncio.run(post(log_request(log_batch()))).status_code == 429
+        now[0] += .001
+        assert asyncio.run(post(log_request(log_batch()))).status_code == 200
+    records = [r for r in caplog.records if r.name == "auto_short.web.watch"]
+    assert len(records) == 5 and all(r.levelno == logging.INFO for r in records)
+    decoded = [json.loads(r.getMessage().removeprefix("player ")) for r in records]
+    assert decoded[1] == {"client": "phone", "page": "watch", "type": "retry_blocked", "err": "NotAllowedError", "hidden": True}
+    assert decoded[2]["drift"] == -3.25
+    assert all(not any(c in r.getMessage() for c in "\n\r\x00\x1b\u2028") for r in records)
+    assert json.loads(endpoint(app, "/api/watch")().body)["version"] == before["version"]
+
+
+@pytest.mark.parametrize("payload", [
+    {}, [], log_batch(client=""), log_batch(client=5), log_batch(client="c" * 201), log_batch(page="other"),
+    log_batch(events=[]), log_batch(events=[{"type": "visibility"}] * 21), log_batch(events="pause_hidden"),
+    log_batch(events=[None]), log_batch(events=[{}]), log_batch(events=[{"type": "other"}]),
+    log_batch(events=[{"type": "pause_hidden", "t": True}]), log_batch(events=[{"type": "pause_hidden", "t": -1}]),
+    log_batch(events=[{"type": "waiting", "drift": float("nan")}]),
+    log_batch(events=[{"type": "waiting", "drift": float("inf")}]),
+    log_batch(events=[{"type": "waiting", "t": 10 ** 400}]),
+    log_batch(events=[{"type": "waiting", "hidden": 1}]), log_batch(events=[{"type": "retry_blocked", "err": 4}]),
+    log_batch(events=[{"type": "visibility", "unknown": True}]), log_batch(extra="unknown"),
+])
+def test_log_route_rejects_invalid_without_logging_or_rate_charge(cfg, payload, caplog):
+    from web_helpers import make_app
+    post = endpoint(make_app(cfg), "/api/watch/log", "POST")
+    with caplog.at_level(logging.INFO, logger="auto_short.web.watch"):
+        assert asyncio.run(post(log_request(payload))).status_code == 422
+        assert not [r for r in caplog.records if r.name == "auto_short.web.watch"]
+        assert asyncio.run(post(log_request(log_batch()))).status_code == 200
+
+
+def test_log_route_byte_and_event_boundaries(cfg, caplog):
+    from web_helpers import make_app
+    post = endpoint(make_app(cfg), "/api/watch/log", "POST")
+    # Exact raw bytes count, including whitespace and non-ASCII UTF-8 characters.
+    raw = json.dumps(log_batch(client="máy", events=[{"type": "visibility"}] * 20), ensure_ascii=False).encode()
+    with caplog.at_level(logging.INFO, logger="auto_short.web.watch"):
+        assert asyncio.run(post(log_request(raw + b" " * (2049 - len(raw)), raw=True))).status_code == 422
+        assert asyncio.run(post(log_request(raw + b" " * (2048 - len(raw)), raw=True))).status_code == 200
+    assert len([r for r in caplog.records if r.name == "auto_short.web.watch"]) == 20
+    assert asyncio.run(post(log_request(b"{", raw=True))).status_code == 422
+    assert asyncio.run(post(log_request(b"\xff", raw=True))).status_code == 422
+
+
+def test_log_route_accepts_pip_and_retry_cap_events(cfg, caplog):  # LISTEN1 AC18/19
+    from web_helpers import make_app
+    post = endpoint(make_app(cfg), "/api/watch/log", "POST")
+    events = [{"type": "retry_gave_up", "t": 24.575, "hidden": True},
+              {"type": "pip_enter", "hidden": False}, {"type": "pip_leave", "hidden": True}]
+    events += [{"type": "pip_unsupported", "err": reason} for reason in ("insecure", "disabled", "api-missing")]
+    with caplog.at_level(logging.INFO, logger="auto_short.web.watch"):
+        assert asyncio.run(post(log_request(log_batch(events=events)))).status_code == 200
+    records = [r for r in caplog.records if r.name == "auto_short.web.watch"]
+    assert len(records) == len(events)
+    assert [json.loads(r.getMessage().removeprefix("player ")) for r in records] == [
+        {"client": "phone", "page": "watch", **event} for event in events]
+
+
+def test_log_requires_auth_without_testclient(cfg):
+    from web_helpers import make_app
+    app = make_app(cfg)
+    middleware = next(m.kwargs["dispatch"] for m in app.user_middleware
+                      if m.kwargs.get("dispatch") and m.kwargs["dispatch"].__name__ == "auth_middleware")
+
+    async def protected(request):
+        pytest.fail("unauthenticated diagnostics reached the endpoint")
+
+    assert asyncio.run(middleware(log_request(log_batch()), protected)).status_code == 401
+
+
+def test_http_log_auth_validation_rate_and_records(web, caplog):
+    from web_helpers import login
+    assert web.post("/api/watch/log", json=log_batch()).status_code == 401
+    login(web)
+    assert web.post("/api/watch/log", json=log_batch(events=[])).status_code == 422
+    with caplog.at_level(logging.INFO, logger="auto_short.web.watch"):
+        assert web.post("/api/watch/log", json=log_batch()).status_code == 200
+        assert web.post("/api/watch/log", json=log_batch()).status_code == 429
+    assert len([r for r in caplog.records if r.name == "auto_short.web.watch"]) == 1
+
+
+EPISODES = [dict(url="/files/ep1/a.mp4", title="a"), dict(url="/files/ep1/b.mp4?v=1", title="b"),
+            dict(url="/files/ep1.kt/c.mp4", title="c"), dict(url="/files/ep2/d.mp4", title="d"),
+            dict(url="/files/ep3/e.mp4", title="e")]
+
+
+def test_auto_advance_stops_at_episode_end_and_card_is_shared(room):  # AC 31
+    r, now = room
+    r.command("a", "set", queue=EPISODES, index=1)
+    wait = r.command("a", "ended", expect_version=r.snapshot()["version"])
+    assert wait["advance_at"] is not None and wait["finished"]
+    now[0] += 3
+    assert r.snapshot()["index"] == 2  # b -> ep1.kt (same base episode)
+    end = r.command("a", "ended", expect_version=r.snapshot()["version"])
+    assert end["advance_at"] is None and end["paused"] and end["finished"] and end["index"] == 2
+    now[0] += 60
+    assert r.snapshot(client="b")["index"] == 2 and r.snapshot()["finished"]
+    # advance_now cannot cross either; the prev/next buttons still can (AC 32).
+    assert r.command("b", "advance_now")["index"] == 2
+    nxt = r.command("b", "next", expect_version=r.snapshot()["version"])
+    assert nxt["index"] == 3 and not nxt["paused"] and not nxt["finished"]
+
+
+def test_episode_command_moves_whole_room_to_first_item(room):  # AC 31
+    r, _ = room
+    r.command("a", "set", queue=EPISODES, index=2)
+    chosen = r.command("b", "episode", episode="ep3")
+    assert chosen["index"] == 4 and not chosen["paused"] and chosen["position"] == 0
+    assert r.snapshot(client="a")["index"] == 4
+    assert r.command("a", "episode", episode="ep1")["index"] == 0
+    for bad in ("nope", 5):
+        with pytest.raises(ValueError):
+            r.command("a", "episode", episode=bad)
+    labelled = r.command("a", "set", queue=[dict(url="/files/ep1/a.mp4", title="a", ep_label="20")])
+    assert labelled["queue"][0]["ep_label"] == "20"
+
+
+def test_continuous_room_crosses_episodes_and_shows_flag(room):  # compatibility: rooms created before Amendment I
+    r, now = room
+    set_ = r.command("a", "set", queue=EPISODES, index=2, continuous=True)
+    assert set_["continuous"] is True
+    wait = r.command("a", "ended", expect_version=set_["version"])
+    assert wait["advance_at"] == now[0] + 3  # ep1.kt -> ep2 would stop in a normal room
+    now[0] += 3
+    assert r.snapshot()["index"] == 3
+    assert r.command("a", "set", queue=EPISODES)["continuous"] is False
+    with pytest.raises(ValueError):
+        r.command("a", "set", queue=EPISODES, continuous="yes")
+    assert r.command("a", "end")["continuous"] is False
+
+
+def test_http_queue_sent_only_when_version_changes_and_size(web):  # AC 35 load
+    import json
+    from web_helpers import login
+    login(web)
+    big = [{"url": f"/files/ep{n // 10}/c{n}.mp4", "title": f"Tiêu đề bài số {n} của một tập kinh"} for n in range(400)]
+    post = lambda body: web.post("/api/watch", json={"client": "a", **body})  # noqa: E731
+    first = post({"action": "set", "queue": big, "index": 5}).json()
+    version = first["queue_version"]
+    assert len(first["queue"]) == 400
+    full = web.get("/api/watch?client=b")  # new machine / invite link: no version -> full queue
+    assert len(full.json()["queue"]) == 400 and full.json()["queue_version"] == version
+    same = web.get(f"/api/watch?client=b&queue_version={version}")
+    assert "queue" not in same.json() and same.json()["video_url"] == big[5]["url"] and same.json()["index"] == 5
+    assert "queue" not in post({"action": "next", "expect_version": first["version"], "queue_version": version}).json()
+    assert len(post({"action": "goto", "index": 1, "queue_version": "stale.0"}).json()["queue"]) == 400
+    changed = post({"action": "set", "queue": big[:3], "queue_version": version}).json()
+    assert changed["queue_version"] != version and len(changed["queue"]) == 3
+    assert "queue" in web.get(f"/api/watch?client=b&queue_version={version}").json()
+    # Size: the poll no longer carries the queue (measured, printed with -s).
+    post({"action": "set", "queue": big, "index": 5})
+    v = web.get("/api/watch?client=b").json()["queue_version"]
+    with_queue, without = len(web.get("/api/watch?client=b").content), len(web.get(f"/api/watch?client=b&queue_version={v}").content)
+    print(f"snapshot 400 items: with queue {with_queue} B, without {without} B")
+    assert without < with_queue / 20
+
+
+@pytest.mark.parametrize("continuous", [False, True])
+def test_favorites_groups_cross_episode_but_stop_at_part_end(room, continuous):  # AC 43
+    r, now = room
+    # Same part crosses episodes; different parts split even the same episode.
+    groups = [{"id": "p1", "label": "Phần 1", "kind": "part", "choice": "Phần 1 (bài 1–2)"},
+              {"id": "p2", "label": "Phần 2", "kind": "part"}]
+    queue = [dict(e, group=groups[0 if n < 2 else 1]) for n, e in enumerate([EPISODES[2], EPISODES[3], EPISODES[3]])]
+    first = r.command("a", "set", queue=queue, continuous=continuous)
+    # Input and snapshot nested metadata cannot mutate the room.
+    queue[0]["group"]["label"] = "changed input"
+    first["queue"][1]["group"]["label"] = "changed snapshot"
+    assert r.snapshot("b")["queue"][0]["group"]["label"] == "Phần 1"
+    assert r.snapshot()["queue"][1]["group"]["label"] == "Phần 1"
+    wait = r.command("a", "ended", expect_version=first["version"])
+    assert wait["advance_at"] == now[0] + 3
+    now[0] += 3
+    assert r.snapshot("b")["index"] == 1
+    done = r.command("b", "ended", expect_version=r.snapshot()["version"])
+    assert done["finished"] and done["paused"] and done["advance_at"] is None
+    now[0] += 30
+    assert r.snapshot("a")["index"] == 1
+    assert r.command("b", "advance_now")["index"] == 1
+    picked = r.command("b", "group", group="p2")
+    assert (picked["index"], picked["position"], picked["paused"], picked["finished"]) == (2, 0, False, False)
+    assert r.snapshot("a")["index"] == 2
+    assert r.command("a", "group", group="p1")["index"] == 0
+    before = r.snapshot()
+    for bad in ("missing", None, 3):
+        with pytest.raises(ValueError):
+            r.command("a", "group", group=bad)
+        assert r.snapshot() == before
+
+
+@pytest.mark.parametrize("group", [None, {}, {"id": "p"}, {"id": 3, "label": "Phần"},
+    {"id": "p", "label": ""}, {"id": "p", "label": "x" * 81},
+    {"id": "p", "label": "Phần", "choice": 3}, {"id": "p", "label": "Phần", "kind": []},
+    {"id": "p\n", "label": "Phần"}, {"id": "p", "label": "Phần", "extra": True}])
+def test_invalid_group_metadata_is_rejected_atomically(room, group):
+    r, _ = room
+    r.command("a", "set", queue=QUEUE)
+    before = r.snapshot()
+    with pytest.raises(ValueError):
+        r.command("b", "set", queue=[dict(QUEUE[0], group=group)])
+    assert r.snapshot() == before
+
+
+def test_group_metadata_survives_route_queue_cache_and_invite(cfg):  # AC 43 / old link / queue_version
+    from web_helpers import make_app
+    # Both endpoints must use the same room, just like two machines on /watch.
+    app = make_app(cfg)
+    post, get = endpoint(app, "/api/watch", "POST"), endpoint(app, "/api/watch", "GET")
+    group = {"id": "favorites:both:1", "label": "Phần 1", "kind": "part"}
+    first = json.loads(post({"client": "a", "action": "set", "queue": [dict(EPISODES[0], group=group)]}).body)
+    invite = json.loads(get(client="b", queue_version=None).body)
+    assert invite["queue"][0]["group"] == group and invite["group"] == group
+    cached = json.loads(get(client="a", queue_version=first["queue_version"]).body)
+    assert "queue" not in cached and cached["group"] == group
