@@ -40,6 +40,8 @@
   });
   let all = [], items = [], index = -1, currentItem = null, state = null, version = 0, started = false;
   let storageKey, lastSave = 0;
+  let groups = new Map();
+  const manuallyOpen = new Set();
   let auto = read("auto-short-listen-auto", true) !== false;
   let filter = read("auto-short-listen-filter", "both");
   if (!["both", "short", "khaithi"].includes(filter)) filter = "both";
@@ -64,9 +66,17 @@
     $("watch").disabled = !item;
     $("next").disabled = !item || index === items.length - 1;
     if (item) $("jump").value = item.base_episode_id;
+    for (const [base, group] of groups) {
+      const open = base === item?.base_episode_id || manuallyOpen.has(base);
+      if (group.details.open !== open) {
+        group.expectedToggle = open; group.details.open = open;
+      }
+    }
     $("queue").querySelectorAll("button[data-index]").forEach((button) => {
-      if (Number(button.dataset.index) === index) button.setAttribute("aria-current", "true");
-      else button.removeAttribute("aria-current");
+      if (Number(button.dataset.index) === index) {
+        button.setAttribute("aria-current", "true");
+        if (document.visibilityState === "visible" && player.active) button.scrollIntoView({ block: "nearest" });
+      } else button.removeAttribute("aria-current");
     });
   }
   function choose(next, autoplay = false, position = 0) {
@@ -96,20 +106,32 @@
     return start < 0 ? (items.length ? 0 : -1) : start;
   }
   function buildList() {
-    const groups = new Map();
+    groups = new Map();
     $("queue").replaceChildren(); $("jump").replaceChildren();
     items.forEach((item, n) => {
       if (!groups.has(item.base_episode_id)) {
-        const section = document.createElement("section"), heading = document.createElement("h3"), list = document.createElement("ol");
-        heading.textContent = epLabel(item); section.append(heading, list); $("queue").append(section);
+        const details = document.createElement("details"), summary = document.createElement("summary"), list = document.createElement("ol");
+        const group = { details, summary, list, item, count: 0, userToggle: false };
+        details.append(summary, list); $("queue").append(details);
+        // Native toggle events are asynchronous and also fire for .open changes.
+        summary.addEventListener("click", () => { group.userToggle = true; });
+        details.addEventListener("toggle", () => {
+          const automatic = !group.userToggle && group.expectedToggle === details.open;
+          group.expectedToggle = undefined; group.userToggle = false;
+          if (automatic) return;
+          if (details.open) manuallyOpen.add(item.base_episode_id);
+          else manuallyOpen.delete(item.base_episode_id);
+        });
         const option = document.createElement("option"); option.value = item.base_episode_id; option.textContent = epLabel(item);
-        $("jump").append(option); groups.set(item.base_episode_id, list);
+        $("jump").append(option); groups.set(item.base_episode_id, group);
       }
       const li = document.createElement("li"), button = document.createElement("button");
       button.type = "button"; button.className = "btn"; button.dataset.index = n;
       button.textContent = `${kindLabel(item)} · ${item.title || item.clip_id}`;
-      button.addEventListener("click", () => choose(n, true)); li.append(button); groups.get(item.base_episode_id).append(li);
+      button.addEventListener("click", () => choose(n, true)); li.append(button);
+      const group = groups.get(item.base_episode_id); group.list.append(li); group.count++;
     });
+    for (const group of groups.values()) group.summary.textContent = `${epLabel(group.item)} · ${group.count} bài`;
     $("jump").disabled = !items.length;
   }
   $("filter").addEventListener("change", () => {
@@ -135,7 +157,7 @@
     if (performance.now() - lastSave > 3000) { lastSave = performance.now(); save(); }
   });
   document.addEventListener("episode-tab", (event) => {
-    if (event.detail === "listen") player.activate();
+    if (event.detail === "listen") { player.activate(); renderCurrent(); }
     else {
       save();
       if (state) {
@@ -146,7 +168,10 @@
       player.suspend();
     }
   });
-  document.addEventListener("visibilitychange", save);
+  document.addEventListener("visibilitychange", () => {
+    save();
+    if (document.visibilityState === "visible" && player.active) renderCurrent();
+  });
   window.addEventListener("pagehide", save);
 
   // An unbound episode needs only the existing episode API (at most its two kinds).

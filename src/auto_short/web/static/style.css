@@ -413,16 +413,33 @@ body.modal-open { overflow: hidden; }
 .listen-room video { display: block; width: 100%; max-height: 60vh; background: #111; }
 .listen-room .actions { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; }
 .listen-room .actions label { max-width: 100%; min-width: 0; }
-.listen-room select { max-width: min(100%, 30rem); min-height: 40px; font-size: 1rem; }
+.listen-room select { width: 100%; max-width: 100%; min-width: 0; min-height: 40px; font-size: 1rem; }
 .listen-kind { font-weight: 600; }
-.listen-queue section { margin-top: 1.5rem; }
+.listen-queue details { margin-top: .75rem; }
+.listen-queue summary { padding: .5rem 0; font-weight: 600; color: var(--text); }
 .listen-queue ol { list-style: none; padding: 0; }
 .listen-queue li { margin: .35rem 0; }
 .listen-queue button { text-align: left; width: 100%; white-space: normal; }
 .listen-queue [aria-current="true"] { border-color: var(--accent); background: var(--accent-bg); font-weight: 600; }
 
 /* Shared LISTEN1/WATCH1 controls and episode-end status. */
-.player-controls { display: grid; grid-template-columns: repeat(3, 2.6rem); gap: .6rem; align-items: center; margin: .75rem 0; }
-.player-heart { display: block; width: 2.6rem; }
+.player-controls { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; margin: .75rem 0; }
+.player-heart { display: block; flex: 0 0 2.75rem; width: 2.75rem; }
 .player-notice { position: sticky; top: .5rem; z-index: 20; padding: .8rem; background: var(--accent-bg); border: 1px solid var(--accent); border-radius: 8px; font-weight: 600; }
 .player-notice .btn { margin-left: .5rem; }
+
+/* LISTEN1: contain long lecture names and native selects on narrow phones. */
+.episode-page .container, .watch-room { width: 100%; grid-template-columns: minmax(0, 1fr); }
+.episode-page .container > *, .watch-room > *, .listen-room *, .watch-queue li { min-width: 0; }
+.episode-page .container, .watch-room, .watch-invite { overflow-wrap: anywhere; }
+.episode-page .topbar { flex-wrap: wrap; gap: .5rem; }
+.episode-page .topnav { flex: 1 1 16rem; flex-wrap: wrap; justify-content: flex-end; }
+.episode-page .topbar > *, .episode-page .topnav > * { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.listen-room .actions > label { flex: 1 1 12rem; }
+.listen-room select, .listen-room option { white-space: normal; overflow-wrap: anywhere; }
+.listen-room select { text-overflow: ellipsis; }
+.listen-room video, .watch-room video, .episode-page .btn, .watch-room .btn { max-width: 100%; }
+.episode-page .btn, .watch-room .btn { white-space: normal; overflow-wrap: anywhere; }
+.watch-invite { min-width: 0; max-width: 100%; }
+.player-pip-hint { margin: .25rem 0; overflow-wrap: anywhere; }
+.player-pip[aria-pressed="true"] { background: var(--accent-bg); border-color: var(--accent); }

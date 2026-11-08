@@ -15,7 +15,8 @@
   let player;
   function cancelPause() { clearTimeout(pauseTimer); pauseTimer = null; if (player) player.syncBlocked = false; }
   function hiddenPause() {
-    return pageHidden || document.visibilityState === "hidden" || performance.now() - lastHiddenAt < 1500;
+    if (player?.inPiP()) return false;
+    return pageHidden || (player ? player.isHidden() : document.visibilityState === "hidden") || performance.now() - lastHiddenAt < 1500;
   }
   let state = null, queueKey = "";
   let sending = Promise.resolve(), pending = 0, pollTimer, pollGeneration = 0;
@@ -192,7 +193,7 @@
     const leave = () => navigator.sendBeacon("/api/watch/leave", new Blob([JSON.stringify({ client })], { type: "application/json" }));
     document.addEventListener("visibilitychange", () => {
       lastHiddenAt = performance.now(); cancelPause();
-      if (document.visibilityState !== "hidden") {
+      if (!player.isHidden()) {
         sending.then(() => poll(true));
       }
     });

@@ -6,7 +6,7 @@
 <title>Episode — Auto Short</title>
 <link rel="stylesheet" href="/static/style.css">
 </head>
-<body>
+<body class="episode-page">
 <header class="topbar">
   <a class="brand" href="/">&larr; Auto Short</a>
   <nav class="topnav"><a href="/monitor">Theo dõi</a> <a href="/storage">Bộ nhớ</a> <a href="/sutras">Đọc Kinh</a> <a href="/images">Thư viện ảnh</a>
@@ -32,11 +32,12 @@
     <video id="listen-video" controls playsinline preload="metadata" hidden></video>
     <button id="listen-play" class="btn primary" type="button" hidden>Bấm để phát</button>
     <div id="listen-notice" class="player-notice" role="status" aria-live="polite" hidden></div>
-    <div class="player-controls">
+    <div id="listen-controls" class="player-controls">
       <span class="player-heart"><button id="listen-favorite" class="btn icon-btn heart" type="button" hidden aria-label="Yêu thích" aria-pressed="false" title="Yêu thích">♡</button></span>
       <button id="listen-prev" class="btn icon-btn" type="button" title="Trước" aria-label="Trước" disabled>⏮</button>
       <button id="listen-next" class="btn icon-btn" type="button" title="Tiếp" aria-label="Tiếp" disabled>⏭</button>
     </div>
+    <p id="listen-pip-hint" class="small muted player-pip-hint" hidden></p>
     <label class="inline"><input id="listen-auto" type="checkbox" checked> Tự chuyển bài</label>
     <div class="actions">
       <button id="listen-watch" class="btn" type="button" disabled>Xem chung</button>

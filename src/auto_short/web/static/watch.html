@@ -18,11 +18,12 @@
   <video id="watch-video" controls playsinline preload="metadata" hidden></video>
   <button id="watch-play" class="btn primary" type="button" hidden>Bấm để phát</button>
   <div id="watch-notice" class="player-notice" role="status" aria-live="polite" hidden></div>
-  <div class="player-controls">
+  <div id="watch-controls" class="player-controls">
     <span class="player-heart"><button id="watch-favorite" class="btn icon-btn heart" type="button" hidden aria-label="Yêu thích" aria-pressed="false" title="Yêu thích">♡</button></span>
     <button id="watch-prev" class="btn icon-btn" type="button" title="Trước" aria-label="Trước" disabled>⏮</button>
     <button id="watch-next" class="btn icon-btn" type="button" title="Tiếp" aria-label="Tiếp" disabled>⏭</button>
   </div>
+  <p id="watch-pip-hint" class="small muted player-pip-hint" hidden></p>
   <label class="inline"><input id="watch-auto" type="checkbox" checked> Tự chuyển bài</label>
   <div class="actions">
     <button id="watch-end" class="btn small danger" type="button" disabled>Kết thúc xem chung</button>
