@@ -9,6 +9,7 @@ import hashlib
 import logging
 import time
 from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,6 +23,7 @@ from ..workspace import (
     Workspace,
     WorkspaceError,
     atomic_write_json,
+    check_up_to_date,
     read_stage_json,
     record_failure,
     run_stage,
@@ -116,10 +118,10 @@ def _title_clip(client: ChatClient, cfg: TitlingConfig, messages: list[dict], cl
     """Call the model for one clip with retries and backoff (G5/G6). Returns the option records of
     the first attempt with a valid option; None when attempts returned options but none valid (P3).
     Raises TitlingError when no attempt returned a schema-valid response."""
-    opts = options(cfg)
     last_error, parsed_any = None, False
     attempts = cfg.retries + 1
     for attempt in range(1, attempts + 1):
+        opts = {**options(cfg), "seed": cfg.seed + attempt - 1}
         wait = backoff_before(attempt, cfg.retry_backoff)
         if wait > 0:
             log.info("%s: clip %s: waiting %g s before attempt %d", STAGE, clip_id, wait, attempt)
@@ -145,6 +147,10 @@ def _title_clip(client: ChatClient, cfg: TitlingConfig, messages: list[dict], cl
             call["seconds"] = round(time.monotonic() - t0, 3)
             call["error"] = str(exc)
             last_error = exc
+            previous = [{"role": "assistant", "content": call["response"]["content"]}] if call["response"] else []
+            messages = messages + previous + [{"role": "user", "content":
+                f"Lần trước bị loại: {exc}. Hãy trả lời đúng schema; "
+                "evidence phải chép nguyên văn liên tục từ lời giảng."}]
             log.warning("%s: clip %s attempt %d/%d failed: %s", STAGE, clip_id, attempt, attempts, exc)
             continue
         call["seconds"] = round(time.monotonic() - t0, 3)
@@ -155,6 +161,10 @@ def _title_clip(client: ChatClient, cfg: TitlingConfig, messages: list[dict], cl
             return records
         call["error"] = "no valid option"
         last_error = "no valid option"
+        feedback = "; ".join(f"option {n}: {r['reject_reason']}" for n, r in enumerate(records, 1))
+        messages = messages + [{"role": "assistant", "content": res.content},
+                               {"role": "user", "content": f"Các phương án bị loại: {feedback}. "
+                                "Hãy đặt lại tiêu đề; evidence phải chép nguyên văn liên tục từ lời giảng."}]
         log.warning("%s: clip %s attempt %d/%d: no valid option (%s)", STAGE, clip_id, attempt, attempts,
                     "; ".join(f"{r['title']!r}: {r['reject_reason']}" for r in records))
     if parsed_any:
@@ -164,7 +174,8 @@ def _title_clip(client: ChatClient, cfg: TitlingConfig, messages: list[dict], cl
 
 def title_clips(episode_id: str, clips_doc: dict, cand_doc: dict, metadata: dict, header: dict,
                 cfg: TitlingConfig, client: ChatClient,
-                sleep: Callable[[float], None] = time.sleep) -> tuple[dict, dict]:
+                sleep: Callable[[float], None] = time.sleep, *,
+                existing_titles: dict | None = None, existing_log: dict | None = None) -> tuple[dict, dict]:
     """Stage body without I/O: inputs -> (titles document, titling log document)."""
     system = system_prompt(cfg.prompt_version, max_chars=cfg.max_chars, n_options=cfg.n_options)
     p_sha = prompt_sha256(cfg.prompt_version)
@@ -177,11 +188,21 @@ def title_clips(episode_id: str, clips_doc: dict, cand_doc: dict, metadata: dict
     video_title = metadata.get("title") or ""
     texts = {c["id"]: clip_text(c, units, index) for c in clips_doc["clips"]}
 
-    entries, clogs = [], []
-    for clip in clips_doc["clips"]:
+    if existing_titles is not None:
+        validate_titles(existing_titles, clips_doc, texts, clips_sha256=clips_sha, candidates_sha256=cands_sha,
+                        min_chars=cfg.min_chars, max_chars=cfg.max_chars)
+    entries = []
+    clogs = deepcopy(existing_log["clips"]) if existing_log is not None else []
+    prior_logs = {c["clip_id"]: c for c in clogs}
+    for n, clip in enumerate(clips_doc["clips"]):
+        if existing_titles is not None and existing_titles["titles"][n]["status"] == TITLED:
+            entries.append(existing_titles["titles"][n])
+            continue
         cid, text = clip["id"], texts[clip["id"]]
-        clog = {"clip_id": cid, "candidate_id": clip["candidate_id"], "text": text, "ai_calls": []}
-        clogs.append(clog)
+        clog = prior_logs.get(cid)
+        if clog is None:
+            clog = {"clip_id": cid, "candidate_id": clip["candidate_id"], "text": text, "ai_calls": []}
+            clogs.append(clog)
         messages = [{"role": "system", "content": system},
                     {"role": "user", "content": render_user_prompt(cfg.prompt_version, title=video_title,
                                                                    duration=clip["duration"], text=text)}]
@@ -212,6 +233,8 @@ def title_clips(episode_id: str, clips_doc: dict, cand_doc: dict, metadata: dict
         "params": {k: getattr(cfg, k) for k in PARAM_KEYS},
         "stats": stats, "titles": entries,
     }
+    if existing_titles is not None:
+        titles_doc = {**existing_titles, "stats": stats, "titles": entries}
     validate_titles(titles_doc, clips_doc, texts, clips_sha256=clips_sha, candidates_sha256=cands_sha,
                     min_chars=cfg.min_chars, max_chars=cfg.max_chars)
     log_doc = {
@@ -220,12 +243,60 @@ def title_clips(episode_id: str, clips_doc: dict, cand_doc: dict, metadata: dict
         "system_prompt": system, "response_format": RESPONSE_SCHEMA, "header": header, "stats": stats,
         "clips": clogs,
     }
+    if existing_log is not None:
+        log_doc = {**existing_log, "stats": stats, "clips": clogs}
     return titles_doc, log_doc
+
+
+def _retitle_untitled(ws: Workspace, manifest: dict, config: Config, client: ChatClient | None,
+                     sleep: Callable[[float], None]) -> TitlingResult:
+    """Repair only untitled entries; prepare in memory so AI/input failures preserve existing titles."""
+    cfg = config.titling
+    titles = read_stage_json(ws.dir / TITLES_NAME, STAGE, TitlingError)
+    old_log = read_stage_json(ws.dir / LOG_NAME, STAGE, TitlingError)
+    paths = [ws.dir / name for name in (CLIPS_NAME, CANDIDATES_NAME, METADATA_NAME)]
+    if (manifest["stages"].get("selection") or {}).get("status") != DONE or not all(p.is_file() for p in paths):
+        raise TitlingError("--untitled-only requires selection done and its input artifacts")
+    inputs = [{"path": ws.relpath(p), "sha256": hashing.sha256_file(p)} for p in paths]
+    cfg_hash = hashing.config_hash(used_config(config, titles["header"]["lines"]))
+    reason = check_up_to_date(ws, manifest, STAGE, inputs, cfg_hash)
+    if reason is not None:
+        raise TitlingError(f"--untitled-only requires current titles.json ({reason}); re-run titling normally")
+    if old_log["clips_sha256"] != titles["clips_sha256"] or old_log["episode_id"] != ws.episode_id:
+        raise TitlingError("titling_log.json does not match titles.json")
+    clips_doc, cand_doc, metadata = [read_stage_json(p, STAGE, TitlingError) for p in paths]
+    chat = client or OllamaClient(resolve_host(cfg.ollama_host), timeout=cfg.timeout)
+    updated, updated_log = title_clips(ws.episode_id, clips_doc, cand_doc, metadata, titles["header"], cfg, chat,
+                                      sleep, existing_titles=titles, existing_log=old_log)
+    if not any(e["status"] == UNTITLED for e in titles["titles"]):
+        log.info("%s: no untitled clips; không có clip untitled [%s]", STAGE, ws.episode_id)
+        return TitlingResult(ws.episode_id, ws.dir / TITLES_NAME, False, updated["stats"]["titled"],
+                             updated["stats"]["clips"])
+
+    def action() -> list[str]:
+        atomic_write_json(ws.dir / LOG_NAME, updated_log)
+        atomic_write_json(ws.dir / TITLES_NAME, updated)
+        return list(ARTIFACTS)
+
+    previous_manifest = deepcopy(manifest)
+    try:
+        run_stage(ws, manifest, STAGE, inputs=inputs, cfg_hash=cfg_hash, force=True, action=action)
+    except (StageError, KeyboardInterrupt) as exc:
+        # run_stage removes artifacts on failure; restore this repair's pre-existing documents.
+        atomic_write_json(ws.dir / LOG_NAME, old_log)
+        atomic_write_json(ws.dir / TITLES_NAME, titles)
+        ws.save_manifest(previous_manifest)
+        if isinstance(exc, KeyboardInterrupt):
+            raise
+        raise TitlingError(str(exc)) from exc
+    stats = updated["stats"]
+    log.info("%s: untitled-only: titled=%d untitled=%d", STAGE, stats["titled"], stats["untitled"])
+    return TitlingResult(ws.episode_id, ws.dir / TITLES_NAME, True, stats["titled"], stats["clips"])
 
 
 def run_titling(episode_id: str, config: Config, *, force: bool = False, speaker: str | None = None,
                 series: str | None = None, episode: str | None = None, client: ChatClient | None = None,
-                sleep: Callable[[float], None] = time.sleep) -> TitlingResult:
+                sleep: Callable[[float], None] = time.sleep, untitled_only: bool = False) -> TitlingResult:
     cfg = config.titling
     try:
         prompt_texts(cfg.prompt_version)
@@ -238,6 +309,10 @@ def run_titling(episode_id: str, config: Config, *, force: bool = False, speaker
         raise TitlingError(str(exc)) from exc
     if manifest is None:
         raise TitlingError(f"no manifest for episode {episode_id!r} in {ws.dir}; run 'auto-short ingest' first")
+    if untitled_only:
+        if force or any(v is not None for v in (speaker, series, episode)):
+            raise TitlingError("--untitled-only cannot be combined with --force or header overrides")
+        return _retitle_untitled(ws, manifest, config, client, sleep)
 
     def fail(msg: str) -> TitlingError:
         _remove_outputs(ws)

@@ -60,7 +60,7 @@ class FakeClient:
         self.calls: list[dict] = []
 
     def chat(self, *, model, messages, format, options, think):
-        n = int(_CLIP_RE.search(messages[-1]["content"]).group(1))
+        n = int(next(m for m in (_CLIP_RE.search(msg["content"]) for msg in messages) if m).group(1))
         self.calls.append({"clip": n, "model": model, "messages": messages, "format": format,
                            "options": options, "think": think})
         queue = self.replies.get(n)

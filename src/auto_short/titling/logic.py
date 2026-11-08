@@ -10,6 +10,7 @@ import json
 import re
 import string
 import unicodedata
+from collections import Counter
 from collections.abc import Callable
 
 from ..config import HEADER_FIELDS, TitlingHeaderConfig
@@ -171,9 +172,40 @@ def normalize_match(text: str) -> str:
 
 
 def evidence_in_text(evidence: str, text_norm: str) -> bool:
-    """``evidence`` (normalized) is a whole-word substring of ``text_norm`` (already normalized)."""
+    """Whole-word match, or a local word window allowing reordering / one changed word per eight.
+
+    Only five window lengths are scanned. Incremental overlap and distinct-word counts keep
+    this O(len(text) + len(evidence)), even for long khai thi clips (no pairwise sequence matching).
+    """
     ev = normalize_match(evidence)
-    return bool(ev) and f" {ev} " in f" {text_norm} "
+    words = ev.split()
+    if len(words) < MIN_EVIDENCE_WORDS:
+        return False
+    if f" {ev} " in f" {text_norm} ":
+        return True
+    expected, tokens = Counter(words), text_norm.split()
+    allowed = len(words) // 8
+    for size in range(max(1, len(words) - 2), min(len(tokens), len(words) + 2) + 1):
+        counts = Counter(tokens[:size])
+        overlap = sum(min(n, counts[w]) for w, n in expected.items())
+        shared = sum(w in expected for w in counts)
+        for start in range(len(tokens) - size + 1):
+            # Same vocabulary (including repetitions), or bounded word-count differences.
+            if shared == len(counts) == len(expected) or max(size, len(words)) - overlap <= allowed:
+                return True
+            if start + size == len(tokens):
+                break
+            for word, delta in ((tokens[start], -1), (tokens[start + size], 1)):
+                old = counts[word]
+                new = old + delta
+                overlap += min(new, expected[word]) - min(old, expected[word])
+                if word in expected:
+                    shared += int(new > 0) - int(old > 0)
+                if new:
+                    counts[word] = new
+                else:
+                    del counts[word]
+    return False
 
 
 def _has_non_latin_letter(text: str) -> bool:
