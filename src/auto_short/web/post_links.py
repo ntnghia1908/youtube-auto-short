@@ -7,6 +7,7 @@ from pathlib import Path
 
 from ..post import links, store
 from ..publish import youtube
+from ..store.cancellation import OffloadStopped, check_stop
 from ..workspace import atomic_write_json, read_json_dict, utc_now
 from . import episodes as ep
 from .urls import ASK, PLAYLIST, UrlError, classify_url
@@ -64,6 +65,8 @@ class PostLinks:
             try:
                 api = self.api_factory(token_path=path, read_only=True)
                 clients.append((api.channel_id(), api))
+            except OffloadStopped:
+                raise
             except Exception as exc:
                 # A bad token cannot stop another channel. No exception or path is logged.
                 failures.append(_safe_error(exc))
@@ -74,6 +77,8 @@ class PostLinks:
         for _, api in clients:
             try:
                 owner = api.playlist_channel(ident)
+            except OffloadStopped:
+                raise
             except Exception as exc:
                 failure = exc
                 continue  # private playlist may be visible only to a later token
@@ -119,6 +124,7 @@ class PostLinks:
             ids = doc.get("link_playlists") or []
             clients, failures = self._clients() if ids else ([], [])
             for ident in ids:
+                check_stop()
                 try:
                     entries_by_playlist[ident] = self._videos(ident, clients)
                 except MissingChannel as exc:
@@ -127,6 +133,8 @@ class PostLinks:
                     if not clients and failures:
                         message += ". " + " / ".join(dict.fromkeys(failures))
                     errors.append({"playlist_id": ident, "error": message})
+                except OffloadStopped:
+                    raise
                 except Exception as exc:
                     errors.append({"playlist_id": ident, "error": _safe_error(exc)})
             try:
@@ -146,6 +154,8 @@ class PostLinks:
                         changed.add(eid)
                     for eid in sorted(changed):
                         store.write(self.ctx.posts_path(eid), posts[eid])
+            except OffloadStopped:
+                raise
             except Exception:
                 result = links.plan([], [], {})
                 errors.append({"error": "Không đọc / ghi được bài đăng; kiểm tra dữ liệu rồi cập nhật lại"})
@@ -161,8 +171,11 @@ class PostLinks:
         with self._lock:
             for doc in self.ctx.playlists.all():
                 if doc.get("link_playlists"):
+                    check_stop()
                     try:
                         self.sync(doc["playlist_id"])
+                    except OffloadStopped:
+                        raise
                     except Exception:
                         log.warning("web: không lưu được kết quả quét link bài đăng; sẽ thử lại")
 

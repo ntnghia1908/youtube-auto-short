@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: BLOCKED
+- Status: IN REVIEW (vòng 2 xong; chờ ORCHESTRATOR chạy full suite + AC 4)
 - Type: BUG
 - Change class: S1 — không đổi architecture / dependency / API; chỉ cách các vòng nền dừng khi tắt + log chẩn đoán
 - Owner: HUMAN LEAD
@@ -131,3 +131,22 @@ AC2 dùng 5 hàm test thay ngân sách mặc định 3 vì cần phân biệt fa
   - Context stop không tự ngắt validator / API client không kiểm nó. Không âm thầm monkeypatch hàm dùng chung, nhân bản validator hoặc bỏ join executor để che thiếu sót.
   - ORCHESTRATOR chạy required verification chuẩn/full suite và AC4; HUMAN LEAD/ORCHESTRATOR chốt boundary trước phần còn lại. Không đủ điều kiện READY theo mục Required verification của contract.
 - PR: không tạo theo yêu cầu.
+
+## Result vòng 2 (2026-11-08, Sonnet)
+
+Điểm dừng thêm (tái dùng `store/cancellation.py`; ngoài stop scope hành vi y cũ):
+
+| Việc | Cách dừng mới | Thời gian dừng đo trong test |
+|---|---|---|
+| validator / băm `theme_render/sources.py` (`_sha256`) | trong stop scope: `cancellation.sha256_file` kiểm cờ mỗi block 1 MiB; ngoài scope vẫn `hashing.sha256_file` | 0,050 s (`test_source_validator_hash_stops_between_blocks`) |
+| ffprobe `ingest/probe.py` | `cancellation.run_captured` (mới): trong scope dùng Popen + poll cờ 50 ms, terminate nhóm tiến trình → kill sau 3 s | 0,042 s (`test_ffprobe_child_is_stopped_within_five_seconds`) |
+| HTTP YouTube `publish/youtube.py` | `urllib_transport` đi qua `cancellation.urlopen` (shutdown socket khi có cờ, vẫn `_NoRedirect`, timeout 30 s); `_request` gọi `check_stop()` | < 0,001 s (fake opener) |
+| `web/post_links.py` `sync` / `sync_all` / `_clients` / `_videos` | `check_stop()` giữa playlist; `OffloadStopped` được re-raise (không bị nuốt thành lỗi quét) nên không ghi journal "xong" | < 0,001 s; `svc.path` không tồn tại sau khi bị ngắt |
+
+Sửa kèm: `_post_link_loop(call=None)` chọn `asyncio.to_thread` lúc chạy (vòng 1 đặt mặc định lúc định nghĩa làm hỏng test patch `asyncio.to_thread`); bắt `OffloadStopped` thì thoát vòng, không log cảnh báo giả.
+Tests mới (trong `tests/test_web_shutdown.py`): 3 hàm — ffprobe, băm validator, YouTube transport + post-link sync. AC1 giữ test vòng 1; AC2 thêm 3 test này; AC3 thêm assert journal không ghi.
+Helper mới: `cancellation.run_captured`, `sources._sha256` (không có sẵn cách ngắt ffprobe capture / băm validator; `sources._sha256` giữ đường `hashing.sha256_file` để test cũ patch được).
+Rà gọn diff vòng 1: chưa xóa được phần nào đáng kể (không tìm thấy code trùng rõ ràng mà không rủi ro đổi hành vi); không làm thêm.
+Diff so với `bc2ee68` (src+tests): +1037 / −137; `app.py` +134/−30; `tests/test_web_shutdown.py` +499/−0.
+Đã chạy (PYTHONPATH=worktree/src, trong sandbox, lifespan test chạy được lần này): `pytest tests/test_web_shutdown.py tests/test_store_backup.py tests/test_store_offload.py tests/test_store_redownload.py tests/test_post_links.py tests/test_theme_source_cache.py tests/test_ingest_local.py tests/test_ingest_youtube.py tests/test_src4_ingest_store.py -q` → **297 passed**. `git diff --check` sạch.
+CHƯA chạy: full suite `pytest -n auto -q`; AC 4 (restart 8080 thật); test HTTP/socket thật ngoài sandbox.

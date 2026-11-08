@@ -17,6 +17,7 @@ from auto_short.store import cancellation as cancel
 from auto_short.store import offload
 from auto_short.store.client import StoreClient
 from auto_short.web import app as web
+from test_post_links import service  # noqa: F401  (fixture)
 
 
 def test_watchdog_repeats_until_closed_and_server_registers_usr1(cfg, monkeypatch, caplog):
@@ -389,3 +390,110 @@ def test_idle_runner_and_sampler_stop_within_budget(cfg):
         sampler.stop()
         if runner._threads:
             runner.stop(timeout=1)
+
+
+def _run_stoppable(work, entered, stop, errors):
+    """Run work in a stop scope; return elapsed seconds from stop.set() to worker exit."""
+    finished = threading.Event()
+
+    def run():
+        try:
+            with cancel.stop_scope(stop):
+                work()
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            finished.set()
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    try:
+        assert entered.wait(3)
+        start = time.monotonic()
+        stop.set()
+        assert finished.wait(5)
+        return time.monotonic() - start
+    finally:
+        stop.set()
+        thread.join(timeout=5)
+
+
+def test_ffprobe_child_is_stopped_within_five_seconds(tmp_path):
+    from auto_short.ingest import probe
+
+    entered, stop, errors = threading.Event(), threading.Event(), []
+    marker = tmp_path / "started"
+    script = tmp_path / "ffprobe"
+    script.write_text(f"#!/bin/sh\ntouch {marker}\nexec sleep 120\n")
+    script.chmod(0o755)
+
+    def work():
+        threading.Thread(target=lambda: [time.sleep(.01) for _ in iter(marker.exists, True)] and entered.set(),
+                         daemon=True).start()
+        probe.probe(tmp_path / "x.mp4", str(script))
+
+    elapsed = _run_stoppable(work, entered, stop, errors)
+    assert len(errors) == 1 and isinstance(errors[0], cancel.OffloadStopped)
+    print(f"ffprobe: stop {elapsed:.3f}s")
+
+
+def test_source_validator_hash_stops_between_blocks(tmp_path, monkeypatch):
+    from auto_short.theme_render import sources
+
+    path = tmp_path / "source.mp4"
+    path.write_bytes(b"x")
+    entered, stop, errors = threading.Event(), threading.Event(), []
+    real_open = Path.open
+
+    class SlowFile:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            pass
+
+        def read(self, size):
+            entered.set()
+            time.sleep(.05)
+            return b"x" * 1024
+
+    monkeypatch.setattr(Path, "open", lambda p, *a, **kw: SlowFile() if p == path else real_open(p, *a, **kw))
+    elapsed = _run_stoppable(lambda: sources._sha256(path), entered, stop, errors)
+    assert len(errors) == 1 and isinstance(errors[0], cancel.OffloadStopped)
+    print(f"source hash: stop {elapsed:.3f}s")
+
+
+def test_youtube_transport_and_post_link_sync_stop_without_writing_journal(service, monkeypatch):
+    from auto_short.publish import youtube
+    from auto_short.workspace import atomic_write_json
+    from test_post_links import PID, SHORTS
+
+    entered, stop, errors = threading.Event(), threading.Event(), []
+
+    def blocked(request, timeout):
+        entered.set()
+        stop.wait(2)
+        raise OSError("socket shut down")
+
+    monkeypatch.setattr(cancel.urllib.request, "build_opener", lambda *a: SimpleNamespace(open=blocked))
+    elapsed = _run_stoppable(lambda: youtube.urllib_transport("GET", "https://example.invalid/x", {}, None),
+                             entered, stop, errors)
+    assert len(errors) == 1 and isinstance(errors[0], cancel.OffloadStopped)
+    print(f"youtube transport: stop {elapsed:.3f}s")
+
+    svc, ctx, wire = service
+    doc = ctx.playlists.load(PID)
+    atomic_write_json(ctx.playlists.path(PID), {**doc, "link_playlists": [SHORTS]})
+    entered, stop, errors = threading.Event(), threading.Event(), []
+    real_call = wire.__call__
+
+    def slow_wire(method, url, headers, body):
+        entered.set()
+        stop.wait(2)
+        return real_call(method, url, headers, body)
+
+    monkeypatch.setattr(type(wire), "__call__", lambda self, *a: slow_wire(*a))
+    elapsed = _run_stoppable(svc.sync_all, entered, stop, errors)
+    assert len(errors) == 1 and isinstance(errors[0], cancel.OffloadStopped)
+    assert not svc.path.exists()
+    print(f"post link sync: stop {elapsed:.3f}s")

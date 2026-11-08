@@ -109,12 +109,14 @@ from .post_links import PostLinks
 log = logging.getLogger("auto_short")
 
 
-async def _post_link_loop(service: PostLinks, hours: float, call=asyncio.to_thread) -> None:
+async def _post_link_loop(service: PostLinks, hours: float, call=None) -> None:
     if hours <= 0:
         return
     while True:
         try:
-            await call(service.sync_all)
+            await (call or asyncio.to_thread)(service.sync_all)
+        except OffloadStopped:
+            return
         except Exception:
             log.warning("web: quét link bài đăng lỗi; sẽ thử lại")
         await asyncio.sleep(hours * 3600)

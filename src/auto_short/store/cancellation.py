@@ -164,6 +164,39 @@ def urlopen(request, timeout, *, handlers=()):
         watcher.join(timeout=.2)
 
 
+def run_captured(command, **kwargs):
+    """subprocess.run(capture_output, text, check=False); inside a stop scope, terminate -> kill after 3 s."""
+    stop = current_stop()
+    if stop is None:
+        return subprocess.run(command, capture_output=True, text=True, check=False, **kwargs)
+    check_stop(stop)
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                               start_new_session=True, **kwargs)
+    try:
+        while True:
+            try:
+                out, err = process.communicate(timeout=.05)
+                break
+            except subprocess.TimeoutExpired:
+                check_stop(stop)
+        check_stop(stop)
+        return subprocess.CompletedProcess(command, process.returncode, out, err)
+    finally:
+        if process.poll() is None:
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                process.wait(timeout=1)
+
+
 def run_process(command, **kwargs):
     """Own the process group so yt-dlp's ffmpeg/node children cannot survive cancellation."""
     check_stop()

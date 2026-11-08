@@ -12,6 +12,7 @@ import urllib.request
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
+from ..store.cancellation import check_stop, urlopen
 from ..workspace import atomic_write_json, read_json_dict
 from . import PublishError
 
@@ -64,7 +65,7 @@ def urllib_transport(method, url, headers, body):
     """One HTTP boundary; redirects never forward credentials elsewhere."""
     request = urllib.request.Request(url, data=body, headers=headers, method=method)
     try:
-        with urllib.request.build_opener(_NoRedirect).open(request, timeout=30) as response:
+        with urlopen(request, 30, handlers=(_NoRedirect(),)) as response:
             return response.status, dict(response.headers), response.read()
     except urllib.error.HTTPError as exc:
         with exc:
@@ -212,6 +213,7 @@ class YouTube:
         self.token = token
 
     def _request(self, method, url, body=None):
+        check_stop()
         if self.read_only and method != "GET":
             raise PublishError("web chỉ được đọc YouTube (GET)")
         expiry = self.token.get("expires_at", 0)
