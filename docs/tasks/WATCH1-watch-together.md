@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: DONE (chờ merge PR)
 - Type: FEATURE
 - Change class: S1 — thêm endpoint + trang mới sau login sẵn có; không dependency mới, không đổi security model (cùng cookie login, chỉ nhận URL cùng origin), không đổi API hiện có
 - Owner: HUMAN LEAD
@@ -136,3 +136,10 @@ Không chạm database / security model / public API hiện có (chỉ thêm end
 - Review / lifecycle: đã rà Owned paths và verification cục bộ; sẵn sàng ORCHESTRATOR review vòng 3. Giữ Status IN_PROGRESS vì HTTP/full suite và chạy thật chưa hoàn tất. Không commit / push / PR / gọi agent khác / gọi dịch vụ thật / thêm dependency.
 - Known limitations: trạng thái phòng mất khi restart; cache chỉ remux, không encode lại; khi nguồn không có tiếng/container không hỗ trợ copy sẽ trả 503 và client fallback MP4. Khả năng nghe khi chuyển app / khóa màn hình cần kiểm tra lại trên điện thoại thật.
 - PR: chưa tạo theo chỉ dẫn HUMAN LEAD.
+
+### Kết thúc (ORCHESTRATOR 2026-11-08)
+
+- Chạy thật: HUMAN LEAD vòng 1 "Hoạt động rất tốt" (AC 6, 7, 9 hai máy). Các vòng sau (Nghe nền m4a, AC 16) được LISTEN1 thay: Chrome Android dừng `<video>` ngay khi trang ẩn (log `/api/watch/log`), nghe nền bằng PiP / toàn màn hình (LISTEN1 AC 18, HUMAN LEAD "Ok rồi"); route / cache âm thanh `watch_audio` bị LISTEN1 gỡ (PR LISTEN1 xếp chồng lên PR này). Giao diện `/watch` được gộp vào giao diện Nghe ở LISTEN1 Amendment G; HUMAN LEAD chạy thật bản gộp 2026-11-08: "Ok tất cả ổn".
+- Verification nhánh này (`89250f2`), ORCHESTRATOR ngoài sandbox: full suite `pytest -n auto -q` (gồm HTTP / TestClient của `tests/test_web_watch_party.py`): **4115 passed, 2 skipped, 1 failed** — `tests/test_web_stop_fix.py::test_ac2_orphaned_grandchild_and_children_started_after_the_interrupt` (dừng tiến trình con, ngoài phạm vi WATCH1; chạy lại riêng file 3 lần: 9 passed cả 3) → coi là test chập chờn theo tải, không phải hồi quy của nhánh.
+- Manual checklist: 3 mục PASS (HUMAN LEAD chạy thật hai máy, vòng 1; tốc độ vẫn đồng bộ dù gỡ ô chọn — AC 14).
+- Status: DONE (chờ merge PR).
