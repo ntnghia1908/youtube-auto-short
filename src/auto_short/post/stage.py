@@ -194,16 +194,17 @@ def compose_clip(client: ChatClient, cfg: PostConfig, clip_id: str, candidate_id
                          last_ratio)
 
 
-def _append_log(path: Path, episode_id: str, entry: dict) -> None:
-    doc: dict = {"schema_version": SCHEMA_VERSION, "episode_id": episode_id, "entries": []}
-    try:
-        old = json.loads(path.read_text(encoding="utf-8"))
-        if isinstance(old, dict) and isinstance(old.get("entries"), list) and old.get("episode_id") == episode_id:
-            doc = old
-    except (OSError, ValueError):
-        pass
-    doc["entries"].append(entry)
-    atomic_write_json(path, doc)
+def _append_log(path: Path, episode_id: str, entry: dict, *, lock=None) -> None:
+    with lock if lock is not None else _NullLock():
+        doc: dict = {"schema_version": SCHEMA_VERSION, "episode_id": episode_id, "entries": []}
+        try:
+            old = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(old, dict) and isinstance(old.get("entries"), list) and old.get("episode_id") == episode_id:
+                doc = old
+        except (OSError, ValueError):
+            pass
+        doc["entries"].append(entry)
+        atomic_write_json(path, doc)
 
 
 def rendered_clip_ids(config: Config, episode_id: str) -> list[tuple[str, str]]:
@@ -371,7 +372,7 @@ def compose_posts(episode_id: str, config: Config, clips: "list[str] | str", *, 
                     "at": utc_now(), "clip_id": cid, "candidate_id": cand_by_clip[cid], "origin": store.DOC,
                     "doc_url": docsrc.url, "doc_match": docsrc.match, "ratio": dp.ratio, "span": list(dp.span),
                     "expanded": {"head": dp.head, "tail": dp.tail}, "seconds": round(time.monotonic() - t0, 3),
-                    "text": raw_text, "paragraphs": dp.paragraphs})
+                    "text": raw_text, "paragraphs": dp.paragraphs}, lock=guard)
                 with guard:
                     doc = store.read_posts(posts_path, episode_id)
                     image = images.least_used(cfg.image_dir, Path(config.workspace.dir)) \
@@ -400,7 +401,7 @@ def compose_posts(episode_id: str, config: Config, clips: "list[str] | str", *, 
             "chunks": result.chunks, "attempts": result.attempts, "first_try": result.first_try,
             "match_ratio": result.match_ratio, "seconds": round(secs, 3), "origin": result.origin,
             "text": result.source_text, "corrections": applied, "paragraphs": result.paragraphs,
-            "ai_calls": clog["ai_calls"]})
+            "ai_calls": clog["ai_calls"]}, lock=guard)
         with guard:
             doc = store.read_posts(posts_path, episode_id)
             image = images.least_used(cfg.image_dir, Path(config.workspace.dir)) if store.find(doc, cid) is None \

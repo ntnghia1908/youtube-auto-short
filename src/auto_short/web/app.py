@@ -19,6 +19,7 @@ from urllib.parse import quote
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
 from .. import khaithi
 from ..config import Config, whisper_threads_per_job
@@ -30,6 +31,7 @@ from ..pipeline import ollama_preflight, run_pipeline
 from ..sutra import web as sutra_web
 from ..sutra.store import SutraStore
 from ..post import (
+    codex_text as post_codex,
     source as post_source,
     stage as post_stage,
     store as post_store,
@@ -80,6 +82,9 @@ from .jobs import (
     KIND_IMAGE_SEARCH,
     KIND_PIPELINE,
     KIND_POST,
+    KIND_POST_CODEX,
+    PostCodexTarget,
+    PostCodexBacklog,
     KIND_POST_SEARCH,
     KIND_RENDER,
     INTERRUPTED,
@@ -290,13 +295,18 @@ ENHANCE_PREFIX = "/api/enhance/"  # CP13.1 E8: worker routes, token auth (no coo
 ENHANCE_UI_PATHS = {"/api/enhance/status"}  # read-only status for the UI: cookie, like every other web route
 
 
+class PostCodexIn(BaseModel):
+    clips: list[str] | None = Field(default=None, max_length=500)
+    include_posted: bool = False
+
+
 def create_app(config: Config, password: str, *, runner: JobRunner | None = None,
                preflight: Callable[[Config], None] | None = ollama_preflight,
                pipeline: Callable = run_pipeline, render: Callable = run_render,
                secret: bytes | None = None, disk_usage: Callable = shutil.disk_usage,
                clock: Callable[[], float] = time.time, playlist_lister: Callable = ytdlp_list,
                playlist_timeout: float = LIST_TIMEOUT, titler: Callable | None = None,
-               post_compose: Callable | None = None,
+               post_compose: Callable | None = None, post_codex_rewrite: Callable | None = None,
                post_preflight: Callable[[Config], None] | None = post_stage.preflight,
                post_search: Callable | None = None, keyword_search: Callable | None = None, doc_prepare: Callable | None = None,
                codex_runner: Callable | None = None,
@@ -955,6 +965,14 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             clip = spec.get("clip_id")
             return add_short_target(config, clip, render=render, preflight=preflight, titler=titler) \
                 if isinstance(clip, str) and clip else None
+        if kind == KIND_POST_CODEX:
+            clips, confirmed = spec.get("clips"), spec.get("confirmed", [])
+            if not isinstance(clips, list) or not clips or not all(isinstance(c, str) and ep.valid_clip_id(c) for c in clips) \
+                    or not isinstance(confirmed, list) or not all(c in clips for c in confirmed):
+                return None
+            target = PostCodexTarget(config, clips, rewrite=post_codex_rewrite, lock=post_lock, runner=codex_runner)
+            target.confirmed = set(confirmed)
+            return target
         if kind == KIND_POST:
             clips = spec.get("clips")
             if not (isinstance(clips, str) or (isinstance(clips, list) and all(isinstance(c, str) for c in clips))):
@@ -1014,6 +1032,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
         runner.recheck_parked()  # CP13.1b: "đợi HD" jobs whose HD is ready by now
         sampler.start()
         sweeper = asyncio.create_task(_auto_archive_loop(), name="sweeper")
+        codex_backlog = asyncio.create_task(_codex_backlog_loop(), name="codex_backlog")
         post_link_sync = asyncio.create_task(
             _post_link_loop(ctx.post_links, config.post.link_sync_hours, _background_call), name="post_link_sync")
         store_retry = asyncio.create_task(_store_retry_loop(), name="store_retry")
@@ -1034,7 +1053,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
             shorts_stop.set()
             runner.begin_stop()
             log.info("tắt: đặt mọi cờ dừng xong sau %.3f s", time.monotonic() - shutdown_started)
-            loops = (sweeper, post_link_sync, store_retry, source_backup, vertical_offload,
+            loops = (sweeper, post_link_sync, codex_backlog, store_retry, source_backup, vertical_offload,
                      shorts_offload, source_redownload)
             def loop_stopped(task):
                 log.info("tắt: %s xong sau %.3f s", task.get_name(), time.monotonic() - shutdown_started)
@@ -1160,6 +1179,80 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
 
     # --- CP8.15: community post text ------------------------------------------------------------------------
 
+    def _codex_target(clips, include_posted=False):
+        return PostCodexTarget(config, clips, include_posted=include_posted, rewrite=post_codex_rewrite,
+                               lock=post_lock, runner=codex_runner)
+
+    backlog = PostCodexBacklog(config, runner, _codex_target, post_lock=post_lock, submit_lock=submit_lock)
+    app.state.post_codex_backlog = backlog
+
+    async def _codex_backlog_loop():
+        if not config.post.codex_auto:
+            return
+        while True:
+            try:
+                await _background_call(backlog.tick)
+            except OffloadStopped:
+                return
+            except Exception:
+                log.exception("web: quét hàng đợi Codex lỗi; sẽ thử lại")
+            await asyncio.sleep(5)
+
+    @app.get("/api/posts/codex")
+    def api_post_codex_backlog():
+        return backlog.status()
+
+    @app.get("/api/episodes/{episode_id}/posts/codex")
+    def api_post_codex_status(episode_id: str):
+        if (bad := ctx.episode_or_404(episode_id, error_response=JSONResponse)) is not None:
+            return bad
+        return {"job": ctx.job_view(runner.latest_post_codex(episode_id)),
+                "errors": post_codex.errors(config, episode_id), "quota": runner.codex_quota()}
+
+    @app.post("/api/episodes/{episode_id}/posts/codex")
+    def api_post_codex(episode_id: str, body: PostCodexIn):
+        if (bad := ctx.episode_or_404(episode_id, error_response=JSONResponse)) is not None:
+            return bad
+        if body.clips is not None and (not body.clips or not all(ep.valid_clip_id(c) for c in body.clips)):
+            return JSONResponse({"detail": "clips phải là danh sách clip_id không rỗng"}, status_code=422)
+        if body.include_posted and (body.clips is None or len(body.clips) != 1):
+            return JSONResponse({"detail": "bài đã đăng cần xác nhận từng bài"}, status_code=422)
+        with submit_lock:
+            current = runner.latest(episode_id)
+            if current is not None and current.active and current.kind == KIND_PIPELINE:
+                return JSONResponse({"detail": "đang chạy pipeline; thử lại sau"}, status_code=409)
+            try:
+                with post_lock:
+                    doc = post_store.read_posts(ctx.posts_path(episode_id), episode_id)
+                if body.clips is not None and len(body.clips) == 1:
+                    p = post_store.find(doc, body.clips[0])
+                    if p and p["posted_at"] and not body.include_posted:
+                        return JSONResponse({"detail": "bài đã đăng, chỉ thay chữ trên web; cần xác nhận"},
+                                            status_code=409)
+                order = [cid for cid, _ in post_stage.rendered_clip_ids(config, episode_id)]
+                clips = post_codex.eligible(doc, order, body.clips, include_posted=body.include_posted)
+            except (post_store.PostsError, post_codex.CodexTextError) as exc:
+                return JSONResponse({"detail": str(exc)}, status_code=422)
+            if not clips:
+                return JSONResponse({"detail": "không có bài AI phù hợp để Codex dịch"}, status_code=422)
+            job, _ = runner.submit(episode_id, KIND_POST_CODEX, _codex_target(clips, body.include_posted),
+                                   clip_ids=clips)
+        return JSONResponse({"job": ctx.job_view(job)}, status_code=202)
+
+    def _auto_codex(job):
+        if not config.post.codex_auto:
+            return
+        result = getattr(job.target, "result", None)
+        if result is None:
+            return
+        order = [cid for cid, _ in post_stage.rendered_clip_ids(config, job.episode_id)]
+        requested = [cid for cid in result.clip_ids if cid in order and cid not in result.errors]
+        with post_lock:
+            doc = post_store.read_posts(ctx.posts_path(job.episode_id), job.episode_id)
+        clips = post_codex.eligible(doc, order, requested)
+        if clips:
+            runner.submit(job.episode_id, KIND_POST_CODEX, _codex_target(clips), clip_ids=clips)
+
     def _auto_post(job) -> None:
         """CP8.16 R2a: an episode job that ran the render step has ended (done / failed) → queue the ``auto``
         compose job of the episode when R4 selects at least one Short (empty set = no job)."""
@@ -1184,7 +1277,8 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     def _on_episode_finished(job) -> None:
         """The one ``on_finished`` hook: CP8.16 R2a (auto post) then CP8.35 D4 (auto vertical); one failing does not
         stop the other."""
-        for hook in (_auto_post, lambda j: _auto_vertical_check(j.episode_id)):
+        hooks = (_auto_codex,) if job.kind == KIND_POST else (_auto_post, lambda j: _auto_vertical_check(j.episode_id))
+        for hook in hooks:
             try:
                 hook(job)
             except Exception:

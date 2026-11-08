@@ -330,6 +330,8 @@ class PostConfig:
     timeout: float = 600.0
     retry_backoff: tuple[float, ...] = (5.0, 15.0)
     link_sync_hours: float = 6.0  # LNK1: 0 = manual scans only
+    codex_auto: bool = True  # PCX1: rewrite new and backlog unposted ai/raw posts
+    codex_retry_minutes: int = 30  # retry account limits without a known reset time
 
 
 @dataclass(frozen=True)
@@ -855,6 +857,8 @@ def _post(data: dict) -> PostConfig:
         search_max_candidates=_int(po, "search_max_candidates", d.search_max_candidates, w, lo=1, hi=200),
         google_daily_limit=_int(po, "google_daily_limit", d.google_daily_limit, w, lo=0, hi=10000),
         link_sync_hours=link_sync_hours,
+        codex_auto=_bool(po, "codex_auto", d.codex_auto, w),
+        codex_retry_minutes=_int(po, "codex_retry_minutes", d.codex_retry_minutes, w, lo=1, hi=1440),
         candidate_ttl_hours=_number(po, "candidate_ttl_hours", d.candidate_ttl_hours, w, lo=0.1, hi=720),
         corrections_path=Path(_str(po, "corrections_path", str(d.corrections_path), w)).expanduser(),
         ollama_host=_str(po, "ollama_host", d.ollama_host, w),
