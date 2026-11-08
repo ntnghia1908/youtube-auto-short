@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: FEATURE
 - Change class: S2
 - Owner: HUMAN LEAD
@@ -147,3 +147,19 @@ PYTHONPATH=/home/ntnghia/projects/yas-pcx1/src conda run -n auto-short python -m
 - Ownership decision cần ORCHESTRATOR review: `packaging/cover_suggest.py` không thuộc Owned paths. Không sửa file đó; `_run_codex_images` trong `post/` chuyển danh sách ảnh thành cờ `-i` qua process runner của `run_codex`, giữ sandbox / timeout / cancel / capacity handling và nguyên lệnh của caller bìa/IMG. Đây là adapter nhỏ thay cho mở rộng signature ngoài ownership. Làn `codex` độc lập cũng cần ORCHESTRATOR chốt ở review theo contract.
 - Known limitations: chưa chạy media/Whisper/Codex thật; chất lượng chữ và crop trên 4 Short thật chờ AC9. Thông báo reset không parse được dùng chu kỳ cấu hình; không gọi script quota / mạng thật để suy đoán. Review độc lập / full verification / manual gate chưa thực hiện.
 - PR: không tạo theo ràng buộc.
+
+### ORCHESTRATOR verification (2026-11-08)
+
+- Test web/post (TestClient) ngoài sandbox: **177 passed, 1 skipped**. Full suite: **4275 passed, 2 skipped** (28 phút 31 giây; test chập chờn đã biết `test_lower_thread_priority…` deselect, chạy riêng PASS ở nhánh FIX cùng đêm). Sau rebase lên `46ac329`: `test_post_codex_cli.py` + `test_titling_stage.py` 50 passed.
+- Chạy thật CLI `post codex --include-posted` trên bản sao 4 workspace, config thật (Short local / kho), Whisper CPU + Codex `gpt-6.1-sol` medium: cả 4 `codex`, 0 lỗi.
+
+  | Bài | Thời gian | Token Codex |
+  |---|---|---|
+  | VLT 25 k01 (đã đăng) | 123 s | 19.596 |
+  | ĐT 83 k01 | 43 s | 11.054 |
+  | ĐT 33 k02 | 83 s | 18.622 |
+  | ĐT 22 k05 | 47 s | 10.426 |
+
+  Chữ ORCHESTRATOR đọc: đúng ý, đúng thuật ngữ (Bát quan trai giới, Lục hòa kính, huống chi, Cứ nha địa ngục, hào khấp), bỏ câu Whisper bịa, sửa "tháng 5 → tháng 10" theo chữ trên hình.
+- Review: lane `codex` riêng (1 job toàn cục) — chấp nhận; adapter nhiều ảnh trong `post/` thay vì sửa `cover_suggest.run_codex` — chấp nhận (caller cũ không đổi). Codex IMPLEMENTER 1 vòng, 202.919 token (tự đọc phần bổ sung Scope 8–9 trong lúc chạy).
+- Known limitations: Whisper chạy CPU (~1–2 phút / Short) song song với các làn khác; log Codex đầy đủ lưu trong `post_log.json` (file lớn dần).
