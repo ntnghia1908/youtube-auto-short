@@ -10,9 +10,9 @@ Ngân sách token: `docs/ai/workflow.md` §10.
 
 ## Current focus
 
-Cập nhật 2026-10-26.
+Cập nhật 2026-11-08.
 
-- Web 8080 (tmux `youtube:web`, worktree `~/projects/youtube-auto-short-web`): chạy `origin/main` `20501e1` (detached; restart 2026-10-26 sau #169 timeout-đợi, #170 ARC1, #171 offload-incremental); `[store]` bật (kho 3090 qua tunnel 18090, chi tiết ops-notes), `offload = true` (bản dọc tự lên kho + giải phóng). Script restart từ chối khi làn bận; mật khẩu `~/.local/share/auto-short/web.env`.
+- Web 8080 (tmux `youtube:web`, worktree `~/projects/youtube-auto-short-web`): chạy `origin/main` `8020108` (detached; restart 2026-11-08 23:23 giờ VN sau #207 WATCH1 Xem chung, #208 LISTEN1 tab Nghe, #209 tắt server nhanh — tắt hết 1,4 s, trước 7–8 phút); `[store]` bật (kho 3090 qua tunnel 18090, chi tiết ops-notes), `offload = true` (bản dọc tự lên kho + giải phóng). Script restart từ chối khi làn bận; mật khẩu `~/.local/share/auto-short/web.env`.
 - Kinh Địa Tạng 41 tập đã giải phóng bản HD (HD1, bản ở kho 3090 `E:\KinhDiaTang_HD`); HUMAN LEAD chạy định kỳ trên 3090 `backup.ps1 -Release` (#161: mặc định `-Dest` ổ E:, `danh-sach.csv` giữ dòng tập đã giải phóng). Chạy thật 2026-10-26 (#161 PASS): giữ 22 dòng CSV cũ, kho vẫn 52 bản dọc + 102 HD, E: còn 1.642 GB. 12 tập 21–26, 29–34: bản dọc đã render, HD2b đẩy lên kho + giải phóng HD + dọc 2026-10-26. Chưa giải phóng: 38 tập (35 trở đi trừ đã giải phóng, và 100) mới có HD, chưa xử lý Short.
 - 2026-10-26 xếp "Xử lý" (Short + khai thị 4–7 phút, không bản dọc) tới tập 50: Vô Lượng Thọ 31–50, Cảm Ứng Thiên 31–50, Thập Thiện Nghiệp 34–39 + 41–50 (56 tập, 112 job prepare, xen kẽ theo số tập). 26 tập (47 job) fail ingest vì YouTube timeout (đêm 25 → 26), xếp lại lần 2 sau #169 (2026-10-26, giờ timeout thì đợi thay vì fail).
 - Dự án ở `~/projects/` từ 2026-10-19; backup JSON: ops-notes. `config.toml` `[storage]`: `auto_archive = true`, `auto_archive_grace_minutes = 7200`.
@@ -32,7 +32,7 @@ Cập nhật 2026-10-26.
    PUB2: chờ `~/.local/share/auto-short/youtube-client.json`: auth → `thumbs` chạy thử → `--apply` 1 video.
 3. HD2b (#167), `FIX-ytdlp-timeout-wait` (#169), `ARC1-short-zip-archive` (#170), `FIX-offload-incremental` (#171) đã merge + chạy thật (Result trong contract). Còn mở: HUMAN LEAD chạy `scripts/archive/luu-tru-short.ps1` trên 3090 (cú pháp PowerShell chưa kiểm); thử restart lúc offload đang băm khi có bản dọc mới.
 4. SRC1–SRC4, TC3.2 đã merge (#154, #159, #160). Chưa có ca thật, chỉ test tự động: SRC3 G2 a (bản kho khác byte), nhánh chờ khi YouTube chặn của TC3.2 / SRC4. FIX job "đợi 3090" khi restart (#165) và gộp snapshot kho (#166) đã merge.
-5. SHO1 (Short + khai thị đã đăng hết lên kho 3090, web vẫn xem / sửa): SHO1a merge (#174); SHO1b (`docs/tasks/SHO1b-short-store-edit.md`, sửa / ghép / Bộ nhớ + G1 sửa đổi: Short sửa → bản `(rN)` trên kho) READY, PR mở (chạy thật bản sao PASS); sau merge: HUMAN LEAD chép `store.py` lên 3090 rồi mới bật cờ `offload_shorts` trên 8080.
+5. SHO1 (Short + khai thị đã đăng hết lên kho 3090, web vẫn xem / sửa): SHO1a merge (#174); SHO1b merge (#176; Short sửa → bản `(rN)` trên kho); HUMAN LEAD chép `store.py` lên 3090 rồi mới bật cờ `offload_shorts` trên 8080.
 6. Còn mở: HTTPS cho 8080; FIX `setup-enhance-worker.ps1` (S1); CP14 Whisper GPU tạm gác.
 
 Đây là PROPOSED, không authorize implementation tiếp theo.
