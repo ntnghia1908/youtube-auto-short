@@ -592,7 +592,7 @@ def test_episode_command_moves_whole_room_to_first_item(room):  # AC 31
     assert labelled["queue"][0]["ep_label"] == "20"
 
 
-def test_continuous_room_crosses_episodes_and_shows_flag(room):  # AC 39: Yêu thích is one unbroken list
+def test_continuous_room_crosses_episodes_and_shows_flag(room):  # compatibility: rooms created before Amendment I
     r, now = room
     set_ = r.command("a", "set", queue=EPISODES, index=2, continuous=True)
     assert set_["continuous"] is True
@@ -630,3 +630,62 @@ def test_http_queue_sent_only_when_version_changes_and_size(web):  # AC 35 load
     with_queue, without = len(web.get("/api/watch?client=b").content), len(web.get(f"/api/watch?client=b&queue_version={v}").content)
     print(f"snapshot 400 items: with queue {with_queue} B, without {without} B")
     assert without < with_queue / 20
+
+
+@pytest.mark.parametrize("continuous", [False, True])
+def test_favorites_groups_cross_episode_but_stop_at_part_end(room, continuous):  # AC 43
+    r, now = room
+    # Same part crosses episodes; different parts split even the same episode.
+    groups = [{"id": "p1", "label": "Phần 1", "kind": "part", "choice": "Phần 1 (bài 1–2)"},
+              {"id": "p2", "label": "Phần 2", "kind": "part"}]
+    queue = [dict(e, group=groups[0 if n < 2 else 1]) for n, e in enumerate([EPISODES[2], EPISODES[3], EPISODES[3]])]
+    first = r.command("a", "set", queue=queue, continuous=continuous)
+    # Input and snapshot nested metadata cannot mutate the room.
+    queue[0]["group"]["label"] = "changed input"
+    first["queue"][1]["group"]["label"] = "changed snapshot"
+    assert r.snapshot("b")["queue"][0]["group"]["label"] == "Phần 1"
+    assert r.snapshot()["queue"][1]["group"]["label"] == "Phần 1"
+    wait = r.command("a", "ended", expect_version=first["version"])
+    assert wait["advance_at"] == now[0] + 3
+    now[0] += 3
+    assert r.snapshot("b")["index"] == 1
+    done = r.command("b", "ended", expect_version=r.snapshot()["version"])
+    assert done["finished"] and done["paused"] and done["advance_at"] is None
+    now[0] += 30
+    assert r.snapshot("a")["index"] == 1
+    assert r.command("b", "advance_now")["index"] == 1
+    picked = r.command("b", "group", group="p2")
+    assert (picked["index"], picked["position"], picked["paused"], picked["finished"]) == (2, 0, False, False)
+    assert r.snapshot("a")["index"] == 2
+    assert r.command("a", "group", group="p1")["index"] == 0
+    before = r.snapshot()
+    for bad in ("missing", None, 3):
+        with pytest.raises(ValueError):
+            r.command("a", "group", group=bad)
+        assert r.snapshot() == before
+
+
+@pytest.mark.parametrize("group", [None, {}, {"id": "p"}, {"id": 3, "label": "Phần"},
+    {"id": "p", "label": ""}, {"id": "p", "label": "x" * 81},
+    {"id": "p", "label": "Phần", "choice": 3}, {"id": "p", "label": "Phần", "kind": []},
+    {"id": "p\n", "label": "Phần"}, {"id": "p", "label": "Phần", "extra": True}])
+def test_invalid_group_metadata_is_rejected_atomically(room, group):
+    r, _ = room
+    r.command("a", "set", queue=QUEUE)
+    before = r.snapshot()
+    with pytest.raises(ValueError):
+        r.command("b", "set", queue=[dict(QUEUE[0], group=group)])
+    assert r.snapshot() == before
+
+
+def test_group_metadata_survives_route_queue_cache_and_invite(cfg):  # AC 43 / old link / queue_version
+    from web_helpers import make_app
+    # Both endpoints must use the same room, just like two machines on /watch.
+    app = make_app(cfg)
+    post, get = endpoint(app, "/api/watch", "POST"), endpoint(app, "/api/watch", "GET")
+    group = {"id": "favorites:both:1", "label": "Phần 1", "kind": "part"}
+    first = json.loads(post({"client": "a", "action": "set", "queue": [dict(EPISODES[0], group=group)]}).body)
+    invite = json.loads(get(client="b", queue_version=None).body)
+    assert invite["queue"][0]["group"] == group and invite["group"] == group
+    cached = json.loads(get(client="a", queue_version=first["queue_version"]).body)
+    assert "queue" not in cached and cached["group"] == group

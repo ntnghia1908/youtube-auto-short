@@ -5,7 +5,7 @@
   if (!$("queue")) return;
   const W = window.AutoShortWatch;
   const shell = location.pathname === "/watch";
-  // Yêu thích page: the hearted items of one series as ONE continuous list (no stop at episode ends).
+  // Favorites use parts; ordinary listening uses episodes through the same group interface.
   const favPid = decodeURIComponent((location.pathname.match(/^\/playlists\/([^/]+)\/favorites$/) || [])[1] || "");   // /watch only loads the same interface in room mode
   const ROOM_MAX = 1000;                           // = MAX_QUEUE of WatchRoom
   const read = (key, fallback = null) => {
@@ -33,7 +33,12 @@
   let filter = read("auto-short-listen-filter", "both");
   if (!["both", "short", "khaithi"].includes(filter)) filter = "both";
   // In Yêu thích an un-hearted item stays until the playing item changes (it finishes first).
-  const visible = (item) => (filter === "both" || item.kind === filter) && (!favPid || item.fav?.favorite || item === currentItem);
+  const same = (a, b) => !!a && !!b && a.episode_id === b.episode_id && a.clip_id === b.clip_id;
+  const visible = (item) => (filter === "both" || item.kind === filter) && (!favPid || item.fav?.favorite || same(item, currentItem));
+  function rebuildItems() {
+    items = all.filter(visible);
+    if (favPid) items = AutoShortPlayer.groupFavorites(items, filter);
+  }
   const curItems = () => inRoom ? (rstate?.queue || []) : items;
   const curIndex = () => inRoom ? (rstate?.index ?? -1) : index;
 
@@ -46,9 +51,13 @@
     getItems: curItems,
     getNext: () => curItems()[curIndex() + 1],
     onNavigate: (action) => inRoom ? roomNavigate(action) : navigate(action),
-    onEpisode(id) {
-      if (inRoom) { player.hideNotice(); roomCommand("episode", { episode: id }, true).then(() => player.scrollToVideo()).catch(() => {}); return; }
-      const n = items.findIndex((item) => item.base_episode_id === id);
+    onGroup(id) {
+      if (inRoom) {
+        const explicit = curItems().some((item) => item.group?.id === id);
+        player.hideNotice(); roomCommand(explicit ? "group" : "episode", explicit ? { group: id } : { episode: id }, true)
+          .then(() => player.scrollToVideo()).catch(() => {}); return;
+      }
+      const n = items.findIndex((item) => player.group(item)?.id === id);
       if (n >= 0) choose(n, true, 0, true);
     },
     onAuto(value) {
@@ -95,7 +104,6 @@
   }
   renderFilter();
   if (document.getElementById("episode-listen").hidden) player.suspend();
-  const same = (a, b) => a?.episode_id === b?.episode_id && a?.clip_id === b?.clip_id;
   const epLabel = (item) => `Tập ${item.ep_label || item.ep_index || "—"}`;
   const kindLabel = (item) => item.kind === "khaithi" ? "Khai thị" : "Short";
   function save() {
@@ -106,14 +114,18 @@
       position: Number.isFinite(player.media().currentTime) ? player.media().currentTime : 0 });
   }
   function renderJump() {
-    const eps = player.episodes(), signature = JSON.stringify(eps.map((e) => [e.id, e.label]));
+    const eps = player.groups(), signature = JSON.stringify(eps);
     if ($("jump").dataset.signature !== signature) {
       $("jump").dataset.signature = signature;
       $("jump").replaceChildren(...eps.map((e) => {
-        const option = document.createElement("option"); option.value = e.id; option.textContent = e.label; return option;
+        const option = document.createElement("option"); option.value = e.id; option.textContent = e.choice || e.label; return option;
       }));
     }
-    const here = player.episode(curItems()[curIndex()]);
+    const here = player.group(curItems()[curIndex()]);
+    const noun = here?.kind === "part" ? "phần" : "tập";
+    $("jump").setAttribute("aria-label", `Nhảy tới ${noun}`);
+    $("jump").parentElement.firstChild.textContent = `Tới ${noun} `;
+    $("queue").setAttribute("aria-label", `Danh sách theo ${noun}`);
     if (here) $("jump").value = here.id;
     $("jump").disabled = !eps.length;
   }
@@ -131,15 +143,15 @@
       $("next").disabled = !item || index === items.length - 1;
     }
     renderJump();
-    player.renderEpisodeList($("queue"), list, i, (n) => {
+    player.renderGroupList($("queue"), list, i, (n) => {
       if (inRoom) { player.hideNotice(); roomCommand("goto", { index: n }, true).then(() => player.scrollToVideo()).catch(() => {}); }
       else choose(n, true, 0, true);
     }, scrollItem);
   }
   function choose(next, autoplay = false, position = 0, scroll = false) {
-    save();
+    save(); player.hideNotice();
     const target = items[next];
-    if (favPid && target) { currentItem = target; items = all.filter(visible); next = items.indexOf(target); }
+    if (favPid && target) { currentItem = target; rebuildItems(); next = items.findIndex((item) => same(item, target)); }
     index = next; started = autoplay;
     const item = currentItem = items[index];
     state = { ...item, video_url: item?.video_url || null, auto,
@@ -180,7 +192,6 @@
   }
   function setRoomMode(on) {
     inRoom = on; W.room.active = on;
-    player.continuous = !!favPid; player.listLabel = favPid ? "Yêu thích" : "";
     W.room.handler = roomHandler; W.room.message = message; W.room.onVersion = cancelPause;
     player.onEnded = on ? roomEnded : undefined;
     player.onAdvance = on ? roomAdvance : undefined;
@@ -193,8 +204,9 @@
   function roomHandler(data, force) {
     if (!data.video_url && !shell && items.length) { exitRoom(); return; }
     const scroll = data.index !== lastRoomIndex; lastRoomIndex = data.index;
-    player.continuous = !!data.continuous; rstate = data; renderCurrent(scroll);
+    rstate = data;
     player.setState(data, force || data.by !== W.client, pauseTimer !== null, data.by !== W.client);
+    renderCurrent(scroll);
   }
   // Back to solo at the item / position the room was on.
   function exitRoom() {
@@ -213,10 +225,10 @@
       // The whole list (AC 35); above the room cap send a window that still holds the playing item.
       const from = items.length > ROOM_MAX ? Math.max(0, Math.min(index - ROOM_MAX / 2, items.length - ROOM_MAX)) : 0;
       const queue = items.slice(from, from + ROOM_MAX).map((item) => ({ url: item.video_url,
-        title: Array.from(item.title || "Video").slice(0, 200).join(""), ep_label: String(item.ep_label || "").slice(0, 40) || undefined }));
+        title: Array.from(item.title || "Video").slice(0, 200).join(""), ep_label: String(item.ep_label || "").slice(0, 40) || undefined, group: item.group }));
       const position = player.loading ? state.position : player.media().currentTime;
       setRoomMode(true);
-      await roomCommand("set", { queue, index: index - from, position, paused: state.paused, continuous: !!favPid }, true);
+      await roomCommand("set", { queue, index: index - from, position, paused: state.paused }, true);
       if (!auto) await roomCommand("auto", { auto: false }, true);
     } catch (error) {
       if (inRoom) { setRoomMode(false); renderCurrent(false); }
@@ -244,11 +256,11 @@
     const previous = items[index], position = player.media().currentTime;
     const playing = player.active && !!state && !player.media().paused;
     save(); filter = button.dataset.kind; write("auto-short-listen-filter", filter); renderFilter();
-    items = all.filter(visible);
+    rebuildItems();
     const retained = items.findIndex((item) => same(item, previous));
     choose(retained < 0 ? startingIndex() : retained, playing, retained < 0 ? 0 : position);
   }));
-  $("jump").addEventListener("change", () => player.onEpisode($("jump").value));
+  $("jump").addEventListener("change", () => player.onGroup($("jump").value));
   player.video.addEventListener("timeupdate", () => {
     if (performance.now() - lastSave > 3000) { lastSave = performance.now(); save(); }
   });
@@ -301,18 +313,25 @@
       }
       all = data.items; storageKey = `auto-short-listen-position:${data.playlist_id || base}${favPid ? ":fav" : ""}`;
       $("series").textContent = favPid ? `Yêu thích — ${data.title}` : data.title;
-      items = all.filter(visible);
-      choose(startingIndex());
+      rebuildItems();
       const saved = read(storageKey);
       const resume = all.find((item) => same(item, saved));
-      if (resume && Number.isFinite(saved.position) && saved.position >= 0) {
+      const validResume = resume && Number.isFinite(saved.position) && saved.position >= 0;
+      // Favorites reopen at the saved identity/part, paused; ordinary episode pages keep the resume button.
+      if (favPid && validResume) {
+        if (!items.some((item) => same(item, resume))) {
+          filter = "both"; renderFilter(); write("auto-short-listen-filter", filter); rebuildItems();
+        }
+        choose(items.findIndex((item) => same(item, resume)), false, saved.position);
+      } else choose(startingIndex());
+      if (validResume) {
         const seconds = Math.floor(saved.position);
         $("resume").textContent = `Nghe tiếp từ ${epLabel(resume)} · ${kindLabel(resume)} · ${resume.title || resume.clip_id} (${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")})`;
         $("resume").hidden = false;
         $("resume").addEventListener("click", () => {
           if (!items.some((item) => same(item, resume))) {
             filter = "both"; renderFilter(); write("auto-short-listen-filter", filter);
-            items = all.filter(visible);
+            rebuildItems();
           }
           choose(items.findIndex((item) => same(item, resume)), true, saved.position, true);
           $("resume").hidden = true;
@@ -320,7 +339,6 @@
       }
     } catch (error) { message(error.message); }
   }
-  if (favPid) { player.continuous = true; player.listLabel = "Yêu thích"; }
   if (shell) { setRoomMode(true); renderCurrent(false); }
   else load();
 })();

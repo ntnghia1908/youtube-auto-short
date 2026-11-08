@@ -182,14 +182,14 @@ def test_listen_and_watch_share_one_module():  # AC 30 / 31 / 34 (static guard)
     listen, watch, player = [(static / n).read_text() for n in ("listen.js", "watch.js", "player.js")]
     assert "<details" not in listen and "createElement(\"details\")" not in listen
     # The room UI exists once (listen.js); watch.js is only transport + invitation bar.
-    assert "new AutoShortPlayer" in listen and "new AutoShortPlayer" not in watch and "renderEpisodeList" not in watch
-    assert "nextInEpisode()" in player and "onEpisode" in listen and 'roomCommand("episode"' in listen
+    assert "new AutoShortPlayer" in listen and "new AutoShortPlayer" not in watch and "renderGroupList" not in watch
+    assert "nextInGroup()" in player and "onGroup" in listen and 'explicit ? "group" : "episode"' in listen
     for page in ("episode.html", "watch.html", "favorites.html"):
         html = (static / page).read_text()
         assert 'id="listen-video"' in html and "/static/listen.js" in html and "/static/player.js" in html
     assert 'id="watch-video"' not in (static / "watch.html").read_text()
-    # Favorites = one continuous list (AC 39), un-hearted item stays until the playing item changes (AC 40).
-    assert "player.continuous" in listen and "favorites=1" in listen and "item === currentItem" in listen
+    # Favorites use parts (AC 43); keep an un-hearted playing item until it changes (AC 40).
+    assert "groupFavorites" in listen and "favorites=1" in listen and "same(item, currentItem)" in listen
 
 
 def test_countdown_card_overlays_the_video_on_all_pages():  # AC 28
@@ -202,3 +202,222 @@ def test_countdown_card_overlays_the_video_on_all_pages():  # AC 28
         assert html.count('id="listen-notice"') == 1
     css = (static / "style.css").read_text()
     assert ".player-stage { position: relative; }" in css and ".player-stage .player-notice { position: absolute;" in css
+
+
+@pytest.fixture
+def run_player_js():
+    """Run the real browser modules with a small event DOM; no server or browser dependency."""
+    import subprocess
+    root = Path(__file__).parents[1]
+    harness = r'''
+const assert = require("node:assert/strict"), fs = require("node:fs");
+global.window = globalThis;
+let now = 0, timerId = 0;
+const timers = new Map(), scrolls = [];
+global.performance = {now: () => now};
+global.setTimeout = (fn, delay) => { timers.set(++timerId, {fn, at: now + delay}); return timerId; };
+global.clearTimeout = (id) => timers.delete(id);
+function tick(ms) {
+  const end = now + ms;
+  while (true) {
+    const due = [...timers].filter(([, t]) => t.at <= end).sort((a, b) => a[1].at - b[1].at)[0];
+    if (!due) break;
+    now = due[1].at; timers.delete(due[0]); due[1].fn();
+  }
+  now = end;
+}
+class Element {
+  constructor(tag = "div") {
+    this.tagName = tag; this.children = []; this.dataset = {}; this.attrs = {}; this.events = {};
+    this.style = {}; this.hidden = false; this.value = ""; this._text = "";
+    this.classList = {toggle() {}}; this.paused = true; this.currentTime = 0; this.duration = 60; this.playbackRate = 1;
+  }
+  set textContent(value) { this._text = String(value); this.children = []; }
+  get textContent() { return this._text + this.children.map(e => e.textContent).join(""); }
+  get firstChild() { return this.children[0]; }
+  append(...nodes) { for (const n of nodes) { n.parentElement = this; this.children.push(n); } }
+  replaceChildren(...nodes) { this._text = ""; this.children = []; this.append(...nodes); }
+  setAttribute(k, v) { this.attrs[k] = String(v); }
+  removeAttribute(k) { delete this.attrs[k]; }
+  addEventListener(name, fn) { (this.events[name] ||= []).push(fn); }
+  async fire(name) { await Promise.all((this.events[name] || []).map(fn => fn({target: this}))); }
+  querySelectorAll(selector) {
+    const matches = (e) => selector === "[data-kind]" ? !!e.dataset.kind
+      : selector === "button[data-index]" ? e.tagName === "button" && e.dataset.index !== undefined : false;
+    return this.children.flatMap(e => [...(matches(e) ? [e] : []), ...e.querySelectorAll(selector)]);
+  }
+  getBoundingClientRect() { return {top: 0, bottom: 10, height: 10}; }
+  scrollIntoView(options) { scrolls.push([this, options]); }
+  load() { this.readyState = 0; this.currentTime = 0; this.paused = true; this.ended = false; }
+  pause() { this.paused = true; }
+  play() { this.paused = false; return Promise.resolve(); }
+}
+const elements = new Map();
+const $ = (name) => {
+  if (!elements.has(name)) elements.set(name, new Element(name === "video" ? "video" : "div"));
+  return elements.get(name);
+};
+global.document = {visibilityState: "visible", pictureInPictureEnabled: false,
+  getElementById: id => $(id.replace(/^listen-/, "")), createElement: tag => new Element(tag),
+  createTextNode: text => {const e = new Element("text"); e.textContent = text; return e;},
+  addEventListener() {}, querySelectorAll: () => []};
+global.addEventListener = () => {};
+global.dispatchEvent = () => {};
+global.navigator = {};
+const storage = new Map();
+global.localStorage = {getItem: k => storage.get(k) || null, setItem: (k, v) => storage.set(k, v)};
+const jumpLabel = new Element("label"); jumpLabel.append(document.createTextNode("Tới tập "), $("jump"));
+for (const kind of ["short", "khaithi", "both"]) { const b = new Element("button"); b.dataset.kind = kind; $("filter").append(b); }
+$("resume").hidden = true;
+let sourceItems = [], commands = [];
+global.location = {pathname: "/playlists/PLtest/favorites", origin: "http://test"};
+global.fetch = async path => ({ok: true, json: async () => path.includes("/listen")
+  ? {playlist_id: "PLtest", title: "Bộ kinh", items: sourceItems}
+  : {id: "ep1", base_episode_id: "ep1", favorites: {playlist_id: "PLtest"}}});
+global.AutoShortWatch = {client: "a", room: {}, poll() {}, command: async (action, data) => {commands.push({action, ...data});}};
+eval(fs.readFileSync("src/auto_short/web/static/player.js", "utf8"));
+const Player = AutoShortPlayer;
+function item(ep, n, kind = "short") {
+  return {episode_id: `ep${ep}${kind === "khaithi" ? ".kt" : ""}`, base_episode_id: `ep${ep}`, ep_index: ep,
+    kind, clip_id: `k${n}`, title: `Bài ${n}`, video_url: `/files/ep${ep}${kind === "khaithi" ? ".kt" : ""}/k${n}.mp4`,
+    fav: {playlist_id: "PLtest", episode_id: `ep${ep}`, clip: `k${n}`, favorite: true}};
+}
+async function settled() { for (let i = 0; i < 8; i++) await new Promise(setImmediate); }
+async function boot() { eval(fs.readFileSync("src/auto_short/web/static/listen.js", "utf8")); await settled(); }
+async function metadata() { $("video").readyState = 1; await $("video").fire("loadedmetadata"); await settled(); }
+async function end() { $("video").ended = true; $("video").paused = true; $("video").currentTime = 60; await $("video").fire("ended"); }
+'''
+
+    def run(body):
+        script = harness + "\n(async () => {\n" + body + "\n})().catch(e => { console.error(e); process.exitCode = 1; });"
+        result = subprocess.run(["node", "-e", script], cwd=root, capture_output=True, text=True, timeout=15)
+        assert result.returncode == 0, result.stdout + result.stderr
+    return run
+
+
+@pytest.mark.parametrize("kind,size", [("khaithi", 12), ("short", 35), ("both", 4)])
+def test_favorites_part_sizes_and_sparse_episode_groups(run_player_js, kind, size):  # AC 43
+    run_player_js(f'''
+const kind = {json.dumps(kind)}, size = {size};
+// Four episodes with favorites means four existing episodes, even if episode numbers have gaps.
+const source = kind === "both" ? [1, 3, 7, 10, 20].flatMap(ep => [item(ep, 1), item(ep, 1, "khaithi")])
+  : Array.from({{length: size * 2 + 1}}, (_, n) => item(1, n, kind));
+const grouped = Player.groupFavorites(source, kind);
+const player = Object.create(Player.prototype); player.getItems = () => grouped;
+assert.equal(player.groups().length, kind === "both" ? 2 : 3);
+assert.equal(grouped.filter(e => e.group.id === grouped[0].group.id).length, kind === "both" ? 8 : size);
+assert.equal(grouped.at(-1).group.label, kind === "both" ? "Phần 2" : "Phần 3");
+assert.equal(grouped[0].group.choice, kind === "both" ? "Phần 1 (Tập 1–10)" : `Phần 1 (bài 1–${{size}})`);
+assert.ok(source.every(e => !e.group)); // pure grouping; identities/heart records stay reusable
+assert.deepEqual(Player.groupFavorites([], kind), []);
+''')
+
+
+def test_favorites_click_filter_end_card_and_unheart(run_player_js):  # AC 23 / 28–31 / 40 / 43
+    run_player_js(r'''
+sourceItems = Array.from({length: 38}, (_, n) => item(1, n));
+storage.set("auto-short-listen-filter", '"short"');
+await boot(); await metadata();
+assert.equal($("queue").firstChild.textContent, "Phần 1 · 35 bài");
+assert.equal($("jump").children.length, 2);
+await $("queue").querySelectorAll("button[data-index]")[34].fire("click"); await metadata();
+assert.equal($("video").src, sourceItems[34].video_url); assert.ok(!$("video").paused);
+assert.equal(scrolls.at(-1)[0], $("video"));
+await end();
+assert.ok(!$("notice").hidden); assert.match($("notice").textContent, /Đã hết Phần 1/);
+assert.match($("notice").textContent, /Nghe Phần 2/);
+tick(10000); assert.equal($("video").src, sourceItems[34].video_url);
+const actions = $("notice").children.find(e => e.className === "actions");
+await actions.firstChild.fire("click"); await metadata();
+assert.equal($("video").src, sourceItems[35].video_url);
+assert.equal($("queue").firstChild.textContent, "Phần 2 · 3 bài");
+await end(); assert.match($("notice").textContent, /Sau 3 s/);
+tick(3000); await metadata(); assert.equal($("video").src, sourceItems[36].video_url);
+// Filter changes regroup, retaining the same playable item and time.
+$("video").currentTime = 17;
+await $("filter").children[2].fire("click"); await metadata();
+assert.equal($("video").src, sourceItems[36].video_url); assert.equal($("video").currentTime, 17);
+assert.equal($("queue").firstChild.textContent, "Phần 1 · 38 bài");
+await $("favorite").fire("click");
+assert.equal($("queue").querySelectorAll("button[data-index]").length, 38); // playing item finishes
+await $("next").fire("click"); await metadata();
+assert.equal($("queue").querySelectorAll("button[data-index]").length, 37);
+assert.ok(!$("queue").querySelectorAll("button[data-index]").some(b => b.textContent.includes("Bài 36")));
+// No page scroll ever targets a row.
+assert.ok(scrolls.every(([e, opts]) => e === $("video") && opts.behavior === "smooth"));
+''')
+
+
+def test_favorites_resume_identity_and_room_group_payload(run_player_js):  # AC 43 / 44
+    run_player_js(r'''
+sourceItems = Array.from({length: 50}, (_, n) => item(1, n));
+storage.set("auto-short-listen-filter", '"short"');
+const key = "auto-short-listen-position:PLtest:fav";
+storage.set(key, JSON.stringify({episode_id: "ep1", clip_id: "k43", position: 23}));
+// Reordering/removing preceding items changes the index/part; resume must still find k43.
+sourceItems.splice(0, 10);
+await boot(); await metadata();
+assert.equal($("video").src, "/files/ep1/k43.mp4"); assert.equal($("video").currentTime, 23);
+assert.equal($("queue").firstChild.textContent, "Phần 1 · 35 bài"); assert.ok($("video").paused);
+await $("play").fire("click"); $("video").currentTime = 29;
+tick(4000); await $("video").fire("timeupdate");
+assert.deepEqual(JSON.parse(storage.get(key)), {episode_id: "ep1", clip_id: "k43", position: 29});
+await $("watch").fire("click");
+const sent = commands.find(c => c.action === "set");
+assert.equal(sent.position, 29); assert.equal(sent.index, 33); assert.equal(sent.queue.length, 40);
+assert.equal(sent.queue[33].group.label, "Phần 1"); assert.equal(sent.queue[35].group.label, "Phần 2");
+// Another participant receives the groups from the room, even via the old /watch invite URL.
+await AutoShortWatch.room.handler({queue: sent.queue, index: 35, video_url: sent.queue[35].url,
+  title: sent.queue[35].title, paused: true, position: 0, rate: 1, auto: true,
+  finished: false, version: 2, by: "b", server_time: 0, updated_at: 0});
+assert.equal($("queue").firstChild.textContent, "Phần 2 · 5 bài");
+$("jump").value = sent.queue[0].group.id; await $("jump").fire("change");
+assert.deepEqual(commands.at(-1), {action: "group", group: sent.queue[0].group.id});
+''')
+
+
+def test_overlay_action_text_has_contrast():  # AC 42: dark glyphs on light/yellow button and select surfaces
+    css = (Path(__file__).parents[1] / "src/auto_short/web/static/style.css").read_text()
+    assert ".player-stage .player-notice .btn, .player-stage .player-notice .btn.primary { color: #1d1d1b; }" in css
+    assert ".player-stage .player-notice select, .player-stage .player-notice option { color: #1d1d1b; background: #fff; }" in css
+    # The override follows the .small rule which used to make small buttons unreadable.
+    assert css.index(".player-stage .player-notice .btn,") > css.index(".player-stage .player-notice .small { color: #ddd; }")
+
+
+def test_episode_groups_keep_end_boundary_and_manual_next(run_player_js):  # AC 23 / 28–31
+    run_player_js(r'''
+location.pathname = "/episodes/ep1";
+sourceItems = [item(1, 1), item(1, 2, "khaithi"), item(2, 1)];
+await boot(); await metadata();
+assert.equal($("queue").firstChild.textContent, "Tập 1 · 2 bài");
+await end(); tick(3000); await metadata();
+assert.equal($("video").src, sourceItems[1].video_url); // Short -> khai thị in the same episode
+await end(); assert.match($("notice").textContent, /Đã hết Tập 1/);
+tick(10000); assert.equal($("video").src, sourceItems[1].video_url);
+await $("next").fire("click"); await metadata();
+assert.equal($("video").src, sourceItems[2].video_url);
+assert.equal($("queue").firstChild.textContent, "Tập 2 · 1 bài");
+assert.ok(scrolls.every(([e]) => e === $("video")));
+// Old continuous rooms still render as a single group.
+const old = Object.create(Player.prototype); old.state = {continuous: true, index: 0};
+old.getItems = () => sourceItems; old.getNext = () => sourceItems[2];
+assert.equal(old.groups().length, 1); assert.equal(old.nextInGroup(), sourceItems[2]);
+''')
+
+
+@pytest.mark.parametrize("saved_episode", ["ep1.kt", "removed"])
+def test_favorites_resume_hidden_kind_or_missing_identity(run_player_js, saved_episode):  # AC 44
+    run_player_js(r'''
+sourceItems = [item(1, 1), item(1, 1, "khaithi")]; // identical clip ids in two different episodes
+storage.set("auto-short-listen-filter", '"short"');
+const savedEpisode = SAVED_EPISODE;
+storage.set("auto-short-listen-position:PLtest:fav", JSON.stringify({episode_id: savedEpisode, clip_id: "k1", position: 19}));
+await boot(); await metadata();
+if (savedEpisode === "ep1.kt") {
+  assert.equal($("video").src, sourceItems[1].video_url); assert.equal($("video").currentTime, 19);
+  assert.equal(storage.get("auto-short-listen-filter"), '"both"');
+} else {
+  assert.equal($("video").src, sourceItems[0].video_url); assert.equal($("video").currentTime, 0);
+  assert.ok($("resume").hidden);
+}
+'''.replace("SAVED_EPISODE", json.dumps(saved_episode)))

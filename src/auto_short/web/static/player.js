@@ -2,13 +2,13 @@
 (() => {
   "use strict";
   window.AutoShortPlayer = class AutoShortPlayer {
-    constructor(prefix, { client, request, onAction, onNavigate, onFavorite, message, onAuto, onEnded, onAdvance, onCancelAdvance, onEpisode, getItems = () => this.state?.queue || [], getNext = () => this.state?.queue?.[this.state.index + 1] }) {
+    constructor(prefix, { client, request, onAction, onNavigate, onFavorite, message, onAuto, onEnded, onAdvance, onCancelAdvance, onGroup, getItems = () => this.state?.queue || [], getNext = () => this.state?.queue?.[this.state.index + 1] }) {
       const $ = (name) => document.getElementById(`${prefix}-${name}`);
       this.$ = $; this.request = request; this.onAction = onAction;
       this.onNavigate = onNavigate; this.onFavorite = onFavorite; this.message = message;
-      this.video = $("video"); this.getNext = getNext; this.getItems = getItems; this.onEpisode = onEpisode;
+      this.video = $("video"); this.getNext = getNext; this.getItems = getItems; this.onGroup = onGroup;
       this.onEnded = onEnded; this.onAdvance = onAdvance; this.onCancelAdvance = onCancelAdvance;
-      this.continuous = false; this.listLabel = ""; this.client = client; this.page = prefix; this.events = []; this.lastLogAt = -Infinity; this.logMarks = new Map();
+      this.client = client; this.page = prefix; this.events = []; this.lastLogAt = -Infinity; this.logMarks = new Map();
       this.programmed = new Map(); this.sourceKey = null; this.active = true;
       this.receivedAt = 0; this.loading = false; this.state = null;
       this.pipActive = document.pictureInPictureElement === this.video;
@@ -41,7 +41,7 @@
         if (this.onEnded) this.onEnded(current.currentTime);
         else {
           this.onAction("pause", { position: current.currentTime }, true);
-          this.localAdvanceAt = this.state.auto && this.nextInEpisode() ? performance.now() + 3000 : null;
+          this.localAdvanceAt = this.state.auto && this.nextInGroup() ? performance.now() + 3000 : null;
         }
         this.renderAdvance(); this.scrollToVideo();
       });
@@ -163,24 +163,30 @@
       else if (row.bottom > box.bottom) container.scrollTop += row.bottom - box.bottom;
     }
     currentEntry() { return this.getItems()[this.state?.index] || this.state; }
-    // continuous (e.g. Yêu thích): one unbroken list, no stop at episode boundaries.
-    nextInEpisode() {
-      if (this.continuous) return this.getNext() || null;
-      const next = this.getNext(), now = this.episode(this.currentEntry()), then = this.episode(next);
+    // All navigation, lists and end cards share one group identity (episode or favorites part).
+    group(entry) {
+      if (!entry) return null;
+      if (entry.group) return entry.group;
+      // Compatibility with rooms created by older clients; new favorites rooms send explicit groups.
+      if (this.state?.continuous) return { id: "legacy-continuous", label: "Yêu thích" };
+      return this.episode(entry);
+    }
+    nextInGroup() {
+      const next = this.getNext(), now = this.group(this.currentEntry()), then = this.group(next);
       return next && (now?.id ?? null) === (then?.id ?? null) ? next : null;
     }
-    // Distinct episodes of the list, in order.
-    episodes() {
+    // Distinct groups of the list, in order.
+    groups() {
       const seen = new Map();
-      for (const entry of this.getItems()) { const e = this.episode(entry); if (e && !seen.has(e.id)) seen.set(e.id, e); }
+      for (const entry of this.getItems()) { const e = this.group(entry); if (e && !seen.has(e.id)) seen.set(e.id, e); }
       return [...seen.values()];
     }
-    // List box shows only the episode of the playing item (AC 30); it scrolls inside itself only.
-    renderEpisodeList(container, items, index, onPick, scroll = true) {
-      const here = this.episode(items[index]), key = here?.id ?? null;
+    // Show only the playing group; scroll inside the list box (AC 29/30/43).
+    renderGroupList(container, items, index, onPick, scroll = true) {
+      const here = this.group(items[index]), key = here?.id ?? null;
       const members = [];
-      items.forEach((entry, n) => { if (this.continuous || (this.episode(entry)?.id ?? null) === key) members.push(n); });
-      const label = this.continuous ? this.listLabel || "Danh sách" : here?.label;
+      items.forEach((entry, n) => { if ((this.group(entry)?.id ?? null) === key) members.push(n); });
+      const label = here?.label;
       const signature = JSON.stringify([key, label, members, items.map((e) => e.code || e.title || e.url || "")]);
       if (container.dataset.signature !== signature) {
         container.dataset.signature = signature;
@@ -206,6 +212,27 @@
       if (!id) return null;
       return { id: id.replace(/\.kt$/, ""), label: `Tập ${entry.ep_label || entry.ep_index || id.replace(/\.kt$/, "")}` };
     }
+    // Sizes live here only; the server uses the group metadata sent with the queue.
+    static favoritePartSizes = Object.freeze({ khaithi: 12, short: 35, both: 4 });
+    static groupFavorites(items, filter) {
+      const size = AutoShortPlayer.favoritePartSizes[filter], parts = [];
+      let episodes = 0, lastEpisode;
+      for (const [n, item] of items.entries()) {
+        const eid = item.base_episode_id || item.episode_id.replace(/\.kt$/, "");
+        if (eid !== lastEpisode) { episodes++; lastEpisode = eid; }
+        const part = Math.floor((filter === "both" ? episodes - 1 : n) / size);
+        (parts[part] ||= []).push(item);
+      }
+      let offset = 0;
+      return parts.flatMap((members, n) => {
+        const label = `Phần ${n + 1}`, first = members[0], last = members[members.length - 1];
+        const span = filter === "both" ? `Tập ${first.ep_label || first.ep_index || first.base_episode_id}–${last.ep_label || last.ep_index || last.base_episode_id}`
+          : `bài ${offset + 1}–${offset + members.length}`;
+        offset += members.length;
+        const group = { id: `favorites:${filter}:${n + 1}`, label, choice: `${label} (${span})`, kind: "part" };
+        return members.map((item) => ({ ...item, group }));
+      });
+    }
     hideNotice() {
       clearTimeout(this.advanceTimer); this.localAdvanceAt = null; this.finishedKey = null;
       this.advanceSignature = null; this.$("notice").hidden = true;
@@ -224,8 +251,8 @@
       const at = this.onEnded ? this.state.advance_at : this.localAdvanceAt;
       if (at != null || (this.onEnded && this.state.finished)) this.finishedKey = this.sourceKey;
       if (this.finishedKey !== this.sourceKey) { this.$("notice").hidden = true; return; }
-      const next = this.getNext(), current = this.episode(this.currentEntry()), upcoming = this.episode(next);
-      const boundary = current && (!next || (!this.continuous && upcoming && upcoming.id !== current.id));
+      const next = this.getNext(), current = this.group(this.currentEntry()), upcoming = this.group(next);
+      const boundary = current && (!next || upcoming?.id !== current.id);
       const signature = JSON.stringify([this.sourceKey, at ?? null, next?.code, next?.title, boundary]);
       if (signature !== this.advanceSignature) {
         this.advanceSignature = signature;
@@ -237,7 +264,7 @@
         notice.replaceChildren(end, title, count);
         if (next) {
           const actions = document.createElement("div"), play = document.createElement("button");
-          actions.className = "actions"; play.type = "button"; play.className = "btn primary small"; play.textContent = boundary ? `Nghe ${upcoming.label}` : "Phát ngay";
+          actions.className = "actions"; play.type = "button"; play.className = "btn primary small"; play.textContent = boundary ? `Nghe ${upcoming?.label || "nhóm tiếp theo"}` : "Phát ngay";
           const key = this.sourceKey;
           play.addEventListener("click", () => { if (key === this.sourceKey) this.advanceNow(); }); actions.append(play);
           if (at != null) {
@@ -246,15 +273,16 @@
           }
           notice.append(actions);
         }
-        const others = this.episodes();
-        if (boundary && this.onEpisode && others.length > 1) {
+        const others = this.groups();
+        if (boundary && this.onGroup && others.length > 1) {
           const pick = document.createElement("select");
-          pick.setAttribute("aria-label", "Chọn tập khác");
+          const noun = current.kind === "part" ? "phần" : "tập";
+          pick.setAttribute("aria-label", `Chọn ${noun} khác`);
           const option = (value, text) => { const o = document.createElement("option"); o.value = value; o.textContent = text; return o; };
-          pick.append(option("", "Chọn tập khác…"));
-          for (const e of others) if (e.id !== current.id) pick.append(option(e.id, e.label));
+          pick.append(option("", `Chọn ${noun} khác…`));
+          for (const e of others) if (e.id !== current.id) pick.append(option(e.id, e.choice || e.label));
           const key = this.sourceKey;
-          pick.addEventListener("change", () => { if (pick.value && key === this.sourceKey) this.onEpisode(pick.value); });
+          pick.addEventListener("change", () => { if (pick.value && key === this.sourceKey) this.onGroup(pick.value); });
           notice.append(pick);
         }
         notice.hidden = false;

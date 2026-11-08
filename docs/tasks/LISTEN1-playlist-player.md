@@ -262,7 +262,7 @@ Không chạm database / security model / API hiện có → manual test là đi
 - Diff so với `d7c969e`, không tính contract/Amendment D có sẵn: app **+311 / −101**, test **+120 / −0**, tổng **+431 / −101**.
 - Review / lifecycle: sẵn sàng ORCHESTRATOR review vòng 5; giữ IN_PROGRESS tới khi required verification/code mới và AC27 thực tế được hoàn tất. Không commit/push/PR, gọi agent khác, thêm dependency hoặc sửa ngoài Owned paths.
 
-### Amendment I (HUMAN LEAD 2026-11-08, chạy thật `fdd6d39`) — chưa làm
+### Amendment I (HUMAN LEAD 2026-11-08, chạy thật `fdd6d39`) — đã implement, chờ review / verification ngoài sandbox
 
 Bằng chứng: "1,2 đều ổn nhưng chữ trên nút bị tệp màu ko thấy" (thẻ đè video: PASS AC 28 / 31 vị trí). "Khi sử dụng playlist ở yêu thích càng về sau video càng nhiều như vậy tôi sẽ không thể nào coi được hết nên có cách phân ra nhiều [phần] và nên thêm có chức năng chọn bài trong playlist của yêu thích". Cỡ phần: "10-15 bài khai thị, short 30-40 shorts vì short nhiều hơn khai thị, nếu cả hai thì 3,5 tập lớn" → ORCHESTRATOR chốt giữa khoảng: lọc chỉ khai thị 12 bài / phần; chỉ Short 35 bài / phần; cả hai: 4 tập / phần (bài yêu thích của 4 tập liền nhau có bài yêu thích).
 
@@ -270,6 +270,38 @@ Bằng chứng: "1,2 đều ổn nhưng chữ trên nút bị tệp màu ko th�
 43. **Yêu thích chia phần** (thay "một danh sách liên tục" của AC 39) theo bộ lọc hiện tại (Short / Khai thị / cả hai — bộ lọc sẵn có): cỡ phần như trên, hằng số một chỗ. Danh sách chỉ hiện bài của phần đang phát, tiêu đề "Phần k · …"; **bấm một bài → phát bài đó** (như AC 23). Ô chọn phần ở vị trí ô chọn tập ("Phần 1 (Tập 1–4)" / "Phần 1 (bài 1–35)"). Tự chuyển / đếm ngược trong phần; hết phần → dừng + thẻ "Đã hết Phần k" với nút "Nghe Phần k+1" + chọn phần khác — tái dùng cơ chế biên tập AC 31 (phần là "nhóm" thay cho tập; không nhân đôi code). Đổi bộ lọc → chia lại, giữ bài đang phát. Chế độ phòng (Xem chung từ Yêu thích) dùng cùng nhóm phần, đồng bộ hai máy.
 44. **Nhớ chỗ nghe** ở Yêu thích (như tab Nghe: `localStorage`, bài + vị trí): mở lại trang → về đúng bài / phần. Nhận diện bằng bài (episode_id + clip), không bằng số thứ tự.
 45. Chạy thật: Android Chrome — chữ nút đọc được; Yêu thích thấy phần, bấm bài được, hết phần thấy thẻ hỏi, mở lại trang nghe tiếp đúng chỗ.
+
+#### Result — Amendment I (IMPLEMENTER 2026-11-08, base `825c5df`)
+
+- Delegation hiện hành authorize phần server nhóm trong `src/auto_short/web/watch_party.py` (bổ sung Owned paths cho Amendment I); các file còn lại nằm trong Owned paths ở đầu contract / Amendment H. Không sửa route hoặc API listen, trang Quản lý, HTML ghép video, dependency hay runtime.
+- Cách làm:
+  - AC 42: sửa CSS sau rule `.small` của thẻ tối: `.btn` / `.btn.primary` dùng chữ `#1d1d1b` trên nền sáng / vàng sẵn có; select / option chữ tối trên nền trắng. Rule `.small { color: #ddd }` trước đó ghi đè màu chữ nút nhỏ làm mất tương phản.
+  - AC 43: nhóm là một khái niệm trong `player.js`: `group(entry)` lấy nhóm gửi sẵn hoặc tập từ helper `episode`; danh sách, biên tự chuyển, ô chọn và thẻ hết nhóm đều dùng nó. `groupFavorites` thuần tạo phần từ danh sách đã lọc; cỡ phần chỉ khai báo tại `favoritePartSizes` (12 khai thị / 35 Short / 4 tập có bài yêu thích cho Cả hai). Giữ danh tính và giây khi đổi bộ lọc mà bài vẫn thuộc bộ lọc; nếu bài bị loại bởi bộ lọc thì chọn điểm bắt đầu như hành vi cũ. `choose` hủy thẻ / timer cũ kể cả khi giữ cùng bài. Chỉ hiển thị bài của phần hiện tại, bấm bài phát và cuộn lên video, hết phần dừng với nút nghe phần sau + select phần khác. Bỏ tim dùng `visible` cũ, so sánh danh tính thay tham chiếu object vì nhóm được tạo lại.
+  - Phòng gửi `group: {id, label, choice, kind}` theo từng mục trong lệnh `set`; server validate trước mutation, dùng nhóm thay tập khi có, lệnh `group` chọn mục đầu nhóm cho cả phòng. `queue_version` và decorate route hiện có tự giữ metadata này, không cần một luồng riêng. Snapshot sao chép sâu để nhóm lồng nhau không bị input / người đọc sửa. Phòng cũ không có nhóm vẫn dùng tập suy từ URL / lệnh `episode`; `continuous` chỉ còn là tương thích phòng cũ (client tập trung fallback tại `group`, server tại `_group_of`). Link `/watch` giữ nguyên.
+  - AC 44: dùng `save` và khóa `auto-short-listen-position:<playlist>:fav` sẵn có; mở Yêu thích chọn đúng `episode_id + clip_id` và giây đã lưu, ở trạng thái dừng. Phần tính lại từ danh tính, không lưu index / số phần. Bài bị lọc thì mở Cả hai để khôi phục; bài đã mất thì về bài đầu. Tab Nghe giữ nút "Nghe tiếp" như trước.
+- Code bị thay / xóa: `continuous` / `listLabel` ở player và các nhánh hiển thị danh sách liên tục trong listen; `renderEpisodeList` → `renderGroupList`, `nextInEpisode` → `nextInGroup`, `episodes` → `groups`, callback `onEpisode` → `onGroup`; server `_same_episode_next` → `_same_group_next`. Không giữ bản sao cơ chế phần / tập. Cờ `continuous` server được giữ riêng vì tương thích.
+- Helper mới: `group`, `groupFavorites`, `favoritePartSizes` (player), `rebuildItems` (listen), `_group_of` (server). Đã tìm bằng `rg -n 'onEpisode|episodes\(|nextInEpisode|renderEpisodeList|continuous|listLabel' src/auto_short/web/static` và đọc `episode_of` / `_same_episode_next`: tái dùng và khái quát các helper cũ nêu trên; helper chia phần là mới vì chưa có logic cỡ phần theo bộ lọc. Test dùng fixture `run_player_js` chung trong cùng file, DOM / clock giả chạy trực tiếp source JS bằng Node, không server / browser dependency.
+
+| AC | Test / evidence |
+|---|---|
+| 42 | `test_overlay_action_text_has_contrast` (tĩnh: màu chữ / nền và thứ tự override); chưa đo giao diện thật |
+| 43, chia phần / chọn bài / hết phần | `test_favorites_part_sizes_and_sparse_episode_groups` (parametrize 3 bộ lọc, tập cách số, không cắt Short/KT cùng tập); `test_favorites_click_filter_end_card_and_unheart` (DOM thật module, click / đếm ngược / biên phần / đổi lọc); phần payload của `test_favorites_resume_identity_and_room_group_payload` |
+| 43, phòng / tương thích | `test_favorites_groups_cross_episode_but_stop_at_part_end` (cùng nhóm qua tập, khác nhóm cùng tập, lệnh chọn, hai client); `test_group_metadata_survives_route_queue_cache_and_invite` (gọi endpoint trực tiếp, queue cache / client mới); `test_invalid_group_metadata_is_rejected_atomically`; test `episode` / `continuous` cũ vẫn PASS |
+| 44 | `test_favorites_resume_identity_and_room_group_payload` (xóa bài phía trước đổi index/phần, lưu lại giây); `test_favorites_resume_hidden_kind_or_missing_identity` (Short / KT cùng clip id, bài bị lọc hoặc đã mất) |
+| 23/28/29/30/31/40 | `test_episode_groups_keep_end_boundary_and_manual_next`, `test_favorites_click_filter_end_card_and_unheart`, các guard tĩnh cũ về cuộn / overlay / giao diện chung và test server tập cũ |
+| 45 | Chưa chạy Android Chrome; ORCHESTRATOR / HUMAN LEAD xác nhận |
+
+AC 43 có hơn 3 hàm test vì gồm thuật toán chia phần thuần, DOM một mình, trạng thái phòng, cache route và validation; các ca cùng nhánh được parametrize, không thêm dependency.
+
+- Verification đã chạy (cwd `/home/ntnghia/projects/yas-listen1`):
+  - `PYTHONPATH=/home/ntnghia/projects/yas-listen1/src conda run --no-capture-output -n auto-short pytest tests/test_web_listen.py tests/test_web_watch_party.py -q -k 'not test_http' -x --tb=short`: **121 passed, 9 deselected in 6.30s** (lần cuối). Gồm các test Node ở trên và endpoint trực tiếp, không socket.
+  - `node --check src/auto_short/web/static/player.js` và `node --check src/auto_short/web/static/listen.js`: **PASS** (mọi JS đổi).
+  - `git diff --check`: **PASS**.
+- Không chạy theo giới hạn delegation (sandbox không có loopback, TestClient / server có thể treo):
+  - `PYTHONPATH=/home/ntnghia/projects/yas-listen1/src conda run -n auto-short pytest tests/test_web_listen.py tests/test_web_watch_party.py tests/test_web_app.py tests/test_web_compilation.py tests/test_web_episode_ui_cp812.py -q` (đủ 5 file, gồm 9 test HTTP bị bỏ chọn và các file dùng TestClient).
+  - Full suite `pytest -n auto -q`; thử Android / hai trình duyệt thật AC 45. ORCHESTRATOR chạy phần này; không claim PASS.
+- Diff so với `825c5df` (không tính contract): app **+134 / −65**, test **+283 / −5**, tổng **+417 / −70**.
+- Handoff: implementation sẵn sàng review; giữ lifecycle **IN_PROGRESS** tới khi required verification / review ngoài sandbox hoàn tất. Không commit / push / PR / gọi agent khác / gọi mạng thật / restart server.
 
 ### Amendment H (HUMAN LEAD 2026-11-08) — chưa làm, làm sau G
 

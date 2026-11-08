@@ -8,6 +8,7 @@ import secrets
 import threading
 import time
 import unicodedata
+from copy import deepcopy
 
 
 class WatchConflict(ValueError):
@@ -77,18 +78,22 @@ class WatchRoom:
         self._by = None
         self._viewers = {}
 
-    def _same_episode_next(self, index):
-        """Auto-advance never crosses an episode boundary (AC 31)."""
+    def _group_of(self, entry):
+        # Explicit parts take precedence over the legacy continuous-room flag.
+        if "group" in entry:
+            return ("group", entry["group"]["id"])
+        return ("legacy", None) if self._continuous else ("episode", episode_of(entry))
+
+    def _same_group_next(self, index):
+        """Auto-advance stays within the playing group (episode or favorites part)."""
         nxt = index + 1
-        if self._continuous:
-            return nxt < len(self._queue)
-        return nxt < len(self._queue) and episode_of(self._queue[nxt]) == episode_of(self._queue[index])
+        return nxt < len(self._queue) and self._group_of(self._queue[nxt]) == self._group_of(self._queue[index])
 
     def _apply_advance(self, now):
         if self._advance_at is None or now < self._advance_at:
             return
         at, self._advance_at = self._advance_at, None
-        if self._auto and self._same_episode_next(self._index):
+        if self._auto and self._same_group_next(self._index):
             self._index += 1
             self._position, self._paused = 0.0, False
             self._finished = False
@@ -100,7 +105,7 @@ class WatchRoom:
     def _snapshot(self, now):
         self._viewers = {c: t for c, t in self._viewers.items() if now - t < 10}
         current = self._queue[self._index] if self._queue else None
-        return dict(queue=[dict(e) for e in self._queue], queue_version=f"{self._epoch}.{self._queue_version}", index=self._index,
+        return dict(queue=deepcopy(self._queue), queue_version=f"{self._epoch}.{self._queue_version}", index=self._index,
                     video_url=current["url"] if current else None, title=current["title"] if current else "",
                     paused=self._paused, auto=self._auto, continuous=self._continuous, finished=self._finished, advance_at=self._advance_at,
                     position=self._position, rate=self._rate,
@@ -149,7 +154,7 @@ class WatchRoom:
                     raise ValueError("Chưa có phòng xem chung")
                 ended_version, position, paused = expected, end_position, True
                 finished = True
-                advance_at = now + 3 if auto and self._same_episode_next(index) else None
+                advance_at = now + 3 if auto and self._same_group_next(index) else None
             elif action in ("advance_now", "cancel_advance"):
                 if "expect_version" in data:
                     if type(data["expect_version"]) is not int:
@@ -159,7 +164,7 @@ class WatchRoom:
                 if advance_at is None:
                     return self._snapshot(now)
                 advance_at = None
-                if action == "advance_now" and auto and self._same_episode_next(index):
+                if action == "advance_now" and auto and self._same_group_next(index):
                     index, position, paused = index + 1, 0.0, False
                     finished = False
                 else:
@@ -184,6 +189,20 @@ class WatchRoom:
                         if not isinstance(label, str) or len(label) > 40:
                             raise ValueError("Nhãn tập tối đa 40 ký tự")
                         item["ep_label"] = label
+                    if "group" in entry:
+                        group = entry["group"]
+                        if not isinstance(group, dict) or set(group) - {"id", "label", "choice", "kind"}:
+                            raise ValueError("Nhóm không hợp lệ")
+                        for field, limit in (("id", 100), ("label", 80), ("choice", 160)):
+                            value = group.get(field)
+                            if field == "choice" and value is None:
+                                continue
+                            if (not isinstance(value, str) or not value.strip() or len(value) > limit
+                                    or any(unicodedata.category(c).startswith("C") for c in value)):
+                                raise ValueError("Nhãn / mã nhóm không hợp lệ")
+                        if group.get("kind", "part") not in ("part", "episode"):
+                            raise ValueError("Loại nhóm không hợp lệ")
+                        item["group"] = {**group, "kind": group.get("kind", "part")}
                     clean.append(item)
                 queue = clean
                 index = _index(data.get("index", 0), len(queue))
@@ -210,9 +229,9 @@ class WatchRoom:
                     raise ValueError("Chưa có phòng xem chung")
                 if not auto:
                     advance_at = None
-            elif action in ("play", "pause", "seek", "rate", "goto", "episode", "next", "prev"):
+            elif action in ("play", "pause", "seek", "rate", "goto", "episode", "group", "next", "prev"):
                 advance_at = None
-                if action in ("play", "seek", "goto", "episode", "next", "prev"):
+                if action in ("play", "seek", "goto", "episode", "group", "next", "prev"):
                     finished = False
                 if not self._queue:
                     raise ValueError("Chưa có phòng xem chung")
@@ -230,14 +249,15 @@ class WatchRoom:
                 elif action == "goto":
                     index = _index(data.get("index"), len(self._queue))
                     position, paused = 0.0, False
-                elif action == "episode":
-                    # Everyone in the room moves to the first item of the chosen episode.
-                    wanted = data.get("episode")
+                elif action in ("episode", "group"):
+                    # Keep the old episode command for old clients / invitations.
+                    wanted = data.get(action)
                     if not isinstance(wanted, str):
-                        raise ValueError("episode không hợp lệ")
-                    found = [n for n, e in enumerate(self._queue) if episode_of(e) == wanted]
+                        raise ValueError(f"{action} không hợp lệ")
+                    found = [n for n, e in enumerate(self._queue)
+                             if (e.get("group", {}).get("id") if action == "group" else episode_of(e)) == wanted]
                     if not found:
-                        raise ValueError("Không có tập này trong danh sách")
+                        raise ValueError("Không có nhóm này trong danh sách")
                     index, position, paused = found[0], 0.0, False
                 elif action == "seek":
                     position = _number(data.get("position"), "position")
