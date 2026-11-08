@@ -24,6 +24,42 @@
     <p class="small"><a id="fv-back" href="/">&larr; Về bộ kinh</a></p>
     <p id="fv-msg" class="small" hidden></p>
   </section>
+  <section id="episode-listen" class="card listen-room">
+    <h1 id="listen-series">Nghe yêu thích</h1>
+    <div class="listen-toolbar">
+      <div id="listen-filter" class="player-segments" role="group" aria-label="Loại bài">
+        <button class="btn" type="button" data-kind="short" aria-pressed="false">Short</button>
+        <button class="btn" type="button" data-kind="khaithi" aria-pressed="false">Khai thị</button>
+        <button class="btn" type="button" data-kind="both" aria-pressed="true">Cả hai</button>
+      </div>
+      <label class="player-jump">Tới tập <select id="listen-jump" aria-label="Nhảy tới tập"></select></label>
+    </div>
+    <button id="listen-resume" class="btn player-soft-card player-resume" type="button" hidden></button>
+    <video id="listen-video" class="player-video" controls playsinline preload="metadata" hidden></video>
+    <div class="player-now">
+      <h2 id="listen-title" class="player-now-title"></h2>
+      <p id="listen-meta" class="small muted"></p>
+      <p id="listen-lecture" class="small muted player-lecture"></p>
+      <span id="listen-count" class="badge"></span>
+    </div>
+    <button id="listen-play" class="btn primary" type="button" hidden>Bấm để phát</button>
+    <div id="listen-notice" class="player-notice player-soft-card" role="status" aria-live="polite" hidden></div>
+    <div id="listen-controls" class="player-controls">
+      <span class="player-heart"><button id="listen-favorite" class="btn icon-btn heart" type="button" hidden aria-label="Yêu thích" aria-pressed="false" title="Yêu thích">♡</button></span>
+      <button id="listen-prev" class="btn icon-btn" type="button" title="Trước" aria-label="Trước" disabled>⏮</button>
+      <button id="listen-next" class="btn icon-btn" type="button" title="Tiếp" aria-label="Tiếp" disabled>⏭</button>
+    </div>
+    <p id="listen-pip-hint" class="small muted player-pip-hint" hidden></p>
+    <label class="player-switch"><input id="listen-auto" type="checkbox" role="switch" checked><span class="player-switch-track" aria-hidden="true"></span> Tự chuyển bài</label>
+    <div class="actions">
+      <button id="listen-watch" class="btn" type="button" disabled>Xem chung</button>
+      <button id="listen-end" class="btn small danger" type="button" hidden disabled>Kết thúc xem chung</button>
+    </div>
+    <p id="listen-viewers" class="small" hidden></p>
+    <p id="listen-invite" class="small" hidden></p>
+    <p id="listen-message" class="small muted" role="status" aria-live="polite"></p>
+    <div id="listen-queue" class="listen-queue" aria-label="Danh sách theo tập"></div>
+  </section>
   <nav class="tabs fv-tabs" role="tablist" aria-label="Cách ghép video">
     <button id="fv-tab-ai" class="btn tab active" type="button" role="tab" aria-selected="true" aria-controls="fv-pane-ai" data-fv-tab="ai">Gợi ý chủ đề (AI)</button>
     <button id="fv-tab-manual" class="btn tab" type="button" role="tab" aria-selected="false" aria-controls="fv-pane-manual" data-fv-tab="manual" tabindex="-1">Yêu thích &amp; ghép tay</button>
@@ -82,7 +118,9 @@
   </div>
 </main>
 <script src="/static/app.js"></script>
+<script src="/static/player.js" defer></script>
 <script src="/static/watch.js" defer></script>
+<script src="/static/listen.js" defer></script>
 <script src="/static/favorites.js"></script>
 <script src="/static/theme_plan.js"></script>
 <script>Favorites.init();ThemePlan.init();</script>

@@ -63,13 +63,13 @@ def build(ctx: WebContext) -> APIRouter:
     router = APIRouter()
 
     @router.get("/api/playlists/{playlist_id}/listen")
-    def api_listen(playlist_id: str):
+    def api_listen(playlist_id: str, favorites: bool = False):
         from ..listen import playlist_listen
 
         doc = ctx.playlist_or_404(playlist_id)
         if doc is None:
             return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
-        return playlist_listen(ctx.config, doc, ctx.compilations.favorites(playlist_id))
+        return playlist_listen(ctx.config, doc, ctx.compilations.favorites(playlist_id), favorites_only=favorites)
 
     @router.get("/api/playlists/{playlist_id}/link-playlists")
     def api_link_playlists(playlist_id: str):

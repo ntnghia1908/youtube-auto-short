@@ -33,7 +33,7 @@ def clip_metadata(config: Config, episode_id: str, manifest: dict | None = None)
         and short.get("status") == "rendered"}
 
 
-def playlist_listen(config: Config, doc: dict, favorites: Iterable[Item]) -> dict:
+def playlist_listen(config: Config, doc: dict, favorites: Iterable[Item], favorites_only: bool = False) -> dict:
     """Build a queue without loading titles, publication, jobs or remote storage."""
     pid = doc["playlist_id"]
     hearted = {(item.episode_id, item.clip) for item in favorites}
@@ -69,6 +69,8 @@ def playlist_listen(config: Config, doc: dict, favorites: Iterable[Item]) -> dic
                 if view is None:
                     continue
                 clip = view["clip_id"]
+                if favorites_only and (eid, clip) not in hearted:
+                    continue
                 items.append({**metadata[clip], "kind": kind, "episode_id": eid, "base_episode_id": base,
                               "ep_index": entry.get("index"), "ep_title": entry.get("title"),
                               "clip_id": clip, "title": view["title"]["text"],

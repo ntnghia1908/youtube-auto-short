@@ -157,10 +157,36 @@ def test_auto_advance_never_scrolls_page_to_list():  # AC 28 / 29 (static guard)
     assert "this.endedKey = null; this.scrollToVideo();" in player
 
 
-def test_list_shows_only_playing_episode_in_both_pages():  # AC 30 / 31 (static guard)
+def test_favorites_only_keeps_order_and_marks_all_hearted(library):  # AC 39
+    hearts = [Item(FIRST, "k09"), Item(FIRST + ".kt", "k02")]
+    full = playlist_listen(library, document(), hearts)["items"]
+    only = playlist_listen(library, document(), hearts, favorites_only=True)["items"]
+    assert [i["clip_id"] for i in only] == [i["clip_id"] for i in full if i["fav"]["favorite"]] and len(only) == 2
+    assert all(i["fav"]["favorite"] for i in only)
+    assert playlist_listen(library, document(), [], favorites_only=True)["items"] == []
+
+
+def test_http_listen_favorites_query(library):  # AC 39 (route)
+    from fastapi.testclient import TestClient
+    app = make_app(library)
+    with TestClient(app, follow_redirects=False) as client:
+        login(client)
+        assert client.get(f"/api/playlists/{PID}/listen?favorites=true").json()["items"] == []
+        store.write_favorites(app.state.compilations.folder(PID), [Item(FIRST, "k09")])
+        got = client.get(f"/api/playlists/{PID}/listen?favorites=true").json()["items"]
+        assert [i["clip_id"] for i in got] == ["k09"] and got[0]["fav"]["favorite"] is True
+
+
+def test_listen_and_watch_share_one_module():  # AC 30 / 31 / 34 (static guard)
     static = Path(__file__).parents[1] / "src/auto_short/web/static"
     listen, watch, player = [(static / n).read_text() for n in ("listen.js", "watch.js", "player.js")]
     assert "<details" not in listen and "createElement(\"details\")" not in listen
-    assert "player.renderEpisodeList($(\"queue\")" in listen and "player.renderEpisodeList($(\"watch-queue\")" in watch
-    assert "nextInEpisode()" in player and "onEpisode" in listen and "onEpisode" in watch
-    assert 'command("episode"' in watch
+    # The room UI exists once (listen.js); watch.js is only transport + invitation bar.
+    assert "new AutoShortPlayer" in listen and "new AutoShortPlayer" not in watch and "renderEpisodeList" not in watch
+    assert "nextInEpisode()" in player and "onEpisode" in listen and 'roomCommand("episode"' in listen
+    for page in ("episode.html", "watch.html", "favorites.html"):
+        html = (static / page).read_text()
+        assert 'id="listen-video"' in html and "/static/listen.js" in html and "/static/player.js" in html
+    assert 'id="watch-video"' not in (static / "watch.html").read_text()
+    # Favorites = one continuous list (AC 39), un-hearted item stays until the playing item changes (AC 40).
+    assert "player.continuous" in listen and "favorites=1" in listen and "item === currentItem" in listen

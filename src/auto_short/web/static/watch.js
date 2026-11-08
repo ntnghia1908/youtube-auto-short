@@ -1,6 +1,7 @@
+/* Room transport shared by every page: client id, commands, polling, invitation bar and "Xem chung"
+   buttons. The room UI itself lives in listen.js (one interface, solo / room modes). */
 (() => {
   "use strict";
-  const $ = (id) => document.getElementById(id);
   let client;
   try { client = sessionStorage.getItem("auto-short-watch-client"); } catch (_) { /* Storage disabled. */ }
   if (!client) {
@@ -9,24 +10,23 @@
     client = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
     try { sessionStorage.setItem("auto-short-watch-client", client); } catch (_) { /* Keep it for this page. */ }
   }
-  const inRoom = !!$("watch-room");
-  const video = $("watch-video");
-  let pauseTimer = null, lastHiddenAt = -Infinity, pageHidden = false;
-  let player;
-  function cancelPause() { clearTimeout(pauseTimer); pauseTimer = null; if (player) player.syncBlocked = false; }
-  function hiddenPause() {
-    if (player?.inPiP()) return false;
-    return pageHidden || (player ? player.isHidden() : document.visibilityState === "hidden") || performance.now() - lastHiddenAt < 1500;
-  }
-  let state = null;
-  let sending = Promise.resolve(), pending = 0, pollTimer, pollGeneration = 0;
+  // listen.js sets active / handler / message / onVersion when its page is in room mode.
+  const room = { active: false, handler: null, message: null, onVersion: null };
+  let cached = { version: null, queue: [] };   // queue cache: the server omits `queue` while queue_version matches
+  let state = null, sending = Promise.resolve(), pending = 0, pollTimer, pollGeneration = 0, pageHidden = false;
 
   async function request(method = "GET", body, path = "/api/watch") {
+    const isRoom = path.startsWith("/api/watch") && !path.startsWith("/api/watch/log");
+    if (isRoom && !body && cached.version !== null) path += `${path.includes("?") ? "&" : "?"}queue_version=${encodeURIComponent(cached.version)}`;
     const response = await fetch(path, {
       method, cache: "no-store", headers: body ? { "Content-Type": "application/json" } : {},
-      body: body ? JSON.stringify({ ...body, client }) : undefined,
+      body: body ? JSON.stringify({ ...body, client, ...(isRoom && cached.version !== null ? { queue_version: cached.version } : {}) }) : undefined,
     });
     const data = await response.json();
+    if (response.ok && isRoom && data.queue_version !== undefined) {
+      if (data.queue === undefined) data.queue = cached.queue;
+      else cached = { version: data.queue_version, queue: data.queue };
+    }
     if (!response.ok) {
       const error = new Error(typeof data.detail === "string" ? data.detail : "Yêu cầu không hợp lệ");
       error.status = response.status;
@@ -34,7 +34,7 @@
     }
     return data;
   }
-  function message(text) { if (inRoom) $("watch-message").textContent = text || ""; }
+  const message = (text) => { if (room.active && room.message) room.message(text || ""); };
   function command(action, extra = {}, force = false) {
     pending++;
     // Serialize this client's controls; polling cannot overwrite an unacknowledged local gesture.
@@ -53,40 +53,22 @@
     sending = result.catch(() => {}).finally(() => { pending--; });
     return result;
   }
-  function renderRoom() {
-    const active = !!state.video_url;
-    $("watch-title").textContent = active ? AutoShortPlayer.heading(state) : "Chưa có phòng xem chung";
-    $("watch-meta").textContent = active && state.ep_label ? `Tập ${state.ep_label} · ${state.kind === "khaithi" ? "Khai thị" : "Short"} ${state.number} / ${state.total}` : "";
-    $("watch-viewers").textContent = `Đang xem: ${Object.keys(state.viewers).length} người`;
-    $("watch-end").disabled = !active;
-    player.renderEpisodeList($("watch-queue"), state.queue, state.index, (index) => {
-      player.hideNotice();
-      command("goto", { index }, true).then(() => player.scrollToVideo()).catch(() => {});
-    }, false);
-  }
   const invite = document.createElement("div");
-  if (!inRoom) { invite.className = "watch-invite"; invite.hidden = true; document.body.prepend(invite); }
+  invite.className = "watch-invite"; invite.hidden = true; document.body.prepend(invite);
   function accept(data, force = false) {
     if (state && data.version < state.version) return;
-    if (state && data.version !== state.version) {
-      cancelPause();
-    }
+    if (state && data.version !== state.version && room.onVersion) room.onVersion();
     state = data;
-    if (!inRoom) {
-      invite.hidden = !data.video_url || data.by === client;
-      if (!invite.hidden) {
-        const link = document.createElement("a"); link.href = "/watch"; link.textContent = "Vào xem";
-        invite.replaceChildren(document.createTextNode(`Đang xem chung: ${data.title} — `), link);
-      }
-      return;
+    if (room.active) { room.handler(data, force); return; }
+    invite.hidden = !data.video_url || data.by === client;
+    if (!invite.hidden) {
+      const link = document.createElement("a"); link.href = "/watch"; link.textContent = "Vào xem";
+      invite.replaceChildren(document.createTextNode(`Đang xem chung: ${data.title} — `), link);
     }
-    renderRoom();
-    player.setState(data, force || data.by !== client, pauseTimer !== null, data.by !== client);
   }
-
   async function poll(force = false) {
     try {
-      const data = await request("GET", undefined, "/api/watch" + (inRoom ? `?client=${encodeURIComponent(client)}` : ""));
+      const data = await request("GET", undefined, "/api/watch" + (room.active ? `?client=${encodeURIComponent(client)}` : ""));
       if (!pending) { accept(data, force); message(""); }
       return data;
     } catch (error) { message(`Không thể cập nhật phòng: ${error.message}`); }
@@ -95,11 +77,11 @@
     const generation = pollGeneration;
     await poll(force);
     if (pageHidden || generation !== pollGeneration) return;
-    pollTimer = setTimeout(tick, inRoom || state?.video_url ? 1000 : 10000);
+    pollTimer = setTimeout(tick, room.active || state?.video_url ? 1000 : 10000);
   }
 
   function eligible(v) {
-    return v.controls && v.id !== "dq-awake" && v.id !== "awake" && v !== video && v.id !== "listen-video"
+    return v.controls && v.id !== "dq-awake" && v.id !== "awake" && v.id !== "listen-video"
       && !v.closest("[hidden]") && v.getBoundingClientRect().width > 0 && v.getBoundingClientRect().height > 0
       && getComputedStyle(v).visibility !== "hidden" && getComputedStyle(v).visibility !== "collapse";
   }
@@ -150,64 +132,17 @@
     });
   }
   window.AutoShortWatch = {
-    client,
-    async start(queue, position = 0) {
-      await command("set", { queue, index: 0, position });
-      location.assign("/watch");
-    },
+    client, room, request, command, poll,
+    sent: () => sending,
+    stopPolling() { pageHidden = true; pollGeneration++; clearTimeout(pollTimer); },
+    resume() { pageHidden = false; tick(true); },
+    leave() { navigator.sendBeacon("/api/watch/leave", new Blob([JSON.stringify({ client })], { type: "application/json" })); },
+    async end() { await sending; accept(await request("DELETE", {}), true); },
   };
-  if (inRoom) {
-    const navigate = (action) => {
-      if (state?.video_url) { cancelPause(); return command(action, { expect_version: state.version }, true).catch(() => {}); }
-    };
-    player = new AutoShortPlayer("watch", {
-      client, request, message, onNavigate: navigate,
-      onEnded: (position) => { cancelPause(); command("ended", { expect_version: state.version, position }, true).catch(() => {}); },
-      onAdvance: () => command("advance_now", { expect_version: state.version }, true).catch(() => {}),
-      onCancelAdvance: () => command("cancel_advance", { expect_version: state.version }, true).catch(() => {}),
-      onEpisode: (episode) => { player.hideNotice(); command("episode", { episode }, true).then(() => player.scrollToVideo()).catch(() => {}); },
-      onFavorite: () => poll(true),
-      onAuto: (auto) => { command("auto", { auto }).catch(() => poll(true)); },
-      onAction(action, extra, force = false) {
-        if (action === "pause" && !force) {
-          if (hiddenPause()) return;
-          cancelPause();
-          const version = state.version;
-          player.syncBlocked = true;
-          // Some phones pause before visibilitychange/pagehide: preserve WATCH1's transition window.
-          pauseTimer = setTimeout(() => {
-            pauseTimer = null; player.syncBlocked = false;
-            if (!hiddenPause() && player.media().paused && state?.version === version) {
-              command("pause", extra).catch(() => {});
-            }
-          }, 1500);
-          return;
-        }
-        cancelPause(); command(action, extra, force).catch(() => {});
-      },
-    });
-    $("watch-end").addEventListener("click", async () => {
-      try { cancelPause(); await sending; accept(await request("DELETE", {}), true); } catch (error) { message(error.message); }
-    });
-    const leave = () => navigator.sendBeacon("/api/watch/leave", new Blob([JSON.stringify({ client })], { type: "application/json" }));
-    document.addEventListener("visibilitychange", () => {
-      lastHiddenAt = performance.now(); cancelPause();
-      if (!player.isHidden()) {
-        sending.then(() => poll(true));
-      }
-    });
-    window.addEventListener("pagehide", () => {
-      pageHidden = true; pollGeneration++; lastHiddenAt = performance.now(); cancelPause(); clearTimeout(pollTimer); leave();
-    });
-    window.addEventListener("pageshow", (event) => {
-      if (event.persisted) { pageHidden = false; lastHiddenAt = performance.now(); tick(true); }
-    });
-  } else {
-    let scheduled = false;
-    new MutationObserver(() => {
-      if (!scheduled) { scheduled = true; requestAnimationFrame(() => { scheduled = false; scan(); }); }
-    }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["hidden", "style", "class", "controls"] });
-    scan();
-  }
+  let scheduled = false;
+  new MutationObserver(() => {
+    if (!scheduled) { scheduled = true; requestAnimationFrame(() => { scheduled = false; scan(); }); }
+  }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["hidden", "style", "class", "controls"] });
+  scan();
   tick();
 })();

@@ -8,7 +8,7 @@
       this.onNavigate = onNavigate; this.onFavorite = onFavorite; this.message = message;
       this.video = $("video"); this.getNext = getNext; this.getItems = getItems; this.onEpisode = onEpisode;
       this.onEnded = onEnded; this.onAdvance = onAdvance; this.onCancelAdvance = onCancelAdvance;
-      this.client = client; this.page = prefix; this.events = []; this.lastLogAt = -Infinity; this.logMarks = new Map();
+      this.continuous = false; this.listLabel = ""; this.client = client; this.page = prefix; this.events = []; this.lastLogAt = -Infinity; this.logMarks = new Map();
       this.programmed = new Map(); this.sourceKey = null; this.active = true;
       this.receivedAt = 0; this.loading = false; this.state = null;
       this.pipActive = document.pictureInPictureElement === this.video;
@@ -163,7 +163,9 @@
       else if (row.bottom > box.bottom) container.scrollTop += row.bottom - box.bottom;
     }
     currentEntry() { return this.getItems()[this.state?.index] || this.state; }
+    // continuous (e.g. Yêu thích): one unbroken list, no stop at episode boundaries.
     nextInEpisode() {
+      if (this.continuous) return this.getNext() || null;
       const next = this.getNext(), now = this.episode(this.currentEntry()), then = this.episode(next);
       return next && (now?.id ?? null) === (then?.id ?? null) ? next : null;
     }
@@ -177,12 +179,13 @@
     renderEpisodeList(container, items, index, onPick, scroll = true) {
       const here = this.episode(items[index]), key = here?.id ?? null;
       const members = [];
-      items.forEach((entry, n) => { if ((this.episode(entry)?.id ?? null) === key) members.push(n); });
-      const signature = JSON.stringify([key, here?.label, members, items.map((e) => e.code || e.title || e.url || "")]);
+      items.forEach((entry, n) => { if (this.continuous || (this.episode(entry)?.id ?? null) === key) members.push(n); });
+      const label = this.continuous ? this.listLabel || "Danh sách" : here?.label;
+      const signature = JSON.stringify([key, label, members, items.map((e) => e.code || e.title || e.url || "")]);
       if (container.dataset.signature !== signature) {
         container.dataset.signature = signature;
         const head = document.createElement("p"), list = document.createElement("ol");
-        head.className = "player-episode-head"; head.textContent = items.length ? `${here?.label || "Danh sách"} · ${members.length} bài` : "";
+        head.className = "player-episode-head"; head.textContent = items.length ? `${label || "Danh sách"} · ${members.length} bài` : "";
         for (const n of members) {
           const li = document.createElement("li"), button = AutoShortPlayer.queueButton(items[n], () => onPick(n));
           button.dataset.index = n; li.append(button); list.append(li);
@@ -222,7 +225,7 @@
       if (at != null || (this.onEnded && this.state.finished)) this.finishedKey = this.sourceKey;
       if (this.finishedKey !== this.sourceKey) { this.$("notice").hidden = true; return; }
       const next = this.getNext(), current = this.episode(this.currentEntry()), upcoming = this.episode(next);
-      const boundary = current && (!next || (upcoming && upcoming.id !== current.id));
+      const boundary = current && (!next || (!this.continuous && upcoming && upcoming.id !== current.id));
       const signature = JSON.stringify([this.sourceKey, at ?? null, next?.code, next?.title, boundary]);
       if (signature !== this.advanceSignature) {
         this.advanceSignature = signature;

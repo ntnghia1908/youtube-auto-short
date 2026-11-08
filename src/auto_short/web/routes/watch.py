@@ -88,12 +88,14 @@ def build(ctx: WebContext) -> APIRouter:
                                              ensure_ascii=False, separators=(",", ":")))
         return JSONResponse({"ok": True})
 
-    def decorate(state):
+    def decorate(state, have=None):
         # Derive fresh metadata on every response, including rooms set by old browser tabs.
         state["fav"] = None
         state["code"] = None
         metadata = {}
-        for entry in state["queue"]:
+        # The queue is only sent (and decorated) when the client's cached copy is stale.
+        send_queue = have != state["queue_version"]
+        for entry in (state["queue"] if send_queue else state["queue"][state["index"]:state["index"] + 1]):
             match = re.fullmatch(r"/files/([^/]+)/([^/]+)\.mp4", urlsplit(entry["url"]).path)
             if not match:
                 continue
@@ -115,33 +117,39 @@ def build(ctx: WebContext) -> APIRouter:
                 if favorites is not None:
                     state["fav"] = dict(playlist_id=favorites["playlist_id"], episode_id=episode_id,
                                         clip=clip, favorite=clip in favorites["clips"])
+        if not send_queue:
+            del state["queue"]
         return state
 
-    def call(client, action, **data):
+    def have_version(body):
+        value = body.get("queue_version")
+        return value if isinstance(value, str) else None
+
+    def call(client, action, have=None, **data):
         try:
             state = room.snapshot(client) if action is None else room.command(client, action, **data)
-            return JSONResponse(decorate(state), headers={"Cache-Control": "no-store"})
+            return JSONResponse(decorate(state, have), headers={"Cache-Control": "no-store"})
         except WatchConflict as exc:
             return JSONResponse({"detail": str(exc)}, status_code=409)
         except ValueError as exc:
             return JSONResponse({"detail": str(exc)}, status_code=422)
 
     @router.get("/api/watch")
-    def get_watch(client: str | None = None):
-        return call(client, None)
+    def get_watch(client: str | None = None, queue_version: str | None = None):
+        return call(client, None, queue_version)
 
     @router.post("/api/watch")
     def update_watch(body: dict = Body(...)):
-        data = {k: v for k, v in body.items() if k not in ("client", "action", "self")}
+        data = {k: v for k, v in body.items() if k not in ("client", "action", "self", "queue_version")}
         action = body.get("action")
-        return call(body.get("client"), action if isinstance(action, str) else "", **data)
+        return call(body.get("client"), action if isinstance(action, str) else "", have_version(body), **data)
 
     @router.post("/api/watch/leave")
     def leave_watch(body: dict = Body(...)):
-        return call(body.get("client"), "leave")
+        return call(body.get("client"), "leave", have_version(body))
 
     @router.delete("/api/watch")
     def end_watch(body: dict = Body(...)):
-        return call(body.get("client"), "end")
+        return call(body.get("client"), "end", have_version(body))
 
     return router

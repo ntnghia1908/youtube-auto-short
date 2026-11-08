@@ -370,6 +370,7 @@ const Favorites = (() => {
     });
     $("#fv-auto-min").addEventListener("input", updateAuto);
     $("#fv-auto").addEventListener("click", (ev) => create({ mode: "auto", minutes: parseInt($("#fv-auto-min").value, 10), kinds: kindsOfFilter() }, ev.target));
+    window.addEventListener("listen-favorite-changed", load); // heart toggled in the player
     load();
   }
 

@@ -60,7 +60,7 @@ def test_reject_urls_atomically(room, url):  # AC2,8
 
 
 @pytest.mark.parametrize("data", [
-    {"queue": []}, {"queue": QUEUE * 101}, {"queue": [{"url": "/v", "title": "x" * 201}]},
+    {"queue": []}, {"queue": QUEUE * 334}, {"queue": [{"url": "/v", "title": "x" * 201}]},
     {"queue": [None]}, {"queue": "oops"}, {"index": -1}, {"index": 3}, {"index": True},
     {"position": -1}, {"position": 10 ** 400}, {"position": float("inf")}, {"position": True}, {"rate": .24},
     {"rate": 4.01}, {"rate": float("nan")}, {"rate": "1"}, {"paused": "false"},
@@ -106,8 +106,10 @@ def test_queue_cas_navigation_and_end(room):  # AC8
     assert end["index"] == 2 and end["paused"]
     assert r.command("a", "prev", expect_version=end["version"])["index"] == 1
     # Maximum accepted queue, title and URL boundaries.
-    r.command("a", "set", queue=[{"url": "/" + "a" * 2047, "title": "t" * 200}] * 300, index=299)
-    assert len(r.snapshot()["queue"]) == 300
+    r.command("a", "set", queue=[{"url": "/" + "a" * 2047, "title": "t" * 200}] * 1000, index=999)
+    assert len(r.snapshot()["queue"]) == 1000
+    with pytest.raises(ValueError):  # AC 35: one whole series fits; beyond the cap is refused
+        r.command("a", "set", queue=[{"url": "/a", "title": "t"}] * 1001)
 
 
 def test_simultaneous_ended_only_advances_once(room):  # AC8
@@ -293,7 +295,7 @@ def test_http_room_lifecycle_and_validation(web):  # AC1,2,4,8
     for url in BAD_URLS:
         response = web.post("/api/watch", json={"client": "a", "action": "set", "video_url": url})
         assert response.status_code == 422
-    for queue in [QUEUE * 101, [{"url": "/v", "title": "x" * 201}], [QUEUE[0], {"url": "//evil/x"}]]:
+    for queue in [QUEUE * 334, [{"url": "/v", "title": "x" * 201}], [QUEUE[0], {"url": "//evil/x"}]]:
         assert web.post("/api/watch", json={"client": "a", "action": "set", "queue": queue}).status_code == 422
     assert web.get("/api/watch").json()["version"] == view["version"]
     assert web.post("/api/watch", json={"client": "a", "action": "next", "expect_version": first["version"]}).status_code == 409
@@ -588,3 +590,43 @@ def test_episode_command_moves_whole_room_to_first_item(room):  # AC 31
             r.command("a", "episode", episode=bad)
     labelled = r.command("a", "set", queue=[dict(url="/files/ep1/a.mp4", title="a", ep_label="20")])
     assert labelled["queue"][0]["ep_label"] == "20"
+
+
+def test_continuous_room_crosses_episodes_and_shows_flag(room):  # AC 39: Yêu thích is one unbroken list
+    r, now = room
+    set_ = r.command("a", "set", queue=EPISODES, index=2, continuous=True)
+    assert set_["continuous"] is True
+    wait = r.command("a", "ended", expect_version=set_["version"])
+    assert wait["advance_at"] == now[0] + 3  # ep1.kt -> ep2 would stop in a normal room
+    now[0] += 3
+    assert r.snapshot()["index"] == 3
+    assert r.command("a", "set", queue=EPISODES)["continuous"] is False
+    with pytest.raises(ValueError):
+        r.command("a", "set", queue=EPISODES, continuous="yes")
+    assert r.command("a", "end")["continuous"] is False
+
+
+def test_http_queue_sent_only_when_version_changes_and_size(web):  # AC 35 load
+    import json
+    from web_helpers import login
+    login(web)
+    big = [{"url": f"/files/ep{n // 10}/c{n}.mp4", "title": f"Tiêu đề bài số {n} của một tập kinh"} for n in range(400)]
+    post = lambda body: web.post("/api/watch", json={"client": "a", **body})  # noqa: E731
+    first = post({"action": "set", "queue": big, "index": 5}).json()
+    version = first["queue_version"]
+    assert len(first["queue"]) == 400
+    full = web.get("/api/watch?client=b")  # new machine / invite link: no version -> full queue
+    assert len(full.json()["queue"]) == 400 and full.json()["queue_version"] == version
+    same = web.get(f"/api/watch?client=b&queue_version={version}")
+    assert "queue" not in same.json() and same.json()["video_url"] == big[5]["url"] and same.json()["index"] == 5
+    assert "queue" not in post({"action": "next", "expect_version": first["version"], "queue_version": version}).json()
+    assert len(post({"action": "goto", "index": 1, "queue_version": "stale.0"}).json()["queue"]) == 400
+    changed = post({"action": "set", "queue": big[:3], "queue_version": version}).json()
+    assert changed["queue_version"] != version and len(changed["queue"]) == 3
+    assert "queue" in web.get(f"/api/watch?client=b&queue_version={version}").json()
+    # Size: the poll no longer carries the queue (measured, printed with -s).
+    post({"action": "set", "queue": big, "index": 5})
+    v = web.get("/api/watch?client=b").json()["queue_version"]
+    with_queue, without = len(web.get("/api/watch?client=b").content), len(web.get(f"/api/watch?client=b&queue_version={v}").content)
+    print(f"snapshot 400 items: with queue {with_queue} B, without {without} B")
+    assert without < with_queue / 20

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import re
+import secrets
 import threading
 import time
 import unicodedata
@@ -45,6 +46,7 @@ def _client(value) -> str:
     return value
 
 
+MAX_QUEUE = 1000  # whole sutra series (AG 35); the listen API itself has no cap
 _FILE_URL = re.compile(r"^/files/([^/]+)/[^/]+\.mp4$")
 
 
@@ -59,9 +61,12 @@ class WatchRoom:
         self._clock = clock
         self._lock = threading.Lock()
         self._queue = []
+        self._queue_version = 0
+        self._epoch = secrets.token_hex(4)  # a restarted server never matches a stale client cache
         self._index = 0
         self._paused = True
         self._auto = True
+        self._continuous = False
         self._advance_at = None
         self._ended_version = None
         self._finished = False
@@ -75,6 +80,8 @@ class WatchRoom:
     def _same_episode_next(self, index):
         """Auto-advance never crosses an episode boundary (AC 31)."""
         nxt = index + 1
+        if self._continuous:
+            return nxt < len(self._queue)
         return nxt < len(self._queue) and episode_of(self._queue[nxt]) == episode_of(self._queue[index])
 
     def _apply_advance(self, now):
@@ -93,9 +100,9 @@ class WatchRoom:
     def _snapshot(self, now):
         self._viewers = {c: t for c, t in self._viewers.items() if now - t < 10}
         current = self._queue[self._index] if self._queue else None
-        return dict(queue=[dict(e) for e in self._queue], index=self._index,
+        return dict(queue=[dict(e) for e in self._queue], queue_version=f"{self._epoch}.{self._queue_version}", index=self._index,
                     video_url=current["url"] if current else None, title=current["title"] if current else "",
-                    paused=self._paused, auto=self._auto, finished=self._finished, advance_at=self._advance_at,
+                    paused=self._paused, auto=self._auto, continuous=self._continuous, finished=self._finished, advance_at=self._advance_at,
                     position=self._position, rate=self._rate,
                     updated_at=self._updated_at, version=self._version, by=self._by,
                     viewers=dict(self._viewers), server_time=now)
@@ -124,6 +131,7 @@ class WatchRoom:
             position = self._position + (0 if self._paused else (now - self._updated_at) * self._rate)
             rate, paused = self._rate, self._paused
             auto, advance_at = self._auto, self._advance_at
+            continuous = self._continuous
             ended_version = self._ended_version
             finished = self._finished
             if action == "ended":
@@ -160,8 +168,8 @@ class WatchRoom:
                 queue = data.get("queue")
                 if queue is None and "video_url" in data:
                     queue = [dict(url=data["video_url"], title=data.get("title", ""))]
-                if not isinstance(queue, list) or not 1 <= len(queue) <= 300:
-                    raise ValueError("Danh sách phải có từ 1 đến 300 video")
+                if not isinstance(queue, list) or not 1 <= len(queue) <= MAX_QUEUE:
+                    raise ValueError(f"Danh sách phải có từ 1 đến {MAX_QUEUE} video")
                 clean = []
                 for entry in queue:
                     if not isinstance(entry, dict):
@@ -184,11 +192,14 @@ class WatchRoom:
                 paused = data.get("paused", False)
                 if type(paused) is not bool:
                     raise ValueError("paused không hợp lệ")
+                continuous = data.get("continuous", False)
+                if type(continuous) is not bool:
+                    raise ValueError("continuous phải là boolean")
                 advance_at, ended_version = None, None
                 finished = False
             elif action == "end":
                 queue, index, position, rate, paused = [], 0, 0.0, 1.0, True
-                auto = True
+                auto, continuous = True, False
                 advance_at, ended_version = None, None
                 finished = False
             elif action == "auto":
@@ -240,10 +251,12 @@ class WatchRoom:
                 raise ValueError("Lệnh xem chung không hợp lệ")
             if queue is not None:
                 self._queue = queue
+                self._queue_version += 1
                 if action == "end":
                     self._viewers.clear()
             self._index, self._position, self._rate, self._paused = index, position, rate, paused
             self._auto, self._advance_at, self._ended_version = auto, advance_at, ended_version
+            self._continuous = continuous
             self._finished = finished
             self._updated_at, self._by = now, client
             self._version += 1

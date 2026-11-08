@@ -47,7 +47,10 @@
     <label class="player-switch"><input id="listen-auto" type="checkbox" role="switch" checked><span class="player-switch-track" aria-hidden="true"></span> Tự chuyển bài</label>
     <div class="actions">
       <button id="listen-watch" class="btn" type="button" disabled>Xem chung</button>
+      <button id="listen-end" class="btn small danger" type="button" hidden disabled>Kết thúc xem chung</button>
     </div>
+    <p id="listen-viewers" class="small" hidden></p>
+    <p id="listen-invite" class="small" hidden></p>
     <p id="listen-message" class="small muted" role="status" aria-live="polite">Đang tải danh sách…</p>
     <div id="listen-queue" class="listen-queue" aria-label="Danh sách theo tập"></div>
   </section>
