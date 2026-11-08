@@ -1768,6 +1768,7 @@ const AutoShort = (() => {
 
   function postBadges(p) {
     const nodes = [];
+    if (p.origin === "codex") nodes.push(el("span", { class: "badge", text: "Codex dịch" }));
     if (p.origin === "doc") nodes.push(el("span", { class: "badge", text: "Văn bản gốc" }));
     if (postHasAiText(p)) nodes.push(el("span", { class: "badge stale-badge", text: "Chữ AI từ phụ đề — đọc kỹ trước khi đăng" }));
     if (p.origin === "raw") nodes.push(el("span", { class: "badge stale-badge", text: "AI không chắc — kiểm lại" }));
@@ -1807,7 +1808,7 @@ const AutoShort = (() => {
     return el("span", { class: "copy-wrap" }, copy, warning);
   }
 
-  const postsPage = { vid: null, groups: [], autoTried: false, timer: null, nodes: new Map(), loaded: false };
+  const postsPage = { vid: null, groups: [], autoTried: false, timer: null, nodes: new Map(), loaded: false, backlog: null };
 
   function renderedOf(g) { return g.view.shorts.filter((s) => s.status === "rendered"); }
 
@@ -1834,6 +1835,7 @@ const AutoShort = (() => {
       const d = await api(postsUrlFor(id));
       g.posts = d.posts;
       g.postError = d.post_error;
+      g.codex = await api(postsUrlFor(id, "/codex"));
     }
     return g;
   }
@@ -1843,6 +1845,11 @@ const AutoShort = (() => {
     m.textContent = text || "";
     m.className = "small " + (cls || "");
     m.hidden = !text;
+  }
+
+  function codexResetTime(quota) {
+    return quota && quota.retry_at ? new Date(quota.retry_at * 1000).toLocaleString("vi-VN", {
+      timeZone: "Asia/Ho_Chi_Minh", hour12: false }) + " (giờ VN)" : "theo chu kỳ cấu hình";
   }
 
   function postJobLine(g) {
@@ -1856,7 +1863,8 @@ const AutoShort = (() => {
   }
 
   function anyPostWork() {
-    return postsPage.groups.some((g) => jobActive(g.view.post_job) || jobActive(g.view.job));
+    if (postsPage.backlog && (postsPage.backlog.current || (postsPage.backlog.enabled && postsPage.backlog.remaining))) return true;
+    return postsPage.groups.some((g) => jobActive(g.view.post_job) || jobActive(g.codex && g.codex.job) || jobActive(g.view.job));
   }
 
   function updatePostsHead() {
@@ -1879,6 +1887,17 @@ const AutoShort = (() => {
       cb.addEventListener("change", () => { setDocxImages(cb.checked); docx.href = withImages(docx.dataset.base); });
     }
     const lines = groups.map(postJobLine).filter(Boolean);
+    const backlog = postsPage.backlog;
+    if (backlog) {
+      let text = `Codex dịch: còn ${backlog.remaining} bài AI chưa đăng`;
+      if (!backlog.enabled) text += " · tự động đang tắt";
+      if (backlog.current) text += ` · ${backlog.current.episode_id}/${backlog.current.clip_id || "…"}`;
+      if (backlog.quota && backlog.quota.waiting) text += ` · đợi hạn mức Codex, thử lại ${codexResetTime(backlog.quota)}`;
+      else if (backlog.current) text += backlog.current.waiting ? " · đang đợi" : " · đang dịch";
+      else if (backlog.enabled && backlog.remaining) text += " · đợi làn trống / tập xử lý xong";
+      if (backlog.skipped_errors) text += ` · ${backlog.skipped_errors} bài lỗi đã bỏ qua (bấm từng bài để thử lại)`;
+      lines.push({ text, cls: backlog.current || backlog.remaining ? "busy" : "muted small" });
+    }
     $("#posts-jobs").replaceChildren(...lines.map((l) => el("p", { class: l.cls, text: l.text })));
     const titles = groups.map((g) => g.view.title).filter(Boolean);
     $("#posts-meta").textContent = titles.length ? titles[0] : postsPage.vid;
@@ -1913,14 +1932,24 @@ const AutoShort = (() => {
         const cur = byClip.get(s.clip_id) || null;
         const id = g.id + "|" + s.clip_id;
         seen.add(id);
-        const key = JSON.stringify([cur, s.title && s.title.text, s.video_url, jobActive(g.view.post_job)]);
+        const key = JSON.stringify([cur, s.title && s.title.text, s.video_url, jobActive(g.view.post_job), g.codex]);
         const old = postsPage.nodes.get(id);
         if (old && old.key === key) return old.node;
         const node = postCard(g, s, cur);
         postsPage.nodes.set(id, { key, node });
         return node;
       });
-      const head = el("div", { class: "shorts-head" }, el("h2", { text: g.label }),
+      const codexAll = el("button", { class: "btn small", type: "button", text: "Codex dịch các bài AI" });
+      codexAll.disabled = !g.posts.some((p) => postHasAiText(p) && !p.posted)
+        || jobActive(g.codex && g.codex.job) || jobActive(g.view.post_job);
+      codexAll.addEventListener("click", async () => {
+        codexAll.disabled = true;
+        try {
+          await api(postsUrlFor(g.id, "/codex"), jsonBody("POST", {}));
+          await loadPostsPage();
+        } catch (e) { postsMsg(e.message, "error"); codexAll.disabled = false; }
+      });
+      const head = el("div", { class: "shorts-head" }, el("h2", { text: g.label }), codexAll,
         g.postError ? el("p", { class: "error small", text: "Lỗi đọc bài đăng: " + g.postError }) : null);
       return el("section", { class: "card" }, head, el("div", { class: "posts-list" }, ...cards));
     });
@@ -1934,6 +1963,7 @@ const AutoShort = (() => {
     try {
       groups = (await Promise.all([fetchPostGroup(postsPage.vid, "Shorts"),
         fetchPostGroup(postsPage.vid + ".kt", "Khai thị")])).filter(Boolean);
+      postsPage.backlog = await api("/api/posts/codex");
     } catch (e) {
       postsMsg(e.message, "error");
       postsPage.timer = setTimeout(loadPostsPage, POLL_MS * 4);
@@ -2184,6 +2214,41 @@ const AutoShort = (() => {
       const postedLabel = el("label", { class: "publish-label" }, postedInput, " Đã đăng bài");
       postedInput.addEventListener("change", () => togglePosted(postedInput));
 
+      const codexState = g.codex || {};
+      const codexJob = codexState.job;
+      const codexBusy = jobActive(codexJob);
+      const codexBtn = postHasAiText(cur)
+        ? el("button", { class: "btn small", type: "button", text: "Codex dịch" }) : null;
+      const codexMsg = el("p", { class: "small", hidden: true });
+      if (codexBusy) {
+        codexMsg.hidden = false;
+        codexMsg.textContent = codexState.quota && codexState.quota.waiting
+          ? `Đợi hạn mức Codex, thử lại ${codexResetTime(codexState.quota)}` : codexJob.status === "queued" ? "Đang đợi Codex dịch…" : "Codex đang dịch…";
+      } else if ((codexState.errors || {})[s.clip_id]) {
+        codexMsg.hidden = false;
+        codexMsg.className = "error small";
+        codexMsg.textContent = "Codex dịch lỗi: " + codexState.errors[s.clip_id];
+      } else if (codexJob && codexJob.status === "failed" && (codexJob.clip_ids || []).includes(s.clip_id)) {
+        codexMsg.hidden = false;
+        codexMsg.className = "error small";
+        codexMsg.textContent = "Codex dịch lỗi: " + codexJob.error;
+      }
+      if (codexBtn) {
+        codexBtn.disabled = codexBusy || jobActive(g.view.post_job);
+        codexBtn.addEventListener("click", async () => {
+          if (cur.posted && !window.confirm("Bài đã đăng, chỉ thay chữ trên web. Tiếp tục Codex dịch?")) return;
+          codexBtn.disabled = true;
+          try {
+            await api(postsUrlFor(g.id, "/codex"), jsonBody("POST", { clips: [s.clip_id], include_posted: !!cur.posted }));
+            await loadPostsPage();
+          } catch (e) {
+            codexMsg.hidden = false;
+            codexMsg.className = "error small";
+            codexMsg.textContent = e.message;
+            codexBtn.disabled = false;
+          }
+        });
+      }
       const badges = postBadges(cur);
       panel.replaceChildren(...[
         badges.length ? el("div", { class: "post-badges" }, ...badges) : null,
@@ -2192,8 +2257,8 @@ const AutoShort = (() => {
         el("div", { class: "post-image-row" }, img, changeImg, download),
         el("div", { class: "edit-actions" }, link, linkSave, linkMsg),
         el("p", { class: "muted small", text: `${cur.chars} ký tự (bài đầy đủ, kể cả tiêu đề / link / hashtag)` }),
-        el("div", { class: "edit-actions" }, copyBtn, composeAgain, postedLabel),
-        composeMsg].filter(Boolean));
+        el("div", { class: "edit-actions" }, copyBtn, composeAgain, codexBtn, postedLabel),
+        codexMsg, composeMsg].filter(Boolean));
     }
 
     async function compose(btn, msg) {
@@ -3948,8 +4013,8 @@ const AutoShort = (() => {
   // --- CP8.28 monitor tab: queue detail, VM CPU, Ollama, GPU workers (refresh every few seconds) ---------------
 
   const MON_MS = 4000;
-  const LANE_NAMES = { prepare: "Chuẩn bị (tải + phiên âm + phân tích)", ai: "AI (chọn đoạn + đặt tên)", render: "Render", serial: "Tuần tự" };
-  const KIND_NAMES = { pipeline: "xử lý tập", render: "render lại", add: "thêm Short", post: "soạn bài đăng", post_search: "tìm ảnh", enhance: "ghép HD", vertical: "bản dọc cả tập", restore_source: "khôi phục nguồn" };
+  const LANE_NAMES = { prepare: "Chuẩn bị (tải + phiên âm + phân tích)", ai: "AI (chọn đoạn + đặt tên)", render: "Render", codex: "Codex dịch", serial: "Tuần tự" };
+  const KIND_NAMES = { pipeline: "xử lý tập", render: "render lại", add: "thêm Short", post: "soạn bài đăng", post_codex: "Codex dịch bài đăng", post_search: "tìm ảnh", enhance: "ghép HD", vertical: "bản dọc cả tập", restore_source: "khôi phục nguồn" };
   const STAGE_NAMES = { ingest: "tải video", transcript: "phiên âm", analysis: "phân tích", preflight: "kiểm Ollama", selection: "chọn đoạn", titling: "đặt tên", render: "render" };
   const WAIT_NAMES = { hd: "đợi HD", gpu: "đợi GPU / Ollama", youtube: "đợi YouTube" };
 

@@ -4,6 +4,8 @@ posts view, no "ít dấu câu"), static UI hooks. AI / network are fakes; nothi
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import json
 from types import SimpleNamespace
 
@@ -48,6 +50,7 @@ class FakePrepare:
 
 
 def make_client(cfg, *, compose=None, prepare=None):
+    cfg = replace(cfg, post=replace(cfg.post, codex_auto=False))
     app = make_app(cfg, render=lambda eid, c: SimpleNamespace(ran=False),
                    post_compose=compose or FakeComposeAI(), post_preflight=lambda c: None,
                    doc_prepare=prepare or FakePrepare(),

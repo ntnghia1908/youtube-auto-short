@@ -45,6 +45,7 @@ from ..pipeline import (PIPELINE_STAGES, OllamaUnavailable, PipelineError, Prefl
 from ..post import fetch as post_fetch
 from ..post import imgsearch as post_imgsearch
 from ..post import stage as post_stage
+from ..post.codex_text import CodexQuotaWait
 from ..render import RenderError, run_render
 from ..render.stage import StoreWait
 from ..render import full as full_mod
@@ -63,6 +64,7 @@ LOG_LINES = 200
 KIND_PIPELINE = "pipeline"
 KIND_RENDER = "render"
 KIND_ADD = "add"  # CP9 C7: AI title of a Short added by hand (lane ai), then render (lane render)
+KIND_POST_CODEX = "post_codex"  # PCX1: independent, globally serialized Codex text lane
 KIND_POST = "post"  # CP8.15 P1: compose / recompose community post text (lane ai; no render)
 KIND_POST_SEARCH = "post_search"  # CP8.15 P5b: find images from a link (lane prepare; no Ollama)
 KIND_IMAGE_SEARCH = "image_search"  # CP8.30 P5c: find images by keyword -> candidates (lane prepare; no Ollama)
@@ -126,6 +128,8 @@ def vertical_key(episode_id: str) -> str:
 
 
 def job_key(kind: str, episode_id: str) -> str:
+    if kind == KIND_POST_CODEX:
+        return f"{episode_id}#post_codex"
     return post_key(episode_id) if kind == KIND_POST else enhance_key(episode_id) if kind == KIND_ENHANCE \
         else f"{episode_id}#hd_intro" if kind == KIND_HD_INTRO \
         else vertical_key(episode_id) if kind == KIND_VERTICAL else episode_id
@@ -133,9 +137,11 @@ def job_key(kind: str, episode_id: str) -> str:
 
 MODE_LANES, MODE_SERIAL = "lanes", "serial"
 PREPARE, AI, RENDER = "prepare", "ai", "render"
+CODEX = "codex"
 LANES = (PREPARE, AI, RENDER)
 LANE_STAGES: dict[str, tuple[str, ...]] = {
-    PREPARE: ("ingest", "transcript", "analysis"), AI: ("selection", "titling"), RENDER: ("render",)}
+    PREPARE: ("ingest", "transcript", "analysis"), AI: ("selection", "titling"),
+    RENDER: ("render",), CODEX: ("post_codex",)}
 PREFETCH_LIMIT = 2  # Q2: prepare starts no new job while this many prepared jobs wait for the ai lane
 GPU_RETRY_SECONDS = 60.0  # FIX-ollama-wait O5: the ai lane re-checks Ollama this often while it is down
 GPU_OK, GPU_DOWN = "ok", "down"
@@ -229,6 +235,8 @@ class Job:
     step_t0: float = field(default=0.0, repr=False)  # CP8.28: monotonic start of the running step
     step_started_at: str | None = field(default=None, repr=False)  # CP8.28: the same, ISO (monitor tab)
     cancel_requested: bool = field(default=False, repr=False)  # CP8.32 V4: a running vertical job being cancelled
+    codex_wait: bool = False
+    current_clip: str | None = None
     hd_wait: bool = False  # CP13.1b: parked after titling until the HD source is ready ("đợi HD"): in no lane queue
 
     @property
@@ -255,6 +263,8 @@ class Job:
             "clip_ids": list(self.clip_ids), "lane": self.lane, "waiting": self.waiting,
             "gpu_wait": self.gpu_wait, "hd_wait": self.hd_wait, "yt_wait": self.yt_wait,
         }
+        if self.kind == KIND_POST_CODEX:
+            out.update(codex_wait=self.codex_wait, current_clip=self.current_clip)
         if logs:
             out["logs"] = list(self.logs)
         return out
@@ -411,10 +421,12 @@ class JobRunner:
         if mode not in (MODE_LANES, MODE_SERIAL):
             raise ValueError(f"unknown queue mode {mode!r}")
         self.mode = mode
+        self._codex_retry_at = 0.0
+        self._codex_message = None
         # CP8.26: per-video priority mark (P1); a lane starts the marked videos' jobs first (P2)
         self.priority = priority if priority is not None else Priority()
         self.priority.on_change = self._priority_changed
-        self._lane_names = LANES if mode == MODE_LANES else (_SERIAL,)
+        self._lane_names = (*LANES, CODEX) if mode == MODE_LANES else (_SERIAL, CODEX)
         # CP8.29: worker slots; the slot named like the lane is the first (the only one except for ``prepare``)
         self._slot_lane: dict[str, str] = {lane: lane for lane in self._lane_names}
         if mode == MODE_LANES:
@@ -594,6 +606,8 @@ class JobRunner:
     # --- queue ---------------------------------------------------------------------------------
 
     def _steps(self, kind: str, target: Callable[[Job], None]) -> list[Step]:
+        if kind == KIND_POST_CODEX:
+            return [Step(CODEX, target)]
         if self.mode == MODE_SERIAL:
             return [Step(_SERIAL, target)]
         lane_steps = getattr(target, "lane_steps", None)
@@ -629,6 +643,11 @@ class JobRunner:
             latest = self._latest.get(key)
             if latest is not None and latest.active:
                 new = getattr(target, "clips", None)
+                if latest.kind == KIND_POST_CODEX and new is not None:
+                    pending = latest.status == RUNNING and not latest.waiting
+                    latest.target.merge_target(target, pending=pending)
+                    latest.again = latest.again or pending
+                    self._save_locked()
                 if latest.kind == KIND_POST and new is not None:
                     if latest.status == QUEUED or (latest.status == RUNNING and latest.waiting):
                         latest.target.merge(new)  # not started yet (or back in the queue waiting for the GPU)
@@ -650,6 +669,10 @@ class JobRunner:
         """The newest ``post`` job of the episode (CP8.16 R3)."""
         with self._lock:
             return self._latest.get(post_key(episode_id))
+
+    def latest_post_codex(self, episode_id: str) -> Job | None:
+        with self._lock:
+            return self._latest.get(job_key(KIND_POST_CODEX, episode_id))
 
     def latest_enhance(self, episode_id: str) -> Job | None:
         """The newest HD assembly job of the episode (CP13.1b)."""
@@ -723,13 +746,15 @@ class JobRunner:
         """Drop the finished jobs of a deleted episode (CP8.5 X3) so it leaves every view; refused (False) while
         one of its jobs is queued/running."""
         with self._lock:
-            for key in (episode_id, post_key(episode_id), enhance_key(episode_id), vertical_key(episode_id),
+            for key in (episode_id, post_key(episode_id), job_key(KIND_POST_CODEX, episode_id),
+                        enhance_key(episode_id), vertical_key(episode_id),
                         job_key(KIND_HD_INTRO, episode_id)):
                 latest = self._latest.get(key)
                 if latest is not None and latest.active:
                     return False
             self._latest.pop(episode_id, None)
             self._latest.pop(post_key(episode_id), None)
+            self._latest.pop(job_key(KIND_POST_CODEX, episode_id), None)
             self._latest.pop(enhance_key(episode_id), None)
             self._latest.pop(vertical_key(episode_id), None)
             self._latest.pop(job_key(KIND_HD_INTRO, episode_id), None)
@@ -988,6 +1013,9 @@ class JobRunner:
             if self._paused is not None:  # CP8.22: nothing new starts while paused
                 self._lock.wait()
                 continue
+            if lane == CODEX and queue and self._codex_retry_at > self._wall():
+                self._lock.wait(self._codex_retry_at - self._wall())
+                continue
             if lane == PREPARE and queue and self._yt_blocked():
                 left = self._yt_next - self._mono()
                 if left > 0:  # Y2: only jobs that need no download may start (and only within the prefetch limit)
@@ -1053,6 +1081,7 @@ class JobRunner:
             ok = False
             requeue: str | None = None
             blocked: str | None = None
+            quota: CodexQuotaWait | None = None
             paused_back = False
             with self._lock:
                 job = self._take_locked(lane, slot)
@@ -1064,7 +1093,7 @@ class JobRunner:
                 if first:
                     job.status, job.started_at, job.t0 = RUNNING, utc_now(), time.monotonic()
                 job.lane = None if lane == _SERIAL else lane
-                job.waiting, job.gpu_wait, job.yt_wait = False, False, False
+                job.waiting, job.gpu_wait, job.yt_wait, job.codex_wait = False, False, False, False
                 job._reachable = self._gpu_reachable if lane == AI else None
                 job._yt_ok = self._youtube_ok if lane == PREPARE else None
                 job.step_t0, job.step_started_at = time.monotonic(), utc_now()
@@ -1086,6 +1115,9 @@ class JobRunner:
                     if self._stopping:
                         job.resume = (lane, job.step)
                     log.info("web: job %s interrupted [%s]", job.id, job.episode_id)
+            except CodexQuotaWait as exc:
+                quota = exc
+                log.info("web: job %s [%s] đợi hạn mức Codex", job.id, job.episode_id)
             except YoutubeWait as exc:
                 if lane == PREPARE and not self._stopping:  # Y2: back to the head of the queue, wait for YouTube
                     blocked = str(exc)
@@ -1118,10 +1150,12 @@ class JobRunner:
                 for _attempt in range(3):  # a late "pause now" interrupt must not skip the bookkeeping
                     try:
                         if job.cancel_requested and not ok:  # CP8.32 V4: whatever stopped it, it ends "cancelled"
-                            paused_back, blocked, requeue = False, None, None
+                            paused_back, blocked, requeue, quota = False, None, None, None
                             job.status, job.error = CANCELLED, None
                         if paused_back:
                             self._requeue_paused(lane, job)
+                        elif quota is not None:
+                            self._requeue_codex(job, quota)
                         elif blocked is not None:
                             self._requeue_blocked(lane, job, blocked)
                         elif requeue is not None:
@@ -1132,6 +1166,24 @@ class JobRunner:
                     except KeyboardInterrupt:
                         if self._stopping:
                             break
+
+    def codex_quota(self) -> dict:
+        with self._lock:
+            return {"waiting": self._codex_retry_at > self._wall(),
+                    "retry_at": self._codex_retry_at or None, "message": self._codex_message}
+
+    def _requeue_codex(self, job: Job, quota: CodexQuotaWait) -> None:
+        with self._lock:
+            self._release_locked(job)
+            delay = job.target.config.post.codex_retry_minutes * 60
+            self._codex_retry_at = quota.retry_at if quota.retry_at is not None and quota.retry_at > self._wall() \
+                else self._wall() + delay
+            self._codex_message = str(quota)
+            job.status, job.error = RUNNING, None
+            job.lane, job.waiting, job.codex_wait = CODEX, True, True
+            self._queues[CODEX].appendleft(job)
+            self._save_locked()
+            self._lock.notify_all()
 
     def _requeue_paused(self, lane: str, job: Job) -> None:
         """CP8.22: a step cut by "pause now" returns to the head of its lane (not failed); its stages rerun later."""
@@ -1198,7 +1250,7 @@ class JobRunner:
             job.status = DONE
             log.info("web: job %s done in %.1f s [%s]%s", job.id, time.monotonic() - job.t0,
                      job.episode_id, f": {job.summary}" if job.summary else "")
-        if last and job.kind in EPISODE_KINDS and job.status in (DONE, FAILED) \
+        if last and job.kind in (*EPISODE_KINDS, KIND_POST) and job.status in (DONE, FAILED) \
                 and self.on_finished is not None and not self._stopping:
             # before the lane is released: ``wait_idle`` never sees a gap between the job and its follow-up
             try:
@@ -1215,11 +1267,11 @@ class JobRunner:
             self._release_locked(job)
             if last:
                 job.finished_at, job.lane, job.waiting = utc_now(), None, False
-                if job.again and job.kind == KIND_POST and job.status != INTERRUPTED and not self._stopping:
+                if job.again and job.kind in (KIND_POST, KIND_POST_CODEX) and job.status != INTERRUPTED and not self._stopping:
                     follow = getattr(job.target, "followup", None)
                     follow = follow() if follow is not None else None
                     if follow is not None:  # R3: one more pass for the trigger that arrived meanwhile
-                        self._enqueue_locked(job.episode_id, KIND_POST, follow, None)
+                        self._enqueue_locked(job.episode_id, job.kind, follow, None)
             elif park:  # CP13.1b: waits outside every lane queue until unpark()
                 job.step += 1
                 job.lane, job.waiting, job.hd_wait = None, True, True
@@ -1365,6 +1417,8 @@ class JobRunner:
             lanes: dict[str, dict] = {}
             waiting: list[dict] = []
             for lane in self._lane_names:
+                if lane == CODEX and not self._lane_running_locked(lane) and not self._queues[lane]:
+                    continue
                 cur_all = self._lane_running_locked(lane)
                 ordered = self._ordered(self._queues[lane])
                 pend = []
@@ -1419,7 +1473,8 @@ class JobRunner:
             entries = [self._entry(j, j.resume[1] if j.resume is not None and j.status == INTERRUPTED else j.step)
                        for j in heads]
             entries += [self._entry(j, j.step) for j in self._queues[lane]]
-            lanes[lane] = entries
+            if lane != CODEX or entries:
+                lanes[lane] = entries
         parked = [self._entry(j, j.step) for j in sorted(self._parked.values(), key=lambda j: int(j.id))]
         out = {"version": 1, "mode": self.mode, "paused": self._paused is not None, "lanes": lanes,
                "parked": parked}
@@ -1428,6 +1483,8 @@ class JobRunner:
                       and (j.error or "").startswith(WAIT_PREFIX) and self._latest.get(j.key) is j]
         if store_wait:
             out["store_wait"] = store_wait
+        if self._codex_retry_at > self._wall():
+            out["codex_quota"] = {"retry_at": self._codex_retry_at, "message": self._codex_message}
         if self._yt_blocked():  # Y3: the block (and its retry time) survives a restart
             out["youtube"] = {k: self._yt[k] for k in ("since", "error", "next_check", "failures")}
         return out
@@ -1460,7 +1517,7 @@ class JobRunner:
             and self.mode == MODE_LANES else []
         store_wait_entries = data.get("store_wait") if isinstance(data.get("store_wait"), list) else []
         entries: list[tuple[str, dict]] = []
-        for lane in (self._lane_names if same_mode else LANES + (_SERIAL,)):
+        for lane in (self._lane_names if same_mode else LANES + (_SERIAL, CODEX)):
             for entry in lanes.get(lane) or []:
                 entries.append((lane, entry))
         restored = 0
@@ -1469,6 +1526,11 @@ class JobRunner:
             try:
                 self._paused = "after" if data.get("paused") else None
                 self._restore_youtube_locked(data.get("youtube"))
+                quota = data.get("codex_quota") or {}
+                retry = quota.get("retry_at") if isinstance(quota, dict) else None
+                if isinstance(retry, (int, float)) and not isinstance(retry, bool) and retry > self._wall():
+                    self._codex_retry_at = retry
+                    self._codex_message = "đợi hạn mức Codex"
                 for lane, entry in entries:
                     try:
                         job = self._restore_one_locked(lane, entry, same_mode)
@@ -1558,6 +1620,11 @@ class JobRunner:
         if not (same_mode and isinstance(step, int) and 0 <= step < len(job.steps) and job.steps[step].lane == lane):
             step = 0
         job.step = step
+        if kind == KIND_POST_CODEX:
+            job.again = bool(target.pending)
+            if self._codex_retry_at > self._wall():
+                job.codex_wait = True
+                job.current_clip = next(iter(target.clips), None)
         if step > 0:  # finished its earlier lanes: waiting for this one
             job.status, job.started_at, job.t0 = RUNNING, utc_now(), time.monotonic()
             job.lane, job.waiting, job.stage = job.steps[step].lane, True, LANE_STAGES.get(job.steps[step].lane, (None,))[0]
@@ -2148,3 +2215,128 @@ class CompilationTarget:
 
     def spec(self) -> dict:
         return dict(self._spec)
+
+
+class PostCodexTarget:
+    """PCX1: one CPU Whisper / Codex job at a time, independent of prepare, render and Ollama.
+
+    Duplicate requests merge through the same mechanism as KIND_POST, including one pending pass.
+    Posted authorization is clip-specific so a bulk request cannot inherit a single-post confirmation.
+    """
+
+    def __init__(self, config, clips, *, include_posted=False, rewrite=None, lock=None, runner=None):
+        from ..post.codex_text import rewrite_posts
+        self.config, self.clips = config, list(clips)
+        self.confirmed = set(clips) if include_posted else set()
+        self.rewrite, self.lock, self.runner = rewrite or rewrite_posts, lock, runner
+        self.pending = []
+        self.pending_confirmed = set()
+        self.result = None
+
+    def merge_target(self, other, *, pending=False):
+        if pending:
+            self.pending = list(dict.fromkeys(self.pending + other.clips))
+            self.pending_confirmed.update(other.confirmed)
+        else:
+            self.clips = list(dict.fromkeys(self.clips + other.clips))
+            self.confirmed.update(other.confirmed)
+
+    def followup(self):
+        target = PostCodexTarget(self.config, self.pending, rewrite=self.rewrite, lock=self.lock, runner=self.runner)
+        target.confirmed = self.pending_confirmed.copy()
+        return target
+
+    def __call__(self, job):
+        from ..post.codex_text import Summary
+        job.stage = "post_codex"
+        self.result = Summary([])
+        for cid in list(self.clips):
+            job.current_clip = cid
+            st = self.rewrite(job.episode_id, self.config, [cid], include_posted=cid in self.confirmed,
+                              lock=self.lock, runner=self.runner)
+            self.result.clip_ids.extend(st.clip_ids)
+            self.result.rewritten.extend(st.rewritten)
+            self.result.errors.update(st.errors)
+            self.clips.remove(cid)  # quota / restart resumes at the unfinished clip; ordinary errors are not retried
+            self.confirmed = self.confirmed - {cid}
+        job.current_clip = None
+        job.summary = f"{len(self.result.rewritten)} bài Codex dịch, {len(self.result.errors)} lỗi"
+        if self.result.errors:
+            raise JobFailed("; ".join(f"{cid}: {error}" for cid, error in self.result.errors.items()))
+        job.stage = None
+
+    def spec(self):
+        return {"clips": list(dict.fromkeys(self.clips + self.pending)),
+                "confirmed": sorted(self.confirmed | self.pending_confirmed)}
+
+
+class PostCodexBacklog:
+    """PCX1: derive durable backlog from posts + attempt logs; admit one clip whenever Codex is idle.
+
+    Ordinary errors are skipped until the current source text changes. Quota waits remain active jobs,
+    saved by JobRunner, so scanning cannot bypass the clip parked at the front of the Codex lane.
+    """
+
+    def __init__(self, config, runner, target, *, post_lock=None, submit_lock=None):
+        self.config, self.runner, self.target = config, runner, target
+        self.post_lock, self.submit_lock = post_lock, submit_lock
+
+    def scan(self):
+        from contextlib import nullcontext
+        from ..post import codex_text, source, store
+        from .episodes import valid_episode_id
+        pending, skipped = [], 0
+        root = Path(self.config.workspace.dir)
+        for path in sorted(root.glob("*/posts.json")):
+            eid = path.parent.name
+            if path.parent.is_symlink() or not valid_episode_id(eid):
+                continue
+            try:
+                with self.post_lock if self.post_lock is not None else nullcontext():
+                    doc = store.read_posts(path, eid)
+                order = [cid for cid, _ in post_stage.rendered_clip_ids(self.config, eid)]
+                attempts = codex_text.latest_attempts(self.config, eid)
+                episode = None
+                for cid in codex_text.eligible(doc, order):
+                    last = attempts.get(cid, {})
+                    if last.get("error"):
+                        sha = store.find(doc, cid)["source_sha256"]
+                        try:
+                            episode = episode or source.load(eid, self.config)
+                            sha = source.source_sha256(source.source_text(episode, cid))
+                        except source.PostSourceError:
+                            pass
+                        if last.get("source_sha256") == sha:
+                            skipped += 1
+                            continue
+                    pending.append((eid, cid))
+            except (OSError, store.PostsError):
+                continue
+        return pending, skipped
+
+    def tick(self):
+        from contextlib import nullcontext
+        if not self.config.post.codex_auto:
+            return None
+        with self.submit_lock if self.submit_lock is not None else nullcontext():
+            if any(job.active and job.kind == KIND_POST_CODEX for job in self.runner.jobs()):
+                return None
+            pending, _ = self.scan()
+            for eid, cid in pending:
+                own = self.runner.latest(eid)
+                post = self.runner.latest_post(eid)
+                if (own is not None and own.active) or (post is not None and post.active):
+                    continue
+                job, _ = self.runner.submit(eid, KIND_POST_CODEX, self.target([cid]), clip_ids=[cid])
+                return job
+        return None
+
+    def status(self):
+        pending, skipped = self.scan()
+        active = next((j for j in self.runner.jobs() if j.active and j.kind == KIND_POST_CODEX), None)
+        quota = self.runner.codex_quota()
+        return {"enabled": self.config.post.codex_auto, "remaining": len(pending), "skipped_errors": skipped,
+                "current": {"episode_id": active.episode_id,
+                            "clip_id": active.current_clip or next(iter(active.target.clips), None),
+                            "status": active.status, "waiting": active.waiting} if active else None,
+                "quota": quota}

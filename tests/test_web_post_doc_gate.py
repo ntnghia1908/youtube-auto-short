@@ -83,7 +83,7 @@ const state = () => ({ copies, warning: !!warning && !warning.hidden,
 
 
 @pytest.mark.skipif(NODE is None, reason="node not installed")
-@pytest.mark.parametrize("origin", ["ai", "raw", "doc", "manual"])
+@pytest.mark.parametrize("origin", ["ai", "raw", "doc", "manual", "codex"])
 @pytest.mark.parametrize("copy_ok", [True, False])
 def test_post_copy_warning_and_tick_only_after_success(origin, copy_ok):
     result = subprocess.run([NODE, "-e", HARNESS, str(APP_JS), origin, json.dumps(copy_ok)],
@@ -94,6 +94,8 @@ def test_post_copy_warning_and_tick_only_after_success(origin, copy_ok):
     assert out["badges"].count(ai_label) == int(origin in {"ai", "raw"})
     if origin == "raw":
         assert "AI không chắc — kiểm lại" in out["badges"]
+    if origin == "codex":
+        assert "Codex dịch" in out["badges"]
     if origin == "doc":
         assert "Văn bản gốc" in out["badges"]
     assert out["initial"] == {"copies": 0, "warning": False, "posted": [], "fallback": 0}

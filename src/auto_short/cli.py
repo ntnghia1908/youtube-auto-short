@@ -109,6 +109,14 @@ def _build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("status", help="show stage status of an episode")
     s.add_argument("episode_id")
     s.add_argument("--config", type=Path, help="config TOML (default: ./config.toml if present)")
+    post = sub.add_parser("post", help="community post tools")
+    post_sub = post.add_subparsers(dest="post_command", required=True)
+    pc = post_sub.add_parser("codex", help="rewrite ai/raw posts from the Short's audio and images")
+    pc.add_argument("episode_id", nargs="?")
+    pc.add_argument("--clips", help="comma-separated clip ids, e.g. k01,k02")
+    pc.add_argument("--include-posted", action="store_true", help="explicitly allow replacing posted ai/raw text")
+    pc.add_argument("--all-ai", action="store_true", help="all episodes, only unposted ai/raw posts")
+    pc.add_argument("--config", type=Path, help="config TOML (default: ./config.toml if present)")
     return parser
 
 
@@ -258,6 +266,38 @@ def _cmd_title(args: argparse.Namespace, cfg: config_mod.Config) -> int:
     return 0
 
 
+def _cmd_post(args: argparse.Namespace, cfg: config_mod.Config) -> int:
+    from .post import codex_text, store
+
+    if args.all_ai and (args.episode_id or args.clips is not None or args.include_posted):
+        print("auto-short: error: --all-ai không đi cùng episode_id / --clips / --include-posted", file=sys.stderr)
+        return 1
+    if not args.all_ai and not args.episode_id:
+        print("auto-short: error: cần episode_id hoặc --all-ai", file=sys.stderr)
+        return 1
+    clips = [c.strip() for c in args.clips.split(",")] if args.clips is not None else None
+    if clips is not None and (not clips or any(not c for c in clips)):
+        print("auto-short: error: --clips cần danh sách clip_id không rỗng", file=sys.stderr)
+        return 1
+    episodes = [args.episode_id]
+    if args.all_ai:
+        root = Path(cfg.workspace.dir)
+        episodes = sorted(p.parent.name for p in root.glob("*/posts.json") if not p.parent.is_symlink())
+    failed = False
+    for eid in episodes:
+        try:
+            validate_episode_id(eid)
+            result = codex_text.rewrite_posts(eid, cfg, clips, include_posted=args.include_posted)
+            print(f"{eid}\t{len(result.rewritten)} Codex dịch\t{len(result.errors)} lỗi")
+            for cid, error in result.errors.items():
+                print(f"{eid}/{cid}: {error}", file=sys.stderr)
+            failed = failed or bool(result.errors)
+        except (codex_text.CodexTextError, codex_text.CodexQuotaWait, store.PostsError, WorkspaceError) as exc:
+            print(f"auto-short: error: {eid}: {exc}", file=sys.stderr)
+            failed = True
+    return 1 if failed else 0
+
+
 def _cmd_status(args: argparse.Namespace, cfg: config_mod.Config) -> int:
     ws = Workspace(cfg.workspace.dir, validate_episode_id(args.episode_id))
     manifest = ws.load_manifest()
@@ -366,6 +406,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_run(args, cfg)
         if args.command == "web":
             return _cmd_web(args, cfg)
+        if args.command == "post":
+            return _cmd_post(args, cfg)
         if args.command == "title":
             return _cmd_title(args, cfg)
         return _cmd_status(args, cfg)

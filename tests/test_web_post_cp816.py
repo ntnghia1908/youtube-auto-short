@@ -3,6 +3,8 @@ key (R3), the automatic compose after an episode job (R2a). Render / AI are fake
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import threading
 from types import SimpleNamespace
 
@@ -50,6 +52,7 @@ class GatedCompose(FakeComposeAI):
 
 
 def make_client(cfg, *, compose=None, render=None):
+    cfg = replace(cfg, post=replace(cfg.post, codex_auto=False))
     app = make_app(cfg, render=render or (lambda eid, c: SimpleNamespace(ran=False)),
                    post_compose=compose or FakeComposeAI(), post_preflight=lambda c: None)
     return TestClient(app, follow_redirects=False), app

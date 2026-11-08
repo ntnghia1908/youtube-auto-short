@@ -3,6 +3,8 @@ Render/AI/search are fakes; no real Ollama, no real network."""
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from types import SimpleNamespace
 
 import pytest
@@ -73,6 +75,7 @@ class FakeComposeAI:
 
 
 def make_client(cfg, *, compose=None, post_preflight=lambda c: None, search=None):
+    cfg = replace(cfg, post=replace(cfg.post, codex_auto=False))
     app = make_app(cfg, render=lambda eid, c: SimpleNamespace(ran=False),
                    post_compose=compose or FakeComposeAI(), post_preflight=post_preflight, post_search=search)
     return TestClient(app, follow_redirects=False), app

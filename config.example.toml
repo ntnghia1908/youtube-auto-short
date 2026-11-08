@@ -237,6 +237,8 @@ timeout_seconds = 30
 retry_seconds = 300          # a waiting job is tried again this often
 
 [post]
+codex_retry_minutes = 30     # unknown Codex quota reset: retry automatically after this interval
+codex_auto = true            # PCX1: Codex rewrites unposted ai/raw posts after compose; uses [thumbs] Codex settings
 # Community post text of a Short (docs/decisions/CP8.15-community-post-contract.md): AI adds punctuation /
 # paragraph breaks only (never changes words) to the Short's caption text via Ollama, plus the image library
 # and link fetching. posts.json is not a stage artifact: no key here re-runs a pipeline stage.
