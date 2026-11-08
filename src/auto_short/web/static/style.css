@@ -410,3 +410,16 @@ body.modal-open { overflow: hidden; }
 .watch-queue [aria-current="true"] { outline: 2px solid #3baf8f; font-weight: bold; }
 .watch-room audio { display: block; width: 100%; margin: 1rem 0; }
 .watch-room #watch-background { width: auto; }
+
+/* LISTEN1: local queue, grouped by lecture. */
+.listen-room video { display: block; width: 100%; max-height: 60vh; background: #111; }
+.listen-room audio { width: 100%; }
+.listen-room .actions { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; }
+.listen-room .actions label { max-width: 100%; min-width: 0; }
+.listen-room select { max-width: min(100%, 30rem); min-height: 40px; font-size: 1rem; }
+.listen-kind { font-weight: 600; }
+.listen-queue section { margin-top: 1.5rem; }
+.listen-queue ol { list-style: none; padding: 0; }
+.listen-queue li { margin: .35rem 0; }
+.listen-queue button { text-align: left; width: 100%; white-space: normal; }
+.listen-queue [aria-current="true"] { border-color: var(--accent); background: var(--accent-bg); font-weight: 600; }

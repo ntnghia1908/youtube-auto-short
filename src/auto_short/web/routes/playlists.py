@@ -62,6 +62,15 @@ class FavoriteIn(BaseModel):
 def build(ctx: WebContext) -> APIRouter:
     router = APIRouter()
 
+    @router.get("/api/playlists/{playlist_id}/listen")
+    def api_listen(playlist_id: str):
+        from ..listen import playlist_listen
+
+        doc = ctx.playlist_or_404(playlist_id)
+        if doc is None:
+            return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
+        return playlist_listen(ctx.config, doc, ctx.compilations.favorites(playlist_id))
+
     @router.get("/api/playlists/{playlist_id}/link-playlists")
     def api_link_playlists(playlist_id: str):
         if ctx.playlist_or_404(playlist_id) is None:
