@@ -46,6 +46,7 @@ from .routes import (
     auth,
     pages,
     status,
+    watch as watch_routes,
     reading_api,
     files,
     files_catchall,
@@ -1094,6 +1095,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     app.include_router(auth.build(ctx))
     app.include_router(pages.build(ctx))
     app.include_router(status.build(ctx))
+    app.include_router(watch_routes.build(ctx))  # WATCH1
     app.include_router(reading_api.build(ctx))
     app.include_router(files.build(ctx))
     app.include_router(playlist_routes.build(ctx))

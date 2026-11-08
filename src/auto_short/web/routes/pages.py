@@ -43,6 +43,10 @@ def build(ctx: WebContext) -> APIRouter:
             return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
         return FileResponse(ctx.static_dir / "sutra.html", headers={"Cache-Control": "no-cache"})
 
+    @router.get("/watch")
+    async def watch_page():
+        return FileResponse(ctx.static_dir / "watch.html", headers={"Cache-Control": "no-cache"})
+
     @router.get("/storage")
     async def storage_page():
         return FileResponse(ctx.static_dir / "storage.html", headers={"Cache-Control": "no-cache"})
