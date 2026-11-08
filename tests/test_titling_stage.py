@@ -12,7 +12,8 @@ from auto_short.config import Config, WorkspaceConfig
 from auto_short.hashing import canonical_json, config_hash, sha256_file
 from auto_short.selection import run_selection
 from auto_short.titling import TitlingError, run_titling
-from auto_short.titling.prompt import RESPONSE_SCHEMA, prompt_sha256, system_prompt
+from auto_short.titling.logic import clip_text, validate_titles
+from auto_short.titling.prompt import RESPONSE_SCHEMA, prompt_sha256, render_user_prompt, system_prompt
 from auto_short.titling.stage import used_config
 from selection_helpers import SYN_ANALYSIS, FakeClient as SelectionClient, proposal, response
 from titling_helpers import SELECTION, FakeClient, good_reply, http_error, make_titling_episode, option, reply
@@ -231,6 +232,26 @@ def test_no_valid_option_retries_then_untitled(tcfg, caplog):
         [(1, 0, "no valid option"), (2, 5.0, "no valid option"), (3, 15.0, "no valid option")]
     assert [o["reject_reason"] for o in calls[0]["options"]] == \
         ["too short (8 < 10 chars)", "emoji/pictograph", "evidence not in clip text"]
+    # The first serialized request is unchanged; later requests keep immutable history and change seed.
+    clip = _load(ws, "clips.json")["clips"][1]
+    text = _load(ws, "titling_log.json")["clips"][1]["text"]
+    expected = {"model": "qwen3:14b", "messages": [
+        {"role": "system", "content": system_prompt("v2", max_chars=60, n_options=3)},
+        {"role": "user", "content": render_user_prompt("v2", title=_load(ws, "metadata.json")["title"],
+                                                        duration=clip["duration"], text=text)}],
+        "format": RESPONSE_SCHEMA, "options": {"temperature": 0, "seed": 42, "num_ctx": 16384},
+        "think": False, "stream": False}
+    assert json.dumps(calls[0]["request"]).encode() == json.dumps(expected).encode()
+    assert [c["request"]["options"]["seed"] for c in calls] == [42, 43, 44]
+    for previous, current in zip(calls, calls[1:]):
+        messages = current["request"]["messages"]
+        assert messages[:-2] == previous["request"]["messages"]
+        assert messages[-2] == {"role": "assistant", "content": previous["response"]["content"]}
+        assert messages[-1]["role"] == "user"
+        for n, record in enumerate(previous["options"], 1):
+            assert f"option {n}: {record['reject_reason']}" in messages[-1]["content"]
+        assert "evidence phải chép nguyên văn liên tục từ lời giảng" in messages[-1]["content"]
+    assert [c["messages"] for c in fake.calls if c["clip"] == 7] == [c["request"]["messages"] for c in calls]
     assert manifest_of(ws)["stages"]["titling"]["status"] == "done"
     assert "WARNING: clip k02 untitled" in caplog.text and "WARNING: 1 clip(s) untitled: k02" in caplog.text
 
@@ -277,6 +298,101 @@ def test_error_then_success(tcfg, bad):
     calls = _load(ws, "titling_log.json")["clips"][0]["ai_calls"]
     assert [c["attempt"] for c in calls] == [1, 2] and calls[0]["error"] and calls[1]["error"] is None
     assert calls[0]["options"] == []
+    assert [c["request"]["options"]["seed"] for c in calls] == [42, 43]
+    messages = calls[1]["request"]["messages"]
+    assert calls[0]["error"] in messages[-1]["content"]
+    assert "evidence phải chép nguyên văn liên tục từ lời giảng" in messages[-1]["content"]
+    if isinstance(bad, str):
+        assert messages[-2] == {"role": "assistant", "content": bad}
+
+
+@pytest.mark.parametrize("target,repaired", [(0, True), (1, True), (1, False)])
+def test_untitled_only_preserves_titles_metadata_and_appends_log(tcfg, target, repaired):
+    ws = make_titling_episode(tcfg.workspace.dir)
+    n = (2, 7)[target]
+    run_titling(EID, tcfg, client=FakeClient({n: [ALL_BAD]}), sleep=NoSleep())
+    before, old_log = _load(ws, "titles.json"), _load(ws, "titling_log.json")
+    unchanged_entry = json.dumps(before["titles"][1 - target], ensure_ascii=False, indent=2)
+    unchanged_bytes = "\n".join("    " + line for line in unchanged_entry.splitlines()).encode()
+    assert unchanged_bytes in (ws.dir / "titles.json").read_bytes()
+    manifest = manifest_of(ws)
+    manifest["stages"]["render"] = {"status": "done"}
+    ws.save_manifest(manifest)
+    fake = FakeClient({n: [good_reply(n) if repaired else ALL_BAD]})
+    # Resolve from the stored header, even if a current title pattern no longer matches.
+    cfg = _hdr(tcfg, title_patterns=())
+    result = run_titling(EID, cfg, untitled_only=True, client=fake, sleep=NoSleep())
+    assert result.ran and (result.titled, result.clips) == (2 if repaired else 1, 2)
+    assert [c["clip"] for c in fake.calls] == [n] * (1 if repaired else 3)
+    after, new_log = _load(ws, "titles.json"), _load(ws, "titling_log.json")
+    assert after["titles"][1 - target] == before["titles"][1 - target]
+    assert unchanged_bytes in (ws.dir / "titles.json").read_bytes()
+    for key in before.keys() - {"stats", "titles"}:
+        assert after[key] == before[key]
+    assert [e["clip_id"] for e in after["titles"]] == [e["clip_id"] for e in before["titles"]]
+    assert after["titles"][target]["status"] == ("titled" if repaired else "untitled")
+    assert after["stats"] == {"clips": 2, "ai_calls": 4 + len(fake.calls),
+                              "titled": 2 if repaired else 1, "untitled": 0 if repaired else 1}
+    assert new_log["stats"] == after["stats"]
+    for old, new in zip(old_log["clips"], new_log["clips"]):
+        assert new["ai_calls"][:len(old["ai_calls"])] == old["ai_calls"]
+    assert new_log["clips"][1 - target] == old_log["clips"][1 - target]
+    clips_doc, cands = _load(ws, "clips.json"), _load(ws, "candidates.json")
+    validate_titles(after, clips_doc, {c["id"]: clip_text(c, cands["units"]) for c in clips_doc["clips"]},
+                    clips_sha256=_sha(clips_doc), candidates_sha256=_sha(cands), min_chars=10, max_chars=60)
+    assert manifest_of(ws)["stages"]["render"]["status"] == "stale"
+    assert not run_titling(EID, tcfg, client=FakeClient()).ran
+
+
+def test_cli_untitled_only_and_no_untitled_noop(tcfg, tmp_path, monkeypatch, capsys):
+    ws = make_titling_episode(tcfg.workspace.dir)
+    cfg_file = tmp_path / "titling.toml"
+    cfg_file.write_text(f'[workspace]\ndir = "{tcfg.workspace.dir.as_posix()}"\n', encoding="utf-8")
+    run_titling(EID, tcfg, client=FakeClient({7: [ALL_BAD]}), sleep=NoSleep())
+    fake = FakeClient()
+    monkeypatch.setattr("auto_short.titling.stage.OllamaClient", lambda host, timeout: fake)
+    assert main(["titling", EID, "--config", str(cfg_file), "--untitled-only"]) == 0
+    assert [c["clip"] for c in fake.calls] == [7]
+    before = {p.name: p.read_bytes() for p in ws.dir.iterdir() if p.is_file()}
+    assert main(["titling", EID, "--config", str(cfg_file), "--untitled-only"]) == 0
+    assert "no untitled clips" in capsys.readouterr().err
+    assert [c["clip"] for c in fake.calls] == [7]
+    assert {p.name: p.read_bytes() for p in ws.dir.iterdir() if p.is_file()} == before
+
+
+@pytest.mark.parametrize("failure", ["ai", "write", "inputs", "config", "force", "header", "log"])
+def test_untitled_only_failure_keeps_existing_artifacts(tcfg, monkeypatch, failure):
+    ws = make_titling_episode(tcfg.workspace.dir)
+    run_titling(EID, tcfg, client=FakeClient({7: [ALL_BAD]}), sleep=NoSleep())
+    cfg, kwargs = tcfg, {}
+    if failure == "inputs":
+        (ws.dir / "metadata.json").write_text('{}', encoding="utf-8")
+    elif failure == "config":
+        cfg = _ti(tcfg, seed=123)
+    elif failure == "force":
+        kwargs["force"] = True
+    elif failure == "header":
+        kwargs["speaker"] = "Tên khác"
+    elif failure == "log":
+        doc = _load(ws, "titling_log.json")
+        doc["clips_sha256"] = "wrong"
+        (ws.dir / "titling_log.json").write_text(json.dumps(doc), encoding="utf-8")
+    elif failure == "write":
+        from auto_short.titling import stage
+        original = stage.atomic_write_json
+        def fail_once(path, doc):
+            if path.name == "titles.json":
+                monkeypatch.setattr(stage, "atomic_write_json", original)
+                raise OSError("fake disk write failure")
+            return original(path, doc)
+        monkeypatch.setattr(stage, "atomic_write_json", fail_once)
+    before = {name: _load(ws, name) for name in ARTIFACTS + ["manifest.json"]}
+    fake = FakeClient({7: [http_error()]}) if failure == "ai" else FakeClient()
+    with pytest.raises(TitlingError):
+        run_titling(EID, cfg, untitled_only=True, client=fake, sleep=NoSleep(), **kwargs)
+    assert {name: _load(ws, name) for name in before} == before
+    if failure not in ("ai", "write"):
+        assert not fake.calls
 
 
 def test_errors_exhaust_retries_fail(tcfg):

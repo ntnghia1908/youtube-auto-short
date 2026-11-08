@@ -55,6 +55,7 @@ def _build_parser() -> argparse.ArgumentParser:
     ti.add_argument("--series", help="header series (overrides config and the metadata title)")
     ti.add_argument("--episode", help="header episode number (overrides config and the metadata title)")
     ti.add_argument("--force", action="store_true", help="re-run even if up to date")
+    ti.add_argument("--untitled-only", action="store_true", help="retry only untitled clips; keep existing titles")
     ti.add_argument("--config", type=Path, help="config TOML (default: ./config.toml if present)")
 
     r = sub.add_parser("render", help="compose each titled clip into a 1080x1920 Short -> output/<id>/shorts/")
@@ -151,7 +152,7 @@ def _cmd_selection(args: argparse.Namespace, cfg: config_mod.Config) -> int:
 
 def _cmd_titling(args: argparse.Namespace, cfg: config_mod.Config) -> int:
     result = run_titling(args.episode_id, cfg, force=args.force, speaker=args.speaker, series=args.series,
-                         episode=args.episode)
+                         episode=args.episode, untitled_only=args.untitled_only)
     print(stage_line("titling", result))
     return 0
 

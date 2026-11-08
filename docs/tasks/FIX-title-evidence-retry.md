@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: BUG
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -69,11 +69,24 @@ Không chạm database, security model, public API. Sau merge: chạy `--untitle
 
 ## Result
 
-- Main changes:
-- Tests:
-- Diff + / − (app, test):
-- Helper mới:
-- Review:
-- Important findings / decisions:
-- Known limitations:
-- PR:
+- Main changes: retry giữ nguyên request đầu, từ lần 2 tăng seed và đưa response/lý do loại vào hội thoại; evidence dùng cửa sổ trượt 5 độ dài, bộ đếm cập nhật O(n + m); CLI `--untitled-only` tái dùng luồng titling, giữ entry titled/header/provenance/thứ tự, cộng dồn log và stats, đánh stale render sau cập nhật.
+- Tests (IMPLEMENTER, sandbox, client giả; mọi lệnh từ `/home/ntnghia/projects/yas-title-fix`):
+  - `PYTHONPATH=/home/ntnghia/projects/yas-title-fix/src conda run -n auto-short python -m pytest -q tests/test_titling_logic.py tests/test_titling_stage.py tests/test_titling_added_cp9.py -x --tb=short` → **131 passed in 1.91s** (vòng đầu).
+  - `PYTHONPATH=/home/ntnghia/projects/yas-title-fix/src conda run -n auto-short python -m pytest -q tests/test_titling_logic.py tests/test_titling_stage.py tests/test_titling_added_cp9.py tests/test_series_cp811.py -x --tb=short` → **160 passed in 2.08s** (sau bổ sung kiểm tra byte entry và Short thêm tay).
+  - `PYTHONPATH=/home/ntnghia/projects/yas-title-fix/src conda run -n auto-short python -m pytest -q tests/test_ollama_wait_client.py::test_titling_unavailable_stops_stage_without_untitled_clip tests/test_ollama_wait_client.py::test_added_short_title_unavailable_one_call_untitled -x --tb=short` → **2 passed in 0.21s** (không dùng fixture socket).
+  - `git diff --check` → PASS; kiểm AST `HASH_KEYS` / `PARAM_KEYS` và so byte `prompt.py` với HEAD bằng Python → không đổi.
+
+  | AC | Test / bằng chứng |
+  |---|---|
+  | 1 | `test_no_valid_option_retries_then_untitled`, `test_error_then_success`, `test_added_title_inherits_retry_feedback_and_fuzzy_evidence` |
+  | 2 | `test_evidence_local_window_shared_by_option_and_artifact_validation` (parametrize), `test_evidence_windows_on_long_lecture` (6.000 từ + evidence 1.000 từ), test Short thêm tay ở AC1 |
+  | 3 | `test_untitled_only_preserves_titles_metadata_and_appends_log`, `test_cli_untitled_only_and_no_untitled_noop`, `test_untitled_only_failure_keeps_existing_artifacts` (parametrize; gồm AI/ghi file/input/config lỗi) |
+  | 4 | ORCHESTRATOR 2026-11-08, bản sao 4 workspace, Ollama 3090 qwen3:14b: cả 4 `titled` — 7axON1RpRjo k01 "Tâm tạo nghiệp thiện ác từ thân ngữ ý", AiF-lVD29jM.kt k01 "Người nghe danh hiệu Phật có công đức lớn không?", S0AbpjI3tXw.kt k01 "Kinh Hoa Nghiêm có phải là gốc của Phật pháp không?", jKGZC-ENyMo.kt k06 "Niệm Phật 24 giờ không gián đoạn có thật không?"; entry titled khác giữ nguyên; render dùng lại các Short không đổi (`render_key`) |
+
+- Diff + / − (app, test): app **+118 / −10**; test **+178 / −2** (không tính tài liệu).
+- Helper mới: `_retitle_untitled` điều phối kiểm freshness, chuẩn bị kết quả trước khi ghi và phục hồi artifact/manifest nếu ghi lỗi. Đã tìm bằng `rg -n 'Counter\(|sliding|evidence_in_text|SequenceMatcher|levenshtein|untitled.only|ai_calls.*extend' src tests/titling_helpers.py` và đọc stage/workspace: không có helper repair một phần; `run_stage` đơn lẻ xóa artifact khi lỗi nên không dùng trực tiếp cho toàn bộ quá trình repair. Tái dùng `title_clips`, `_title_clip`, `validate_titles`, `check_up_to_date`, `run_stage`, `atomic_write_json`; không thêm helper fuzzy riêng, không dùng `SequenceMatcher` vốn không có cùng luật và có nguy cơ O(n²).
+- Review: IMPLEMENTER tự rà contract → diff → AC → verification; chờ ORCHESTRATOR review độc lập. Chỉ sửa Owned paths, không commit/push/PR/agent/mạng thật.
+- Important findings / decisions: HEAD thực thi `41a6474` theo delegation. Repair yêu cầu input/config còn current; từ chối kết hợp `--untitled-only` với `--force` hoặc header override để giữ provenance. `--force` riêng giữ hành vi cũ. Không có entry untitled → không gọi AI/ghi artifact, thông báo rõ. HASH_KEYS/PARAM_KEYS/prompt SHA không đổi.
+- Known limitations: không chạy `tests/test_web_titles.py` (TestClient/socket), full suite `python -m pytest -q -n auto`, hoặc AC4/Ollama thật theo ràng buộc sandbox/delegation; chưa xác nhận 4 Short thật hết untitled. Khớp gần đúng kiểm từ trong cửa sổ theo contract, không chứng minh ý nghĩa title.
+- ORCHESTRATOR verification: `tests/test_web_titles.py` nằm trong full suite; full suite ngoài sandbox **4244 passed, 2 skipped** (26 phút 56 giây), test chập chờn đã biết `test_lower_thread_priority_is_per_thread_and_inherited_by_children` chạy riêng **1 passed**. Codex IMPLEMENTER 1 vòng, 91.191 token.
+- PR: xem nhánh `fix/title-evidence-retry`.

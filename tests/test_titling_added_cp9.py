@@ -79,6 +79,20 @@ def test_no_valid_option_leaves_untitled(ws, cfg):
     assert _review(ws)["added"][0]["title"] is None
 
 
+@pytest.mark.parametrize("evidence", ["lời giảng dòng 62 thứ 62", "dòng 62 lời giảng thứ 62 về tấm"])
+def test_added_title_inherits_retry_feedback_and_fuzzy_evidence(ws, cfg, evidence):
+    bad = reply(*[("Tiêu đề sai!", "dòng 62 lời giảng")] * 3)
+    good = reply(*[("Lời giảng về tâm an", evidence)] * 3)
+    client = Client(bad, good)
+    res = title_added(EID, cfg, "m01", client=client, sleep=lambda s: None)
+    assert res.stored and res.status == "titled"
+    calls = json.loads((ws.dir / LOG_NAME).read_text())["entries"][0]["ai_calls"]
+    assert [c["request"]["options"]["seed"] for c in calls] == [cfg.titling.seed, cfg.titling.seed + 1]
+    assert client.calls[1][-2] == {"role": "assistant", "content": bad}
+    assert "option 1: exclamation mark" in client.calls[1][-1]["content"]
+    assert calls[1]["options"][0]["status"] == "valid"
+
+
 def test_connection_error_is_reported(ws, cfg):
     waits = []
     res = title_added(EID, cfg, "m01", client=Client(ChatError("connection refused")), sleep=waits.append)

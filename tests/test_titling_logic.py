@@ -16,6 +16,7 @@ from auto_short.titling.logic import (
     TitlingError,
     choose_title,
     clip_text,
+    evidence_in_text,
     normalize_match,
     parse_response,
     reject_reason,
@@ -245,6 +246,51 @@ def test_validate_options_and_choose():
     assert chosen == {"title": "Tướng tùy tâm chuyển", "evidence": "Tướng Tùy Tâm chuyển"}
     assert alts == [{"title": "Lời nói không sai chút nào", "evidence": "không sai chút nào"}]
     assert choose_title([dict(r, status=INVALID) for r in recs]) == (None, [])
+
+
+@pytest.mark.parametrize("evidence,text,accepted", [
+    ("niệm phật không gián đoạn 24 giờ", "24 giờ niệm phật không gián đoạn", True),
+    ("niệm phật 24 giờ không gián đoạn", "24 giờ niệm phật không gián đoạn", True),
+    ("như Thị Nhất thiết bộ bắt do Tâm Tạo", "như Thị Nhất thiết bị bắt do Tâm Tạo", True),
+    ("Vì sao bị nói xấu mà không cần cãi lại", "người ta nói xấu mình thì cứ để họ nói chúng ta giữ tâm bình tĩnh",
+     False),
+    ("niệm phật", "niệm phật", False),
+    ("", "", False),
+    ("niệm phật không gián đoạn 24 giờ", "niệm phật " + "học kinh " * 30 + "không gián đoạn 24 giờ", False),
+    ("a b c d e f g", "a b c x e f g", False),  # < 8 words: no substitutions
+    ("a b c d e f g h", "a b c x e f g h", True),
+    ("a b c d e f g h", "a b c x e f y h", False),
+    ("a b c d e f g h i j k l m n o", "a b c x e f g y i j k l m n o", False),
+    ("a b c d e f g h i j k l m n o p", "a b c x e f g y i j k l m n o p", True),
+    ("a a a b b c d e", "a b b b b c d x", False),  # repeated words cannot inflate overlap
+    ("a b c", "c c b b a", True),  # same set at evidence length + 2
+    ("a a b b c", "c b a", True),  # same set at evidence length - 2
+    ("a a a a a b c", "c b a", False),  # outside the allowed window lengths
+    ("niệm, PHẬT không gián đoạn 24 giờ", "24 giờ niệm phật không gián đoạn", True),
+])
+def test_evidence_local_window_shared_by_option_and_artifact_validation(evidence, text, accepted):
+    assert evidence_in_text(evidence, normalize_match(text)) is accepted
+    title = "Giữ tâm khi nghe lời giảng"
+    record = validate_options([{"title": title, "evidence": evidence}], text, min_chars=10, max_chars=60)[0]
+    assert (record["status"] == VALID) is accepted
+    doc, clips = _doc()
+    doc["titles"][0].update(title=title, evidence=evidence)
+    if accepted:
+        validate_titles(doc, clips, {"k01": text}, clips_sha256="a", candidates_sha256="b",
+                        min_chars=10, max_chars=60)
+    else:
+        with pytest.raises(TitlingError, match="evidence"):
+            validate_titles(doc, clips, {"k01": text}, clips_sha256="a", candidates_sha256="b",
+                            min_chars=10, max_chars=60)
+
+
+def test_evidence_windows_on_long_lecture():
+    # Long evidence as well as a long lecture exercises incremental rather than pairwise matching.
+    evidence = " ".join(f"e{n}" for n in range(1000))
+    lecture = " ".join(f"t{n}" for n in range(6000))
+    assert not evidence_in_text(evidence, lecture)
+    reordered = " ".join(reversed(evidence.split()))
+    assert evidence_in_text(evidence, lecture + " " + reordered)
 
 
 # --- G8 -------------------------------------------------------------------------------------------------------
