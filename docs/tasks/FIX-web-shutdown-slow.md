@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN REVIEW (vòng 2 xong; chờ ORCHESTRATOR chạy full suite + AC 4)
+- Status: DONE (chờ merge PR)
 - Type: BUG
 - Change class: S1 — không đổi architecture / dependency / API; chỉ cách các vòng nền dừng khi tắt + log chẩn đoán
 - Owner: HUMAN LEAD
@@ -68,7 +68,7 @@ Tất cả required verification phải chạy và PASS trước READY.
 
 Không chạm database / security model / public API → điểm danh.
 
-- [ ] Restart 8080 nhanh (≤ 30 s) trong ngày sau merge.
+- [ ] Restart 8080 nhanh (≤ 30 s) trong ngày sau merge. (Trước merge: PASS trên bản ghép tạm, xem Kết thúc.)
 
 ## Result
 
@@ -150,3 +150,10 @@ Rà gọn diff vòng 1: chưa xóa được phần nào đáng kể (không tìm
 Diff so với `bc2ee68` (src+tests): +1037 / −137; `app.py` +134/−30; `tests/test_web_shutdown.py` +499/−0.
 Đã chạy (PYTHONPATH=worktree/src, trong sandbox, lifespan test chạy được lần này): `pytest tests/test_web_shutdown.py tests/test_store_backup.py tests/test_store_offload.py tests/test_store_redownload.py tests/test_post_links.py tests/test_theme_source_cache.py tests/test_ingest_local.py tests/test_ingest_youtube.py tests/test_src4_ingest_store.py -q` → **297 passed**. `git diff --check` sạch.
 CHƯA chạy: full suite `pytest -n auto -q`; AC 4 (restart 8080 thật); test HTTP/socket thật ngoài sandbox.
+
+## Kết thúc (ORCHESTRATOR 2026-11-08)
+
+- Vòng sửa 3 (Sonnet): full suite lần đầu 1 fail `tests/test_store_shorts_edit.py::test_short_storage_snapshot_and_orphan_temp_sweep` — fixture `memory_store` patch `urllib.request.urlopen` nhưng trong stop scope `cancellation.urlopen` dựng opener riêng nên đi mạng thật (`http://memory`). Sửa fixture (patch thêm `auto_short.store.client.urlopen`, +7 dòng test, không đổi production); các test khác dùng fake `urllib.request.urlopen` không chạy trong stop scope. Commit `5b43de2`.
+- Full suite trên nhánh (`5b43de2`, ngoài sandbox): **4079 passed, 2 skipped**. Trên bản ghép với LISTEN1 (`d73046a`): **4214 passed, 2 skipped**.
+- AC 4 chạy thật 8080 (bản ghép tạm `tmp/8080-listen1-shutdown`, làn rảnh): 7 lần restart đều 5–6 s tổng (script), lifespan 0,047–0,063 s; lần đo đầu có `redownload_pass` và `source_backup_pass` đang chạy, dừng sau 0,003 s / 0,018 s. Log mỗi bước "tắt: <bước> xong sau X s" có trong tmux. Chưa đo được lúc đang tải lên kho (không có việc offload khi đo) — mục checklist theo dõi sau merge.
+- Implementer: Codex vòng 1, Sonnet vòng 2–3 (Codex hết quota 2026-11-08 13:40–15:04 UTC).
