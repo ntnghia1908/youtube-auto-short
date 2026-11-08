@@ -261,3 +261,10 @@ Không chạm database / security model / API hiện có → manual test là đi
   - Không chạy TestClient/full suite trong sandbox theo delegation; không gọi mạng thật, không chạm runtime 8080. Kết quả 114 PASS ở baseline thuộc vòng 4.
 - Diff so với `d7c969e`, không tính contract/Amendment D có sẵn: app **+311 / −101**, test **+120 / −0**, tổng **+431 / −101**.
 - Review / lifecycle: sẵn sàng ORCHESTRATOR review vòng 5; giữ IN_PROGRESS tới khi required verification/code mới và AC27 thực tế được hoàn tất. Không commit/push/PR, gọi agent khác, thêm dependency hoặc sửa ngoài Owned paths.
+
+### Amendment E (HUMAN LEAD 2026-11-08, chạy thật `9c5cf63`) — chưa làm
+
+Bằng chứng: "3. Ok rồi" (nghe ở app khác bằng màn hình nhỏ / toàn màn hình: PASS AC 18 / 22). "Hết bài không thấy đếm ngược 3 giây. Ở trang nghe khi hết bài tự chuyển sang bài tiếp theo thì nhảy xuống tab tiêu đề, không cuộn lên video."
+
+28. Sửa: thẻ đếm ngược 3 s (AC 25) phải hiện khi hết bài (tab Nghe và `/watch`) — tìm vì sao không render (kiểm `advance_at` / timer / CSS `hidden`).
+29. Sửa: tự chuyển bài (và đổi bài do đếm ngược) không cuộn trang tới dòng danh sách; nếu cần cuộn thì cuộn lên khung video như AC 23 (chỉ khi trang visible), danh sách chỉ cuộn bên trong khung của nó.
