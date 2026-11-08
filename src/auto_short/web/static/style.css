@@ -481,3 +481,9 @@ body.modal-open { overflow: hidden; }
 .player-episode-head { margin: .5rem 0; font-weight: 600; }
 .player-notice select { display: block; margin-top: .5rem; padding: .55rem; border: 1px solid var(--border); border-radius: 8px; background: var(--card); max-width: 100%; }
 .listen-room [hidden] { display: none; }
+/* AC 28: the countdown / end-of-episode card overlays the lower part of the video (above its native
+   control bar), so it is visible whenever the video is; hidden it takes no space and blocks nothing. */
+.player-stage { position: relative; }
+.player-stage .player-notice { position: absolute; left: .5rem; right: .5rem; bottom: 3.5rem; z-index: 2; margin: 0;
+  max-height: calc(100% - 4.5rem); overflow: auto; background: rgba(20, 20, 20, .92); color: #fff; border-color: #666; }
+.player-stage .player-notice .muted, .player-stage .player-notice .small { color: #ddd; }

@@ -29,7 +29,10 @@
       <label class="player-jump">Tới tập <select id="listen-jump" aria-label="Nhảy tới tập"></select></label>
     </div>
     <button id="listen-resume" class="btn player-soft-card player-resume" type="button" hidden></button>
-    <video id="listen-video" class="player-video" controls playsinline preload="metadata" hidden></video>
+    <div class="player-stage">
+      <video id="listen-video" class="player-video" controls playsinline preload="metadata" hidden></video>
+      <div id="listen-notice" class="player-notice player-soft-card" role="status" aria-live="polite" hidden></div>
+    </div>
     <div class="player-now">
       <h2 id="listen-title" class="player-now-title"></h2>
       <p id="listen-meta" class="small muted"></p>
@@ -37,7 +40,6 @@
       <span id="listen-count" class="badge"></span>
     </div>
     <button id="listen-play" class="btn primary" type="button" hidden>Bấm để phát</button>
-    <div id="listen-notice" class="player-notice player-soft-card" role="status" aria-live="polite" hidden></div>
     <div id="listen-controls" class="player-controls">
       <span class="player-heart"><button id="listen-favorite" class="btn icon-btn heart" type="button" hidden aria-label="Yêu thích" aria-pressed="false" title="Yêu thích">♡</button></span>
       <button id="listen-prev" class="btn icon-btn" type="button" title="Trước" aria-label="Trước" disabled>⏮</button>

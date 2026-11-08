@@ -190,3 +190,15 @@ def test_listen_and_watch_share_one_module():  # AC 30 / 31 / 34 (static guard)
     assert 'id="watch-video"' not in (static / "watch.html").read_text()
     # Favorites = one continuous list (AC 39), un-hearted item stays until the playing item changes (AC 40).
     assert "player.continuous" in listen and "favorites=1" in listen and "item === currentItem" in listen
+
+
+def test_countdown_card_overlays_the_video_on_all_pages():  # AC 28
+    import re
+    static = Path(__file__).parents[1] / "src/auto_short/web/static"
+    for page in ("episode.html", "watch.html", "favorites.html"):
+        html = (static / page).read_text()
+        stage = re.search(r'<div class="player-stage">(.*?)</div>\s*</div>|<div class="player-stage">(.*?)\n\s*</div>', html, re.S)
+        assert stage and 'id="listen-video"' in stage.group(0) and 'id="listen-notice"' in stage.group(0), page
+        assert html.count('id="listen-notice"') == 1
+    css = (static / "style.css").read_text()
+    assert ".player-stage { position: relative; }" in css and ".player-stage .player-notice { position: absolute;" in css
