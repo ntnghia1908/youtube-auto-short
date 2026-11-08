@@ -51,6 +51,7 @@ class WatchRoom:
         self._queue = []
         self._index = 0
         self._paused = True
+        self._auto = True
         self._position = 0.0
         self._rate = 1.0
         self._updated_at = clock()
@@ -63,7 +64,7 @@ class WatchRoom:
         current = self._queue[self._index] if self._queue else None
         return dict(queue=[dict(e) for e in self._queue], index=self._index,
                     video_url=current["url"] if current else None, title=current["title"] if current else "",
-                    paused=self._paused, position=self._position, rate=self._rate,
+                    paused=self._paused, auto=self._auto, position=self._position, rate=self._rate,
                     updated_at=self._updated_at, version=self._version, by=self._by,
                     viewers=dict(self._viewers), server_time=now)
 
@@ -88,6 +89,7 @@ class WatchRoom:
             index = self._index
             position = self._position + (0 if self._paused else (now - self._updated_at) * self._rate)
             rate, paused = self._rate, self._paused
+            auto = self._auto
             if action == "set":
                 queue = data.get("queue")
                 if queue is None and "video_url" in data:
@@ -112,6 +114,13 @@ class WatchRoom:
                     raise ValueError("paused không hợp lệ")
             elif action == "end":
                 queue, index, position, rate, paused = [], 0, 0.0, 1.0, True
+                auto = True
+            elif action == "auto":
+                auto = data.get("auto")
+                if type(auto) is not bool:
+                    raise ValueError("auto phải là boolean")
+                if not self._queue:
+                    raise ValueError("Chưa có phòng xem chung")
             elif action in ("play", "pause", "seek", "rate", "goto", "next", "prev"):
                 if not self._queue:
                     raise ValueError("Chưa có phòng xem chung")
@@ -144,6 +153,7 @@ class WatchRoom:
                 if action == "end":
                     self._viewers.clear()
             self._index, self._position, self._rate, self._paused = index, position, rate, paused
+            self._auto = auto
             self._updated_at, self._by = now, client
             self._version += 1
             if self._queue:

@@ -1,15 +1,9 @@
 """WATCH1: pure room invariants and authenticated HTTP integration, no real services."""
 from __future__ import annotations
 
-import hashlib
 import json
-import os
-import subprocess
-import threading
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import replace
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -128,6 +122,46 @@ def test_simultaneous_ended_only_advances_once(room):  # AC8
     assert r.snapshot()["index"] == 1
 
 
+def test_auto_defaults_updates_preserve_playback_and_reset(room):  # LISTEN1 AC11
+    r, now = room
+    assert r.snapshot()["auto"] is True
+    first = r.command("a", "set", queue=QUEUE, position=12)
+    now[0] += 3
+    manual = r.command("b", "auto", auto=False)
+    assert manual["auto"] is False and not manual["paused"]
+    assert manual["position"] == 15 and manual["index"] == 0 and manual["queue"] == QUEUE
+    assert manual["version"] == first["version"] + 1 and manual["by"] == "b"
+    assert r.snapshot("a")["auto"] is False
+    assert r.command("a", "next", expect_version=manual["version"])["index"] == 1
+    assert r.command("a", "set", queue=QUEUE)["auto"] is False
+    assert r.command("b", "auto", auto=True)["auto"] is True
+    r.command("a", "auto", auto=False)
+    assert r.command("a", "end")["auto"] is True
+
+
+@pytest.mark.parametrize("value", [None, 0, 1, "true", "false", [], {}])
+def test_auto_rejects_non_bool_atomically(room, value):  # LISTEN1 AC11
+    r, _ = room
+    r.command("a", "set", queue=QUEUE)
+    before = r.snapshot()
+    with pytest.raises(ValueError):
+        r.command("b", "auto", auto=value)
+    assert r.snapshot() == before
+    with pytest.raises(ValueError):
+        r.command("b", "auto")
+    assert r.snapshot() == before
+
+
+def test_auto_change_invalidates_stale_ended_version(room):
+    r, _ = room
+    playing = r.command("a", "set", queue=QUEUE)
+    manual = r.command("b", "auto", auto=False)
+    with pytest.raises(WatchConflict):
+        r.command("a", "next", expect_version=playing["version"])
+    assert r.snapshot()["index"] == 0 and r.snapshot()["auto"] is False
+    assert r.command("a", "next", expect_version=manual["version"])["index"] == 1
+
+
 @pytest.mark.parametrize("action,data", [
     ("seek", {"position": -1}), ("rate", {"rate": 5}), ("goto", {"index": 3}),
     ("next", {}), ("prev", {"expect_version": True}), ("unknown", {}),
@@ -151,7 +185,7 @@ def web(cfg):
 
 
 def test_http_auth(web):  # AC3
-    calls = [("GET", "/api/watch"), ("GET", "/api/watch/audio/youtube0001/k01"), ("POST", "/api/watch"),
+    calls = [("GET", "/api/watch"), ("POST", "/api/watch"),
              ("POST", "/api/watch/leave"), ("DELETE", "/api/watch")]
     for method, path in calls:
         assert web.request(method, path, json={"client": "a", "action": "set", "queue": QUEUE}).status_code == 401
@@ -219,6 +253,32 @@ def set_room(app, url):
         {"client": "old-tab", "action": "set", "queue": [{"url": url, "title": "Video"}]}).body)
 
 
+def test_auto_route_defaults_fresh_snapshot_and_422(cfg):  # no TestClient/socket
+    from web_helpers import make_app
+    app = make_app(cfg)
+    assert set_room(app, "/files/youtube0001/k01.mp4")["auto"] is True
+    post, get = endpoint(app, "/api/watch", "POST"), endpoint(app, "/api/watch")
+    response = post({"client": "a", "action": "auto", "auto": False})
+    assert response.status_code == 200 and json.loads(response.body)["auto"] is False
+    current = json.loads(get("b").body)
+    assert current["auto"] is False
+    for value in [None, 0, 1, "true", "false", [], {}]:
+        invalid = post({"client": "a", "action": "auto", "auto": value})
+        assert invalid.status_code == 422
+        assert json.loads(get().body)["version"] == current["version"]
+    assert post({"client": "a", "action": "auto"}).status_code == 422
+
+
+def test_http_auto_sync_and_validation(web):
+    from web_helpers import login
+    login(web)
+    assert web.post("/api/watch", json={"client": "a", "action": "set", "queue": QUEUE}).json()["auto"] is True
+    assert web.post("/api/watch", json={"client": "a", "action": "auto", "auto": False}).json()["auto"] is False
+    assert web.get("/api/watch?client=b").json()["auto"] is False
+    for value in [None, 0, 1, "true", [], {}]:
+        assert web.post("/api/watch", json={"client": "b", "action": "auto", "auto": value}).status_code == 422
+
+
 def test_client_fav_is_ignored_and_favorite_action_removed(room):  # AC15
     r, _ = room
     view = r.command("a", "set", queue=[{**QUEUE[0], "fav": {"untrusted": True}}], fav="ignored")
@@ -261,136 +321,6 @@ def test_fav_only_for_valid_clip_and_owned_episode(cfg, monkeypatch, url):  # AC
     assert seen == ([EID] if url.startswith(f"/files/{EID}/k02") else [])
 
 
-@pytest.fixture
-def fake_ffmpeg(monkeypatch):
-    from auto_short.web import watch_audio
-    calls = []
-    def run(args, **kwargs):
-        calls.append((args, kwargs))
-        assert args[0] == "ffmpeg"
-        assert args[args.index("-c:a") + 1] == "copy" and "-vn" in args
-        assert args[args.index("-map") + 1] == "0:a:0"
-        assert args[args.index("-movflags") + 1] == "+faststart"
-        assert kwargs["check"] is True
-        Path(args[-1]).write_bytes(b"m4a-data")
-        return SimpleNamespace(returncode=0)
-    monkeypatch.setattr(watch_audio.subprocess, "run", run)
-    return calls
-
-
-def test_audio_route_local_remux_cache_and_changed_manifest(cfg, fake_ffmpeg):  # AC16
-    from web_helpers import make_app, write_episode
-    write_episode(cfg, EID)
-    app = make_app(cfg)
-    get = endpoint(app, "/api/watch/audio/{episode_id}/{clip}")
-    assert get("invalid/path", "k01").status_code == 404
-    assert get(EID, "invalid.clip").status_code == 404
-    assert get(EID, "missing").status_code == 404
-    first = get(EID, "k01")
-    assert first.status_code == 200 and first.media_type == "audio/mp4"
-    assert Path(first.path).name == "0" * 64 + ".m4a"
-    args, _ = fake_ffmpeg[0]
-    assert args[args.index("-i") + 1] == str(Path(cfg.render.output_dir) / EID / "shorts/k01.mp4")
-    assert Path(first.path).read_bytes() == b"m4a-data"
-    assert get(EID, "k01").path == first.path and len(fake_ffmpeg) == 1
-    manifest = Path(cfg.render.output_dir) / EID / "render_manifest.json"
-    doc = json.loads(manifest.read_text())
-    doc["shorts"][0]["sha256"] = "a" * 64
-    manifest.write_text(json.dumps(doc))
-    assert Path(get(EID, "k01").path).name == "a" * 64 + ".m4a" and len(fake_ffmpeg) == 2
-
-
-def test_audio_route_stored_short_offline_and_fetch_parameters(cfg, monkeypatch, fake_ffmpeg):  # AC16
-    from auto_short.config import StoreConfig
-    from auto_short.web.routes import watch
-    from web_helpers import make_app, write_episode
-    files = write_episode(cfg, EID)
-    out = Path(cfg.render.output_dir) / EID
-    source = out / "shorts/k01.mp4"
-    stat = source.stat()
-    (out / "store.json").write_text(json.dumps({"released": {"k01": {
-        "sha256": "0" * 64, "size": stat.st_size, "mtime_ns": stat.st_mtime_ns}}}))
-    source.unlink()
-    off = endpoint(make_app(cfg), "/api/watch/audio/{episode_id}/{clip}")
-    assert off(EID, "k01").status_code == 503 and not fake_ffmpeg
-    fetched = []
-    class Store:
-        up = False
-        def available(self):
-            return self.up
-        def fetch(self, video_id, kind, dest, sha256, *, clip):
-            assert (video_id, kind, sha256, clip) == (EID, "short", "0" * 64, "k01.mp4")
-            assert dest.parent.parent == Path(cfg.workspace.dir) / "_watch_audio"
-            fetched.append(dest)
-            dest.write_bytes(files["k01"])
-    client = Store()
-    monkeypatch.setattr(watch.StoreClient, "from_config", lambda config: client)
-    online_cfg = replace(cfg, store=StoreConfig(enabled=True))
-    get = endpoint(make_app(online_cfg), "/api/watch/audio/{episode_id}/{clip}")
-    assert get(EID, "k01").status_code == 503 and not fake_ffmpeg
-    client.up = True
-    response = get(EID, "k01")
-    assert response.status_code == 200 and len(fake_ffmpeg) == len(fetched) == 1
-    assert not fetched[0].exists()  # temporary original is cleaned after remux
-    assert get(EID, "k01").path == response.path and len(fetched) == 1
-
-
-def test_audio_cache_concurrent_requests_remux_once(tmp_path):  # AC16
-    from auto_short.web.watch_audio import AudioCache
-    started, release = threading.Event(), threading.Event()
-    calls = []
-    def run(args, **kwargs):
-        calls.append(args)
-        started.set()
-        assert release.wait(5)
-        Path(args[-1]).write_bytes(b"m4a")
-    cache = AudioCache(tmp_path / "cache", run=run)
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        first = pool.submit(cache.get, "a" * 64, tmp_path / "source.mp4")
-        assert started.wait(5)
-        second = pool.submit(cache.get, "a" * 64, tmp_path / "source.mp4")
-        release.set()
-        assert first.result(timeout=5) == second.result(timeout=5)
-    assert len(calls) == 1
-
-
-def test_audio_cache_failure_is_atomic_and_cleans_temp(tmp_path):  # AC16
-    from auto_short.web.watch_audio import AudioCache, WatchAudioError
-    def run(args, **kwargs):
-        Path(args[-1]).write_bytes(b"partial")
-        raise subprocess.CalledProcessError(1, args)
-    cache = AudioCache(tmp_path / "cache", run=run)
-    with pytest.raises(WatchAudioError):
-        cache.get("a" * 64, tmp_path / "source.mp4")
-    assert list(cache.root.iterdir()) == []
-    with pytest.raises(WatchAudioError):
-        cache.get("../escape", tmp_path / "source.mp4")
-
-
-def test_audio_cache_evicts_oldest_mtime(tmp_path):  # AC16; small injected quota instead of 2 GB
-    from auto_short.web.watch_audio import AudioCache
-    def run(args, **kwargs):
-        Path(args[-1]).write_bytes(b"1234")
-    cache = AudioCache(tmp_path / "cache", run=run, max_bytes=8)
-    a = cache.get("a" * 64, tmp_path / "source.mp4")
-    b = cache.get("b" * 64, tmp_path / "source.mp4")
-    os.utime(a, (10, 10))
-    os.utime(b, (20, 20))
-    c = cache.get("c" * 64, tmp_path / "source.mp4")
-    assert not a.exists() and b.exists() and c.exists()
-    assert sum(p.stat().st_size for p in cache.root.glob("*.m4a")) == 8
-
-
-def test_audio_real_remux_has_only_aac_and_faststart(video, tmp_path):  # AC16, tiny local ffmpeg fixture
-    from auto_short.web.watch_audio import AudioCache
-    result = AudioCache(tmp_path / "cache").get(hashlib.sha256(video.read_bytes()).hexdigest(), video)
-    streams = json.loads(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,codec_name",
-        "-of", "json", str(result)], check=True, capture_output=True, text=True).stdout)["streams"]
-    assert streams == [{"codec_name": "aac", "codec_type": "audio"}]
-    data = result.read_bytes()
-    assert data.index(b"moov") < data.index(b"mdat")
-
-
 def test_http_watch_fav_is_fresh_without_client_metadata(web, monkeypatch):  # AC15
     from web_helpers import login
     login(web)
@@ -402,19 +332,3 @@ def test_http_watch_fav_is_fresh_without_client_metadata(web, monkeypatch):  # A
     favorites["clips"].append("k01")
     assert web.get("/api/watch?client=other").json()["fav"]["favorite"] is True
     assert web.post("/api/watch", json={"client": "a", "action": "favorite", "index": 0, "favorite": False}).status_code == 422
-
-
-def test_http_audio_range_auth_and_cache(cfg, fake_ffmpeg):  # AC16
-    from fastapi.testclient import TestClient
-    from web_helpers import login, make_app, write_episode
-    write_episode(cfg, EID)
-    with TestClient(make_app(cfg), follow_redirects=False) as client:
-        path = f"/api/watch/audio/{EID}/k01"
-        assert client.get(path).status_code == 401
-        login(client)
-        assert client.get(f"/api/watch/audio/{EID}/bad.clip").status_code == 404
-        response = client.get(path)
-        assert response.status_code == 200 and response.headers["content-type"].startswith("audio/mp4")
-        partial = client.get(path, headers={"Range": "bytes=0-3"})
-        assert partial.status_code == 206 and partial.content == response.content[:4]
-        assert len(fake_ffmpeg) == 1

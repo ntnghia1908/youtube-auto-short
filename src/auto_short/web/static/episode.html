@@ -30,13 +30,15 @@
     <h3 id="listen-title"></h3>
     <p id="listen-message" role="status" aria-live="polite">Đang tải danh sách…</p>
     <video id="listen-video" controls playsinline preload="metadata" hidden></video>
-    <audio id="listen-audio" controls preload="metadata" hidden></audio>
     <button id="listen-play" class="btn primary" type="button" hidden>Bấm để phát</button>
-    <div class="actions">
-      <button id="listen-favorite" class="btn icon-btn heart" type="button" hidden aria-label="Yêu thích" aria-pressed="false">♡</button>
-      <label class="inline"><input id="listen-background" type="checkbox"> Nghe nền</label>
+    <div id="listen-notice" class="player-notice" role="status" aria-live="polite" hidden></div>
+    <div class="player-controls">
+      <span class="player-heart"><button id="listen-favorite" class="btn icon-btn heart" type="button" hidden aria-label="Yêu thích" aria-pressed="false" title="Yêu thích">♡</button></span>
       <button id="listen-prev" class="btn icon-btn" type="button" title="Trước" aria-label="Trước" disabled>⏮</button>
       <button id="listen-next" class="btn icon-btn" type="button" title="Tiếp" aria-label="Tiếp" disabled>⏭</button>
+    </div>
+    <label class="inline"><input id="listen-auto" type="checkbox" checked> Tự chuyển bài</label>
+    <div class="actions">
       <button id="listen-watch" class="btn" type="button" disabled>Xem chung</button>
     </div>
     <div id="listen-queue" class="listen-queue" aria-label="Danh sách theo tập"></div>

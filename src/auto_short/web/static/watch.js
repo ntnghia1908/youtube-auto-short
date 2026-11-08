@@ -33,7 +33,7 @@
     }
     return data;
   }
-  function message(text) { if (inRoom) $("watch-message").textContent = text || (player?.background ? player.audioWarning || "" : ""); }
+  function message(text) { if (inRoom) $("watch-message").textContent = text || ""; }
   function command(action, extra = {}, force = false) {
     pending++;
     // Serialize this client's controls; polling cannot overwrite an unacknowledged local gesture.
@@ -165,7 +165,8 @@
       if (state?.video_url) { cancelPause(); return command(action, { expect_version: state.version }, true).catch(() => {}); }
     };
     player = new AutoShortPlayer("watch", {
-      request, message, onNavigate: navigate, onFavorite: () => poll(true), onInteraction: cancelPause,
+      request, message, onNavigate: navigate, onFavorite: () => poll(true),
+      onAuto: (auto) => { command("auto", { auto }).catch(() => poll(true)); },
       onAction(action, extra, force = false) {
         if (action === "pause" && !force) {
           if (hiddenPause()) return;

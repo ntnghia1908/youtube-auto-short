@@ -7,7 +7,7 @@
   };
   const write = (key, value) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch (_) { /* Private mode. */ } };
   const episodeId = decodeURIComponent(location.pathname.split("/").filter(Boolean)[1] || "");
-  const message = (text) => { $("message").textContent = text || (player.background ? player.audioWarning || "" : ""); };
+  const message = (text) => { $("message").textContent = text || ""; };
   async function request(method = "GET", body, path) {
     const response = await fetch(path, { method, cache: "no-store", headers: body ? { "Content-Type": "application/json" } : {},
       body: body ? JSON.stringify(body) : undefined });
@@ -20,7 +20,11 @@
   }
   const episode = (id) => request("GET", null, `/api/episodes/${encodeURIComponent(id)}`);
   const player = new AutoShortPlayer("listen", {
-    request, message, onNavigate: (action) => navigate(action),
+    request, message, onNavigate: (action) => navigate(action), getNext: () => items[index + 1],
+    onAuto(value) {
+      auto = value; write("auto-short-listen-auto", auto);
+      if (state) { state = { ...state, auto }; player.setState(state, false); }
+    },
     onAction(action, extra, force) {
       if (!state) return;
       if (action === "play") started = true;
@@ -36,6 +40,7 @@
   });
   let all = [], items = [], index = -1, currentItem = null, state = null, version = 0, started = false;
   let storageKey, lastSave = 0;
+  let auto = read("auto-short-listen-auto", true) !== false;
   let filter = read("auto-short-listen-filter", "both");
   if (!["both", "short", "khaithi"].includes(filter)) filter = "both";
   $("filter").value = filter;
@@ -67,7 +72,7 @@
   function choose(next, autoplay = false, position = 0) {
     save(); index = next; started = autoplay;
     const item = currentItem = items[index];
-    state = { video_url: item?.video_url || null, audio_url: item?.audio_url,
+    state = { ...item, video_url: item?.video_url || null, auto,
       title: item ? `${epLabel(item)} · ${kindLabel(item)} · ${item.title || ""}` : "",
       fav: item?.fav || null, index, version: ++version, paused: !autoplay,
       position, rate: 1, server_time: 0, updated_at: 0 };
@@ -126,11 +131,9 @@
     } catch (error) { message(error.message); }
     finally { $("watch").disabled = false; }
   });
-  for (const current of [player.video, player.audio]) {
-    current.addEventListener("timeupdate", () => {
-      if (current === player.media() && performance.now() - lastSave > 3000) { lastSave = performance.now(); save(); }
-    });
-  }
+  player.video.addEventListener("timeupdate", () => {
+    if (performance.now() - lastSave > 3000) { lastSave = performance.now(); save(); }
+  });
   document.addEventListener("episode-tab", (event) => {
     if (event.detail === "listen") player.activate();
     else {
@@ -156,7 +159,7 @@
       .map((short) => ({ kind: view.kind, episode_id: view.id, base_episode_id: base,
         ep_index: null, ep_title: views.find((v) => v?.id === base)?.title || view.title,
         clip_id: short.clip_id, title: short.title?.text, duration: short.duration, video_url: short.video_url,
-        audio_url: `/api/watch/audio/${encodeURIComponent(view.id)}/${encodeURIComponent(short.clip_id)}`, fav: null })));
+        fav: null })));
   }
   async function load() {
     try {

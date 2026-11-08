@@ -54,7 +54,6 @@ def playlist_listen(config: Config, doc: dict, favorites: Iterable[Item]) -> dic
                               "ep_index": entry.get("index"), "ep_title": entry.get("title"),
                               "clip_id": clip, "title": view["title"]["text"],
                               "duration": view["duration"], "video_url": view["video_url"],
-                              "audio_url": f"/api/watch/audio/{eid}/{clip}",
                               "fav": {"playlist_id": pid, "episode_id": eid, "clip": clip,
                                       "favorite": (eid, clip) in hearted}})
     return {"playlist_id": pid, "title": doc.get("title") or pid, "items": items}

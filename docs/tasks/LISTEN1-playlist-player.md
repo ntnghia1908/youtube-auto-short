@@ -67,6 +67,17 @@ Mở trang một tập là nghe được ngay: trình phát danh sách của c�
 8. "Nghe tiếp từ …" hiện khi có chỗ đã nhớ của bộ kinh; bấm thì phát từ đúng mục + giây.
 9. WATCH1 không hồi quy (test + chạy thật nhanh: Xem chung 1 trang, đồng bộ phát / dừng / Tiếp).
 
+### Amendment A (HUMAN LEAD 2026-11-08, chạy thật WATCH1 vòng 3 trên Android Chrome)
+
+Bằng chứng: "tôi không cần tick nghe nền vẫn nghe được. Nên bỏ luôn nút nghe nền để 3 nút: trái tim và 2 nút mũi tên, trên cùng một hàng cho gọn" — xác nhận: chuyển app vẫn nghe khi trang **đang hiện video** (chế độ video thường). "Playlist nên cho user bấm nút bài tiếp theo và có option tự chuyển bài tiếp theo. Khi hết một tập nên báo user biết đã hết tập".
+
+Code bị thay / xóa thêm: công tắc Nghe nền, phần tử `<audio>`, chế độ audio / handoff / audio fallback trong `player.js`; `src/auto_short/web/watch_audio.py`, route `/api/watch/audio/...`, `audio_url` trong API listen, test liên quan; cache `work/_watch_audio/` không còn được tạo (ORCHESTRATOR xóa thư mục trên 8080 sau merge). Giữ: Media Session + playbackState, bỏ qua pause khi trang ẩn, không retry play khi hidden. Owned paths thêm `src/auto_short/web/routes/watch.py`, `tests/test_web_watch_party.py`.
+
+10. Cả `/watch` và tab Nghe: một hàng gọn **♡ ⏮ ⏭** (icon-btn, `title` + `aria-label`); tim ẩn khi mục không có `fav` thì hai nút mũi tên vẫn giữ chỗ / cùng hàng. "Kết thúc xem chung" (chỉ `/watch`) ở dòng riêng, nút nhỏ. Không còn công tắc Nghe nền.
+11. Công tắc **"Tự chuyển bài"** (mặc định bật). Tab Nghe: nhớ trong `localStorage`. `/watch`: là trạng thái của phòng (`auto` bool trong WatchRoom, mặc định true, lệnh `auto`), hai máy thấy cùng giá trị. Tắt → hết bài thì dừng ở cuối bài, không gửi `next`; ⏭ vẫn chuyển.
+12. **Hết tập**: khi mục vừa xong là mục cuối của một tập (mục kế thuộc tập khác hoặc hết danh sách), hiện thông báo nổi bật (role="status") "Đã hết Tập N — <tên>" kèm "Tiếp theo: Tập N+1" (khi tự chuyển) hoặc nút "Nghe Tập N+1" (khi tắt tự chuyển / hết danh sách thì "Đã hết danh sách"). Thông báo tự ẩn sau ~8 s hoặc khi bấm. `/watch` dùng cùng logic dựa trên `episode_id` suy từ url mục (danh sách 1 trang thường là 1 tập → "Đã hết danh sách").
+13. Chạy thật: tắt Tự chuyển → hết bài dừng; bật → qua bài; hết tập thấy thông báo; điện thoại chuyển app vẫn nghe (video thường).
+
 ## Required verification
 
 - `PYTHONPATH=~/projects/yas-listen1/src conda run -n auto-short pytest tests/test_web_listen.py tests/test_web_watch_party.py -q` — AC 1, 2, 9 (phần server).
@@ -85,6 +96,8 @@ Không chạm database / security model / API hiện có → manual test là đi
 - [ ] Đổi công tắc Khai thị → chỉ còn khai thị.
 
 ## Result
+
+### Vòng 1 — 0bc53cf (trước Amendment A)
 
 - Main changes (IMPLEMENTER 2026-11-08):
   - Thêm `web/listen.py` + `GET /api/playlists/{playlist_id}/listen`: sắp entry theo index, Short theo manifest rồi khai thị; bỏ chưa render / rejected (cả review đang chờ render), giữ title trong file, URL SHA như trang tập, audio URL WATCH1 và favorites đọc mới một lần/request. Không resolve file / gọi kho / chạy job.
@@ -109,3 +122,30 @@ Không chạm database / security model / API hiện có → manual test là đi
 - Review: đã tự rà Owned paths, giữ management HTML, suppression/hidden pause, khởi tạo không autoplay, save identity khi lọc, async tim khi đổi mục. Không commit / push / PR / gọi agent khác / dịch vụ thật / thêm dependency.
 - Known limitations / lifecycle: implementation xong, sẵn sàng ORCHESTRATOR review; giữ **IN_PROGRESS**, chưa đủ điều kiện READY vì TestClient/full suite và manual AC3–9 (8080 + điện thoại/khóa màn hình) chưa PASS trong lượt này. Danh sách là snapshot lúc mở trang, thay render/favorites ở tab khác cần tải lại như API tập hiện có; chỗ nghe chỉ lưu tại trình duyệt.
 - PR: chưa tạo theo chỉ dẫn HUMAN LEAD.
+
+
+### Vòng 2 — Amendment A (IMPLEMENTER 2026-11-08)
+
+- Baseline: `0bc53cf`; ORCHESTRATOR báo 84 PASS ngoài sandbox cho `test_web_listen.py` + `test_web_watch_party.py` + `test_web_app.py` của vòng 1. Bằng chứng Android Chrome của HUMAN LEAD nằm ở Amendment A; chưa claim đã chạy thật phiên bản vòng 2.
+- Main changes / files:
+  - Xóa `web/watch_audio.py`; gỡ route audio/cache/store-fetch/import khỏi `routes/watch.py`; gỡ `audio_url` khỏi `listen.py` và fallback danh sách cục bộ. Xóa fixture/test audio/remux/cache/Range và import không còn dùng trong `test_web_watch_party.py`. Không tạo/đụng cache thật trên 8080.
+  - `player.js` chỉ còn video: gỡ background/storage, audio, handoff, transfer, fallback, audioUrl và các guard chọn media thừa. Giữ suppression, Media Session, playbackState theo media thật và giới hạn retry hidden. `watch.js` giữ pause guard khi ẩn trang.
+  - `watch.html`, `episode.html`, `style.css`: một hàng cố định ♡ ⏮ ⏭, wrapper tim giữ chỗ khi tim ẩn; công tắc Tự chuyển bài ở dòng riêng. Kết thúc xem chung là nút nhỏ, dòng riêng. HTML/scripts Quản lý không đổi so với vòng 1 (`app.js` không sửa).
+  - `watch_party.py`: snapshot có `auto` bool mặc định true; action `auto` validate strict bool trước mutation, tăng version và giữ timeline/rate/index/paused. Đổi queue trong cùng phòng giữ lựa chọn; kết thúc phòng reset true. Tắt auto làm CAS của lệnh ended cũ mất hiệu lực.
+  - `listen.js` nhớ `auto-short-listen-auto` trong localStorage; `watch.js` gửi action auto và nhận lại giá trị qua snapshot. Shared player kiểm auto khi ended: bật thì next như cũ, tắt thì pause tại cuối bài (không gửi next); nút mũi tên/Media Session vẫn điều hướng được.
+  - Thông báo hết tập nằm chung trong `player.js`: gộp Short + `.kt` theo base episode; nhận metadata listen hoặc suy episode từ `/files/<ep>/<clip>.mp4` trên WATCH1. Hiện role=status, tên tập + mục kế/nút Nghe Tập kế hoặc Đã hết danh sách; tự ẩn sau 8 s hoặc bấm. Client nhận chuyển bài từ máy kia ngay trước ended cũng hiện thông báo nếu đang sát cuối bài. Nút thông báo cũ không nhảy nhầm nếu người dùng đã đổi nguồn.
+- Helper mới (đã tìm trong player/watch/listen, chưa có helper thông báo ranh giới tập): `AutoShortPlayer.episode`, `notifyEpisodeEnd`, `hideNotice`; tái dùng player/onNavigate và phiên bản CAS hiện có, không thêm module/dependency.
+- AC → test:
+  - AC10: hai HTML dùng chung `.player-controls` grid 3 ô và wrapper tim; node smoke + rà markup/CSS. Phần layout thật còn ORCHESTRATOR/HUMAN LEAD kiểm.
+  - AC11: `test_auto_defaults_updates_preserve_playback_and_reset`, `test_auto_rejects_non_bool_atomically` (7 kiểu sai + thiếu field), `test_auto_change_invalidates_stale_ended_version`, `test_auto_route_defaults_fresh_snapshot_and_422` PASS. Thêm `test_http_auto_sync_and_validation` để ORCHESTRATOR chạy TestClient.
+  - AC12: `/tmp/listen1-round2-local.cjs` và `/tmp/listen1-round2-watch.cjs` PASS với DOM/media/fetch giả: auto=false không next; next thủ công vẫn đổi mục; auto đồng bộ/nhớ; Short→khai thị cùng tập không báo sớm; hết tập có thông tin tiếp/nút; hết danh sách; tự ẩn 8 s/bấm; peer advance trước ended. WATCH1 smoke còn kiểm tim, pause hidden, playbackState thực, không retry hidden mỗi poll và reset khi visible/version mới. Listen smoke giữ kiểm không autoplay, resume/tab/fallback tập lẻ/cap 300.
+  - AC13: chưa chạy Android Chrome thật ở vòng 2. Smoke không thay thế bằng chứng thiết bị.
+  - API listen: `test_queue_order_fields_favorites_and_no_khaithi` thêm assert mọi mục không có audio_url; các test order/filter/fav/404 cũ vẫn PASS. `rg` toàn `src/` + `tests/` không còn watch_audio/cache/route/công tắc và helper audio đã gỡ (chỉ còn assert phủ định audio_url).
+- Verification vòng 2:
+  - `PYTHONPATH=/home/ntnghia/projects/yas-listen1/src conda run --no-capture-output -n auto-short pytest tests/test_web_listen.py tests/test_web_watch_party.py -q -k 'not test_http' -x --tb=short`: **60 passed, 6 deselected in 1.89s**.
+  - `node --check` cho `player.js`, `watch.js`, `listen.js`, `app.js`: **PASS**; `node /tmp/listen1-round2-local.cjs` và `node /tmp/listen1-round2-watch.cjs`: **PASS**.
+  - Đối chiếu HTML/scripts Quản lý với `0bc53cf`: **PASS**; `git diff --check`: **PASS**.
+  - Không chạy lại TestClient/full suite trong sandbox theo delegation vòng 2; ORCHESTRATOR chạy ngoài sandbox. Không chạy 8080/điện thoại trong lượt này.
+- Diff vòng 2 so với `0bc53cf`, không tính contract/Amendment A có sẵn: app **+117 / −201**, test **+68 / −154**, tổng **+185 / −355**.
+- Review / lifecycle: sẵn sàng ORCHESTRATOR review vòng 2; giữ IN_PROGRESS đến khi required verification và chạy thật hoàn tất. Không commit/push/PR, gọi agent khác, gọi mạng thật, thêm dependency hoặc sửa ngoài phạm vi delegation.
+- Known limitation: WATCH1 chỉ có URL/title thì nhãn tập dùng ID gốc; queue gửi từ Nghe có prefix Tập N — tên nên giữ được nhãn đầy đủ. Cache cũ `work/_watch_audio/` trên 8080 do ORCHESTRATOR dọn sau merge như Amendment A.

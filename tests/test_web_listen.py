@@ -51,7 +51,7 @@ def test_queue_order_fields_favorites_and_no_khaithi(library):  # AC1,2
     assert items[2]["base_episode_id"] == FIRST and items[2]["ep_title"] == "Tập một"
     assert items[0]["title"] == "Chữ trong file" and items[0]["duration"] == 60.0
     assert items[0]["video_url"] == f"/files/{FIRST}/k09.mp4?v={'0' * 12}"
-    assert items[0]["audio_url"] == f"/api/watch/audio/{FIRST}/k09"
+    assert all("audio_url" not in item for item in items)
     assert items[0]["fav"] == dict(playlist_id=PID, episode_id=FIRST, clip="k09", favorite=True)
     assert [i["fav"]["favorite"] for i in items] == [True, False, False, True, False]
 

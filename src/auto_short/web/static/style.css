@@ -408,12 +408,9 @@ body.modal-open { overflow: hidden; }
 .watch-queue li { margin: .35rem 0; }
 .watch-queue button { text-align: left; white-space: normal; overflow-wrap: anywhere; }
 .watch-queue [aria-current="true"] { outline: 2px solid #3baf8f; font-weight: bold; }
-.watch-room audio { display: block; width: 100%; margin: 1rem 0; }
-.watch-room #watch-background { width: auto; }
 
 /* LISTEN1: local queue, grouped by lecture. */
 .listen-room video { display: block; width: 100%; max-height: 60vh; background: #111; }
-.listen-room audio { width: 100%; }
 .listen-room .actions { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; }
 .listen-room .actions label { max-width: 100%; min-width: 0; }
 .listen-room select { max-width: min(100%, 30rem); min-height: 40px; font-size: 1rem; }
@@ -423,3 +420,9 @@ body.modal-open { overflow: hidden; }
 .listen-queue li { margin: .35rem 0; }
 .listen-queue button { text-align: left; width: 100%; white-space: normal; }
 .listen-queue [aria-current="true"] { border-color: var(--accent); background: var(--accent-bg); font-weight: 600; }
+
+/* Shared LISTEN1/WATCH1 controls and episode-end status. */
+.player-controls { display: grid; grid-template-columns: repeat(3, 2.6rem); gap: .6rem; align-items: center; margin: .75rem 0; }
+.player-heart { display: block; width: 2.6rem; }
+.player-notice { position: sticky; top: .5rem; z-index: 20; padding: .8rem; background: var(--accent-bg); border: 1px solid var(--accent); border-radius: 8px; font-weight: 600; }
+.player-notice .btn { margin-left: .5rem; }
