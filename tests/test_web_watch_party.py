@@ -189,3 +189,64 @@ def test_http_rooms_are_per_app(cfg):
         login(b)
         a.post("/api/watch", json={"client": "a", "action": "set", "queue": QUEUE})
         assert b.get("/api/watch").json()["queue"] == []
+
+
+FAV = {"playlist_id": "PLwatch00001", "episode_id": "youtube0001.kt", "clip": "k01", "favorite": False}
+
+
+def test_favorite_metadata_and_action_preserve_playback(room):  # AC10
+    r, now = room
+    fav = dict(FAV)
+    first = r.command("a", "set", queue=[{**QUEUE[0], "fav": fav}, QUEUE[1]], index=1, position=12, rate=1.5)
+    assert first["queue"][0]["fav"] == FAV and "fav" not in first["queue"][1]
+    fav["favorite"] = True
+    first["queue"][0]["fav"]["episode_id"] = "changed"
+    assert r.snapshot()["queue"][0]["fav"] == FAV  # input and nested snapshots are independent
+    now[0] += 2
+    view = r.command("b", "favorite", index=0, favorite=True)
+    assert view["queue"][0]["fav"] == {**FAV, "favorite": True}
+    assert (view["index"], view["position"], view["paused"], view["rate"]) == (1, 15, False, 1.5)
+    assert view["version"] == first["version"] + 1 and view["by"] == "b"
+    assert r.command("a", "favorite", index=0, favorite=False)["queue"][0]["fav"]["favorite"] is False
+    assert r.snapshot("b")["queue"][0]["fav"] == FAV
+
+
+BAD_FAVS = [None, True, "bad", [], {},
+            {**FAV, "playlist_id": "//evil"}, {**FAV, "playlist_id": "WL"}, {**FAV, "playlist_id": 123},
+            {**FAV, "episode_id": "../bad"}, {**FAV, "episode_id": None},
+            {**FAV, "clip": "../clip"}, {**FAV, "clip": 1},
+            {**FAV, "favorite": 1}, {**FAV, "favorite": "true"},
+            {key: val for key, val in FAV.items() if key != "favorite"}]
+
+
+@pytest.mark.parametrize("fav", BAD_FAVS)
+def test_favorite_metadata_invalid_is_atomic_422(room, fav):  # AC10; direct router call, no TestClient
+    from auto_short.web.routes.watch import build
+    r, _ = room
+    r.command("a", "set", queue=QUEUE)
+    before = r.snapshot()
+    with pytest.raises(ValueError):
+        r.command("b", "set", queue=[QUEUE[0], {**QUEUE[1], "fav": fav}])
+    assert r.snapshot() == before
+    router = build(None)
+    post = next(route.endpoint for route in router.routes if route.path == "/api/watch" and "POST" in route.methods)
+    assert post({"client": "a", "action": "set", "queue": [{**QUEUE[0], "fav": fav}]}).status_code == 422
+
+
+@pytest.mark.parametrize("data", [{"index": -1, "favorite": True}, {"index": 2, "favorite": True},
+                                  {"index": True, "favorite": True}, {"index": 0, "favorite": "true"},
+                                  {"index": 0}, {"index": 1, "favorite": True}])
+def test_favorite_invalid_command_is_atomic_422(room, data):  # AC10
+    from auto_short.web.routes.watch import build
+    queue = [{**QUEUE[0], "fav": FAV}, QUEUE[1]]
+    r, _ = room
+    r.command("a", "set", queue=queue)
+    before = r.snapshot()
+    with pytest.raises(ValueError):
+        r.command("b", "favorite", **data)
+    assert r.snapshot() == before
+    router = build(None)
+    post = next(route.endpoint for route in router.routes if route.path == "/api/watch" and "POST" in route.methods)
+    assert post({"client": "a", "action": "set", "queue": queue}).status_code == 200
+    assert post({"client": "b", "action": "favorite", **data}).status_code == 422
+    assert post({"client": "b", "action": "favorite", "index": 0, "favorite": True}).status_code == 200

@@ -15,8 +15,11 @@
   <p id="watch-viewers">Đang xem: 0 người</p>
   <p id="watch-message" role="status" aria-live="polite"></p>
   <video id="watch-video" controls playsinline preload="metadata" hidden></video>
+  <audio id="watch-audio" controls preload="metadata" hidden></audio>
   <button id="watch-play" class="btn primary" type="button" hidden>Bấm để phát</button>
   <div class="actions">
+    <button id="watch-favorite" class="btn icon-btn heart" type="button" hidden aria-label="Yêu thích" aria-pressed="false">♡</button>
+    <label class="inline"><input id="watch-background" type="checkbox"> Nghe nền</label>
     <button id="watch-prev" class="btn" type="button" disabled>Trước</button>
     <button id="watch-next" class="btn" type="button" disabled>Tiếp</button>
     <label>Tốc độ <select id="watch-rate" disabled aria-label="Tốc độ phát">

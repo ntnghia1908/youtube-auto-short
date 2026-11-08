@@ -408,3 +408,5 @@ body.modal-open { overflow: hidden; }
 .watch-queue li { margin: .35rem 0; }
 .watch-queue button { text-align: left; white-space: normal; overflow-wrap: anywhere; }
 .watch-queue [aria-current="true"] { outline: 2px solid #3baf8f; font-weight: bold; }
+.watch-room audio { display: block; width: 100%; margin: 1rem 0; }
+.watch-room #watch-background { width: auto; }
