@@ -90,6 +90,26 @@ def test_unrendered_episode_and_khaithi_are_omitted(library):  # AC1,2
     assert playlist_listen(library, {**document(), "entries": []}, [])["items"] == []
 
 
+def test_codes_use_download_labels_positions_and_width_including_skipped(library):  # AC24
+    from auto_short.khaithi import KhaiThi
+    from auto_short.web import episodes as ep
+    for eid in (FIRST, FIRST + ".kt"):
+        (Path(library.workspace.dir) / eid / "titles.json").write_text(json.dumps({"header": {"fields": {"episode": "20"}}}))
+    (Path(library.workspace.dir) / (FIRST + ".kt") / "khaithi.json").write_text(json.dumps(KhaiThi(FIRST, 4, 7).to_json()))
+    path = Path(library.render.output_dir) / FIRST / "render_manifest.json"
+    manifest = json.loads(path.read_text())
+    manifest["shorts"].insert(0, {"clip_id": "gone", "status": "skipped", "skip_reason": "rejected"})
+    manifest["shorts"] += [{"clip_id": f"skip{n}", "status": "skipped"} for n in range(95)]
+    path.write_text(json.dumps(manifest))
+    items = playlist_listen(library, document(), [])["items"]
+    assert [i["code"] for i in items[:4]] == ["T20_S002", "T20_S003", "T20_KT01", "T20_KT02"]
+    assert items[0]["number"] == 2 and items[0]["total"] == 100 and items[0]["ep_label"] == "20"
+    for item in items:
+        eid = item["episode_id"]
+        name = ep._names(library, eid, ep.render_manifest(library, eid))[item["clip_id"]]
+        assert name.startswith(item["code"] + "_")
+
+
 def endpoint(app):
     # Same nested router traversal as test_web_watch_party / test_store_download.
     routes = list(app.routes)

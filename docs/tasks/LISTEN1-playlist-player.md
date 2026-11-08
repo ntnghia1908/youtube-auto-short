@@ -97,6 +97,21 @@ Bằng chứng: "Tab nghe chưa ổn, phải zoom cho khớp với màn hình đ
 21. **Danh sách theo tập dạng thu gọn**: mỗi tập là một `<details>` (summary "Tập N — tên · k bài"); chỉ tập đang phát mở; chuyển sang tập khác thì tập mới tự mở, tập cũ tự đóng (trừ tập người dùng tự mở tay sau đó vẫn để mở); mục đang phát cuộn vào tầm nhìn trong danh sách (không cuộn cả trang khi trang đang ẩn). Áp cho tab Nghe; `/watch` (thường 1 tập) giữ danh sách phẳng.
 22. Chạy thật: Android Chrome — PiP nghe ≥ 10 phút qua nhiều bài; tab Nghe không cần zoom; danh sách gọn.
 
+### Amendment D (HUMAN LEAD 2026-11-08, chạy thật `d7c969e`)
+
+Bằng chứng: "tab nghe: nhấp vào short ở tập nào đó thì tự cuộn lên video, hiện tại tôi phải cuộn lên. Các form ở trang này cũng còn rất thô. Tên tập ở trang nghe lẫn trang nghe chung nên ở dạng ngắn ví dụ T20_S01_. Trang nghe chung khi tự chuyển tập có cảm giác hơi gấp, có cách nào không ví dụ chờ 3s".
+
+23. Bấm một mục trong danh sách (tab Nghe, `/watch`) → phát mục đó và cuộn mượt lên khung video (`scrollIntoView({behavior: "smooth", block: "start"})`, trừ đi thanh trên cùng nếu có).
+24. **Mã ngắn**: mỗi mục có `code` = `review.names.short_code(...)` (`T20_S01`, khai thị `T20_KT01`; cùng số / độ rộng như tên file tải về — tái dùng helper, không tự tính lại). API listen trả `code`; `/watch` lấy `code` do server suy từ url mục (như `fav`). Hiển thị: dòng danh sách "`T20_S01` · tiêu đề"; đang phát "`T20_S01` — tiêu đề" + dòng phụ "Tập 20 · Short 1 / 8"; nhóm tập "Tập 20 · 8 bài" (tên video dài bỏ khỏi summary, chỉ hiện nhỏ một lần ở khung đang phát nếu cần). Không còn chuỗi tên video dài lặp lại.
+25. **Chờ 3 s trước khi tự chuyển** (cả hai trang): hết bài → thẻ "Bài tiếp theo: `T20_S02` — tiêu đề · sau 3 s" có đếm ngược + nút "Phát ngay" / "Hủy". `/watch`: đếm ngược là trạng thái phòng (server ghi `advance_at` = lúc hết bài + 3 s khi nhận lệnh `ended` kèm `expect_version`; tự sang mục kế khi tới hạn lúc đọc trạng thái; lệnh `advance_now` / `cancel_advance`), hai máy thấy cùng đếm ngược; hai máy cùng báo `ended` chỉ tạo một lần chờ. Hết tập: thông báo AC 12 gộp vào cùng thẻ này (không hai thông báo chồng nhau).
+26. **Giao diện gọn, đồng bộ với phần còn lại của web** (dùng biến màu / `.btn` / `.icon-btn` sẵn có trong style.css, không thư viện mới):
+    - Khung đang phát: video, ngay dưới là mã + tiêu đề (đậm), dòng phụ nhỏ màu nhạt, hàng nút ♡ ⏮ ⏭ ⧉ căn giữa, kích thước chạm ≥ 44 px.
+    - Công tắc Short / Khai thị / Cả hai: nhóm nút liền (segmented control) thay `<select>`; "Tự chuyển bài": công tắc gạt (checkbox kiểu switch) có nhãn.
+    - Danh sách: dòng gọn (mã đơn cách, tiêu đề cắt 2 dòng, thời lượng bên phải), mục đang phát nền nhấn; nhóm tập là `<details>` có mũi tên.
+    - "Nghe tiếp từ …", thông báo, thanh mời: cùng kiểu thẻ (bo góc, viền nhạt).
+    - Dọc 360 px vẫn không cuộn ngang (AC 20).
+27. Chạy thật: bấm mục ở tập xa → tự cuộn lên video; hết bài thấy đếm ngược 3 s ở cả hai máy (`/watch`); giao diện HUMAN LEAD duyệt trên điện thoại.
+
 ## Required verification
 
 - `PYTHONPATH=~/projects/yas-listen1/src conda run -n auto-short pytest tests/test_web_listen.py tests/test_web_watch_party.py -q` — AC 1, 2, 9 (phần server).
@@ -219,3 +234,30 @@ Không chạm database / security model / API hiện có → manual test là đi
   - Không chạy lại TestClient/full suite trong sandbox theo delegation; không gọi mạng thật hoặc chạm runtime 8080. Kết quả 4151 PASS nêu ở baseline thuộc vòng 3.
 - Diff so với `d7fdb2a`, không tính contract/Amendment C có sẵn: app **+188 / −43**, test **+14 / −0**, tổng **+202 / −43**.
 - Review / lifecycle: sẵn sàng ORCHESTRATOR review vòng 4; giữ IN_PROGRESS đến khi required verification/code mới và AC20/22 trên trình duyệt/Android hoàn tất. Không commit/push/PR, gọi agent khác, thêm dependency hoặc sửa ngoài Owned paths.
+
+
+### Vòng 5 — Amendment D (IMPLEMENTER 2026-11-08)
+
+- Baseline: `d7c969e`, ORCHESTRATOR báo 114 test PASS ngoài sandbox và đã ghim 8080 cho vòng 4. Phản hồi chạy thật ở Amendment D được giữ nguyên; chưa claim HUMAN LEAD đã duyệt giao diện vòng 5.
+- Main changes / files:
+  - `web/listen.py`: thêm `clip_metadata`, dùng **review.names.short_code + ep.kind_fields + ep.label**, đánh số 1-based trên toàn render manifest và total=độ dài manifest, gồm mục skipped/deleted như `_names` / `copy_prefixes`. API listen có code, ep_label, number, total. `routes/watch.py.decorate` dùng cùng helper cho queue và mục hiện tại; cache metadata mỗi episode trong một lần decorate, không tin code/title do client gửi khi có manifest. Không gọi kho/job/ffprobe. `review/names.py` chỉ đọc, không sửa.
+  - Tập ngoài bộ kinh vẫn dùng API tập hiện có; client lấy code đã có trong download_name (được tạo qua short_code), không tự tạo mã hoặc tính lại độ rộng số. Số bài UI lấy từ view tập đang có.
+  - `watch_party.py`: thêm advance_at, ended/advance_now/cancel_advance. Ended version hợp lệ dừng ở cuối bài và đặt hạn +3 s khi auto=true và có mục kế. Snapshot/command áp chuyển khi đến hạn, version tăng, anchor ở deadline; auto=false/hết danh sách thì dừng. Hủy/tắt auto/manual navigation xóa lịch; phát ngay chuyển luôn. Marker nội bộ giữ ended idempotent kể cả hai máy cùng version, máy báo muộn đã nhận version chờ, sau khi Hủy và sau deadline; replay cho phép ended mới. Không có timer/job nền trên server.
+  - `player.js`: thẻ đếm ngược chung dùng server_time + advance_at cho WATCH1, deadline performance.now cho Nghe. Có code/title mục kế, 3/2/1, Phát ngay/Hủy; gộp hết tập/hết danh sách vào một thẻ. WATCH1 gửi ended, không gửi next từ sự kiện ended; client đợi snapshot server chuyển. Xóa notifyEpisodeEnd / noticeTimer cũ. Lệnh next thủ công sau Hủy vẫn phát mục kế. Guard finishedKey/current.ended tránh sự kiện ended trùng/cũ tạo lại lịch.
+  - Shared heading/duration/queueButton: code đơn cách, title tối đa 2 dòng, m:ss bên phải. scrollToVideo chỉ khi visible, scroll mượt block=start với scroll-margin tính từ thanh sticky/fixed đang hiện. List click ở Nghe và WATCH1 dùng helper; Nghe không cuộn xuống list trước khi cuộn lên video.
+  - `listen.js`, `watch.js`, `episode.html`, `watch.html`, `style.css`: video rồi code — title đậm / dòng phụ Tập N · kind number/total; bỏ tên video dài khỏi summary, chỉ giữ nhỏ ở khung Nghe. Nhóm “Tập N · k bài”, segmented buttons aria-pressed nhớ filter, checkbox role=switch, control icons căn giữa ≥44 px, queue gọn, resume/notice/invitation cùng biến màu/thẻ bo viền. Giữ PiP, budget retry và details/manual-open của vòng trước. Quản lý HTML/scripts và app.js không đổi.
+- Helper mới (đã tìm và đối chiếu `_names`, `copy_prefixes`, `_copy`, `ep.label`, `review.names.episode_label/short_code/download_name`): clip_metadata chia sẻ canonical numbering; WatchRoom._apply_advance cho deadline thuần clock; AutoShortPlayer.heading/duration/queueButton/scrollToVideo/renderAdvance/advanceNow/cancelAdvance cho UI dùng chung. Tái dùng player, auth, API favorite và kiểu card/button/màu hiện có; không dependency/module mới.
+- AC → test:
+  - AC23/24/26 client: `/tmp/listen1-round5-local.cjs` PASS với DOM/media/clock/fetch giả: code/heading/meta/row và duration, nhóm ngắn, filter buttons aria-pressed/localStorage, cuộn video smooth chỉ khi visible (kể cả margin offset), code tập lẻ từ download_name; giữ không autoplay, details tự mở tập đang phát.
+  - AC24 server: `test_codes_use_download_labels_positions_and_width_including_skipped` PASS: label 20 từ titles thay vì playlist index, manifest 100 mục có skipped → T20_S002/T20_S003, khai thị T20_KT01/KT02, đối chiếu code với download_name qua ep._names. `test_watch_codes_are_derived_from_download_manifest_not_client` PASS: queue/current code, canonical title/number/total/duration, bỏ code giả và không bịa code cho URL không có manifest.
+  - AC25 server: `test_ended_countdown_is_shared_idempotent_and_advances_on_read`, `test_ended_simultaneous_only_creates_one_deadline`, `test_late_peer_ended_with_fresh_version_does_not_extend_or_restart_wait`, `test_countdown_cancel_now_auto_and_last_item`, `test_due_countdown_is_applied_before_commands_and_navigation_cancels` PASS. Clock giả kiểm trước/sau 3 s, hai máy, duplicate muộn, cancel/advance_now/auto=false/hết danh sách, replay và áp deadline trước command.
+  - AC25 client: smoke local kiểm 3→2→1, chưa chuyển ở 2,999 s, chuyển ở 3 s, Hủy không chuyển sau 5 s, Phát ngay, đổi nguồn xóa lịch, auto=false/hết danh sách, chỉ một thẻ gộp thông báo tập. `/tmp/listen1-round5-watch.cjs` PASS: ended không gửi next, snapshot deadline, Hủy/advance_now, poll chuyển thật theo state server giả, code/meta/queue, cuộn mượt. Next trong smoke chỉ xuất hiện do thao tác thủ công sau Hủy.
+  - Không hồi quy PiP/retry: `node /tmp/listen1-round4-player.cjs` PASS với code mới (PiP/fallback, effective visibility, source element, cap no-progress/6, log một lần).
+  - AC26/27: đã rà CSS dùng biến/card/button hiện có, track min-width:0, overflow-wrap, max-width100%, controls chạm ≥44 px; chưa render/đo scrollWidth 360 px hoặc thử giao diện/đếm ngược hai máy thật. HUMAN LEAD/ORCHESTRATOR cần xác nhận trên 8080/điện thoại.
+- Verification vòng 5:
+  - `PYTHONPATH=/home/ntnghia/projects/yas-listen1/src conda run --no-capture-output -n auto-short pytest tests/test_web_listen.py tests/test_web_watch_party.py -q -k 'not test_http' -x --tb=short`: **92 passed, 7 deselected in 5.65s** (lần cuối).
+  - `node --check` cả player.js/watch.js/listen.js/app.js: **PASS**; hai smoke vòng 5 và smoke PiP/retry vòng 4: **PASS**.
+  - `git diff --exit-code d7c969e -- src/auto_short/review/names.py src/auto_short/web/static/app.js`: **PASS, diff rỗng**; so sánh Quản lý HTML/scripts và ID duy nhất: **PASS**; `git diff --check`: **PASS**.
+  - Không chạy TestClient/full suite trong sandbox theo delegation; không gọi mạng thật, không chạm runtime 8080. Kết quả 114 PASS ở baseline thuộc vòng 4.
+- Diff so với `d7c969e`, không tính contract/Amendment D có sẵn: app **+311 / −101**, test **+120 / −0**, tổng **+431 / −101**.
+- Review / lifecycle: sẵn sàng ORCHESTRATOR review vòng 5; giữ IN_PROGRESS tới khi required verification/code mới và AC27 thực tế được hoàn tất. Không commit/push/PR, gọi agent khác, thêm dependency hoặc sửa ngoài Owned paths.

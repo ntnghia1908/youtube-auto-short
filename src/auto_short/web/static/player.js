@@ -1,12 +1,13 @@
 /* Shared media controls for the local listening queue and the watch room. */
 (() => {
   "use strict";
-  window.AutoShortPlayer = class {
-    constructor(prefix, { client, request, onAction, onNavigate, onFavorite, message, onAuto, getNext = () => this.state?.queue?.[this.state.index + 1] }) {
+  window.AutoShortPlayer = class AutoShortPlayer {
+    constructor(prefix, { client, request, onAction, onNavigate, onFavorite, message, onAuto, onEnded, onAdvance, onCancelAdvance, getNext = () => this.state?.queue?.[this.state.index + 1] }) {
       const $ = (name) => document.getElementById(`${prefix}-${name}`);
       this.$ = $; this.request = request; this.onAction = onAction;
       this.onNavigate = onNavigate; this.onFavorite = onFavorite; this.message = message;
       this.video = $("video"); this.getNext = getNext;
+      this.onEnded = onEnded; this.onAdvance = onAdvance; this.onCancelAdvance = onCancelAdvance;
       this.client = client; this.page = prefix; this.events = []; this.lastLogAt = -Infinity; this.logMarks = new Map();
       this.programmed = new Map(); this.sourceKey = null; this.active = true;
       this.receivedAt = 0; this.loading = false; this.state = null;
@@ -29,14 +30,20 @@
           if (event === "pause" && this.isHidden() && this.wantsPlay()) {
             this.record("pause_hidden"); this.recover(); return;
           }
+          if (action === "play" || action === "seek") this.hideNotice();
           this.onAction(action, { position: current.currentTime, ...(action === "rate" ? { rate: current.playbackRate } : {}) });
         });
       }
       current.addEventListener("ended", () => {
-        if (!this.active || this.loading || !this.state?.video_url) return;
-        this.notifyEpisodeEnd(this.getNext());
-        if ($("auto").checked) this.onNavigate("next");
-        else this.onAction("pause", { position: current.currentTime }, true);
+        if (!this.active || !current.ended || this.loading || !this.state?.video_url || this.finishedKey === this.sourceKey) return;
+        this.finishedKey = this.sourceKey;
+        this.cancelRecovery(); this.clearProgressChecks();
+        if (this.onEnded) this.onEnded(current.currentTime);
+        else {
+          this.onAction("pause", { position: current.currentTime }, true);
+          this.localAdvanceAt = this.state.auto && this.getNext() ? performance.now() + 3000 : null;
+        }
+        this.renderAdvance();
       });
       for (const event of ["stalled", "waiting"]) current.addEventListener(event, () => {
         if (this.active && this.isHidden()) this.record(event);
@@ -48,7 +55,6 @@
         this.flushLog(true);
       });
       $("auto").addEventListener("change", () => onAuto($("auto").checked));
-      $("notice").addEventListener("click", () => this.hideNotice());
       $("favorite").addEventListener("click", async () => {
         const fav = this.state?.fav;
         if (!fav || this.favoriteBusy) return;
@@ -64,7 +70,7 @@
       $("next").addEventListener("click", () => this.onNavigate("next"));
       $("play").addEventListener("click", () => {
         if (!this.active || !this.state?.video_url) return;
-        this.cancelRecovery(); this.allowHiddenPlay = true;
+        this.hideNotice(); this.cancelRecovery(); this.allowHiddenPlay = true;
         this.onAction("play", { position: this.loading ? this.targetPosition() : this.media().currentTime }, true);
         this.playMedia(this.media());
       });
@@ -126,35 +132,85 @@
       finally { this.pipBusy = false; this.pipButton.disabled = !this.state?.video_url; }
     }
     media() { return this.video; }
+    static heading(entry) { return entry ? `${entry.code ? entry.code + " — " : ""}${entry.title || "Video"}` : ""; }
+    static duration(seconds) {
+      if (!Number.isFinite(seconds) || seconds < 0) return "—";
+      const whole = Math.floor(seconds); return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
+    }
+    static queueButton(entry, onClick) {
+      const button = document.createElement("button"), code = document.createElement("code"), title = document.createElement("span"), duration = document.createElement("span");
+      button.type = "button"; button.className = "btn player-track";
+      code.className = "player-code"; code.textContent = entry.code || entry.clip_id || "—";
+      title.className = "player-track-title"; title.textContent = entry.title || "Video";
+      duration.className = "player-duration"; duration.textContent = AutoShortPlayer.duration(entry.duration);
+      button.append(code, title, duration); button.addEventListener("click", onClick); return button;
+    }
+    scrollToVideo() {
+      if (document.visibilityState !== "visible" || !this.active) return;
+      let offset = 12;
+      for (const bar of document.querySelectorAll(".topbar, .watch-invite")) {
+        if (bar.hidden) continue;
+        const position = getComputedStyle(bar).position;
+        if (position === "sticky" || position === "fixed") offset += bar.getBoundingClientRect().height;
+      }
+      this.video.style.scrollMarginTop = `${offset}px`;
+      this.video.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
     episode(entry) {
       if (!entry) return null;
       const match = (entry.video_url || entry.url || "").split("?")[0].match(/^\/files\/([^/]+)\/[^/]+\.mp4$/);
       const id = entry.base_episode_id || entry.episode_id || match?.[1];
       if (!id) return null;
-      const base = id.replace(/\.kt$/, "");
-      const label = entry.ep_index != null ? `Tập ${entry.ep_index} — ${entry.ep_title || base}`
-        : entry.title?.match(/^(Tập [^·]+)\s·/)?.[1]?.trim() || `Tập ${base}`;
-      return { id: base, label };
+      return { id: id.replace(/\.kt$/, ""), label: `Tập ${entry.ep_label || entry.ep_index || id.replace(/\.kt$/, "")}` };
     }
-    hideNotice() { clearTimeout(this.noticeTimer); this.$("notice").hidden = true; }
-    notifyEpisodeEnd(next) {
-      const current = this.episode(this.state), upcoming = this.episode(next);
-      if (!current || (next && (!upcoming || current.id === upcoming.id))) return;
-      const notice = this.$("notice"), text = document.createElement("span");
-      text.textContent = `Đã hết ${current.label}.`;
-      notice.replaceChildren(text);
-      if (!next) {
-        const done = document.createElement("span"); done.textContent = " Đã hết danh sách."; notice.append(done);
-      } else if (this.$("auto").checked) {
-        const following = document.createElement("span"); following.textContent = ` Tiếp theo: ${upcoming.label}`; notice.append(following);
-      } else {
-        const button = document.createElement("button"), source = this.sourceKey;
-        button.type = "button"; button.className = "btn small"; button.textContent = `Nghe ${upcoming.label}`;
-        button.addEventListener("click", () => { if (this.sourceKey === source) this.onNavigate("next"); });
-        notice.append(button);
+    hideNotice() {
+      clearTimeout(this.advanceTimer); this.localAdvanceAt = null; this.finishedKey = null;
+      this.advanceSignature = null; this.$("notice").hidden = true;
+    }
+    advanceNow() {
+      if (this.onEnded && this.state.advance_at != null) this.onAdvance();
+      else { this.hideNotice(); this.onNavigate("next"); }
+    }
+    cancelAdvance() {
+      if (this.onEnded) this.onCancelAdvance();
+      else { this.localAdvanceAt = null; this.renderAdvance(); }
+    }
+    renderAdvance() {
+      clearTimeout(this.advanceTimer);
+      if (!this.active || !this.state?.video_url) return;
+      const at = this.onEnded ? this.state.advance_at : this.localAdvanceAt;
+      if (at != null) this.finishedKey = this.sourceKey;
+      if (this.finishedKey !== this.sourceKey) { this.$("notice").hidden = true; return; }
+      const next = this.getNext(), current = this.episode(this.state), upcoming = this.episode(next);
+      const boundary = current && (!next || (upcoming && upcoming.id !== current.id));
+      const signature = JSON.stringify([this.sourceKey, at ?? null, next?.code, next?.title, boundary]);
+      if (signature !== this.advanceSignature) {
+        this.advanceSignature = signature;
+        const notice = this.$("notice"), end = document.createElement("strong"), title = document.createElement("p"), count = document.createElement("span");
+        if (boundary) end.textContent = `Đã hết ${current.label}.`;
+        end.hidden = !boundary;
+        title.textContent = next ? `Bài tiếp theo: ${AutoShortPlayer.heading(next)}` : "Đã hết danh sách";
+        title.className = "player-up-next"; count.className = "small muted"; this.advanceCount = count;
+        notice.replaceChildren(end, title, count);
+        if (next) {
+          const actions = document.createElement("div"), play = document.createElement("button");
+          actions.className = "actions"; play.type = "button"; play.className = "btn primary small"; play.textContent = "Phát ngay";
+          const key = this.sourceKey;
+          play.addEventListener("click", () => { if (key === this.sourceKey) this.advanceNow(); }); actions.append(play);
+          if (at != null) {
+            const cancel = document.createElement("button"); cancel.type = "button"; cancel.className = "btn small"; cancel.textContent = "Hủy";
+            cancel.addEventListener("click", () => { if (key === this.sourceKey) this.cancelAdvance(); }); actions.append(cancel);
+          }
+          notice.append(actions);
+        }
+        notice.hidden = false;
       }
-      clearTimeout(this.noticeTimer); notice.hidden = false;
-      this.noticeTimer = setTimeout(() => this.hideNotice(), 8000);
+      if (at == null) { this.advanceCount.textContent = next ? "Tự chuyển đã dừng." : ""; return; }
+      const left = this.onEnded ? at - (this.state.server_time + (performance.now() - this.receivedAt) / 1000) : (at - performance.now()) / 1000;
+      const label = left > 0 ? `Sau ${Math.ceil(left)} s` : "Đang chuyển bài…";
+      if (this.advanceCount.textContent !== label) this.advanceCount.textContent = label;
+      if (left <= 0 && !this.onEnded) { this.hideNotice(); this.onNavigate("next"); return; }
+      this.advanceTimer = setTimeout(() => this.renderAdvance(), 200);
     }
     arm(event, value) {
       const mark = { value, until: performance.now() + 5000 };
@@ -315,6 +371,7 @@
     }
     setState(state, sync = true, blocked = false, remote = false) {
       const previous = this.state;
+      if (previous?.paused && !state.paused && state.advance_at == null) this.hideNotice();
       if (previous && remote && previous.version !== state.version) {
         const expected = previous.position + (previous.paused ? 0 : Math.max(0, state.updated_at - previous.updated_at) * previous.rate);
         const jumped = Math.abs(state.position - expected) > 1;
@@ -325,17 +382,12 @@
         this.cancelRecovery(); this.clearProgressChecks();
         if (this.hiddenRun) this.hiddenRun.flat = 0;
       }
-      // A peer may advance the room just before this browser emits its own ended.
-      if (this.state && state.index === this.state.index + 1 && this.video.readyState
-          && Number.isFinite(this.video.duration) && this.video.currentTime >= this.video.duration - 1) {
-        this.notifyEpisodeEnd({ ...state, url: state.video_url });
-      }
       this.state = state; this.receivedAt = performance.now(); this.syncBlocked = blocked;
       const key = state.video_url ? JSON.stringify([state.index, state.video_url]) : null;
       if (key !== this.sourceKey) {
         this.cancelRecovery(); this.clearProgressChecks();
         if (this.hiddenRun) this.hiddenRun.flat = 0;
-        this.sourceKey = key; this.playPending = null;
+        this.hideNotice(); this.sourceKey = key; this.playPending = null;
         this.seekRequested = true; this.allowHiddenPlay = true;
         if (key === null) {
           this.loading = true;
@@ -343,7 +395,8 @@
           this.hideNotice();
         } else this.load();
       } else if (sync) this.sync();
-      this.render();
+      if (!state.auto && this.localAdvanceAt != null) this.localAdvanceAt = null;
+      this.render(); this.renderAdvance();
     }
     render() {
       const s = this.state, active = !!s?.video_url;
@@ -376,7 +429,7 @@
             if (!this.active || !this.state?.video_url) return;
             if (action === "prev" || action === "next") this.onNavigate(action);
             else {
-              this.cancelRecovery();
+              this.hideNotice(); this.cancelRecovery();
               if (action === "play") this.allowHiddenPlay = true;
               this.onAction(action, { position: this.loading ? this.targetPosition() : this.media().currentTime }, true);
             }
@@ -395,6 +448,6 @@
         }
       }
     }
-    activate() { this.active = true; this.cancelRecovery(); this.render(); }
+    activate() { this.active = true; this.cancelRecovery(); this.render(); this.renderAdvance(); }
   };
 })();

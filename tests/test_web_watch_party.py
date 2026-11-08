@@ -164,6 +164,86 @@ def test_auto_change_invalidates_stale_ended_version(room):
     assert r.command("a", "next", expect_version=manual["version"])["index"] == 1
 
 
+def test_ended_countdown_is_shared_idempotent_and_advances_on_read(room):
+    r, now = room
+    first = r.command("a", "set", queue=QUEUE)
+    ended = r.command("a", "ended", expect_version=first["version"], position=60)
+    assert ended["index"] == 0 and ended["paused"] and ended["advance_at"] == now[0] + 3
+    assert r.command("b", "ended", expect_version=first["version"], position=60) == ended
+    now[0] += 2.999
+    assert r.snapshot()["index"] == 0
+    now[0] += .001
+    advanced = r.snapshot()
+    assert advanced["index"] == 1 and not advanced["paused"] and advanced["advance_at"] is None
+    assert advanced["updated_at"] == now[0] and advanced["version"] == ended["version"] + 1
+    # A late duplicate of the old ended never starts a countdown on the new video.
+    assert r.command("b", "ended", expect_version=first["version"])["advance_at"] is None
+    assert r.snapshot()["index"] == 1
+
+
+def test_ended_simultaneous_only_creates_one_deadline(room):
+    r, _ = room
+    version = r.command("a", "set", queue=QUEUE)["version"]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda client: r.command(client, "ended", expect_version=version), ["a", "b"]))
+    assert results[0]["version"] == results[1]["version"] == version + 1
+    assert results[0]["advance_at"] == results[1]["advance_at"]
+
+
+def test_late_peer_ended_with_fresh_version_does_not_extend_or_restart_wait(room):
+    r, now = room
+    first = r.command("a", "set", queue=QUEUE)
+    wait = r.command("a", "ended", expect_version=first["version"])
+    now[0] += 1
+    late = r.command("b", "ended", expect_version=wait["version"])
+    assert late["advance_at"] == wait["advance_at"] and late["version"] == wait["version"]
+    cancel = r.command("a", "cancel_advance")
+    late = r.command("b", "ended", expect_version=cancel["version"])
+    assert late["advance_at"] is None and late["version"] == cancel["version"]
+    replay = r.command("a", "play", position=0)
+    assert r.command("a", "ended", expect_version=replay["version"])["advance_at"] == now[0] + 3
+
+
+def test_countdown_cancel_now_auto_and_last_item(room):
+    r, now = room
+    def end():
+        return r.command("a", "ended", expect_version=r.snapshot()["version"], position=60)
+    r.command("a", "set", queue=QUEUE)
+    wait = end()
+    cancelled = r.command("b", "cancel_advance", expect_version=wait["version"])
+    now[0] += 4
+    assert r.snapshot()["index"] == 0 and r.snapshot()["advance_at"] is None and r.snapshot()["paused"]
+    r.command("a", "play", position=0)
+    wait = end()
+    quick = r.command("b", "advance_now", expect_version=wait["version"])
+    assert quick["index"] == 1 and not quick["paused"] and quick["advance_at"] is None
+    assert r.command("b", "advance_now")["index"] == 1
+    wait = end()
+    r.command("b", "auto", auto=False)
+    now[0] += 4
+    assert r.snapshot()["index"] == 1 and r.snapshot()["advance_at"] is None
+    r.command("a", "play", position=0)
+    assert end()["advance_at"] is None
+    r.command("b", "auto", auto=True)
+    r.command("b", "goto", index=2)
+    last = end()
+    assert last["paused"] and last["advance_at"] is None and last["index"] == 2
+
+
+def test_due_countdown_is_applied_before_commands_and_navigation_cancels(room):
+    r, now = room
+    first = r.command("a", "set", queue=QUEUE)
+    r.command("a", "ended", expect_version=first["version"])
+    now[0] += 5
+    paused = r.command("b", "pause")
+    assert paused["index"] == 1 and paused["position"] == 2
+    r.command("b", "play", position=0)
+    wait = r.command("a", "ended", expect_version=r.snapshot()["version"])
+    r.command("b", "prev", expect_version=wait["version"])
+    now[0] += 4
+    assert r.snapshot()["index"] == 0 and r.snapshot()["advance_at"] is None
+
+
 @pytest.mark.parametrize("action,data", [
     ("seek", {"position": -1}), ("rate", {"rate": 5}), ("goto", {"index": 3}),
     ("next", {}), ("prev", {"expect_version": True}), ("unknown", {}),
@@ -269,6 +349,26 @@ def test_auto_route_defaults_fresh_snapshot_and_422(cfg):  # no TestClient/socke
         assert invalid.status_code == 422
         assert json.loads(get().body)["version"] == current["version"]
     assert post({"client": "a", "action": "auto"}).status_code == 422
+
+
+def test_watch_codes_are_derived_from_download_manifest_not_client(cfg):
+    from web_helpers import make_app, write_episode
+    eid = "youtube0001"
+    write_episode(cfg, eid)
+    (Path(cfg.workspace.dir) / eid / "titles.json").write_text(json.dumps({"header": {"fields": {"episode": "20"}}}))
+    path = Path(cfg.render.output_dir) / eid / "render_manifest.json"
+    manifest = json.loads(path.read_text())
+    manifest["shorts"].insert(0, {"clip_id": "gone", "status": "skipped", "skip_reason": "rejected"})
+    path.write_text(json.dumps(manifest))
+    app = make_app(cfg)
+    response = endpoint(app, "/api/watch", "POST")({"client": "a", "action": "set", "queue": [
+        {"url": f"/files/{eid}/k01.mp4?v=abc", "title": "wrong", "code": "wrong"},
+        {"url": f"/files/{eid}/k02.mp4", "title": "wrong"}, {"url": "/unknown.mp4", "title": "Other"}]})
+    data = json.loads(response.body)
+    assert data["code"] == "T20_S02" and data["number"] == 2 and data["total"] == 3
+    assert data["title"] == "Tiêu đề k01"
+    assert data["queue"][1]["code"] == "T20_S03" and data["queue"][1]["duration"] == 61
+    assert "code" not in data["queue"][2]
 
 
 def test_http_auto_sync_and_validation(web):

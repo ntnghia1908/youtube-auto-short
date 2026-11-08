@@ -397,24 +397,23 @@ body.modal-open { overflow: hidden; }
 /* WATCH1: watch-room controls and invitation, independent of existing players. */
 .watch-start { display: block; margin: .5rem 0; }
 .watch-start[hidden], .watch-invite[hidden], .watch-room [hidden] { display: none; }
-.watch-invite { position: sticky; top: 0; z-index: 100; padding: .75rem 1rem; background: #163b35; color: #fff; text-align: center; }
-.watch-invite a { color: #b9f6df; font-weight: bold; }
+.watch-invite { position: sticky; top: .5rem; z-index: 100; margin: .5rem; padding: .75rem 1rem; background: var(--card); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); text-align: center; }
+.watch-invite a { color: var(--text); font-weight: bold; }
 .watch-room { max-width: 1000px; }
 .watch-room video { display: block; width: 100%; max-height: 70vh; background: #000; margin-bottom: 1rem; }
 .watch-room .actions { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; margin: 1rem 0; }
 .watch-room label { display: flex; gap: .5rem; align-items: center; }
 .watch-room select { width: auto; }
-.watch-queue { max-height: 22rem; overflow: auto; padding-left: 2rem; }
+.watch-queue { max-height: 28rem; overflow: auto; padding: 0; list-style: none; margin: 0; }
 .watch-queue li { margin: .35rem 0; }
 .watch-queue button { text-align: left; white-space: normal; overflow-wrap: anywhere; }
-.watch-queue [aria-current="true"] { outline: 2px solid #3baf8f; font-weight: bold; }
+.watch-queue [aria-current="true"] { background: var(--accent-bg); border-color: var(--accent); font-weight: bold; }
 
 /* LISTEN1: local queue, grouped by lecture. */
 .listen-room video { display: block; width: 100%; max-height: 60vh; background: #111; }
 .listen-room .actions { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; }
 .listen-room .actions label { max-width: 100%; min-width: 0; }
 .listen-room select { width: 100%; max-width: 100%; min-width: 0; min-height: 40px; font-size: 1rem; }
-.listen-kind { font-weight: 600; }
 .listen-queue details { margin-top: .75rem; }
 .listen-queue summary { padding: .5rem 0; font-weight: 600; color: var(--text); }
 .listen-queue ol { list-style: none; padding: 0; }
@@ -423,10 +422,10 @@ body.modal-open { overflow: hidden; }
 .listen-queue [aria-current="true"] { border-color: var(--accent); background: var(--accent-bg); font-weight: 600; }
 
 /* Shared LISTEN1/WATCH1 controls and episode-end status. */
-.player-controls { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; margin: .75rem 0; }
+.player-controls { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; justify-content: center; margin: .75rem 0; }
 .player-heart { display: block; flex: 0 0 2.75rem; width: 2.75rem; }
-.player-notice { position: sticky; top: .5rem; z-index: 20; padding: .8rem; background: var(--accent-bg); border: 1px solid var(--accent); border-radius: 8px; font-weight: 600; }
-.player-notice .btn { margin-left: .5rem; }
+.player-notice { padding: .8rem; font-weight: 600; }
+.player-notice .btn { margin: 0; }
 
 /* LISTEN1: contain long lecture names and native selects on narrow phones. */
 .episode-page .container, .watch-room { width: 100%; grid-template-columns: minmax(0, 1fr); }
@@ -443,3 +442,38 @@ body.modal-open { overflow: hidden; }
 .watch-invite { min-width: 0; max-width: 100%; }
 .player-pip-hint { margin: .25rem 0; overflow-wrap: anywhere; }
 .player-pip[aria-pressed="true"] { background: var(--accent-bg); border-color: var(--accent); }
+
+/* LISTEN1 shared listening cards, compact queue rows and controls. */
+.player-soft-card { border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); padding: .8rem; margin: .75rem 0; overflow-wrap: anywhere; }
+.player-resume { display: block; width: 100%; text-align: left; }
+.player-card { min-width: 0; }
+.player-now { margin: .75rem 0; }
+.player-now p { margin: .35rem 0; }
+.player-now-title { font-weight: 700; font-size: 1.12rem; }
+.player-lecture { overflow-wrap: anywhere; }
+.player-up-next { margin: .4rem 0; }
+.player-video { scroll-margin-top: 1rem; }
+.listen-toolbar { display: grid; gap: .75rem; margin-bottom: .75rem; }
+.player-segments { display: flex; min-width: 0; }
+.player-segments .btn { flex: 1 1 0; min-width: 0; border-radius: 0; min-height: 44px; }
+.player-segments .btn + .btn { border-left: 0; }
+.player-segments .btn:first-child { border-radius: 8px 0 0 8px; }
+.player-segments .btn:last-child { border-radius: 0 8px 8px 0; }
+.player-segments [aria-pressed="true"] { background: var(--accent-bg); border-color: var(--accent); font-weight: 700; }
+.player-jump { margin: 0; }
+.player-jump select { display: block; padding: .55rem; border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
+.listen-room .player-track, .watch-room .player-track { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: .6rem; width: 100%; min-height: 54px; text-align: left; }
+.player-code { font-family: ui-monospace, monospace; font-size: .8rem; max-width: 8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.player-track-title { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; line-height: 1.3; }
+.player-duration { font-size: .8rem; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.listen-room .player-switch, .watch-room .player-switch { display: flex; align-items: center; justify-content: center; gap: .6rem; min-height: 44px; position: relative; cursor: pointer; }
+.player-switch input { position: absolute; width: 1px; height: 1px; padding: 0; opacity: 0; }
+.player-switch-track { flex: 0 0 42px; height: 24px; border: 1px solid var(--border); border-radius: 20px; background: var(--bg); padding: 2px; }
+.player-switch-track::before { content: ""; display: block; width: 18px; height: 18px; border-radius: 50%; background: var(--muted); transition: transform .15s; }
+.player-switch input:checked + .player-switch-track { background: var(--accent-bg); border-color: var(--accent); }
+.player-switch input:checked + .player-switch-track::before { transform: translateX(17px); background: var(--text); }
+.player-switch input:focus-visible + .player-switch-track { outline: 2px solid var(--text); outline-offset: 3px; }
+.player-switch input:disabled + .player-switch-track { opacity: .5; }
+@media (min-width: 640px) { .listen-toolbar { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: end; } }
+
+.player-track > * { min-width: 0; }

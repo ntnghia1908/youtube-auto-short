@@ -55,17 +55,19 @@
   }
   function renderRoom() {
     const active = !!state.video_url;
-    $("watch-title").textContent = active ? state.title : "Chưa có phòng xem chung";
+    $("watch-title").textContent = active ? AutoShortPlayer.heading(state) : "Chưa có phòng xem chung";
+    $("watch-meta").textContent = active && state.ep_label ? `Tập ${state.ep_label} · ${state.kind === "khaithi" ? "Khai thị" : "Short"} ${state.number} / ${state.total}` : "";
     $("watch-viewers").textContent = `Đang xem: ${Object.keys(state.viewers).length} người`;
     $("watch-end").disabled = !active;
     const signature = JSON.stringify([state.queue, state.index]);
     if (queueKey !== signature) {
       queueKey = signature;
       $("watch-queue").replaceChildren(...state.queue.map((entry, index) => {
-        const li = document.createElement("li"), button = document.createElement("button");
-        button.type = "button"; button.className = "btn"; button.textContent = entry.title || entry.url;
+        const li = document.createElement("li"), button = AutoShortPlayer.queueButton(entry, () => {
+          player.hideNotice();
+          command("goto", { index }, true).then(() => player.scrollToVideo()).catch(() => {});
+        });
         if (index === state.index) button.setAttribute("aria-current", "true");
-        button.addEventListener("click", () => { command("goto", { index }, true).catch(() => {}); });
         li.append(button); return li;
       }));
     }
@@ -167,7 +169,11 @@
       if (state?.video_url) { cancelPause(); return command(action, { expect_version: state.version }, true).catch(() => {}); }
     };
     player = new AutoShortPlayer("watch", {
-      client, request, message, onNavigate: navigate, onFavorite: () => poll(true),
+      client, request, message, onNavigate: navigate,
+      onEnded: (position) => { cancelPause(); command("ended", { expect_version: state.version, position }, true).catch(() => {}); },
+      onAdvance: () => command("advance_now", { expect_version: state.version }, true).catch(() => {}),
+      onCancelAdvance: () => command("cancel_advance", { expect_version: state.version }, true).catch(() => {}),
+      onFavorite: () => poll(true),
       onAuto: (auto) => { command("auto", { auto }).catch(() => poll(true)); },
       onAction(action, extra, force = false) {
         if (action === "pause" && !force) {

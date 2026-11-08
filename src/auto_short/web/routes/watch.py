@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 
 from .. import episodes as ep
 from ..context import WebContext
+from ..listen import clip_metadata
 from ..watch_party import WatchConflict, WatchRoom
 
 log = logging.getLogger("auto_short.web.watch")
@@ -90,6 +91,22 @@ def build(ctx: WebContext) -> APIRouter:
     def decorate(state):
         # Derive fresh metadata on every response, including rooms set by old browser tabs.
         state["fav"] = None
+        state["code"] = None
+        metadata = {}
+        for entry in state["queue"]:
+            match = re.fullmatch(r"/files/([^/]+)/([^/]+)\.mp4", urlsplit(entry["url"]).path)
+            if not match:
+                continue
+            eid, clip = match.groups()
+            if not ep.valid_episode_id(eid) or not ep.valid_clip_id(clip):
+                continue
+            if eid not in metadata:
+                metadata[eid] = clip_metadata(ctx.config, eid)
+            entry.update(metadata[eid].get(clip, {}))
+        if state["queue"]:
+            current = state["queue"][state["index"]]
+            state.update({key: value for key, value in current.items() if key not in ("url", "title")})
+            state["title"] = current["title"]
         match = re.fullmatch(r"/files/([^/]+)/([^/]+)\.mp4", urlsplit(state["video_url"] or "").path)
         if match:
             episode_id, clip = match.groups()

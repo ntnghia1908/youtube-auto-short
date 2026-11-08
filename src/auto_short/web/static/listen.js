@@ -45,10 +45,10 @@
   let auto = read("auto-short-listen-auto", true) !== false;
   let filter = read("auto-short-listen-filter", "both");
   if (!["both", "short", "khaithi"].includes(filter)) filter = "both";
-  $("filter").value = filter;
+  renderFilter();
   if (document.getElementById("episode-listen").hidden) player.suspend();
   const same = (a, b) => a?.episode_id === b?.episode_id && a?.clip_id === b?.clip_id;
-  const epLabel = (item) => `Tập ${item.ep_index ?? "—"} — ${item.ep_title || item.base_episode_id}`;
+  const epLabel = (item) => `Tập ${item.ep_label || item.ep_index || "—"}`;
   const kindLabel = (item) => item.kind === "khaithi" ? "Khai thị" : "Short";
   function save() {
     // Keep the media identity separate from a filter's changing list/index.
@@ -57,11 +57,11 @@
     write(storageKey, { episode_id: item.episode_id, clip_id: item.clip_id,
       position: Number.isFinite(player.media().currentTime) ? player.media().currentTime : 0 });
   }
-  function renderCurrent() {
+  function renderCurrent(scrollItem = true) {
     const item = items[index];
-    $("episode").textContent = item ? epLabel(item) : "";
-    $("kind").textContent = item ? kindLabel(item) : "";
-    $("title").textContent = item?.title || "";
+    $("lecture").textContent = item?.ep_title || "";
+    $("meta").textContent = item ? `${epLabel(item)} · ${kindLabel(item)} ${item.number || "—"} / ${item.total || "—"}` : "";
+    $("title").textContent = AutoShortPlayer.heading(item);
     $("count").textContent = item ? `${index + 1} / ${items.length}` : "0 / 0";
     $("watch").disabled = !item;
     $("next").disabled = !item || index === items.length - 1;
@@ -75,20 +75,21 @@
     $("queue").querySelectorAll("button[data-index]").forEach((button) => {
       if (Number(button.dataset.index) === index) {
         button.setAttribute("aria-current", "true");
-        if (document.visibilityState === "visible" && player.active) button.scrollIntoView({ block: "nearest" });
+        if (scrollItem && document.visibilityState === "visible" && player.active) button.scrollIntoView({ block: "nearest" });
       } else button.removeAttribute("aria-current");
     });
   }
-  function choose(next, autoplay = false, position = 0) {
+  function choose(next, autoplay = false, position = 0, scroll = false) {
     save(); index = next; started = autoplay;
     const item = currentItem = items[index];
     state = { ...item, video_url: item?.video_url || null, auto,
-      title: item ? `${epLabel(item)} · ${kindLabel(item)} · ${item.title || ""}` : "",
+      title: item?.title || "",
       fav: item?.fav || null, index, version: ++version, paused: !autoplay,
       position, rate: 1, server_time: 0, updated_at: 0 };
-    player.setState(state); renderCurrent();
+    player.setState(state); renderCurrent(!scroll);
     if (autoplay) player.playMedia(player.media());
     message(item ? "" : "Chưa có mục đã render trong lựa chọn này.");
+    if (scroll) player.scrollToVideo();
   }
   function navigate(action) {
     if (index < 0) return;
@@ -125,30 +126,31 @@
         const option = document.createElement("option"); option.value = item.base_episode_id; option.textContent = epLabel(item);
         $("jump").append(option); groups.set(item.base_episode_id, group);
       }
-      const li = document.createElement("li"), button = document.createElement("button");
-      button.type = "button"; button.className = "btn"; button.dataset.index = n;
-      button.textContent = `${kindLabel(item)} · ${item.title || item.clip_id}`;
-      button.addEventListener("click", () => choose(n, true)); li.append(button);
+      const li = document.createElement("li"), button = AutoShortPlayer.queueButton(item, () => choose(n, true, 0, true));
+      button.dataset.index = n; li.append(button);
       const group = groups.get(item.base_episode_id); group.list.append(li); group.count++;
     });
     for (const group of groups.values()) group.summary.textContent = `${epLabel(group.item)} · ${group.count} bài`;
     $("jump").disabled = !items.length;
   }
-  $("filter").addEventListener("change", () => {
+  function renderFilter() {
+    $("filter").querySelectorAll("[data-kind]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.kind === filter)));
+  }
+  $("filter").querySelectorAll("[data-kind]").forEach((button) => button.addEventListener("click", () => {
     const previous = items[index], position = player.media().currentTime;
     const playing = player.active && !!state && !player.media().paused;
-    save(); filter = $("filter").value; write("auto-short-listen-filter", filter);
+    save(); filter = button.dataset.kind; write("auto-short-listen-filter", filter); renderFilter();
     items = all.filter((item) => filter === "both" || item.kind === filter);
     const retained = items.findIndex((item) => same(item, previous));
     buildList(); choose(retained < 0 ? startingIndex() : retained, playing, retained < 0 ? 0 : position);
-  });
-  $("jump").addEventListener("change", () => choose(items.findIndex((item) => item.base_episode_id === $("jump").value), true));
+  }));
+  $("jump").addEventListener("change", () => choose(items.findIndex((item) => item.base_episode_id === $("jump").value), true, 0, true));
   $("watch").addEventListener("click", async () => {
     if (!items[index]) return;
     $("watch").disabled = true;
     try {
       const queue = items.slice(index, index + 300).map((item) => ({ url: item.video_url,
-        title: Array.from(`${epLabel(item)} · ${kindLabel(item)} · ${item.title || ""}`).slice(0, 200).join("") }));
+        title: Array.from(item.title || "Video").slice(0, 200).join("") }));
       save(); await AutoShortWatch.start(queue, player.loading ? state.position : player.media().currentTime);
     } catch (error) { message(error.message); }
     finally { $("watch").disabled = false; }
@@ -178,11 +180,17 @@
   function standalone(views, base) {
     return views.filter(Boolean).flatMap((view) => (view.shorts || [])
       .filter((short) => short.status === "rendered" && !short.deleted && !short.rejected && short.video_url)
-      .map((short) => ({ kind: view.kind, episode_id: view.id, base_episode_id: base,
-        ep_index: null, ep_title: views.find((v) => v?.id === base)?.title || view.title,
-        clip_id: short.clip_id, title: short.title?.text, duration: short.duration, video_url: short.video_url,
-        fav: null })));
+      .map((short) => {
+        // The existing download name already owns the canonical label/number/width.
+        const match = short.download_name?.match(/^(T(.*?)_(?:KT|S)(\d+))(?:_|\.mp4$)/);
+        return { code: match?.[1] || null, ep_label: match?.[2], number: match ? Number(match[3]) : null,
+          total: view.shorts.length, kind: view.kind, episode_id: view.id, base_episode_id: base,
+          ep_index: null, ep_title: views.find((v) => v?.id === base)?.title || view.title,
+          clip_id: short.clip_id, title: short.title?.text, duration: short.duration, video_url: short.video_url,
+          fav: null };
+      }));
   }
+
   async function load() {
     try {
       const current = await episode(episodeId), base = current.base_episode_id || current.id;
@@ -207,10 +215,10 @@
         $("resume").hidden = false;
         $("resume").addEventListener("click", () => {
           if (!items.some((item) => same(item, resume))) {
-            filter = "both"; $("filter").value = filter; write("auto-short-listen-filter", filter);
+            filter = "both"; renderFilter(); write("auto-short-listen-filter", filter);
             items = [...all]; buildList();
           }
-          choose(items.findIndex((item) => same(item, resume)), true, saved.position);
+          choose(items.findIndex((item) => same(item, resume)), true, saved.position, true);
           $("resume").hidden = true;
         });
       }

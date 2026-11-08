@@ -12,7 +12,25 @@ from ..config import Config
 from ..khaithi import KhaithiError, episode_id_for
 from ..review import REVIEW_NAME, ReviewError
 from ..review.logic import read_review
+from ..review.names import short_code
 from . import episodes as ep
+
+
+def clip_metadata(config: Config, episode_id: str, manifest: dict | None = None) -> dict[str, dict]:
+    """Same label, manifest positions and total as ep._names/copy_prefixes, including skipped clips."""
+    manifest = manifest if manifest is not None else ep.render_manifest(config, episode_id)
+    if manifest is None:
+        return {}
+    fields = ep.kind_fields(config, episode_id)
+    label, shorts = ep.label(config, episode_id, fields), manifest["shorts"]
+    return {short["clip_id"]: {
+        "code": short_code(label, n, len(shorts), khaithi=fields["kind"] == "khaithi"),
+        "ep_label": label, "number": n, "total": len(shorts), "kind": fields["kind"],
+        "episode_id": episode_id, "base_episode_id": fields["base_episode_id"] or episode_id,
+        "title": short.get("title"), "duration": short.get("duration"),
+    } for n, short in enumerate(shorts, 1) if isinstance(short, dict)
+        and isinstance(short.get("clip_id"), str) and ep.valid_clip_id(short["clip_id"])
+        and short.get("status") == "rendered"}
 
 
 def playlist_listen(config: Config, doc: dict, favorites: Iterable[Item]) -> dict:
@@ -37,6 +55,7 @@ def playlist_listen(config: Config, doc: dict, favorites: Iterable[Item]) -> dic
             manifest = ep.render_manifest(config, eid)
             if manifest is None:
                 continue
+            metadata = clip_metadata(config, eid, manifest)
             try:
                 review = read_review(workspace / REVIEW_NAME, eid)
             except ReviewError:
@@ -50,7 +69,7 @@ def playlist_listen(config: Config, doc: dict, favorites: Iterable[Item]) -> dic
                 if view is None:
                     continue
                 clip = view["clip_id"]
-                items.append({"kind": kind, "episode_id": eid, "base_episode_id": base,
+                items.append({**metadata[clip], "kind": kind, "episode_id": eid, "base_episode_id": base,
                               "ep_index": entry.get("index"), "ep_title": entry.get("title"),
                               "clip_id": clip, "title": view["title"]["text"],
                               "duration": view["duration"], "video_url": view["video_url"],

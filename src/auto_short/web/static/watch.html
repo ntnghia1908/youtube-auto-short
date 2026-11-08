@@ -12,22 +12,27 @@
 <header class="topbar"><a class="brand" href="/">← Auto Short</a></header>
 <main id="watch-room" class="container watch-room">
   <h1>Xem chung</h1>
-  <h2 id="watch-title">Chưa có phòng xem chung</h2>
   <p id="watch-viewers">Đang xem: 0 người</p>
-  <p id="watch-message" role="status" aria-live="polite"></p>
-  <video id="watch-video" controls playsinline preload="metadata" hidden></video>
+  <section class="card player-card">
+  <video id="watch-video" class="player-video" controls playsinline preload="metadata" hidden></video>
+  <div class="player-now">
+    <h2 id="watch-title" class="player-now-title">Chưa có phòng xem chung</h2>
+    <p id="watch-meta" class="small muted"></p>
+  </div>
   <button id="watch-play" class="btn primary" type="button" hidden>Bấm để phát</button>
-  <div id="watch-notice" class="player-notice" role="status" aria-live="polite" hidden></div>
+  <div id="watch-notice" class="player-notice player-soft-card" role="status" aria-live="polite" hidden></div>
   <div id="watch-controls" class="player-controls">
     <span class="player-heart"><button id="watch-favorite" class="btn icon-btn heart" type="button" hidden aria-label="Yêu thích" aria-pressed="false" title="Yêu thích">♡</button></span>
     <button id="watch-prev" class="btn icon-btn" type="button" title="Trước" aria-label="Trước" disabled>⏮</button>
     <button id="watch-next" class="btn icon-btn" type="button" title="Tiếp" aria-label="Tiếp" disabled>⏭</button>
   </div>
   <p id="watch-pip-hint" class="small muted player-pip-hint" hidden></p>
-  <label class="inline"><input id="watch-auto" type="checkbox" checked> Tự chuyển bài</label>
+  <label class="player-switch"><input id="watch-auto" type="checkbox" role="switch" checked><span class="player-switch-track" aria-hidden="true"></span> Tự chuyển bài</label>
   <div class="actions">
     <button id="watch-end" class="btn small danger" type="button" disabled>Kết thúc xem chung</button>
   </div>
+  <p id="watch-message" class="small muted" role="status" aria-live="polite"></p>
+  </section>
   <ol id="watch-queue" class="watch-queue" aria-label="Danh sách phát"></ol>
 </main>
 </body>
