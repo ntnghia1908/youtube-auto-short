@@ -28,6 +28,8 @@
   let all = [], items = [], index = -1, currentItem = null, state = null, version = 0, started = false;
   let storageKey, lastSave = 0;
   let inRoom = false, rstate = null, lastRoomIndex = -1;
+  const removedFavorites = new Set();
+  let pruningRoom = false, favoriteRefresh = Promise.resolve();
   let pauseTimer = null, lastHiddenAt = -Infinity, roomHidden = false;
   let auto = read("auto-short-listen-auto", true) !== false;
   let filter = read("auto-short-listen-filter", "both");
@@ -67,9 +69,16 @@
     },
     onAction(action, extra, force) { inRoom ? roomAction(action, extra, force) : soloAction(action, extra, force); },
     onFavorite(fav, favorite) {
-      if (favPid) for (const name of ["listen-favorite-changed", "favorites-changed"]) window.dispatchEvent(new Event(name));
-      if (inRoom) { W.poll(true); return; }
       fav.favorite = favorite;
+      if (favPid) {
+        for (const item of all) if (item.episode_id === fav.episode_id && item.clip_id === fav.clip) {
+          item.fav.favorite = favorite;
+          if (favorite) removedFavorites.delete(item.video_url); else removedFavorites.add(item.video_url);
+        }
+        window.dispatchEvent(new Event("listen-favorite-changed"));
+        window.dispatchEvent(new CustomEvent("favorites-changed", { detail: { source: "listen" } }));
+      }
+      if (inRoom) return W.poll(true);
       player.render();
     },
   });
@@ -205,9 +214,73 @@
     if (!data.video_url && !shell && items.length) { exitRoom(); return; }
     const scroll = data.index !== lastRoomIndex; lastRoomIndex = data.index;
     rstate = data;
+    if (favPid) {
+      currentItem = all.find((item) => item.video_url === data.video_url) || null;
+      // A different participant may have toggled this heart on /watch.
+      if (currentItem && data.fav) {
+        currentItem.fav.favorite = data.fav.favorite;
+        if (data.fav.favorite) removedFavorites.delete(data.video_url); else removedFavorites.add(data.video_url);
+      }
+      rebuildItems();
+    }
     player.setState(data, force || data.by !== W.client, pauseTimer !== null, data.by !== W.client);
     renderCurrent(scroll);
+    return syncFavoriteRoom();
   }
+  const roomEntry = (item) => ({ url: item.url || item.video_url,
+    title: Array.from(item.title || "Video").slice(0, 200).join(""),
+    ep_label: String(item.ep_label || "").slice(0, 40) || undefined, group: item.group });
+  async function syncFavoriteRoom() {
+    if (!favPid || !inRoom || !rstate?.video_url || pruningRoom) return;
+    const current = rstate.video_url;
+    const queue = rstate.queue.filter((entry) => entry.url === current || !removedFavorites.has(entry.url));
+    if (queue.length === rstate.queue.length) return;
+    // Reuse the part algorithm; the currently playing unhearted item stays until navigation.
+    const groupFilter = rstate.queue[rstate.index].group?.id.match(/^favorites:(both|short|khaithi):/)?.[1] || filter;
+    const grouped = AutoShortPlayer.groupFavorites(queue.map((entry) => ({
+      ...all.find((item) => item.video_url === entry.url), ...entry,
+      base_episode_id: player.episode(entry)?.id || entry.url,
+    })), groupFilter).map(roomEntry);
+    pruningRoom = true;
+    try {
+      await roomCommand("set", { queue: grouped, index: queue.findIndex((entry) => entry.url === current),
+        position: player.loading ? player.targetPosition() : player.media().currentTime,
+        paused: rstate.paused, rate: rstate.rate }, true);
+    } catch (error) { message(error.message); }
+    finally { pruningRoom = false; }
+  }
+  function refreshFavorites() {
+    // Serialize external changes; a slow earlier response cannot overwrite a later refresh.
+    favoriteRefresh = favoriteRefresh.catch(() => {}).then(async () => {
+      const data = await request("GET", null, `/api/playlists/${encodeURIComponent(favPid)}/listen?favorites=1`);
+      const present = new Set(data.items.map((item) => item.video_url));
+      const previous = currentItem;
+      for (const item of all) {
+        if (present.has(item.video_url)) removedFavorites.delete(item.video_url);
+        else removedFavorites.add(item.video_url);
+      }
+      const position = player.loading ? player.targetPosition() : player.media().currentTime;
+      const playing = player.active && !player.media().paused;
+      // Keep a removed playing item in its original place so it can finish before disappearing.
+      const oldIndex = all.findIndex((item) => same(item, previous));
+      if (previous && !present.has(previous.video_url)) {
+        previous.fav.favorite = false;
+        data.items.splice(Math.max(0, Math.min(oldIndex, data.items.length)), 0, previous);
+      }
+      all = data.items;
+      currentItem = all.find((item) => same(item, previous)) || null;
+      rebuildItems();
+      if (inRoom) { await syncFavoriteRoom(); await W.poll(true); }
+      else {
+        const found = items.findIndex((item) => same(item, previous));
+        choose(found < 0 ? startingIndex() : found, playing, position);
+      }
+    }).catch((error) => message(error.message));
+    return favoriteRefresh;
+  }
+  if (favPid) window.addEventListener("favorites-changed", (event) => {
+    if (event.detail?.source !== "listen") return refreshFavorites();
+  });
   // Back to solo at the item / position the room was on.
   function exitRoom() {
     const last = rstate, playing = !player.media().paused;
@@ -224,12 +297,11 @@
       save();
       // The whole list (AC 35); above the room cap send a window that still holds the playing item.
       const from = items.length > ROOM_MAX ? Math.max(0, Math.min(index - ROOM_MAX / 2, items.length - ROOM_MAX)) : 0;
-      const queue = items.slice(from, from + ROOM_MAX).map((item) => ({ url: item.video_url,
-        title: Array.from(item.title || "Video").slice(0, 200).join(""), ep_label: String(item.ep_label || "").slice(0, 40) || undefined, group: item.group }));
+      const queue = items.slice(from, from + ROOM_MAX).map(roomEntry);
       const position = player.loading ? state.position : player.media().currentTime;
       setRoomMode(true);
       await roomCommand("set", { queue, index: index - from, position, paused: state.paused }, true);
-      if (!auto) await roomCommand("auto", { auto: false }, true);
+      await roomCommand("auto", { auto }, true);
     } catch (error) {
       if (inRoom) { setRoomMode(false); renderCurrent(false); }
       message(error.message);

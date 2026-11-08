@@ -303,6 +303,25 @@ AC 43 có hơn 3 hàm test vì gồm thuật toán chia phần thuần, DOM mộ
 - Diff so với `825c5df` (không tính contract): app **+134 / −65**, test **+283 / −5**, tổng **+417 / −70**.
 - Handoff: implementation sẵn sàng review; giữ lifecycle **IN_PROGRESS** tới khi required verification / review ngoài sandbox hoàn tất. Không commit / push / PR / gọi agent khác / gọi mạng thật / restart server.
 
+#### Result — Amendment I, sửa review 1 (IMPLEMENTER 2026-11-08, base `b3f3a8e`)
+
+- HEAD kiểm bằng `git log -1`: `b3f3a8e` (worktree sạch lúc nhận). ORCHESTRATOR báo **178 test web PASS ngoài sandbox** ở baseline; đó không phải kết quả verification của vòng sửa này.
+- Finding 1 / AC 36: `startRoom` luôn gửi lệnh `auto` với đúng giá trị local sau `set`, cả true và false. Tái dùng API cũ; server / semantics `set` không đổi.
+- Finding 2 / AC 40 + 43: `onFavorite` cập nhật cả đối tượng tim và cache `all`; đánh dấu URL đã bỏ tim trong `removedFavorites`. `roomHandler` cập nhật `currentItem` / `items` theo bài của phòng và trạng thái tim server trả về. `syncFavoriteRoom` chỉ chạy ở trang Yêu thích: giữ mục hiện tại, bỏ các mục đã bỏ tim khác bằng `set`, giữ danh tính bài, vị trí, paused, rate và giá trị auto của phòng. Khi bài hiện tại đổi, mục vừa bỏ tim rời queue của cả phòng và cache một mình; queue còn lại chia phần bằng `groupFavorites` hiện có, theo bộ lọc trong group của phòng. Guard `pruningRoom` tránh set lặp trong callback snapshot.
+- Finding 3 / AC 40: trang Yêu thích nghe `favorites-changed`, `refreshFavorites` tải lại API favorites-only hiện có, cập nhật cache, giữ mục hiện tại nếu vừa bỏ tim để nghe hết, giữ bài + giây + trạng thái phát/dừng và chia lại phần. Các refresh xếp tuần tự để response cũ không ghi đè response mới. Sự kiện trình phát gửi có `detail.source = "listen"`, listener bỏ qua nguồn này; vẫn gửi `listen-favorite-changed` cho tab ghép tay như trước. Không cần sửa `favorites.js` / server.
+- Helper mới: `roomEntry` gom serializer queue đã có ở `startRoom` để dùng lại khi lọc phòng; `syncFavoriteRoom`, `refreshFavorites` nối `rebuildItems`, `choose`, `groupFavorites` và transport `roomCommand` hiện có (đã tìm / đọc `onFavorite`, `unheart`, `favorites-changed`, `startRoom`, `roomHandler`). Code bị thay: nhánh chỉ poll khi bỏ tim trong phòng, nhánh chỉ gửi auto=false, serializer queue inline cũ.
+
+| Finding / AC | Test chạy source JS qua fixture `run_player_js` hiện có |
+|---|---|
+| 1 / 36 | `test_start_room_always_transfers_solo_auto` (true/false, phòng cũ có giá trị ngược) |
+| 2 / 40,43 | `test_room_unheart_prunes_after_navigation_and_keeps_parts` (giữ bài đang phát, đổi bài loại khỏi queue, chia lại 35+2, không set lặp, kết thúc phòng về một mình vẫn không có bài đã bỏ) |
+| 3 / 40,43 | `test_manual_unheart_event_refreshes_player_without_loop` (một mình/phòng × phát/dừng; xóa bài đứng trước đổi index nhưng giữ bài + giây; xóa bài hiện tại chỉ loại sau khi đổi bài; đếm GET chứng minh không lặp sự kiện) |
+
+- Test fixture bổ sung event thật trên DOM giả, fetch clone phản hồi / lưu tim giả và transport phòng có trạng thái (`set` giữ auto cũ như server). Không socket / dịch vụ thật / dependency mới.
+- Verification vòng sửa: `PYTHONPATH=/home/ntnghia/projects/yas-listen1/src conda run --no-capture-output -n auto-short pytest tests/test_web_listen.py tests/test_web_watch_party.py -q -k 'not test_http' -x --tb=short` → **128 passed, 9 deselected in 6.90s**. `node --check src/auto_short/web/static/listen.js` (JS duy nhất đổi) và `git diff --check` → **PASS**.
+- Không chạy đủ 5 file `test_web_listen.py`, `test_web_watch_party.py`, `test_web_app.py`, `test_web_compilation.py`, `test_web_episode_ui_cp812.py`, full suite hoặc Android / hai máy thật theo giới hạn delegation (TestClient / server có thể treo khi sandbox không có loopback). ORCHESTRATOR chạy ngoài sandbox; không claim PASS vòng sửa cho phần này.
+- Diff so với `b3f3a8e`, không tính contract: app **+77 / −5**, test **+118 / −6**, tổng **+195 / −11**. Implementation sẵn sàng review; lifecycle giữ **IN_PROGRESS** chờ verification / review ngoài sandbox. Không commit / push / PR / gọi agent khác / gọi mạng thật / restart server.
+
 ### Amendment H (HUMAN LEAD 2026-11-08) — chưa làm, làm sau G
 
 Bằng chứng: "Trang yêu thích gồm những video được thả tim cũng nên chuyển sang dạng xem playlist giống vậy luôn". Owned paths bổ sung (ORCHESTRATOR theo yêu cầu này): `src/auto_short/web/static/favorites.html`, `src/auto_short/web/static/favorites.js`, route / API yêu thích trong `src/auto_short/web/app.py` nếu cần thêm field (url / code) cho trình phát, test tương ứng.
