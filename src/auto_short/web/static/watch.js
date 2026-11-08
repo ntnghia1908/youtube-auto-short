@@ -74,7 +74,7 @@
   function accept(data, force = false) {
     if (state && data.version < state.version) return;
     if (state && data.version !== state.version) {
-      cancelPause(); player?.resetRetry();
+      cancelPause();
     }
     state = data;
     if (!inRoom) {
@@ -86,7 +86,7 @@
       return;
     }
     renderRoom();
-    player.setState(data, force || data.by !== client, pauseTimer !== null);
+    player.setState(data, force || data.by !== client, pauseTimer !== null, data.by !== client);
   }
 
   async function poll(force = false) {
@@ -155,6 +155,7 @@
     });
   }
   window.AutoShortWatch = {
+    client,
     async start(queue, position = 0) {
       await command("set", { queue, index: 0, position });
       location.assign("/watch");
@@ -165,7 +166,7 @@
       if (state?.video_url) { cancelPause(); return command(action, { expect_version: state.version }, true).catch(() => {}); }
     };
     player = new AutoShortPlayer("watch", {
-      request, message, onNavigate: navigate, onFavorite: () => poll(true),
+      client, request, message, onNavigate: navigate, onFavorite: () => poll(true),
       onAuto: (auto) => { command("auto", { auto }).catch(() => poll(true)); },
       onAction(action, extra, force = false) {
         if (action === "pause" && !force) {
@@ -192,7 +193,6 @@
     document.addEventListener("visibilitychange", () => {
       lastHiddenAt = performance.now(); cancelPause();
       if (document.visibilityState !== "hidden") {
-        player.resetRetry();
         sending.then(() => poll(true));
       }
     });
@@ -200,7 +200,7 @@
       pageHidden = true; pollGeneration++; lastHiddenAt = performance.now(); cancelPause(); clearTimeout(pollTimer); leave();
     });
     window.addEventListener("pageshow", (event) => {
-      if (event.persisted) { pageHidden = false; player.resetRetry(); lastHiddenAt = performance.now(); tick(true); }
+      if (event.persisted) { pageHidden = false; lastHiddenAt = performance.now(); tick(true); }
     });
   } else {
     let scheduled = false;

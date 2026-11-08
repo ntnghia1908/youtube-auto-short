@@ -1,7 +1,9 @@
 """WATCH1: pure room invariants and authenticated HTTP integration, no real services."""
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -186,7 +188,7 @@ def web(cfg):
 
 def test_http_auth(web):  # AC3
     calls = [("GET", "/api/watch"), ("POST", "/api/watch"),
-             ("POST", "/api/watch/leave"), ("DELETE", "/api/watch")]
+             ("POST", "/api/watch/leave"), ("POST", "/api/watch/log"), ("DELETE", "/api/watch")]
     for method, path in calls:
         assert web.request(method, path, json={"client": "a", "action": "set", "queue": QUEUE}).status_code == 401
     response = web.get("/watch")
@@ -332,3 +334,107 @@ def test_http_watch_fav_is_fresh_without_client_metadata(web, monkeypatch):  # A
     favorites["clips"].append("k01")
     assert web.get("/api/watch?client=other").json()["fav"]["favorite"] is True
     assert web.post("/api/watch", json={"client": "a", "action": "favorite", "index": 0, "favorite": False}).status_code == 422
+
+
+def log_request(payload, *, raw=False):
+    from starlette.requests import Request
+    data = payload if raw else json.dumps(payload, ensure_ascii=False).encode()
+    chunks = iter(((data[:20], True), (data[20:], False)))
+
+    async def receive():
+        chunk, more = next(chunks)
+        return {"type": "http.request", "body": chunk, "more_body": more}
+
+    return Request({"type": "http", "method": "POST", "path": "/api/watch/log", "headers": [],
+                    "query_string": b""}, receive)
+
+
+def log_batch(**changes):
+    return {"client": "phone", "page": "watch", "events": [{"type": "pause_hidden", "t": 21.5, "hidden": True}], **changes}
+
+
+def test_log_route_records_sanitized_events_and_limits_rate(cfg, monkeypatch, caplog):  # LISTEN1 AC16
+    from auto_short.web.routes import watch
+    from web_helpers import make_app
+    now = [100.0]
+    monkeypatch.setattr(watch.time, "monotonic", lambda: now[0])
+    app = make_app(cfg)
+    post = endpoint(app, "/api/watch/log", "POST")
+    before = json.loads(endpoint(app, "/api/watch")().body)
+    payload = log_batch(client="pho\nne\x00", events=[
+        {"type": "pause_hidden", "t": 21.5, "hidden": True},
+        {"type": "retry_blocked", "err": "NotAllowed\r\nError\x1b\u2028", "hidden": True},
+        {"type": "seek_skipped_hidden", "drift": -3.25},
+    ])
+    with caplog.at_level(logging.INFO, logger="auto_short.web.watch"):
+        assert asyncio.run(post(log_request(payload))).status_code == 200
+        # Same client across pages shares one rate limit; another client is independent.
+        assert asyncio.run(post(log_request(log_batch(page="listen")))).status_code == 429
+        assert asyncio.run(post(log_request(log_batch(client="desktop")))).status_code == 200
+        now[0] += 4.999
+        assert asyncio.run(post(log_request(log_batch()))).status_code == 429
+        now[0] += .001
+        assert asyncio.run(post(log_request(log_batch()))).status_code == 200
+    records = [r for r in caplog.records if r.name == "auto_short.web.watch"]
+    assert len(records) == 5 and all(r.levelno == logging.INFO for r in records)
+    decoded = [json.loads(r.getMessage().removeprefix("player ")) for r in records]
+    assert decoded[1] == {"client": "phone", "page": "watch", "type": "retry_blocked", "err": "NotAllowedError", "hidden": True}
+    assert decoded[2]["drift"] == -3.25
+    assert all(not any(c in r.getMessage() for c in "\n\r\x00\x1b\u2028") for r in records)
+    assert json.loads(endpoint(app, "/api/watch")().body)["version"] == before["version"]
+
+
+@pytest.mark.parametrize("payload", [
+    {}, [], log_batch(client=""), log_batch(client=5), log_batch(client="c" * 201), log_batch(page="other"),
+    log_batch(events=[]), log_batch(events=[{"type": "visibility"}] * 21), log_batch(events="pause_hidden"),
+    log_batch(events=[None]), log_batch(events=[{}]), log_batch(events=[{"type": "other"}]),
+    log_batch(events=[{"type": "pause_hidden", "t": True}]), log_batch(events=[{"type": "pause_hidden", "t": -1}]),
+    log_batch(events=[{"type": "waiting", "drift": float("nan")}]),
+    log_batch(events=[{"type": "waiting", "drift": float("inf")}]),
+    log_batch(events=[{"type": "waiting", "t": 10 ** 400}]),
+    log_batch(events=[{"type": "waiting", "hidden": 1}]), log_batch(events=[{"type": "retry_blocked", "err": 4}]),
+    log_batch(events=[{"type": "visibility", "unknown": True}]), log_batch(extra="unknown"),
+])
+def test_log_route_rejects_invalid_without_logging_or_rate_charge(cfg, payload, caplog):
+    from web_helpers import make_app
+    post = endpoint(make_app(cfg), "/api/watch/log", "POST")
+    with caplog.at_level(logging.INFO, logger="auto_short.web.watch"):
+        assert asyncio.run(post(log_request(payload))).status_code == 422
+        assert not [r for r in caplog.records if r.name == "auto_short.web.watch"]
+        assert asyncio.run(post(log_request(log_batch()))).status_code == 200
+
+
+def test_log_route_byte_and_event_boundaries(cfg, caplog):
+    from web_helpers import make_app
+    post = endpoint(make_app(cfg), "/api/watch/log", "POST")
+    # Exact raw bytes count, including whitespace and non-ASCII UTF-8 characters.
+    raw = json.dumps(log_batch(client="máy", events=[{"type": "visibility"}] * 20), ensure_ascii=False).encode()
+    with caplog.at_level(logging.INFO, logger="auto_short.web.watch"):
+        assert asyncio.run(post(log_request(raw + b" " * (2049 - len(raw)), raw=True))).status_code == 422
+        assert asyncio.run(post(log_request(raw + b" " * (2048 - len(raw)), raw=True))).status_code == 200
+    assert len([r for r in caplog.records if r.name == "auto_short.web.watch"]) == 20
+    assert asyncio.run(post(log_request(b"{", raw=True))).status_code == 422
+    assert asyncio.run(post(log_request(b"\xff", raw=True))).status_code == 422
+
+
+def test_log_requires_auth_without_testclient(cfg):
+    from web_helpers import make_app
+    app = make_app(cfg)
+    middleware = next(m.kwargs["dispatch"] for m in app.user_middleware
+                      if m.kwargs.get("dispatch") and m.kwargs["dispatch"].__name__ == "auth_middleware")
+
+    async def protected(request):
+        pytest.fail("unauthenticated diagnostics reached the endpoint")
+
+    assert asyncio.run(middleware(log_request(log_batch()), protected)).status_code == 401
+
+
+def test_http_log_auth_validation_rate_and_records(web, caplog):
+    from web_helpers import login
+    assert web.post("/api/watch/log", json=log_batch()).status_code == 401
+    login(web)
+    assert web.post("/api/watch/log", json=log_batch(events=[])).status_code == 422
+    with caplog.at_level(logging.INFO, logger="auto_short.web.watch"):
+        assert web.post("/api/watch/log", json=log_batch()).status_code == 200
+        assert web.post("/api/watch/log", json=log_batch()).status_code == 429
+    assert len([r for r in caplog.records if r.name == "auto_short.web.watch"]) == 1

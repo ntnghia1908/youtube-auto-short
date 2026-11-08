@@ -78,6 +78,15 @@ Code bị thay / xóa thêm: công tắc Nghe nền, phần tử `<audio>`, ch�
 12. **Hết tập**: khi mục vừa xong là mục cuối của một tập (mục kế thuộc tập khác hoặc hết danh sách), hiện thông báo nổi bật (role="status") "Đã hết Tập N — <tên>" kèm "Tiếp theo: Tập N+1" (khi tự chuyển) hoặc nút "Nghe Tập N+1" (khi tắt tự chuyển / hết danh sách thì "Đã hết danh sách"). Thông báo tự ẩn sau ~8 s hoặc khi bấm. `/watch` dùng cùng logic dựa trên `episode_id` suy từ url mục (danh sách 1 trang thường là 1 tập → "Đã hết danh sách").
 13. Chạy thật: tắt Tự chuyển → hết bài dừng; bật → qua bài; hết tập thấy thông báo; điện thoại chuyển app vẫn nghe (video thường).
 
+### Amendment B (HUMAN LEAD 2026-11-08, Android Chrome, 8080 = WATCH1 `89250f2`)
+
+Bằng chứng: "Tôi nghe trên điện thoại được một lúc thì tự dừng, tôi phải chuyển qua lại web rồi mới nghe tiếp được"; dừng "Giữa chừng một bài". Code hiện tại khi trang ẩn: bỏ qua pause (không báo phòng) + không retry play → phần tử bị trình duyệt dừng sẽ im tới khi trang hiện lại. Nghi: tua đồng bộ (lệch > 1 s) khi trang ẩn, hoặc mất audio focus.
+
+14. Trang ẩn (`visibilityState === "hidden"`): không tua đồng bộ theo lệch vị trí (chỉ áp lệnh rời rạc: đổi bài, play / pause do người khác bấm, tua do người khác bấm — `/watch`), tua bù khi trang hiện lại. Áp cho cả `/watch` và tab Nghe.
+15. Phần tử bị dừng giữa bài khi trang ẩn mà trạng thái mong muốn là đang phát (phòng / tab Nghe): thử `play()` lại sau ~1 s, tối đa 3 lần mỗi lần dừng (giãn 1 / 3 / 10 s); thành công thì thôi.
+16. Nhật ký chẩn đoán: `POST /api/watch/log` (sau login) nhận lô sự kiện ngắn từ client (`pause_hidden`, `retry_ok`, `retry_blocked` + tên lỗi, `seek_skipped_hidden`, `stalled`, `waiting`, `visibility`, `page` = watch | listen, `t` media, độ lệch), ghi một dòng `logging` mỗi sự kiện (giới hạn: ≤ 20 sự kiện / lô, ≤ 2 KB, ≤ 1 lô / 5 s / client, chuỗi đã lọc ký tự điều khiển). Client gom và gửi khi có sự kiện, dùng `sendBeacon` lúc pagehide. Không lưu file mới.
+17. Chạy thật: điện thoại ở app khác ≥ 10 phút; nếu vẫn dừng thì log 8080 cho biết nguyên nhân.
+
 ## Required verification
 
 - `PYTHONPATH=~/projects/yas-listen1/src conda run -n auto-short pytest tests/test_web_listen.py tests/test_web_watch_party.py -q` — AC 1, 2, 9 (phần server).
@@ -149,3 +158,27 @@ Không chạm database / security model / API hiện có → manual test là đi
 - Diff vòng 2 so với `0bc53cf`, không tính contract/Amendment A có sẵn: app **+117 / −201**, test **+68 / −154**, tổng **+185 / −355**.
 - Review / lifecycle: sẵn sàng ORCHESTRATOR review vòng 2; giữ IN_PROGRESS đến khi required verification và chạy thật hoàn tất. Không commit/push/PR, gọi agent khác, gọi mạng thật, thêm dependency hoặc sửa ngoài phạm vi delegation.
 - Known limitation: WATCH1 chỉ có URL/title thì nhãn tập dùng ID gốc; queue gửi từ Nghe có prefix Tập N — tên nên giữ được nhãn đầy đủ. Cache cũ `work/_watch_audio/` trên 8080 do ORCHESTRATOR dọn sau merge như Amendment A.
+
+
+### Vòng 3 — Amendment B (IMPLEMENTER 2026-11-08)
+
+- Baseline: `11027bb`; ORCHESTRATOR báo 88 PASS ngoài sandbox cho vòng 2. Bằng chứng Android Chrome và giả thuyết dừng giữa bài được giữ ở Amendment B; chưa khẳng định nguyên nhân hoặc đã chữa xong trên thiết bị thật.
+- Main changes / files:
+  - `static/player.js`: hidden không seek bù drift, không play lại mỗi poll; initial source/resume vẫn đặt vị trí được. `/watch` truyền cờ remote; player chỉ nhận diện seek khi by khác mình, version đổi và position lệch >1 s so với anchor phòng ngoại suy ở updated_at mới. Đổi auto/rate/anchor theo thời gian bình thường không thành seek. Remote pause/play được áp; khi visible thì sync đầy đủ.
+  - Bỏ hoàn toàn `hiddenPlayBlocked` / `resetRetry` và reset retry mỗi version. Pause không do code khi hidden + desired playing được giữ nguyên desired state (cả listen), không gửi pause lên phòng; lập một chu kỳ thử play ở **1 / 3 / 10 s tính từ pause**, tối đa ba lần. Polling/version thông thường không gia hạn chu kỳ. Hủy timer khi media play thật, desired paused, visible, đổi source, rời tab Nghe/pagehide. Khi play promise thành công nhưng media đã paused trở lại thì không ghi retry_ok hoặc xóa chu kỳ mới.
+  - Log client dùng chung trong player: pause_hidden, retry_ok, retry_blocked (error.name), seek_skipped_hidden (drift), stalled/waiting khi hidden, visibility; có t và hidden. Queue giữ tối đa 20 sự kiện; mỗi batch UTF-8 ≤2048 byte, tối đa một lần mỗi 5 s; sendBeacon pagehide khi đủ nhịp, nếu còn cooldown thì giữ queue/timer thay vì gửi vượt nhịp. Chẩn đoán best effort, không cản phát media. Drift/waiting/stalled trùng được gom theo 5 s.
+  - `routes/watch.py`: POST `/api/watch/log` sau auth hiện có, đọc stream và chặn raw body >2048 byte trước khi nối chunk; strict schema 1–20 events, enum page/type, số hữu hạn (t ≥0, drift có dấu), hidden bool, client/err chuỗi ≤200 ký tự. Lọc ký tự điều khiển/format/line separator; INFO vào logger `auto_short.web.watch`, một dòng JSON/sự kiện, không file mới. Rate limit một batch/5 s/client dùng monotonic + lock, xóa mốc hết hạn, trả 422/429 trước logging; không sửa trạng thái phòng.
+  - `watch.js` / `listen.js` chỉ nối client ID sẵn có, cờ remote và bỏ reset cũ; không nhân đôi logic. `tests/test_web_watch_party.py` bổ sung tests log. `app.js`, HTML/CSS, listen API và **WatchRoom không đổi** (đã kiểm diff).
+- Helper mới (đã tìm trong player/watch/listen và router): `_log_batch` cho validation/sanitize chẩn đoán; `wantsPlay`, `cancelRecovery`, `recover` cho bounded retry; `record`, `scheduleLog`, `flushLog` cho batch/cooldown. Chưa có helper phù hợp các hành vi này; tái dùng client ID của WATCH1, player/suppression/Media Session hiện có và middleware auth, không dependency/module mới.
+- AC → test:
+  - AC14/15: `/tmp/listen1-round3-player.cjs` PASS bằng clock/DOM/media/fetch giả: không hidden drift seek; remote seek chỉ khi đổi version/jump; own change/anchor-only không tua; remote play/pause/đổi bài; visible catch-up; pause hidden giữ desired playing cho watch và listen; retry chính xác các mốc 1/3/10 s, tối đa ba, polling không thêm; success hủy và pause lần sau có chu kỳ mới; desired pause/visible/suspend/source/ended không retry sai.
+  - AC16: `test_log_route_records_sanitized_events_and_limits_rate` kiểm caplog INFO/một dòng, lọc newline/NUL/ESC/U+2028, drift âm, 429 cùng client xuyên page, client khác độc lập, ranh giới 5 s, version phòng không đổi. `test_log_route_rejects_invalid_without_logging_or_rate_charge` (21 ca) kiểm 422 và không ghi/không tính nhịp cho lô sai. `test_log_route_byte_and_event_boundaries` kiểm UTF-8/raw 2048/2049 bytes, 20/21 events, malformed JSON/UTF-8. `test_log_requires_auth_without_testclient` gọi đúng middleware auth hiện hành, xác nhận 401 trước endpoint. Tất cả PASS; thêm `/api/watch/log` vào HTTP auth test và `test_http_log_auth_validation_rate_and_records` chờ ORCHESTRATOR chạy TestClient.
+  - AC16 client: shared smoke kiểm queue20, UTF-8 ≤2 KB, cooldown5 s, page/client, chỉ log waiting/stalled lúc hidden và pagehide beacon. `/tmp/listen1-round3-local.cjs`, `/tmp/listen1-round3-watch.cjs` PASS để kiểm nối với hai trang và giữ auto/hết tập/tim/resume/tabs/cap300/CAS.
+  - AC17: chưa chạy Android ở app khác ≥10 phút. Cần HUMAN LEAD/ORCHESTRATOR nghe thật và đọc logger 8080 nếu còn dừng; mock không chứng minh audio focus/timer Android thực.
+- Verification vòng 3:
+  - `PYTHONPATH=/home/ntnghia/projects/yas-listen1/src conda run --no-capture-output -n auto-short pytest tests/test_web_listen.py tests/test_web_watch_party.py -q -k 'not test_http' -x --tb=short`: **84 passed, 7 deselected in 5.26s** (lần cuối).
+  - `node --check` cho `player.js`, `watch.js`, `listen.js`, `app.js`: **PASS**. `node /tmp/listen1-round3-player.cjs`, `node /tmp/listen1-round3-local.cjs`, `node /tmp/listen1-round3-watch.cjs`: **PASS**.
+  - `git diff --exit-code 11027bb -- src/auto_short/web/watch_party.py`: **PASS, diff rỗng**; `git diff --check`: **PASS**. Không còn hiddenPlayBlocked/resetRetry.
+  - Không chạy TestClient/full suite trong sandbox theo delegation; ORCHESTRATOR chạy ngoài sandbox. Không gọi mạng thật, không chạy 8080/thiết bị trong lượt này.
+- Diff so với `11027bb`, không tính contract/Amendment B có sẵn: app **+197 / −36**, test **+107 / −1**, tổng **+304 / −37**.
+- Review / lifecycle: sẵn sàng ORCHESTRATOR review vòng 3; giữ IN_PROGRESS vì required verification/TestClient và AC17 trên Android chưa hoàn tất cho code mới. Không commit/push/PR, gọi agent khác, thêm dependency hoặc sửa ngoài Owned paths.

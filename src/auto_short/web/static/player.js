@@ -2,11 +2,12 @@
 (() => {
   "use strict";
   window.AutoShortPlayer = class {
-    constructor(prefix, { request, onAction, onNavigate, onFavorite, message, onAuto, getNext = () => this.state?.queue?.[this.state.index + 1] }) {
+    constructor(prefix, { client, request, onAction, onNavigate, onFavorite, message, onAuto, getNext = () => this.state?.queue?.[this.state.index + 1] }) {
       const $ = (name) => document.getElementById(`${prefix}-${name}`);
       this.$ = $; this.request = request; this.onAction = onAction;
       this.onNavigate = onNavigate; this.onFavorite = onFavorite; this.message = message;
       this.video = $("video"); this.getNext = getNext;
+      this.client = client; this.page = prefix; this.events = []; this.lastLogAt = -Infinity; this.logMarks = new Map();
       this.programmed = new Map(); this.sourceKey = null; this.active = true;
       this.receivedAt = 0; this.loading = false; this.state = null;
       const current = this.video;
@@ -18,8 +19,12 @@
       for (const [event, action] of [["play", "play"], ["pause", "pause"], ["seeked", "seek"], ["ratechange", "rate"]]) {
         current.addEventListener(event, () => {
           if (event === "play" || event === "pause") this.updatePlaybackState();
+          if (event === "play") this.cancelRecovery();
           if (!this.active || this.isProgrammed(event) || !this.state?.video_url
               || (event === "pause" && current.ended)) return;
+          if (event === "pause" && document.visibilityState === "hidden" && this.wantsPlay()) {
+            this.record("pause_hidden"); this.recover(); return;
+          }
           this.onAction(action, { position: current.currentTime, ...(action === "rate" ? { rate: current.playbackRate } : {}) });
         });
       }
@@ -28,6 +33,23 @@
         this.notifyEpisodeEnd(this.getNext());
         if ($("auto").checked) this.onNavigate("next");
         else this.onAction("pause", { position: current.currentTime }, true);
+      });
+      for (const event of ["stalled", "waiting"]) current.addEventListener(event, () => {
+        if (this.active && document.visibilityState === "hidden") this.record(event);
+      });
+      document.addEventListener("visibilitychange", () => {
+        if (!this.active) return;
+        this.record("visibility"); this.cancelRecovery();
+        if (document.visibilityState === "hidden") {
+          if (this.wantsPlay() && current.paused && !current.ended && !this.loading) {
+            this.record("pause_hidden"); this.recover();
+          }
+        } else this.sync();
+      });
+      window.addEventListener("pagehide", () => {
+        this.cancelRecovery();
+        if (this.active) this.record("visibility");
+        this.flushLog(true);
       });
       $("auto").addEventListener("change", () => onAuto($("auto").checked));
       $("notice").addEventListener("click", () => this.hideNotice());
@@ -46,8 +68,9 @@
       $("next").addEventListener("click", () => this.onNavigate("next"));
       $("play").addEventListener("click", () => {
         if (!this.active || !this.state?.video_url) return;
+        this.cancelRecovery(); this.allowHiddenPlay = true;
         this.onAction("play", { position: this.loading ? this.targetPosition() : this.media().currentTime }, true);
-        this.resetRetry(); this.playMedia(this.media());
+        this.playMedia(this.media());
       });
     }
     media() { return this.video; }
@@ -105,43 +128,108 @@
       return s.position + (s.paused ? 0 : Math.max(0,
         s.server_time - s.updated_at + (performance.now() - this.receivedAt) / 1000) * s.rate);
     }
-    playMedia(current) {
-      if (!this.active || this.playPending || (document.visibilityState === "hidden" && this.hiddenPlayBlocked)) return;
-      const playMark = this.arm("play", false), attempt = { current, key: this.sourceKey, version: this.state.version };
+    wantsPlay() { return this.active && !!this.state?.video_url && !this.state.paused; }
+    cancelRecovery() {
+      if (this.recovery) this.recovery.timers.forEach(clearTimeout);
+      this.recovery = null;
+    }
+    recover() {
+      if (this.recovery || !this.wantsPlay() || this.video.ended) return;
+      const cycle = { key: this.sourceKey, timers: [] };
+      this.recovery = cycle;
+      // Deadlines from this pause, not a new attempt on each room poll.
+      cycle.timers = [1000, 3000, 10000].map((delay) => setTimeout(() => {
+        if (this.recovery === cycle && cycle.key === this.sourceKey && this.wantsPlay()
+            && document.visibilityState === "hidden" && this.video.paused && !this.video.ended) {
+          this.playMedia(this.video, cycle);
+        }
+      }, delay));
+    }
+    playMedia(current, recovery = null) {
+      if (!this.active || this.playPending) return;
+      const playMark = this.arm("play", false), attempt = { key: this.sourceKey };
       this.playPending = attempt;
-      const stillCurrent = () => this.playPending === attempt && current === this.media() && attempt.key === this.sourceKey;
+      const stillCurrent = () => this.playPending === attempt && attempt.key === this.sourceKey;
       current.play().then(() => {
-        if (stillCurrent()) this.$("play").hidden = true;
-      }).catch(() => {
+        if (!stillCurrent()) return;
+        if (!this.wantsPlay()) { this.arm("pause", true); current.pause(); return; }
+        if (current.paused) return;
+        this.$("play").hidden = true; this.cancelRecovery();
+        if (recovery) this.record("retry_ok");
+      }).catch((error) => {
         if (this.programmed.get("play") === playMark) this.programmed.delete("play");
         if (!stillCurrent()) return;
-        if (document.visibilityState === "hidden" && attempt.version === this.state?.version) this.hiddenPlayBlocked = true;
-        if (this.state?.video_url && !this.state.paused) this.$("play").hidden = false;
+        if (recovery && this.recovery === recovery) this.record("retry_blocked", { err: String(error.name || "Error").slice(0, 80) });
+        if (this.wantsPlay()) this.$("play").hidden = false;
       }).finally(() => { if (this.playPending === attempt) this.playPending = null; });
     }
     sync() {
       const current = this.media(), s = this.state;
       if (!this.active || !s?.video_url || this.loading || !current.readyState || this.syncBlocked) return;
-      const position = this.targetPosition();
-      const target = Math.min(position, Number.isFinite(current.duration) ? current.duration : Infinity);
-      const rate = s.rate, paused = s.paused;
-      if (Math.abs(current.currentTime - target) > 1) {
-        this.arm("seeked", target); current.currentTime = target;
+      const hidden = document.visibilityState === "hidden", explicit = this.seekRequested;
+      const target = Math.min(this.targetPosition(), Number.isFinite(current.duration) ? current.duration : Infinity);
+      const drift = target - current.currentTime;
+      if (Math.abs(drift) > 1) {
+        if (!hidden || explicit) { this.arm("seeked", target); current.currentTime = target; }
+        else this.record("seek_skipped_hidden", { drift: Math.round(drift * 1000) / 1000 });
       }
-      if (current.playbackRate !== rate) { this.arm("ratechange", rate); current.playbackRate = rate; }
-      if (paused) {
+      if ((!hidden || explicit || this.allowHiddenPlay) && current.playbackRate !== s.rate) {
+        this.arm("ratechange", s.rate); current.playbackRate = s.rate;
+      }
+      if (s.paused) {
+        this.cancelRecovery();
         if (!current.paused) { this.arm("pause", true); current.pause(); }
         this.$("play").hidden = !current.paused;
-      } else if (current.paused && !current.ended) this.playMedia(current);
+      } else if (current.paused && !current.ended && (!hidden || this.allowHiddenPlay)) this.playMedia(current);
+      this.seekRequested = false; this.allowHiddenPlay = false;
+    }
+    record(type, extra = {}) {
+      const now = performance.now();
+      if (["seek_skipped_hidden", "waiting", "stalled"].includes(type)) {
+        if (now - (this.logMarks.get(type) ?? -Infinity) < 5000) return;
+        this.logMarks.set(type, now);
+      }
+      const event = { type, hidden: document.visibilityState === "hidden", ...extra };
+      if (Number.isFinite(this.video.currentTime)) event.t = Math.round(this.video.currentTime * 1000) / 1000;
+      this.events.push(event);
+      if (this.events.length > 20) this.events.shift();
+      this.scheduleLog();
+    }
+    scheduleLog() {
+      if (!this.logTimer && this.events.length) this.logTimer = setTimeout(() => {
+        this.logTimer = null; this.flushLog();
+      }, Math.max(0, 5000 - (performance.now() - this.lastLogAt)));
+    }
+    flushLog(beacon = false) {
+      clearTimeout(this.logTimer); this.logTimer = null;
+      if (!this.events.length) return;
+      if (performance.now() - this.lastLogAt < 5000) { this.scheduleLog(); return; }
+      const events = this.events.slice(0, 20), payload = () => JSON.stringify({ client: this.client, page: this.page, events });
+      while (events.length && new TextEncoder().encode(payload()).length > 2048) events.pop();
+      if (!events.length) { this.events.shift(); return; }
+      const body = payload();
+      if (beacon) {
+        if (!navigator.sendBeacon("/api/watch/log", new Blob([body], { type: "application/json" }))) return;
+      } else {
+        fetch("/api/watch/log", { method: "POST", headers: { "Content-Type": "application/json" }, body, keepalive: true }).catch(() => {});
+      }
+      this.lastLogAt = performance.now(); this.events.splice(0, events.length);
+      if (!beacon) this.scheduleLog();
     }
     load() {
       this.loading = true; this.programmed.clear(); this.playPending = null;
       this.video.src = this.state.video_url;
       this.video.load();
     }
-    resetRetry() { this.hiddenPlayBlocked = false; this.playPending = null; }
-    setState(state, sync = true, blocked = false) {
-      if (this.state?.version !== state.version) this.resetRetry();
+    setState(state, sync = true, blocked = false, remote = false) {
+      const previous = this.state;
+      if (previous && remote && previous.version !== state.version) {
+        const expected = previous.position + (previous.paused ? 0 : Math.max(0, state.updated_at - previous.updated_at) * previous.rate);
+        const jumped = Math.abs(state.position - expected) > 1;
+        this.seekRequested ||= jumped;
+        this.allowHiddenPlay ||= !state.paused && (previous.paused || jumped);
+      }
+      if (state.paused || !state.video_url) this.cancelRecovery();
       // A peer may advance the room just before this browser emits its own ended.
       if (this.state && state.index === this.state.index + 1 && this.video.readyState
           && Number.isFinite(this.video.duration) && this.video.currentTime >= this.video.duration - 1) {
@@ -150,7 +238,8 @@
       this.state = state; this.receivedAt = performance.now(); this.syncBlocked = blocked;
       const key = state.video_url ? JSON.stringify([state.index, state.video_url]) : null;
       if (key !== this.sourceKey) {
-        this.sourceKey = key; this.playPending = null;
+        this.cancelRecovery(); this.sourceKey = key; this.playPending = null;
+        this.seekRequested = true; this.allowHiddenPlay = true;
         if (key === null) {
           this.loading = true;
           this.video.pause(); this.video.removeAttribute("src"); this.video.load();
@@ -187,13 +276,17 @@
           navigator.mediaSession.setActionHandler(name, () => {
             if (!this.active || !this.state?.video_url) return;
             if (action === "prev" || action === "next") this.onNavigate(action);
-            else this.onAction(action, { position: this.loading ? this.targetPosition() : this.media().currentTime }, true);
+            else {
+              this.cancelRecovery();
+              if (action === "play") this.allowHiddenPlay = true;
+              this.onAction(action, { position: this.loading ? this.targetPosition() : this.media().currentTime }, true);
+            }
           });
         } catch (_) { /* Unsupported action. */ }
       }
     }
     suspend() {
-      this.active = false;
+      this.active = false; this.cancelRecovery();
       this.video.pause();
       this.hideNotice();
       if ("mediaSession" in navigator) {
@@ -203,6 +296,6 @@
         }
       }
     }
-    activate() { this.active = true; this.resetRetry(); this.render(); }
+    activate() { this.active = true; this.cancelRecovery(); this.render(); }
   };
 })();

@@ -20,7 +20,7 @@
   }
   const episode = (id) => request("GET", null, `/api/episodes/${encodeURIComponent(id)}`);
   const player = new AutoShortPlayer("listen", {
-    request, message, onNavigate: (action) => navigate(action), getNext: () => items[index + 1],
+    client: AutoShortWatch.client, request, message, onNavigate: (action) => navigate(action), getNext: () => items[index + 1],
     onAuto(value) {
       auto = value; write("auto-short-listen-auto", auto);
       if (state) { state = { ...state, auto }; player.setState(state, false); }
@@ -146,10 +146,7 @@
       player.suspend();
     }
   });
-  document.addEventListener("visibilitychange", () => {
-    save();
-    if (document.visibilityState !== "hidden" && player.active) player.resetRetry();
-  });
+  document.addEventListener("visibilitychange", save);
   window.addEventListener("pagehide", save);
 
   // An unbound episode needs only the existing episode API (at most its two kinds).
