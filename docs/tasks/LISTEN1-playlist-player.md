@@ -262,6 +262,15 @@ Không chạm database / security model / API hiện có → manual test là đi
 - Diff so với `d7c969e`, không tính contract/Amendment D có sẵn: app **+311 / −101**, test **+120 / −0**, tổng **+431 / −101**.
 - Review / lifecycle: sẵn sàng ORCHESTRATOR review vòng 5; giữ IN_PROGRESS tới khi required verification/code mới và AC27 thực tế được hoàn tất. Không commit/push/PR, gọi agent khác, thêm dependency hoặc sửa ngoài Owned paths.
 
+### Amendment I (HUMAN LEAD 2026-11-08, chạy thật `fdd6d39`) — chưa làm
+
+Bằng chứng: "1,2 đều ổn nhưng chữ trên nút bị tệp màu ko thấy" (thẻ đè video: PASS AC 28 / 31 vị trí). "Khi sử dụng playlist ở yêu thích càng về sau video càng nhiều như vậy tôi sẽ không thể nào coi được hết nên có cách phân ra nhiều [phần] và nên thêm có chức năng chọn bài trong playlist của yêu thích". Cỡ phần: "10-15 bài khai thị, short 30-40 shorts vì short nhiều hơn khai thị, nếu cả hai thì 3,5 tập lớn" → ORCHESTRATOR chốt giữa khoảng: lọc chỉ khai thị 12 bài / phần; chỉ Short 35 bài / phần; cả hai: 4 tập / phần (bài yêu thích của 4 tập liền nhau có bài yêu thích).
+
+42. Sửa: chữ của nút / select trong thẻ đè video (nền tối) đủ tương phản (cả `.btn` thường và `.btn.primary`), mọi trang dùng khối `listen-*`.
+43. **Yêu thích chia phần** (thay "một danh sách liên tục" của AC 39) theo bộ lọc hiện tại (Short / Khai thị / cả hai — bộ lọc sẵn có): cỡ phần như trên, hằng số một chỗ. Danh sách chỉ hiện bài của phần đang phát, tiêu đề "Phần k · …"; **bấm một bài → phát bài đó** (như AC 23). Ô chọn phần ở vị trí ô chọn tập ("Phần 1 (Tập 1–4)" / "Phần 1 (bài 1–35)"). Tự chuyển / đếm ngược trong phần; hết phần → dừng + thẻ "Đã hết Phần k" với nút "Nghe Phần k+1" + chọn phần khác — tái dùng cơ chế biên tập AC 31 (phần là "nhóm" thay cho tập; không nhân đôi code). Đổi bộ lọc → chia lại, giữ bài đang phát. Chế độ phòng (Xem chung từ Yêu thích) dùng cùng nhóm phần, đồng bộ hai máy.
+44. **Nhớ chỗ nghe** ở Yêu thích (như tab Nghe: `localStorage`, bài + vị trí): mở lại trang → về đúng bài / phần. Nhận diện bằng bài (episode_id + clip), không bằng số thứ tự.
+45. Chạy thật: Android Chrome — chữ nút đọc được; Yêu thích thấy phần, bấm bài được, hết phần thấy thẻ hỏi, mở lại trang nghe tiếp đúng chỗ.
+
 ### Amendment H (HUMAN LEAD 2026-11-08) — chưa làm, làm sau G
 
 Bằng chứng: "Trang yêu thích gồm những video được thả tim cũng nên chuyển sang dạng xem playlist giống vậy luôn". Owned paths bổ sung (ORCHESTRATOR theo yêu cầu này): `src/auto_short/web/static/favorites.html`, `src/auto_short/web/static/favorites.js`, route / API yêu thích trong `src/auto_short/web/app.py` nếu cần thêm field (url / code) cho trình phát, test tương ứng.
