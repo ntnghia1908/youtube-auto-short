@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: FEATURE
 - Change class: S1
 - Owner: HUMAN LEAD
@@ -74,33 +74,27 @@
 
 Không chạm database / security model; thêm 1 route GET sau đăng nhập (cùng cơ chế session hiện có). Manual test là điểm danh.
 
-- [ ] Trên điện thoại / PC: trang Yêu thích Vô Lượng Thọ → bộ lọc Khai thị → chọn Phần 1 → tải zip, mở được, 15 file đánh số + danh-sach.txt.
+- [x] (ORCHESTRATOR, 8080 2026-11-09; HUMAN LEAD kiểm lại trên điện thoại khi tiện) Trên điện thoại / PC: trang Yêu thích Vô Lượng Thọ → bộ lọc Khai thị → chọn Phần 1 → tải zip, mở được, 15 file đánh số + danh-sach.txt.
 
 ## Result
 
-- Main changes: route GET kiểm toàn bộ item trước stream, giữ thứ tự client; helper tên zip; control chọn phần + link tải theo `groupFavorites`; tests mới. Chỉ sửa Owned paths. **Chưa READY**: route hợp lệ hiện thiếu shared `zip_body` (còn nested trong `files_catchall.build`).
-- Tests (Codex, Python `/home/ntnghia/miniconda3/envs/auto-short/bin/python`, `PYTHONPATH=src`):
-  - `python -m pytest -q tests/test_web_favorites_zip.py -k 'name or download_controls' -x --tb=short`: **4 PASS**.
-  - `python -m pytest -q tests/test_web_favorites_zip.py -k invalid -x --tb=short`: **17 PASS**.
-  - `python -m pytest -q tests/test_web_listen.py -k 'not http' -x --tb=short`: **24 PASS**.
-  - `python -m pytest -q tests/test_archive_zips.py -k 'not web_auth' -x --tb=short`: **34 PASS** (source hiện tại, không patch).
-  - `node --check src/auto_short/web/static/listen.js`, Python import `files` / `favorites_zip_name`, `git diff --check`: PASS.
-  - `python -m pytest -q tests/test_web_favorites_zip.py -x --tb=short`: **FAIL** (3 PASS, 1 FAIL: ImportError `zip_body`, đúng blocker ownership dưới đây).
-  - `timeout 20 python -m pytest -q tests/test_web_compilation.py tests/test_archive_zips.py -x --tb=short`: **timeout 124**, TestClient trong sandbox; không claim PASS.
-  - Candidate chưa áp dụng: `/tmp/favzip1-files-catchall.patch` mở rộng `_zip_stream` nhận bytes + đưa `zip_body` ra module, sửa hai caller cũ. `/tmp/favzip1-verify-candidate.py` nạp candidate trong bộ nhớ rồi chạy hai file `test_web_favorites_zip.py` + `test_archive_zips.py`, `-k 'not web_auth'`: **60 PASS**, 2 deselected; không phải kết quả mã worktree hiện tại.
-- AC → test (các tên dưới thuộc `tests/test_web_favorites_zip.py`):
+- Main changes: route `GET /files/playlists/{pid}/favorites.zip` kiểm toàn bộ item (yêu thích hiện tại, dùng được, không trùng, `filter` / `part` hợp lệ) trước khi stream, giữ thứ tự `items`; `zip_body` chuyển ra cấp module trong `files_catchall.py` và `_zip_stream` nhận thêm entry bytes (`danh-sach.txt`), hai caller cũ giữ hành vi; helper tên `favorites_zip_name` (`review/names.py`); control chọn phần + link "Tải phần này (.zip)" theo `AutoShortPlayer.groupFavorites` (`listen.js`, `favorites.html`). Không đánh dấu "Đã đăng" / không track. Chỉ sửa Owned paths (`files_catchall.py` bổ sung vào Owned paths 2026-11-09).
+- IMPLEMENTER: Codex (1 vòng, dừng ở blocker ownership `files_catchall.py`); ORCHESTRATOR áp dụng phần `zip_body` / `_zip_stream` sau khi bổ sung Owned paths, review diff, chạy test web + full suite.
+- Tests (`PYTHONPATH=src`, conda `auto-short`):
+  - `pytest -q tests/test_web_favorites_zip.py tests/test_web_compilation.py tests/test_archive_zips.py`: **81 PASS** (chạy lại 2026-11-09 16:5x VN trên `763f31f`).
+  - Full suite: **4334 PASS** (phiên trước, trên `763f31f`; không chạy lại phiên này).
+- AC → test (`tests/test_web_favorites_zip.py` trừ khi ghi khác):
 
   | AC | Test | Trạng thái |
   |---|---|---|
-  | AC1 | `test_favorites_zip_name`, `test_local_zip_order_manifest_and_no_publication_or_tracking`, `test_web_auth_and_favorites_zip` | Tên PASS; local chỉ PASS với candidate; HTTP chờ ORCHESTRATOR |
-  | AC2 | `test_stored_short_zip_integrity_and_unavailable` (up/down/sha) | PASS với candidate |
-  | AC3 | `test_invalid_favorites_zip_rejected_before_stream`, `test_kept_favorite_and_missing_kept_file`, `test_web_auth_and_favorites_zip` | Validation PASS; kept PASS với candidate; HTTP chờ ORCHESTRATOR |
-  | AC4 | `test_local_zip_order_manifest_and_no_publication_or_tracking`, `test_web_auth_and_favorites_zip` | Local PASS với candidate; HTTP chờ ORCHESTRATOR |
-  | AC5 | `test_download_controls_use_grouped_favorites` | Node harness PASS; kiểm tay 8080 chờ ORCHESTRATOR |
+  | AC1 | `test_favorites_zip_name`, `test_local_zip_order_manifest_and_no_publication_or_tracking`, `test_web_auth_and_favorites_zip` | PASS |
+  | AC2 | `test_stored_short_zip_integrity_and_unavailable` | PASS |
+  | AC3 | `test_invalid_favorites_zip_rejected_before_stream`, `test_kept_favorite_and_missing_kept_file`, `test_web_auth_and_favorites_zip` | PASS |
+  | AC4 | `test_local_zip_order_manifest_and_no_publication_or_tracking`, `test_web_auth_and_favorites_zip` | PASS |
+  | AC5 | `test_download_controls_use_grouped_favorites` + kiểm tay 8080 | PASS |
 
-- Diff + / − (app, test): `git diff --numstat`: app **+89 / −2** (`names.py` +8/0, `files.py` +55/−2, `favorites.html` +4/0, `listen.js` +22/0); test mới chưa tracked: `git diff --no-index --numstat /dev/null tests/test_web_favorites_zip.py`: **+195 / −0**. Không gồm candidate ngoài repo và task contract.
-- Helper mới (đã tìm, lý do không tái dùng): đã chạy `rg -n 'def (zip_body|favorites_zip_name|timecode)|_zip_stream|groupFavorites' src/auto_short tests/test_web_listen.py` và đọc `names.py`, `compilations.py`, `files_catchall.py`. `favorites_zip_name`: tên phần Yêu thích chưa có, dùng lại `clean_part` / `truncate_utf8` / `MAX_SERIES_BYTES`; `renderDownloadParts`: dựng select/href mới từ `groupFavorites`, không sao chép kích thước phần. Fixture `favorite_zip` dùng lại `prepared_shorts`, `make_app`, `MemoryShortStore`, `run_player_js`; không tạo helper chung mới.
-- Review: self-review diff/AC hoàn tất; ORCHESTRATOR review + web/full suite chưa chạy.
-- Important findings / decisions: `files_catchall.py` không có trong Owned paths, nhưng `_zip_stream` cần thêm bytes entry cho `danh-sach.txt`; đã hỏi mở rộng tối thiểu ownership, chưa nhận xác nhận. Chưa sửa file này hoặc tự đổi Owned paths. Patch cụ thể đã chuẩn bị ở `/tmp/favzip1-files-catchall.patch`; ORCHESTRATOR cần cho phép và áp dụng trước khi route hợp lệ dùng được.
-- Known limitations: thiếu helper trong worktree; required web/full suite + manual chưa PASS. Giữ status IN_PROGRESS, không claim READY.
-- PR: không commit / push / PR theo chỉ thị; không gọi agent khác hoặc mạng thật.
+- AC5 kiểm tay (8080 restart lên `763f31f` lúc 16:39 VN 2026-11-09, sau khi hàng đợi Codex dịch bài chạy hết): dữ liệu `/api/playlists/PLOynZc0cJJfA3FSfw_GxZ7uG2cGdDwRR_/listen?favorites=1` + `groupFavorites` thật (`player.js`, bộ lọc Khai thị) → 7 phần ("Phần 1 (bài 1–15)" … "Phần 7 (bài 91–104)"); tải Phần 1: HTTP 200 `application/zip`, tên `Kinh Vô Lượng Thọ_YeuThich_KhaiThị_Phan1.zip`, 1,10 GB; `zipfile.testzip()` OK, ZIP_STORED; 15 entry `01_T7_KT02_…mp4` … `15_T18_KT01_…mp4` đúng thứ tự phát; `danh-sach.txt` dòng đầu "Kinh Vô Lượng Thọ — Phần 1 — Khai thị — Tổng thời lượng: 1:16:58" + 15 dòng `NN. <code> — <tiêu đề>`. Nút trên giao diện chưa bấm bằng trình duyệt thật (link dựng bằng cùng code `listen.js`).
+- Diff + / − (`git diff --numstat 68e4463 HEAD -- src tests`): app **+105 / −13** (`names.py` +8/0, `files.py` +55/−2, `files_catchall.py` +16/−11, `favorites.html` +4/0, `listen.js` +22/0); test mới **+195 / −0**.
+- Helper mới: `favorites_zip_name` (tên phần Yêu thích chưa có; dùng lại `clean_part` / `truncate_utf8` / `MAX_SERIES_BYTES`), `renderDownloadParts` (UI, dựng từ `groupFavorites`, không sao chép kích thước phần). `zip_body` / `_zip_stream` tái dùng, chỉ chuyển ra cấp module (không còn bản nested).
+- Known limitations: chưa có ca Short trên kho 3090 trong lần kiểm tay (AC2 chỉ test tự động).
+- PR: xem nhánh `feature/favzip1`.
