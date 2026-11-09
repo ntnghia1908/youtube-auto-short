@@ -3,22 +3,26 @@
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter
 from fastapi import Query
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from starlette.background import BackgroundTask
 
 from ...compilation import CID_RE as CID_RE
+from ...compilation import Item
 from ...compilation import store as comp_store
+from ...compilation.meta import timecode
 from ...post import export as post_export
 from ...review import content_disposition
-from ...review.names import posts_docx_name
+from ...review.names import download_name, favorites_zip_name, posts_docx_name
 from ...titling.playlist import stored_series as playlist_series
 from .. import episodes as ep
 from ..context import WebContext
+from ..compilations import MAX_BODY_ITEMS
 from ..urls import valid_playlist_id
 
 DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -86,6 +90,55 @@ def build(ctx: WebContext) -> APIRouter:
         return _docx_response(playlist_series(doc) or doc.get("title") or playlist_id, episodes,
                               posts_docx_name(None, series=ctx.playlist_docx_series(doc), fallback=playlist_id,
                                               span=span, images=with_images), with_images)
+
+    @router.get("/files/playlists/{playlist_id}/favorites.zip")
+    def favorites_zip(playlist_id: str, items: str = "", filter: str = "", part: str = ""):
+        doc = ctx.playlist_or_404(playlist_id)
+        if doc is None:
+            return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
+        if filter not in {"both", "short", "khaithi"} or not re.fullmatch(r"[1-9][0-9]*", part):
+            return JSONResponse({"detail": "filter hoặc part không hợp lệ"}, status_code=400)
+        try:
+            part_number = int(part)
+        except ValueError:
+            return JSONResponse({"detail": "part không hợp lệ"}, status_code=400)
+        raw = items.split(",")
+        if not items or len(raw) > MAX_BODY_ITEMS:
+            return JSONResponse({"detail": "items rỗng hoặc quá nhiều mục"}, status_code=400)
+        by_item = ctx.compilations._lookup(doc)
+        favorites = set(ctx.compilations.favorites(playlist_id))
+        picked, seen = [], set()
+        for value in raw:
+            pair = value.split("/")
+            if len(pair) != 2 or not ep.valid_episode_id(pair[0]) or not ep.valid_clip_id(pair[1]):
+                return JSONResponse({"detail": "item không hợp lệ"}, status_code=400)
+            item = Item(*pair)
+            clip = by_item.get(item)
+            if item in seen or item not in favorites or clip is None or (filter != "both" and clip.kind != filter):
+                return JSONResponse({"detail": "item bị trùng, không còn yêu thích hoặc không dùng được"}, status_code=400)
+            seen.add(item)
+            picked.append(clip)
+        series = ctx.compilations.series_of(doc)
+        duration = timecode(sum(c.manifest_duration for c in picked)) \
+            if all(c.manifest_duration is not None for c in picked) else "không rõ"
+        kind = {"both": "Short + Khai thị", "short": "Short", "khaithi": "Khai thị"}[filter]
+        heading = " ".join((series or doc.get("title") or playlist_id).split())
+        lines = [f"{heading} — Phần {part_number} — {kind} — Tổng thời lượng: {duration}"]
+        entries = []
+        for n, clip in enumerate(picked, 1):
+            name = download_name(clip.label, clip.number, clip.total, clip.title, khaithi=clip.kind == "khaithi")
+            entries.append((clip.item.clip, clip.path, f"{n:02d}_{name}"))
+            title = " ".join((clip.title or "").split())
+            lines.append(f"{n:02d}. {clip.code} — {title}")
+        entries.append(("list", ("\n".join(lines) + "\n").encode("utf-8"), "danh-sach.txt"))
+        from .files_catchall import zip_body
+
+        body = zip_body(ctx, entries)
+        if isinstance(body, Response):
+            return body
+        return StreamingResponse(body, media_type="application/zip", headers={
+            "Content-Disposition": content_disposition(favorites_zip_name(part_number, filter=filter, series=series)),
+            "Cache-Control": "no-store"})
 
     @router.get("/files/playlists/{playlist_id}/compilations/{name}")
     def compilation_file(playlist_id: str, name: str):
