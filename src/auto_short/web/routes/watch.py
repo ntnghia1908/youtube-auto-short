@@ -19,7 +19,7 @@ from ..watch_party import WatchConflict, WatchRoom
 
 log = logging.getLogger("auto_short.web.watch")
 LOG_TYPES = {"pause_hidden", "retry_ok", "retry_blocked", "seek_skipped_hidden", "stalled", "waiting", "visibility",
-             "retry_gave_up", "pip_enter", "pip_leave", "pip_unsupported"}
+             "retry_gave_up", "pip_enter", "pip_leave", "pip_unsupported", "to_audio", "to_video", "hidden_advance", "video_resync", "freeze", "resume", "audio_fallback", "early_start", "early_blocked"}
 
 
 def _log_batch(raw: bytes) -> dict:
@@ -38,7 +38,7 @@ def _log_batch(raw: bytes) -> dict:
         raise ValueError("client / page / events không hợp lệ")
     cleaned = []
     for event in events:
-        if not isinstance(event, dict) or "type" not in event or set(event) - {"type", "t", "drift", "err", "hidden"}:
+        if not isinstance(event, dict) or "type" not in event or set(event) - {"type", "t", "drift", "err", "hidden", "rs", "ns"}:
             raise ValueError("sự kiện không hợp lệ")
         item = {"type": clean(event["type"])}
         if item["type"] not in LOG_TYPES:
@@ -49,6 +49,11 @@ def _log_batch(raw: bytes) -> dict:
                 if type(value) not in (int, float) or not math.isfinite(value) or (key == "t" and value < 0):
                     raise ValueError(f"{key} không hợp lệ")
                 item[key] = value
+        for key, maximum in (("rs", 4), ("ns", 3)):
+            if key in event:
+                if type(event[key]) is not int or not 0 <= event[key] <= maximum:
+                    raise ValueError(f"{key} không hợp lệ")
+                item[key] = event[key]
         if "err" in event:
             item["err"] = clean(event["err"])
         if "hidden" in event:

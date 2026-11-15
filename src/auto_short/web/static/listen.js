@@ -43,6 +43,73 @@
   }
   const curItems = () => inRoom ? (rstate?.queue || []) : items;
   const curIndex = () => inRoom ? (rstate?.index ?? -1) : index;
+  const titleViews = new Map();
+  const editedTitles = new Map(); // Local overrides for room queue snapshots, keyed by the playing URL.
+  let titleKey = null, titleSequence = 0, titleOpen = false, titleEditor = null;
+
+  function renderTitleEditor() {
+    const host = $("title-editor"), item = inRoom ? all.find((i) => i.video_url === rstate?.video_url) : items[index];
+    if (!host) return; // The room-only /watch shell has no editor.
+    const key = item ? JSON.stringify([item.episode_id, item.clip_id]) : null;
+    if (key === titleKey) return;
+    titleKey = key; ++titleSequence;
+    titleEditor?.dispose(); titleEditor = null;
+    host.replaceChildren(); host.hidden = !key;
+    if (!key) { titleOpen = false; return; }
+    const button = document.createElement("button");
+    button.type = "button"; button.className = "btn small"; button.textContent = "Sửa tiêu đề";
+    host.append(button);
+    async function openEditor() {
+      const sequence = ++titleSequence;
+      titleOpen = true; button.disabled = true;
+      try {
+        const cached = titleViews.get(item.episode_id);
+        if (!cached || performance.now() - cached.at > 5000) {
+          const entry = { pending: episode(item.episode_id), at: performance.now() };
+          titleViews.set(item.episode_id, entry);
+          entry.pending.catch(() => { if (titleViews.get(item.episode_id) === entry) titleViews.delete(item.episode_id); });
+        }
+        const view = await titleViews.get(item.episode_id).pending;
+        if (sequence !== titleSequence || key !== titleKey) return;
+        const short = view.shorts?.find((s) => s.clip_id === item.clip_id);
+        if (!short?.editable || short.deleted) { host.hidden = true; return; }
+        const busy = (job) => ["queued", "running"].includes(job?.status);
+        titleEditor = window.AutoShort.titleEditor(short, {
+          episodeId: item.episode_id, locked: () => busy(view.job) || busy(view.restore_job),
+          maxChars: view.max_title_chars || 60, open: true,
+          onToggle(open) {
+            titleOpen = open;
+            if (!open) {
+              titleViews.delete(item.episode_id);
+              titleEditor?.dispose(); titleEditor = null;
+              host.replaceChildren(button); button.disabled = false;
+            }
+          },
+          onSaved(result, title) {
+            view.job = result.job || { status: "queued" };
+            titleViews.delete(item.episode_id);
+            editedTitles.set(item.video_url, title);
+            // Update labels only: render jobs may return a new URL; the playing source stays intact.
+            for (const entry of [...all, ...items]) if (same(entry, item)) entry.title = title;
+            if (state?.video_url === item.video_url) state.title = title;
+            if (rstate) {
+              for (const entry of rstate.queue || []) if ((entry.url || entry.video_url) === item.video_url) entry.title = title;
+              if (rstate.video_url === item.video_url) rstate.title = title;
+            }
+            if (player.state?.video_url === item.video_url) player.state.title = title;
+            $("queue").dataset.signature = "";
+            player.updateSession(); renderCurrent(false);
+          },
+        });
+        host.replaceChildren(titleEditor);
+      } catch (error) {
+        if (sequence !== titleSequence) return;
+        button.disabled = false; message(error.message);
+      }
+    }
+    button.addEventListener("click", openEditor);
+    if (titleOpen) openEditor();
+  }
 
   const cancelPause = () => { clearTimeout(pauseTimer); pauseTimer = null; player.syncBlocked = false; };
   const hiddenPause = () => player.inPiP() ? false : roomHidden || player.isHidden() || performance.now() - lastHiddenAt < 1500;
@@ -51,7 +118,7 @@
   const player = new AutoShortPlayer("listen", {
     client: W.client, request, message,
     getItems: curItems,
-    getNext: () => curItems()[curIndex() + 1],
+    getNext: () => curItems()[(player.state?.index ?? curIndex()) + 1],
     onNavigate: (action) => inRoom ? roomNavigate(action) : navigate(action),
     onGroup(id) {
       if (inRoom) {
@@ -83,6 +150,15 @@
     },
   });
   const roomEnded = (position) => { cancelPause(); roomCommand("ended", { expect_version: rstate.version, position }, true).catch(() => {}); };
+  const roomHiddenAdvance = (version) => {
+    cancelPause(); rstate = player.state; // Follow the optimistic index while the command is in flight.
+    renderCurrent(false);
+    roomCommand("next", { expect_version: version }, true).catch(async () => {
+      // command() polls on 409 while still pending; accept authoritative state after that queue drains.
+      await W.sent();
+      if (inRoom) await W.poll(true);
+    });
+  };
   const roomAdvance = () => roomCommand("advance_now", { expect_version: rstate.version }, true).catch(() => {});
   const roomCancel = () => roomCommand("cancel_advance", { expect_version: rstate.version }, true).catch(() => {});
   function roomNavigate(action) {
@@ -120,7 +196,7 @@
     const item = currentItem;
     if (inRoom || !storageKey || !item || !started || player.loading) return;
     write(storageKey, { episode_id: item.episode_id, clip_id: item.clip_id,
-      position: Number.isFinite(player.media().currentTime) ? player.media().currentTime : 0 });
+      position: Number.isFinite(player.position()) ? player.position() : 0 });
   }
   function renderJump() {
     const eps = player.groups(), signature = JSON.stringify(eps);
@@ -159,6 +235,8 @@
   }
   if (favPid) $("download-part")?.addEventListener("change", renderDownloadParts);
   function renderCurrent(scrollItem = true) {
+    renderTitleEditor();
+    if (document.visibilityState === "hidden") return;
     const list = curItems(), i = curIndex(), item = list[i];
     $("lecture").textContent = item?.ep_title || "";
     $("meta").textContent = item && (item.ep_label || item.ep_index) ? `${epLabel(item)} · ${kindLabel(item)} ${item.number || "—"} / ${item.total || "—"}` : "";
@@ -189,7 +267,7 @@
       fav: item?.fav || null, index, version: ++version, paused: !autoplay,
       position, rate: 1, server_time: 0, updated_at: 0 };
     player.setState(state); renderCurrent(!scroll);
-    if (autoplay) player.playMedia(player.media());
+    if (autoplay && player.media().paused) player.playMedia(player.media());
     message(item ? "" : "Chưa có mục đã render trong lựa chọn này.");
     if (scroll) player.scrollToVideo();
   }
@@ -199,7 +277,7 @@
     if (next >= 0 && next < items.length) choose(next, true);
     else if (action === "next") {
       save();
-      state = { ...state, paused: true, position: player.media().currentTime, server_time: 0, updated_at: 0 };
+      state = { ...state, paused: true, position: player.position(), server_time: 0, updated_at: 0 };
       player.setState(state); renderCurrent();
     }
   }
@@ -224,8 +302,11 @@
     inRoom = on; W.room.active = on;
     W.room.handler = roomHandler; W.room.message = message; W.room.onVersion = cancelPause;
     player.onEnded = on ? roomEnded : undefined;
+    player.onHiddenAdvance = on ? roomHiddenAdvance : undefined;
     player.onAdvance = on ? roomAdvance : undefined;
     player.onCancelAdvance = on ? roomCancel : undefined;
+    renderTitleEditor();
+    player.visibilityChanged();
     $("filter").hidden = on; $("watch").hidden = on; $("resume").hidden = on || $("resume").hidden;
     $("end").hidden = !on; $("viewers").hidden = !on; $("invite").hidden = !on;
     if (on) showInvite(); else { cancelPause(); rstate = null; lastRoomIndex = -1; }
@@ -233,6 +314,11 @@
   }
   function roomHandler(data, force) {
     if (!data.video_url && !shell && items.length) { exitRoom(); return; }
+    for (const entry of data.queue || []) {
+      const url = entry.url || entry.video_url;
+      if (editedTitles.has(url)) entry.title = editedTitles.get(url);
+    }
+    if (editedTitles.has(data.video_url)) data.title = editedTitles.get(data.video_url);
     const scroll = data.index !== lastRoomIndex; lastRoomIndex = data.index;
     rstate = data;
     if (favPid) {
@@ -265,7 +351,7 @@
     pruningRoom = true;
     try {
       await roomCommand("set", { queue: grouped, index: queue.findIndex((entry) => entry.url === current),
-        position: player.loading ? player.targetPosition() : player.media().currentTime,
+        position: player.loading ? player.targetPosition() : player.position(),
         paused: rstate.paused, rate: rstate.rate }, true);
     } catch (error) { message(error.message); }
     finally { pruningRoom = false; }
@@ -273,7 +359,7 @@
   // Back to solo at the item / position the room was on.
   function exitRoom() {
     const last = rstate, playing = !player.media().paused;
-    const position = player.loading || !Number.isFinite(player.media().currentTime) ? (last?.position || 0) : player.media().currentTime;
+    const position = player.loading || !Number.isFinite(player.position()) ? (last?.position || 0) : player.position();
     setRoomMode(false);
     let found = last ? items.findIndex((item) => item.video_url === last.video_url) : -1;
     if (found < 0) found = index >= 0 ? index : startingIndex();
@@ -287,7 +373,7 @@
       // The whole list (AC 35); above the room cap send a window that still holds the playing item.
       const from = items.length > ROOM_MAX ? Math.max(0, Math.min(index - ROOM_MAX / 2, items.length - ROOM_MAX)) : 0;
       const queue = items.slice(from, from + ROOM_MAX).map(roomEntry);
-      const position = player.loading ? state.position : player.media().currentTime;
+      const position = player.loading ? state.position : player.position();
       setRoomMode(true);
       await roomCommand("set", { queue, index: index - from, position, paused: state.paused }, true);
       await roomCommand("auto", { auto }, true);
@@ -314,7 +400,7 @@
   });
 
   $("filter").querySelectorAll("[data-kind]").forEach((button) => button.addEventListener("click", () => {
-    const previous = items[index], position = player.media().currentTime;
+    const previous = items[index], position = player.position();
     const playing = player.active && !!state && !player.media().paused;
     save(); filter = button.dataset.kind; write("auto-short-listen-filter", filter); renderFilter();
     rebuildItems();
@@ -322,7 +408,8 @@
     choose(retained < 0 ? startingIndex() : retained, playing, retained < 0 ? 0 : position);
   }));
   $("jump").addEventListener("change", () => player.onGroup($("jump").value));
-  player.video.addEventListener("timeupdate", () => {
+  for (const audio of player.audios) audio.addEventListener("timeupdate", () => {
+    if (audio !== player.media()) return;
     if (performance.now() - lastSave > 3000) { lastSave = performance.now(); save(); }
   });
   function switchTab(name) {
@@ -330,7 +417,7 @@
     else {
       save();
       if (state && !inRoom) {
-        state = { ...state, paused: true, position: player.loading ? state.position : player.media().currentTime,
+        state = { ...state, paused: true, position: player.loading ? state.position : player.position(),
           server_time: 0, updated_at: 0 };
         player.setState(state, false);
       }
