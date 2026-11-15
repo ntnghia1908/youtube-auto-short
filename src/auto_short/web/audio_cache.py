@@ -8,7 +8,7 @@ import threading
 from pathlib import Path
 
 from ..config import Config
-from ..render.stage import RenderError, _run
+from ..render.stage import RenderError, _run, probe_media
 from ..store.client import StoreClient, StoreMismatch
 from .episodes import StoredShort
 
@@ -30,14 +30,42 @@ def _prune(root: Path, keep: Path) -> None:
             total -= stat.st_size
 
 
+def _concat_pad(media: Path, audio: Path) -> bool:
+    """Encode only the silent prefix, copying the first AAC stream unchanged."""
+    try:
+        stream = probe_media(media, _run)["audio"]
+        if not stream or stream.get("codec_name") != "aac":
+            return False
+        rate, channels = int(stream["sample_rate"]), int(stream["channels"])
+        if rate <= 0 or channels <= 0:
+            return False
+        layout = stream.get("channel_layout") or f"{channels}c"
+        prefix = ["ffmpeg", "-nostdin", "-hide_banner", "-v", "error", "-y"]
+        tmp = audio.parent
+        commands = [
+            prefix + ["-f", "lavfi", "-i", f"anullsrc=r={rate}:cl={layout}",
+                      "-t", str(AUDIO_PAD), "-c:a", "aac", "-b:a", "128k", str(tmp / "pad.m4a")],
+            prefix + ["-i", str(media), "-map", "0:a:0", "-vn", "-c:a", "copy", str(tmp / "source.m4a")],
+            prefix + ["-f", "concat", "-safe", "0", "-i", str(tmp / "concat.txt"),
+                      "-map", "0:a:0", "-c", "copy", "-movflags", "+faststart", str(audio)],
+        ]
+        (tmp / "concat.txt").write_text("file 'pad.m4a'\nfile 'source.m4a'\n", encoding="utf-8")
+        for cmd in commands:
+            if _run(cmd).returncode:
+                return False
+        return audio.is_file() and 0 < audio.stat().st_size <= MAX_BYTES
+    except (RenderError, ValueError, KeyError, TypeError):
+        return False
+
+
 def cached_audio(config: Config, episode_id: str, clip_id: str, source: Path | StoredShort) -> Path:
-    """Encode AAC with leading silence; only complete files become visible to FileResponse."""
+    """Prepend silence to AAC; only complete files become visible to FileResponse."""
     if isinstance(source, StoredShort):
         version = f"{source.sha256}:{source.size}"
     else:
         stat = source.stat()
         version = f"{source.resolve()}:{stat.st_size}:{stat.st_mtime_ns}:{stat.st_ctime_ns}"
-    key = hashlib.sha256(f"{episode_id}:{clip_id}:{version}:aac128-pad{AUDIO_PAD}".encode()).hexdigest()
+    key = hashlib.sha256(f"{episode_id}:{clip_id}:{version}:concat-pad{AUDIO_PAD}".encode()).hexdigest()
     root = Path(config.workspace.dir) / "_audio_cache"
     root.mkdir(parents=True, exist_ok=True)
     target = root / f"{episode_id}.{clip_id}.{key}.m4a"
@@ -65,10 +93,13 @@ def cached_audio(config: Config, episode_id: str, clip_id: str, source: Path | S
                 finally:
                     stream.close()
             audio = tmp / "audio.m4a"
-            proc = _run(["ffmpeg", "-nostdin", "-hide_banner", "-v", "error", "-y", "-i", str(media),
-                         "-map", "0:a:0", "-vn", "-af", f"adelay={round(AUDIO_PAD * 1000)}:all=1",
-                         "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(audio)])
-            if proc.returncode or not audio.is_file() or not 0 < audio.stat().st_size <= MAX_BYTES:
+            if not _concat_pad(media, audio):
+                proc = _run(["ffmpeg", "-nostdin", "-hide_banner", "-v", "error", "-y", "-i", str(media),
+                             "-map", "0:a:0", "-vn", "-af", f"adelay={round(AUDIO_PAD * 1000)}:all=1",
+                             "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(audio)])
+                if proc.returncode:
+                    raise RenderError("không tách được audio của Short")
+            if not audio.is_file() or not 0 < audio.stat().st_size <= MAX_BYTES:
                 raise RenderError("không tách được audio của Short")
             with _prune_lock:
                 audio.replace(target)
