@@ -2,12 +2,17 @@
 (() => {
   "use strict";
   window.AutoShortPlayer = class AutoShortPlayer {
-    constructor(prefix, { client, request, onAction, onNavigate, onFavorite, message, onAuto, onEnded, onAdvance, onCancelAdvance, onGroup, getItems = () => this.state?.queue || [], getNext = () => this.state?.queue?.[this.state.index + 1] }) {
+    constructor(prefix, { client, request, onAction, onNavigate, onFavorite, message, onAuto, onEnded, onHiddenAdvance, onAdvance, onCancelAdvance, onGroup, getItems = () => this.state?.queue || [], getNext = () => this.state?.queue?.[this.state.index + 1] }) {
       const $ = (name) => document.getElementById(`${prefix}-${name}`);
       this.$ = $; this.request = request; this.onAction = onAction;
       this.onNavigate = onNavigate; this.onFavorite = onFavorite; this.message = message;
       this.video = $("video"); this.getNext = getNext; this.getItems = getItems; this.onGroup = onGroup;
+      this.audio = document.createElement("audio");
+      this.audio.hidden = true; this.audio.preload = "metadata";
+      $("controls").append(this.audio);
+      this.currentMedia = this.video;
       this.onEnded = onEnded; this.onAdvance = onAdvance; this.onCancelAdvance = onCancelAdvance;
+      this.onHiddenAdvance = onHiddenAdvance;
       this.client = client; this.page = prefix; this.events = []; this.lastLogAt = -Infinity; this.logMarks = new Map();
       this.programmed = new Map(); this.sourceKey = null; this.active = true;
       this.receivedAt = 0; this.loading = false; this.state = null;
@@ -15,39 +20,58 @@
       this.hiddenRun = this.isHidden() ? { attempts: 0, flat: 0, gaveUp: false, skipped: false } : null;
       this.progressChecks = new Set();
       this.setupPiP();
-      const current = this.video;
-      current.addEventListener("loadedmetadata", () => {
-        if (!this.state?.video_url) return;
-        this.loading = false;
-        this.sync();
-      });
-      for (const [event, action] of [["play", "play"], ["pause", "pause"], ["seeked", "seek"], ["ratechange", "rate"]]) {
-        current.addEventListener(event, () => {
-          if (event === "play" || event === "pause") this.updatePlaybackState();
-          if (event === "play") this.cancelRecovery();
-          if (!this.active || this.isProgrammed(event) || !this.state?.video_url
-              || (event === "pause" && current.ended)) return;
-          if (event === "pause" && this.isHidden() && this.wantsPlay()) {
-            this.record("pause_hidden"); this.recover(); return;
+      for (const current of [this.video, this.audio]) {
+        current.addEventListener("loadedmetadata", () => {
+          if (current !== this.media() || !this.state?.video_url) return;
+          this.loading = false;
+          this.sync();
+        });
+        for (const [event, action] of [["play", "play"], ["pause", "pause"], ["seeked", "seek"], ["ratechange", "rate"]]) {
+          current.addEventListener(event, () => {
+            if (current !== this.media()) return;
+            if (event === "play" || event === "pause") this.updatePlaybackState();
+            if (event === "play") this.cancelRecovery();
+            if (!this.active || this.isProgrammed(event) || !this.state?.video_url
+                || (event === "pause" && current.ended)) return;
+            if (event === "pause" && this.isHidden() && this.wantsPlay()) {
+              this.record("pause_hidden");
+              if (current === this.video) this.switchMedia(this.audio);
+              else this.recover();
+              return;
+            }
+            if (action === "play" || action === "seek") this.hideNotice();
+            this.onAction(action, { position: current.currentTime, ...(action === "rate" ? { rate: current.playbackRate } : {}) });
+          });
+        }
+        current.addEventListener("ended", () => {
+          if (current !== this.media() || !this.active || !current.ended || this.loading || !this.state?.video_url || this.finishedKey === this.sourceKey) return;
+          this.finishedKey = this.endedKey = this.sourceKey;
+          this.cancelRecovery(); this.clearProgressChecks();
+          const next = this.getNext();
+          if (this.isHidden() && this.state.auto && next) {
+            this.record("hidden_advance");
+            if (this.onEnded) {
+              const previous = this.state;
+              const now = previous.server_time + (performance.now() - this.receivedAt) / 1000;
+              // Use the server's queue index + URL so its acknowledgement does not reload the audio.
+              this.setState({ ...previous, ...next, index: previous.index + 1,
+                video_url: next.url || next.video_url, title: next.title, fav: next.fav || null,
+                position: 0, paused: false, finished: false, advance_at: null, updated_at: now, server_time: now }, true, this.syncBlocked);
+              this.onHiddenAdvance(previous.version);
+            } else this.onNavigate("next");
+            return;
           }
-          if (action === "play" || action === "seek") this.hideNotice();
-          this.onAction(action, { position: current.currentTime, ...(action === "rate" ? { rate: current.playbackRate } : {}) });
+          if (this.onEnded) this.onEnded(current.currentTime);
+          else {
+            this.onAction("pause", { position: current.currentTime }, true);
+            this.localAdvanceAt = !this.isHidden() && this.state.auto && this.nextInGroup() ? performance.now() + 3000 : null;
+          }
+          this.renderAdvance(); this.scrollToVideo();
+        });
+        for (const event of ["stalled", "waiting"]) current.addEventListener(event, () => {
+          if (current === this.media() && this.active && this.isHidden()) this.record(event);
         });
       }
-      current.addEventListener("ended", () => {
-        if (!this.active || !current.ended || this.loading || !this.state?.video_url || this.finishedKey === this.sourceKey) return;
-        this.finishedKey = this.endedKey = this.sourceKey;
-        this.cancelRecovery(); this.clearProgressChecks();
-        if (this.onEnded) this.onEnded(current.currentTime);
-        else {
-          this.onAction("pause", { position: current.currentTime }, true);
-          this.localAdvanceAt = this.state.auto && this.nextInGroup() ? performance.now() + 3000 : null;
-        }
-        this.renderAdvance(); this.scrollToVideo();
-      });
-      for (const event of ["stalled", "waiting"]) current.addEventListener(event, () => {
-        if (this.active && this.isHidden()) this.record(event);
-      });
       document.addEventListener("visibilitychange", () => this.visibilityChanged());
       window.addEventListener("pagehide", () => {
         this.cancelRecovery(); this.clearProgressChecks();
@@ -86,10 +110,12 @@
       if (!this.active) return;
       this.record("visibility");
       if (hidden) {
-        if (this.wantsPlay() && this.video.paused && !this.video.ended && !this.loading) {
+        if (this.wantsPlay() && !this.media().ended) this.switchMedia(this.audio);
+        if (this.wantsPlay() && this.media().paused && !this.media().ended && !this.loading) {
           this.record("pause_hidden"); this.recover();
         }
-      } else this.sync();
+      } else if (this.media() === this.audio) this.switchMedia(this.video);
+      else this.sync();
     }
     setupPiP() {
       this.pipSupported = !!document.pictureInPictureEnabled
@@ -131,7 +157,34 @@
       } catch (_) { this.message("Không mở được màn hình nhỏ / toàn màn hình. Hãy thử lại từ nút trên video."); }
       finally { this.pipBusy = false; this.pipButton.disabled = !this.state?.video_url; }
     }
-    media() { return this.video; }
+    media() { return this.currentMedia; }
+    selectMedia(next) {
+      const previous = this.media();
+      if (previous === next) return;
+      this.cancelRecovery(); this.clearProgressChecks(); this.playPending = null; this.programmed.clear();
+      this.record(next === this.audio ? "to_audio" : "to_video");
+      this.currentMedia = next;
+      this.arm("pause", true, previous); previous.pause();
+    }
+    switchMedia(next) {
+      const previous = this.media();
+      if (previous === next || !this.state?.video_url) return;
+      const position = this.loading ? this.targetPosition() : previous.currentTime;
+      const rate = this.loading ? this.state.rate : previous.playbackRate;
+      // Rebase the solo clock at the actual media position; background playback may have drifted.
+      if (!this.onEnded) {
+        Object.assign(this.state, { position, rate, server_time: 0, updated_at: 0 });
+        this.receivedAt = performance.now();
+      }
+      this.selectMedia(next);
+      this.seekRequested = this.allowHiddenPlay = true;
+      if (next.getAttribute("src") !== this.state.video_url) this.load();
+      else this.loading = !next.readyState;
+      this.arm("seeked", position); next.currentTime = position;
+      this.arm("ratechange", rate); next.playbackRate = rate;
+      if (this.wantsPlay()) this.playMedia(next);
+      this.updatePlaybackState();
+    }
     static heading(entry) { return entry ? `${entry.code ? entry.code + " — " : ""}${entry.title || "Video"}` : ""; }
     static duration(seconds) {
       if (!Number.isFinite(seconds) || seconds < 0) return "—";
@@ -187,7 +240,7 @@
       const members = [];
       items.forEach((entry, n) => { if ((this.group(entry)?.id ?? null) === key) members.push(n); });
       const label = here?.label;
-      const signature = JSON.stringify([key, label, members, items.map((e) => e.code || e.title || e.url || "")]);
+      const signature = JSON.stringify([key, label, members, items.map((e) => [e.code, e.title, e.url])]);
       if (container.dataset.signature !== signature) {
         container.dataset.signature = signature;
         const head = document.createElement("p"), list = document.createElement("ol");
@@ -294,8 +347,8 @@
       if (left <= 0 && !this.onEnded) { this.hideNotice(); this.onNavigate("next"); return; }
       this.advanceTimer = setTimeout(() => this.renderAdvance(), 200);
     }
-    arm(event, value) {
-      const mark = { value, until: performance.now() + 5000 };
+    arm(event, value, media = this.media()) {
+      const mark = { value, media, until: performance.now() + 5000 };
       this.programmed.set(event, mark); return mark;
     }
     isProgrammed(event) {
@@ -306,7 +359,7 @@
         return event !== "play" || marked;
       }
       const mark = this.programmed.get(event);
-      if (!mark) return false;
+      if (!mark || mark.media !== this.media()) return false;
       const current = this.media();
       const actual = event === "seeked" ? current.currentTime : event === "ratechange" ? current.playbackRate : current.paused;
       const matches = typeof actual === "number" ? Math.abs(actual - mark.value) < (event === "ratechange" ? .001 : 1) : actual === mark.value;
@@ -336,7 +389,7 @@
       const timer = setTimeout(() => {
         this.progressChecks.delete(timer);
         if (this.hiddenRun !== run || run.gaveUp || !this.isHidden() || key !== this.sourceKey || !this.wantsPlay()) return;
-        const progressed = this.video.currentTime > started;
+        const progressed = this.media().currentTime > started;
         run.flat = progressed ? 0 : run.lastFlat === number - 1 ? run.flat + 1 : 1;
         run.lastFlat = progressed ? null : number;
         if (run.flat >= 2) this.giveUpRetry();
@@ -346,14 +399,14 @@
     recover() {
       if (!this.isHidden() || !this.hiddenRun || this.hiddenRun.gaveUp) return;
       if (this.hiddenRun.attempts >= 6) { this.giveUpRetry(); return; }
-      if (this.recovery || !this.wantsPlay() || this.video.ended) return;
+      if (this.recovery || !this.wantsPlay() || this.media().ended) return;
       const cycle = { key: this.sourceKey, timers: [] };
       this.recovery = cycle;
       // Deadlines from this pause, not a new attempt on each room poll.
       cycle.timers = [1000, 3000, 10000].map((delay) => setTimeout(() => {
         if (this.recovery === cycle && cycle.key === this.sourceKey && this.wantsPlay()
-            && this.isHidden() && this.video.paused && !this.video.ended) {
-          this.playMedia(this.video, cycle);
+            && this.isHidden() && this.media().paused && !this.media().ended) {
+          this.playMedia(this.media(), cycle);
         }
       }, delay));
     }
@@ -367,8 +420,9 @@
       }
       const playMark = this.arm("play", false), attempt = { key: this.sourceKey, number: run?.attempts };
       this.playPending = attempt;
-      const stillCurrent = () => this.playPending === attempt && attempt.key === this.sourceKey;
+      const stillCurrent = () => this.playPending === attempt && attempt.key === this.sourceKey && current === this.media();
       current.play().then(() => {
+        if (current !== this.media()) { this.arm("pause", true, current); current.pause(); return; }
         if (!stillCurrent()) return;
         if (!this.wantsPlay()) { this.arm("pause", true); current.pause(); return; }
         if (recovery && this.hiddenRun === run && !run.gaveUp) {
@@ -391,7 +445,9 @@
     }
     sync() {
       const current = this.media(), s = this.state;
-      if (!this.active || !s?.video_url || this.loading || !current.readyState || this.syncBlocked) return;
+      if (!this.active || !s?.video_url || this.syncBlocked) return;
+      if (s.paused && !current.paused) { this.arm("pause", true); current.pause(); }
+      if (this.loading || !current.readyState) return;
       const hidden = this.isHidden(), explicit = this.seekRequested;
       const target = Math.min(this.targetPosition(), Number.isFinite(current.duration) ? current.duration : Infinity);
       const drift = target - current.currentTime;
@@ -420,7 +476,7 @@
         this.logMarks.set(type, now);
       }
       const event = { type, hidden: this.isHidden(), ...extra };
-      if (Number.isFinite(this.video.currentTime)) event.t = Math.round(this.video.currentTime * 1000) / 1000;
+      if (Number.isFinite(this.media().currentTime)) event.t = Math.round(this.media().currentTime * 1000) / 1000;
       this.events.push(event);
       if (this.events.length > 20) this.events.shift();
       this.scheduleLog();
@@ -448,8 +504,15 @@
     }
     load() {
       this.loading = true; this.programmed.clear(); this.playPending = null;
-      this.video.src = this.state.video_url;
-      this.video.load();
+      if (this.isHidden() && this.wantsPlay()) this.selectMedia(this.audio);
+      else if (!this.isHidden()) this.selectMedia(this.video);
+      const current = this.media();
+      current.src = this.state.video_url;
+      current.load();
+      this.arm("seeked", this.state.position); current.currentTime = this.state.position;
+      this.arm("ratechange", this.state.rate); current.playbackRate = this.state.rate;
+      // Keep play() inside the ended / Media Session handler even before metadata arrives.
+      if (current === this.audio && this.wantsPlay()) this.playMedia(current);
     }
     setState(state, sync = true, blocked = false, remote = false) {
       const previous = this.state, oldKey = this.sourceKey, advanced = this.endedKey != null && this.endedKey === oldKey;
@@ -473,10 +536,15 @@
         this.seekRequested = true; this.allowHiddenPlay = true;
         if (key === null) {
           this.loading = true;
-          this.video.pause(); this.video.removeAttribute("src"); this.video.load();
+          for (const current of [this.video, this.audio]) {
+            this.arm("pause", true, current); current.pause(); current.removeAttribute("src"); current.load();
+          }
           this.hideNotice();
         } else this.load();
-      } else if (sync) this.sync();
+      } else if (sync) {
+        if (this.isHidden() && this.wantsPlay() && this.media() === this.video) this.switchMedia(this.audio);
+        else this.sync();
+      }
       if (!state.auto && this.localAdvanceAt != null) this.localAdvanceAt = null;
       this.render(); this.renderAdvance();
       // Track changed after the end of a track (auto or "Phát ngay"): bring the video back into view.
@@ -516,6 +584,7 @@
               this.hideNotice(); this.cancelRecovery();
               if (action === "play") this.allowHiddenPlay = true;
               this.onAction(action, { position: this.loading ? this.targetPosition() : this.media().currentTime }, true);
+              if (action === "play") this.playMedia(this.media());
             }
           });
         } catch (_) { /* Unsupported action. */ }
@@ -523,7 +592,7 @@
     }
     suspend() {
       this.active = false; this.cancelRecovery(); this.clearProgressChecks();
-      this.video.pause();
+      for (const current of [this.video, this.audio]) { this.arm("pause", true, current); current.pause(); }
       this.hideNotice();
       if ("mediaSession" in navigator) {
         navigator.mediaSession.playbackState = "none";
@@ -532,6 +601,6 @@
         }
       }
     }
-    activate() { this.active = true; this.cancelRecovery(); this.render(); this.renderAdvance(); }
+    activate() { this.active = true; this.cancelRecovery(); this.visibilityChanged(); this.render(); this.renderAdvance(); }
   };
 })();

@@ -519,18 +519,20 @@ def test_log_route_byte_and_event_boundaries(cfg, caplog):
     assert asyncio.run(post(log_request(b"\xff", raw=True))).status_code == 422
 
 
-def test_log_route_accepts_pip_and_retry_cap_events(cfg, caplog):  # LISTEN1 AC18/19
+def test_log_route_accepts_pip_and_retry_cap_events(cfg, caplog):  # LISTEN1 AC18/19; LISTEN2 AC9
     from web_helpers import make_app
     post = endpoint(make_app(cfg), "/api/watch/log", "POST")
     events = [{"type": "retry_gave_up", "t": 24.575, "hidden": True},
               {"type": "pip_enter", "hidden": False}, {"type": "pip_leave", "hidden": True}]
     events += [{"type": "pip_unsupported", "err": reason} for reason in ("insecure", "disabled", "api-missing")]
+    events += [{"type": name, "t": 31.25, "hidden": name != "to_video"}
+               for name in ("to_audio", "to_video", "hidden_advance")]
     with caplog.at_level(logging.INFO, logger="auto_short.web.watch"):
-        assert asyncio.run(post(log_request(log_batch(events=events)))).status_code == 200
+        assert asyncio.run(post(log_request(log_batch(page="listen", events=events)))).status_code == 200
     records = [r for r in caplog.records if r.name == "auto_short.web.watch"]
     assert len(records) == len(events)
     assert [json.loads(r.getMessage().removeprefix("player ")) for r in records] == [
-        {"client": "phone", "page": "watch", **event} for event in events]
+        {"client": "phone", "page": "listen", **event} for event in events]
 
 
 def test_log_requires_auth_without_testclient(cfg):

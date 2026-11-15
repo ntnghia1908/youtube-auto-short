@@ -43,6 +43,68 @@
   }
   const curItems = () => inRoom ? (rstate?.queue || []) : items;
   const curIndex = () => inRoom ? (rstate?.index ?? -1) : index;
+  const titleViews = new Map();
+  let titleKey = null, titleSequence = 0, titleOpen = false, titleEditor = null;
+
+  function renderTitleEditor() {
+    const host = $("title-editor"), item = items[index];
+    if (!host) return; // The room-only /watch shell has no editor.
+    const key = !inRoom && item ? JSON.stringify([item.episode_id, item.clip_id]) : null;
+    if (key === titleKey) return;
+    titleKey = key; ++titleSequence;
+    titleEditor?.dispose(); titleEditor = null;
+    host.replaceChildren(); host.hidden = !key;
+    if (!key) { titleOpen = false; return; }
+    const button = document.createElement("button");
+    button.type = "button"; button.className = "btn small"; button.textContent = "Sửa tiêu đề";
+    host.append(button);
+    async function openEditor() {
+      const sequence = ++titleSequence;
+      titleOpen = true; button.disabled = true;
+      try {
+        const cached = titleViews.get(item.episode_id);
+        if (!cached || performance.now() - cached.at > 5000) {
+          const entry = { pending: episode(item.episode_id), at: performance.now() };
+          titleViews.set(item.episode_id, entry);
+          entry.pending.catch(() => { if (titleViews.get(item.episode_id) === entry) titleViews.delete(item.episode_id); });
+        }
+        const view = await titleViews.get(item.episode_id).pending;
+        if (sequence !== titleSequence || key !== titleKey || inRoom) return;
+        const short = view.shorts?.find((s) => s.clip_id === item.clip_id);
+        if (!short?.editable || short.deleted) { host.hidden = true; return; }
+        const busy = (job) => ["queued", "running"].includes(job?.status);
+        titleEditor = window.AutoShort.titleEditor(short, {
+          episodeId: item.episode_id, locked: () => busy(view.job) || busy(view.restore_job),
+          maxChars: view.max_title_chars || 60, open: true,
+          onToggle(open) {
+            titleOpen = open;
+            if (!open) {
+              titleViews.delete(item.episode_id);
+              titleEditor?.dispose(); titleEditor = null;
+              host.replaceChildren(button); button.disabled = false;
+            }
+          },
+          onSaved(result, title) {
+            view.job = result.job || { status: "queued" };
+            titleViews.delete(item.episode_id);
+            // Update labels only: render jobs may return a new URL; the playing source stays intact.
+            for (const entry of [...all, ...items]) if (same(entry, item)) entry.title = title;
+            if (!inRoom && same(currentItem, item)) {
+              state.title = title; player.state.title = title;
+              $("queue").dataset.signature = "";
+              player.updateSession(); renderCurrent(false);
+            }
+          },
+        });
+        host.replaceChildren(titleEditor);
+      } catch (error) {
+        if (sequence !== titleSequence) return;
+        button.disabled = false; message(error.message);
+      }
+    }
+    button.addEventListener("click", openEditor);
+    if (titleOpen) openEditor();
+  }
 
   const cancelPause = () => { clearTimeout(pauseTimer); pauseTimer = null; player.syncBlocked = false; };
   const hiddenPause = () => player.inPiP() ? false : roomHidden || player.isHidden() || performance.now() - lastHiddenAt < 1500;
@@ -82,6 +144,15 @@
     },
   });
   const roomEnded = (position) => { cancelPause(); roomCommand("ended", { expect_version: rstate.version, position }, true).catch(() => {}); };
+  const roomHiddenAdvance = (version) => {
+    cancelPause(); rstate = player.state; // Follow the optimistic index while the command is in flight.
+    renderCurrent(false);
+    roomCommand("next", { expect_version: version }, true).catch(async () => {
+      // command() polls on 409 while still pending; accept authoritative state after that queue drains.
+      await W.sent();
+      if (inRoom) await W.poll(true);
+    });
+  };
   const roomAdvance = () => roomCommand("advance_now", { expect_version: rstate.version }, true).catch(() => {});
   const roomCancel = () => roomCommand("cancel_advance", { expect_version: rstate.version }, true).catch(() => {});
   function roomNavigate(action) {
@@ -138,6 +209,8 @@
     $("jump").disabled = !eps.length;
   }
   function renderCurrent(scrollItem = true) {
+    renderTitleEditor();
+    if (document.visibilityState === "hidden") return;
     const list = curItems(), i = curIndex(), item = list[i];
     $("lecture").textContent = item?.ep_title || "";
     $("meta").textContent = item && (item.ep_label || item.ep_index) ? `${epLabel(item)} · ${kindLabel(item)} ${item.number || "—"} / ${item.total || "—"}` : "";
@@ -202,8 +275,11 @@
     inRoom = on; W.room.active = on;
     W.room.handler = roomHandler; W.room.message = message; W.room.onVersion = cancelPause;
     player.onEnded = on ? roomEnded : undefined;
+    player.onHiddenAdvance = on ? roomHiddenAdvance : undefined;
     player.onAdvance = on ? roomAdvance : undefined;
     player.onCancelAdvance = on ? roomCancel : undefined;
+    renderTitleEditor();
+    player.visibilityChanged();
     $("filter").hidden = on; $("watch").hidden = on; $("resume").hidden = on || $("resume").hidden;
     $("end").hidden = !on; $("viewers").hidden = !on; $("invite").hidden = !on;
     if (on) showInvite(); else { cancelPause(); rstate = null; lastRoomIndex = -1; }
@@ -300,7 +376,8 @@
     choose(retained < 0 ? startingIndex() : retained, playing, retained < 0 ? 0 : position);
   }));
   $("jump").addEventListener("change", () => player.onGroup($("jump").value));
-  player.video.addEventListener("timeupdate", () => {
+  for (const media of [player.video, player.audio]) media.addEventListener("timeupdate", () => {
+    if (media !== player.media()) return;
     if (performance.now() - lastSave > 3000) { lastSave = performance.now(); save(); }
   });
   function switchTab(name) {

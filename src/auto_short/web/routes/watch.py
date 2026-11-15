@@ -19,7 +19,7 @@ from ..watch_party import WatchConflict, WatchRoom
 
 log = logging.getLogger("auto_short.web.watch")
 LOG_TYPES = {"pause_hidden", "retry_ok", "retry_blocked", "seek_skipped_hidden", "stalled", "waiting", "visibility",
-             "retry_gave_up", "pip_enter", "pip_leave", "pip_unsupported"}
+             "retry_gave_up", "pip_enter", "pip_leave", "pip_unsupported", "to_audio", "to_video", "hidden_advance"}
 
 
 def _log_batch(raw: bytes) -> dict:
