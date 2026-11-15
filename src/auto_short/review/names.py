@@ -79,6 +79,14 @@ def zip_name(episode: str, *, khaithi: bool = False, series: str | None = None, 
     return f"{head}_Tập{episode}_{kind}.zip" if head else f"Tập{episode}_{kind}.zip"
 
 
+def favorites_zip_name(part: int, *, filter: str, series: str | None = None) -> str:
+    """FAVZIP1: ``[<series>_]YeuThich_<kind>_Phan<N>.zip`` for a client-selected part."""
+    kind = {"short": "Shorts", "khaithi": "KhaiThị", "both": "Shorts+KhaiThị"}[filter]
+    head = truncate_utf8(clean_part(series), MAX_SERIES_BYTES)
+    tail = f"YeuThich_{kind}_Phan{part}.zip"
+    return f"{head}_{tail}" if head else tail
+
+
 def posts_docx_name(episode: str | None, *, series: str | None = None, fallback: str = "bai-dang",
                     span: str | None = None, images: bool = True) -> str:
     """CP8.31 P16: ``[<series>_]Tập<episode>_BaiDang.docx`` (one video); ``span`` (A1: ``"1-10"``, or ``"chưa rõ"``

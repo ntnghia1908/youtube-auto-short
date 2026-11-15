@@ -75,6 +75,7 @@
           item.fav.favorite = favorite;
           if (favorite) removedFavorites.delete(item.video_url); else removedFavorites.add(item.video_url);
         }
+        renderDownloadParts();
         window.dispatchEvent(new Event("favorites-changed"));
       }
       if (inRoom) return W.poll(true);
@@ -137,6 +138,26 @@
     if (here) $("jump").value = here.id;
     $("jump").disabled = !eps.length;
   }
+  function renderDownloadParts() {
+    if (!favPid || !$("download")) return;
+    const grouped = AutoShortPlayer.groupFavorites(all.filter((item) => item.fav?.favorite && item.usable !== false
+      && item.video_url && (filter === "both" || item.kind === filter)), filter);
+    const parts = [...new Map(grouped.map((item) => [item.group.id, item.group])).values()];
+    const pick = $("download-part"), previous = pick.value;
+    pick.replaceChildren(...parts.map((part) => {
+      const option = document.createElement("option"); option.value = part.id; option.textContent = part.choice; return option;
+    }));
+    pick.value = parts.some((part) => part.id === previous) ? previous : (parts[0]?.id || "");
+    $("download").hidden = !parts.length;
+    const members = grouped.filter((item) => item.group.id === pick.value);
+    if (!members.length) { $("download-link").removeAttribute("href"); return; }
+    const params = new URLSearchParams({
+      items: members.map((item) => `${item.episode_id}/${item.clip_id}`).join(","), filter,
+      part: String(parts.findIndex((part) => part.id === pick.value) + 1),
+    });
+    $("download-link").href = `/files/playlists/${encodeURIComponent(favPid)}/favorites.zip?${params}`;
+  }
+  if (favPid) $("download-part")?.addEventListener("change", renderDownloadParts);
   function renderCurrent(scrollItem = true) {
     const list = curItems(), i = curIndex(), item = list[i];
     $("lecture").textContent = item?.ep_title || "";
@@ -151,6 +172,7 @@
       $("next").disabled = !item || index === items.length - 1;
     }
     renderJump();
+    renderDownloadParts();
     player.renderGroupList($("queue"), list, i, (n) => {
       if (inRoom) { player.hideNotice(); roomCommand("goto", { index: n }, true).then(() => player.scrollToVideo()).catch(() => {}); }
       else choose(n, true, 0, true);

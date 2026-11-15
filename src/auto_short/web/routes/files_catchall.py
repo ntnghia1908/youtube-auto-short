@@ -44,11 +44,15 @@ class _ZipSink(io.RawIOBase):
         return data
 
 
-def _zip_stream(files: list[tuple[str, Path | ep.StoredShort, str]], *, client=None):
+def _zip_stream(files: list[tuple[str, Path | ep.StoredShort | bytes, str]], *, client=None):
     """Entries named like the single downloads (X1); non-ASCII names get the zip UTF-8 flag (bit 11)."""
     sink = _ZipSink()
     with zipfile.ZipFile(sink, "w", compression=zipfile.ZIP_STORED) as zf:
         for _clip_id, path, name in files:
+            if isinstance(path, bytes):
+                zf.writestr(name, path)
+                yield sink.drain()
+                continue
             if isinstance(path, ep.StoredShort):
                 info = zipfile.ZipInfo(name, time.localtime(path.mtime_ns / 1_000_000_000)[:6])
                 info.compress_type = zipfile.ZIP_STORED
@@ -79,6 +83,15 @@ def _zip_stream(files: list[tuple[str, Path | ep.StoredShort, str]], *, client=N
     yield sink.drain()
 
 
+def zip_body(ctx: WebContext, items):
+    if not any(isinstance(p, ep.StoredShort) for _, p, _ in items):
+        return _zip_stream(items)
+    client = StoreClient.from_config(ctx.config.store)
+    if not ctx.config.store.enabled or not client.available():
+        return JSONResponse({"detail": "3090 đang tắt"}, status_code=503)
+    return _zip_stream(items, client=client)
+
+
 def build(ctx: WebContext) -> APIRouter:
     router = APIRouter()
 
@@ -93,14 +106,6 @@ def build(ctx: WebContext) -> APIRouter:
         response = _files_response(episode_id, name, download, archive_mode, request)
         return response if archive_mode else ctx.tracked(dl, response)
 
-    def zip_body(items):
-        if not any(isinstance(p, ep.StoredShort) for _, p, _ in items):
-            return _zip_stream(items)
-        client = StoreClient.from_config(ctx.config.store)
-        if not ctx.config.store.enabled or not client.available():
-            return JSONResponse({"detail": "3090 đang tắt"}, status_code=503)
-        return _zip_stream(items, client=client)
-
     def _files_response(episode_id: str, name: str, download: str | None, archive: bool,
                         request: Request | None) -> Response:
         if not ep.valid_episode_id(episode_id):
@@ -109,7 +114,7 @@ def build(ctx: WebContext) -> APIRouter:
             items = [(cid, p, n) for cid, p, n in ep.short_locations(ctx.config, episode_id) or [] if p is not None]
             if not items:
                 return JSONResponse({"detail": "chưa có Short nào"}, status_code=404)
-            body = zip_body(items)
+            body = zip_body(ctx, items)
             if isinstance(body, Response):
                 return body
             # CP8.31 D1 (reverses CP8.17 D3): a zip ticks "Đã đăng" for every Short it contains (current file)
@@ -123,7 +128,7 @@ def build(ctx: WebContext) -> APIRouter:
             if both is None:
                 return JSONResponse({"detail": "cần có cả Short và khai thị đã dựng"}, status_code=404)
             items, zip_file_name = both
-            body = zip_body(items)
+            body = zip_body(ctx, items)
             if isinstance(body, Response):
                 return body
             if not archive:  # ARC1: archival downloads neither publish nor track the zip.
