@@ -44,12 +44,13 @@
   const curItems = () => inRoom ? (rstate?.queue || []) : items;
   const curIndex = () => inRoom ? (rstate?.index ?? -1) : index;
   const titleViews = new Map();
+  const editedTitles = new Map(); // Local overrides for room queue snapshots, keyed by the playing URL.
   let titleKey = null, titleSequence = 0, titleOpen = false, titleEditor = null;
 
   function renderTitleEditor() {
-    const host = $("title-editor"), item = items[index];
+    const host = $("title-editor"), item = inRoom ? all.find((i) => i.video_url === rstate?.video_url) : items[index];
     if (!host) return; // The room-only /watch shell has no editor.
-    const key = !inRoom && item ? JSON.stringify([item.episode_id, item.clip_id]) : null;
+    const key = item ? JSON.stringify([item.episode_id, item.clip_id]) : null;
     if (key === titleKey) return;
     titleKey = key; ++titleSequence;
     titleEditor?.dispose(); titleEditor = null;
@@ -69,7 +70,7 @@
           entry.pending.catch(() => { if (titleViews.get(item.episode_id) === entry) titleViews.delete(item.episode_id); });
         }
         const view = await titleViews.get(item.episode_id).pending;
-        if (sequence !== titleSequence || key !== titleKey || inRoom) return;
+        if (sequence !== titleSequence || key !== titleKey) return;
         const short = view.shorts?.find((s) => s.clip_id === item.clip_id);
         if (!short?.editable || short.deleted) { host.hidden = true; return; }
         const busy = (job) => ["queued", "running"].includes(job?.status);
@@ -87,13 +88,17 @@
           onSaved(result, title) {
             view.job = result.job || { status: "queued" };
             titleViews.delete(item.episode_id);
+            editedTitles.set(item.video_url, title);
             // Update labels only: render jobs may return a new URL; the playing source stays intact.
             for (const entry of [...all, ...items]) if (same(entry, item)) entry.title = title;
-            if (!inRoom && same(currentItem, item)) {
-              state.title = title; player.state.title = title;
-              $("queue").dataset.signature = "";
-              player.updateSession(); renderCurrent(false);
+            if (state?.video_url === item.video_url) state.title = title;
+            if (rstate) {
+              for (const entry of rstate.queue || []) if ((entry.url || entry.video_url) === item.video_url) entry.title = title;
+              if (rstate.video_url === item.video_url) rstate.title = title;
             }
+            if (player.state?.video_url === item.video_url) player.state.title = title;
+            $("queue").dataset.signature = "";
+            player.updateSession(); renderCurrent(false);
           },
         });
         host.replaceChildren(titleEditor);
@@ -287,6 +292,11 @@
   }
   function roomHandler(data, force) {
     if (!data.video_url && !shell && items.length) { exitRoom(); return; }
+    for (const entry of data.queue || []) {
+      const url = entry.url || entry.video_url;
+      if (editedTitles.has(url)) entry.title = editedTitles.get(url);
+    }
+    if (editedTitles.has(data.video_url)) data.title = editedTitles.get(data.video_url);
     const scroll = data.index !== lastRoomIndex; lastRoomIndex = data.index;
     rstate = data;
     if (favPid) {

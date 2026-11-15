@@ -188,6 +188,7 @@ def test_listen_and_watch_share_one_module():  # AC 30 / 31 / 34 (static guard)
         html = (static / page).read_text()
         assert 'id="listen-video"' in html and "/static/listen.js" in html and "/static/player.js" in html
     assert 'id="watch-video"' not in (static / "watch.html").read_text()
+    assert 'id="listen-title-editor"' not in (static / "watch.html").read_text()
     for page in ("episode.html", "favorites.html"):
         html = (static / page).read_text()
         assert html.count('id="listen-title-editor"') == 1
@@ -268,7 +269,8 @@ const $ = (name) => {
 };
 const documentEvents = {};
 global.document = {visibilityState: "visible", pictureInPictureEnabled: false,
-  getElementById: id => $(id.replace(/^listen-/, "")), createElement: tag => new Element(tag),
+  getElementById: id => id === "listen-title-editor" && location.pathname === "/watch" ? null : $(id.replace(/^listen-/, "")),
+  createElement: tag => new Element(tag),
   createTextNode: text => {const e = new Element("text"); e.textContent = text; return e;},
   addEventListener: (name, fn) => (documentEvents[name] ||= []).push(fn),
   dispatchEvent: event => {for (const fn of documentEvents[event.type] || []) fn(event); return true;},
@@ -743,10 +745,11 @@ assert.equal(editorInput(), input); assert.equal(input.value, "Đang sửa bài 
 assert.equal(activePlayer.state.episode_id, "ep2"); assert.match($("title").textContent, /Bài 2/);
 assert.equal(titleCalls.filter(c => c.path.endsWith("/title")).at(-1).path, "/api/episodes/ep3/shorts/k1/title");
 await $("next").fire("click"); await metadata(); assert.match($("title").textContent, /Lưu bài tập ba/);
-// Joining a room disposes an open editor and performs no extra title read.
+// Joining a room resets the old draft while awaiting room state, then offers the lazy room editor (Amendment B).
 useRoom(); const count = requests.filter(p => p.startsWith("/api/episodes/")).length;
 await $("watch").fire("click"); await settled();
-assert.ok($("title-editor").hidden); assert.equal(editorInput(), undefined);
+assert.ok(!$("title-editor").hidden); assert.equal($("title-editor").firstChild.textContent, "Sửa tiêu đề");
+assert.equal(editorInput(), undefined);
 assert.equal(requests.filter(p => p.startsWith("/api/episodes/")).length, count);
 ''')
 
@@ -892,7 +895,7 @@ assert.equal(activePlayer.media(), $("video")); assert.equal(audio.loads, 0); as
 assert.ok(!$("video").paused); assert.ok(!activePlayer.state.paused);
 await end(); await settled();
 if (mode === "room") {
-  assert.ok(commands.some(c => c.action === "ended")); assert.ok($("title-editor").hidden);
+  assert.ok(commands.some(c => c.action === "ended")); assert.ok(!$("title-editor").hidden);
 } else assert.ok(activePlayer.localAdvanceAt != null);
 assert.equal(audio.plays, 0);
 await visibility(false); assert.equal(activePlayer.media(), $("video"));
@@ -1059,3 +1062,82 @@ if (ending === "visible") {
   assert.equal(activePlayer.state.advance_at, now / 1000 + 3); assert.match($("notice").textContent, /Sau 3 s/);
 } else { assert.equal(activePlayer.media(), activePlayer.audio); assert.equal(activePlayer.state.advance_at, null); }
 '''.replace("ENDING", json.dumps(ending)))
+
+
+@pytest.mark.parametrize("page", ["/episodes/ep1", "/playlists/PLtest/favorites"])
+@pytest.mark.parametrize("background", [False, True])
+def test_player_js_room_title_editor_keeps_saved_title_across_polls(run_player_js, page, background):  # Amendment B AC1,3,4
+    run_player_js(r'''
+location.pathname = PAGE;
+sourceItems = [item(1, 1), {...item(2, 1, "khaithi"), title: "Tiêu đề KT gốc"}];
+titleView("ep1"); titleView("ep2.kt");
+storage.set("auto-short-listen-filter", '"short"'); // The room's playing item will be absent from solo items.
+const backend = useRoomTransport(); await boot(); await metadata(); await $("play").fire("click");
+await $("watch").fire("click"); await settled(); await metadata();
+assert.ok(!$("title-editor").hidden);
+const queue = sourceItems.map(i => ({url: i.video_url, title: i.title, group: {id: "both", label: "Cả hai"}}));
+backend.apply("set", {queue, index: 1, position: 11.25, rate: 1.25, paused: false}, "b");
+await AutoShortWatch.poll(true); await settled(); await metadata();
+const reads = requests.filter(p => p === "/api/episodes/ep2.kt").length;
+assert.ok(!$("title-editor").hidden); assert.equal(editorInput(), undefined);
+await $("title-editor").firstChild.fire("click"); await settled();
+assert.equal(editorInput().value, "Tiêu đề KT gốc");
+assert.equal(requests.filter(p => p === "/api/episodes/ep2.kt").length, reads + 1);
+if (BACKGROUND) { await visibility(true); await metadata(activePlayer.audio); }
+const media = activePlayer.media(); media.currentTime = 23.5;
+editorInput().value = "Tiêu đề đã sửa trong phòng"; await editorInput().fire("input"); tick(350); await settled();
+const before = [media.src, media.currentTime, media.loads, media.plays, media.pauses, activePlayer.sourceKey,
+  activePlayer.state.index, activePlayer.state.version, activePlayer.receivedAt];
+const posts = commands.length, serverBefore = structuredClone(serverRoom);
+await editorButton("Lưu & render lại").fire("click"); await settled();
+assert.deepEqual(titleCalls.at(-1), {path: "/api/episodes/ep2.kt/shorts/k1/title", body: {set: "Tiêu đề đã sửa trong phòng"}});
+assert.deepEqual([media.src, media.currentTime, media.loads, media.plays, media.pauses, activePlayer.sourceKey,
+  activePlayer.state.index, activePlayer.state.version, activePlayer.receivedAt], before);
+assert.equal(activePlayer.state.title, "Tiêu đề đã sửa trong phòng");
+assert.equal(activePlayer.state.queue[1].title, "Tiêu đề đã sửa trong phòng");
+assert.equal(navigator.mediaSession.metadata.title, "Tiêu đề đã sửa trong phòng");
+assert.equal(commands.length, posts); assert.deepEqual(serverRoom, serverBefore);
+// Neither a full old snapshot nor an omitted queue (reused by watch.js) may undo the edit.
+for (let i = 0; i < 2; i++) {
+  if (i === 1) interceptRoom = body => {
+    if (body) return null;
+    const data = backend.snapshot(); delete data.queue;
+    return {ok: true, json: async () => data};
+  };
+  await AutoShortWatch.poll(true); await settled();
+  assert.equal(activePlayer.state.title, "Tiêu đề đã sửa trong phòng");
+  assert.equal(activePlayer.state.queue[1].title, "Tiêu đề đã sửa trong phòng");
+  assert.equal(serverRoom.queue[1].title, "Tiêu đề KT gốc");
+}
+interceptRoom = null;
+assert.equal(commands.length, posts);
+if (BACKGROUND) await visibility(false);
+assert.match($("title").textContent, /Tiêu đề đã sửa trong phòng/);
+assert.match($("queue").textContent, /Tiêu đề đã sửa trong phòng/);
+// Another queue item with the same clip id keeps its own title; returning reapplies the URL override.
+backend.apply("goto", {index: 0}, "b"); await AutoShortWatch.poll(true); await settled(); await metadata();
+assert.equal(activePlayer.state.title, "Bài 1"); assert.equal(editorInput().value, "Bài 1");
+backend.apply("goto", {index: 1}, "b"); await AutoShortWatch.poll(true); await settled(); await metadata();
+assert.match($("title").textContent, /Tiêu đề đã sửa trong phòng/);
+'''.replace("PAGE", json.dumps(page)).replace("BACKGROUND", json.dumps(background)))
+
+
+@pytest.mark.parametrize("page", ["/episodes/ep1", "/playlists/PLtest/favorites", "/watch"])
+def test_player_js_room_title_editor_needs_local_item_and_host(run_player_js, page):  # Amendment B AC1
+    run_player_js(r'''
+location.pathname = PAGE; sourceItems = [item(1, 1)]; titleView("ep1");
+const foreign = {url: "/files/ep9/k1.mp4", title: "Bài ngoài danh sách"};
+const backend = useRoomTransport(true, PAGE === "/watch" ? {queue: [foreign], index: 0, paused: true} : {});
+await boot(); await metadata();
+if (PAGE !== "/watch") {
+  await $("watch").fire("click"); await settled();
+  backend.apply("set", {queue: [foreign], index: 0, paused: true}, "b");
+  await AutoShortWatch.poll(true); await settled();
+  assert.ok($("title-editor").hidden); assert.equal($("title-editor").children.length, 0);
+} else {
+  assert.equal(document.getElementById("listen-title-editor"), null);
+  assert.ok(!elements.has("title-editor")); // Match the real /watch DOM rather than manufacturing a host.
+  assert.equal(requests.filter(p => p.startsWith("/api/episodes/")).length, 0);
+}
+assert.equal(requests.filter(p => p === "/api/episodes/ep9").length, 0); assert.equal(titleCalls.length, 0);
+'''.replace("PAGE", json.dumps(page)))
