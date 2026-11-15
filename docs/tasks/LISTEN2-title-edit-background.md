@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: READY (Amendment C; chờ HUMAN LEAD thử điện thoại ở 8080)
+- Status: READY (Amendment D + E; chờ HUMAN LEAD thử điện thoại ở 8080)
 - Type: FEATURE + BUG
 - Change class: S1 — chỉ client (HTML / JS / CSS) của tab Nghe, dùng lại endpoint sửa tiêu đề có sẵn; không endpoint mới, không dependency, không đổi security model / public API
 - Owner: HUMAN LEAD
@@ -80,6 +80,23 @@ Cách mới (thay cách "đổi phần tử khi ẩn" của Scope / AC 5 / AC 10
 - Bỏ `switchMedia` / `selectMedia` / sự kiện `to_audio`, `to_video` (code bị thay, xóa luôn; tên log có thể giữ trong `LOG_TYPES` hoặc bỏ). Thêm log `video_resync` (lệch khi hiện lại, giới hạn tần suất).
 - AC thay thế: **AC 5'**: solo + phòng, trang ẩn: audio tiếp tục phát (không có pause / play mới do ẩn), video dừng không sinh `onAction("pause")`; hiện lại: video tua tới audio (lệch ≤ 0.5 s) và phát theo audio nếu audio đang phát. **AC 10'**: AC 10 giữ nguyên trên audio, không còn bước đổi phần tử.
 
+## Amendment D — phát lại bền hơn khi bị dừng lúc nền (2026-11-15)
+
+Thử thật bản `4e14886`: tắt màn hình từ trang và chuyển bài khi ẩn đã chạy (`hidden_advance` ×2, `video_resync` khi hiện lại). Còn lỗi: HUMAN LEAD "chuyển qua màn hình chính thì vẫn có tiếng, khi tắt màn hình thì mới tắt tiếng; lúc đó màn hình khóa có điều khiển Auto Short", phải bấm Play. Log: `pause_hidden → retry_ok → pause_hidden` ×4 cùng `t` → `retry_gave_up` trong ~10 s (có lần 1 lần retry là chạy tiếp). Android / Chrome dừng audio lúc tắt màn hình (nhiều khả năng mất audio focus tạm thời); retry dồn trong 10 s rồi bỏ cuộc.
+
+- Retry khi ẩn bền hơn: giữ 1 / 3 / 10 s đầu, sau đó thử lại mỗi 15 s tới 5 phút kể từ lần dừng (vẫn chỉ khi ẩn, `wantsPlay`, cùng bài, audio dừng và chưa hết bài); tiến độ phát (currentTime tăng) thì reset bộ đếm. Bỏ ngưỡng 6 lần / 2 lần "flat" (thay bằng hạn 5 phút). Dừng retry ngay khi người dùng bấm dừng (Media Session / control) hoặc trang hiện lại.
+- Media Session `play` từ màn hình khóa luôn phát lại được (kể cả sau khi đã bỏ cuộc), và đặt lại vòng retry.
+- Log chẩn đoán thêm `freeze` / `resume` (Page Lifecycle `document` events) và trường `rs` (audio.readyState) / `ns` (networkState) trên `pause_hidden`; tên log mới thêm vào `LOG_TYPES`.
+- AC 11: vòng retry ẩn kéo dài tới 5 phút (test giả thời gian), reset khi có tiến độ, dừng khi người dùng dừng / trang hiện; Media Session play sau bỏ cuộc phát lại; `freeze` / `resume` được ghi.
+
+## Amendment E — pause của video không được tự dừng audio (2026-11-15)
+
+Log `4e14886`: mỗi lần trang ẩn, ~10 ms sau `visibility hidden` có `pause_hidden` của audio. Nguyên nhân trong code: Chrome Android dừng `<video>` lúc app vào nền, có khi trước khi `visibilityState` thành `hidden`; handler pause của video (`player.js` ~dòng 95) coi đó là thao tác người dùng và gọi `audio.pause()` → trang nền phải *bắt đầu* phát lại → bị chặn. HUMAN LEAD: "đang nghe vẫn có lúc không chuyển bài được khi tắt màn hình".
+
+- Pause của video chỉ chuyển sang audio khi là thao tác người dùng: trang đang hiện **và** (`navigator.userActivation?.isActive` đúng, hoặc sau 1500 ms trang vẫn hiện, video vẫn dừng, audio vẫn phát, cùng bài — giống cửa sổ 1500 ms của WATCH1 / `hiddenPause`). Trang ẩn trong 1500 ms đó → bỏ qua. Không có `navigator.userActivation` → chỉ dùng nhánh chờ 1500 ms.
+- Video bị dừng mà không chuyển sang audio thì video theo lại audio khi trang hiện (`syncVideo`).
+- AC 12: pause của video lúc hiện rồi ẩn trong < 1500 ms không dừng audio, không gửi `onAction("pause")`; pause với userActivation đang active dừng audio ngay; pause không có activation mà trang vẫn hiện sau 1500 ms thì dừng audio.
+
 ## Phải giữ nguyên
 
 - Tất cả hành vi LISTEN1 / WATCH1 đang có test: thứ tự danh sách, nhóm tập / phần Yêu thích, thẻ đếm ngược khi màn hình sáng, không cuộn trang khi tự chuyển, tim, nhớ chỗ nghe, Xem chung, PiP.
@@ -123,43 +140,24 @@ Không chạm database, security model hay public API contract → manual test l
 
 ## Result
 
-- Amendment C — IMPLEMENTER handoff (2026-11-15): implementation hoàn tất trên base `01b73ae`, chờ ORCHESTRATOR review / HUMAN LEAD thử lại 8080. Chưa claim phát nền thực tế PASS: cách cũ đã thất bại trên điện thoại như bằng chứng trong Amendment C, bản mới chưa chạy trên điện thoại trong lượt này. Không commit.
-- Main changes / files:
-  - `static/player.js`: `media()` luôn trả audio. Audio giữ nguồn tiếng / đồng hồ cho solo và phòng ngay từ lần Play đầu ở foreground; chỉ metadata audio quyết định `loading`. Control play / pause / seek / rate của video được chuyển tới audio, không dùng thời gian video cho Play / Pause. Video luôn muted, bị unmute sẽ đặt lại muted; video ended không chuyển bài.
-  - `syncVideo` mới giữ video theo audio: cùng src, play / pause / rate theo audio, tua khi lệch > 0.5 s và khi hiện lại / thay đổi PiP. Khi hidden ngoài PiP chỉ dừng video; không pause / play / đổi src audio vì visibility. Bỏ qua pause video do browser khi hidden. Có token cho promise play video để phản hồi trễ không làm khởi động lại video lúc hidden hoặc ảnh hưởng audio.
-  - Xóa `switchMedia`, `selectMedia`, `currentMedia` và đường phát log `to_audio` / `to_video` trong client. `arm` / `isProgrammed` vẫn dùng chung, tách marker audio và video để sự kiện mirror không gửi ngược lệnh / thay trạng thái audio. Chỉ arm pause khi phần tử đang phát và tiêu thụ marker khi inactive, tránh nuốt thao tác thật sau suspend / resume.
-  - `load` đặt src / vị trí / rate cho cả audio và video muted, gọi `playMedia(audio)` ngay nếu cần phát, không chờ metadata hoặc mạng. Giữ nguyên đường audio ended cho `hidden_advance`, solo auto và room optimistic next / expect_version / 409; countdown khi sáng và WATCH1 sync / hidden seek guard giữ nguyên.
-  - `static/listen.js`: chỉ lắng nghe timeupdate audio để nhớ chỗ nghe; các đường save / filter / room vốn dùng `media()` nay luôn đọc audio. Amendment B (editor phòng / Map title / không reload khi lưu) giữ nguyên.
-  - `routes/watch.py`: chỉ thêm `video_resync` vào `LOG_TYPES`. `record` giới hạn event này một lần / 5 giây qua `logMarks`, giữ giới hạn batch 20 event / 2 KB. Giữ tên `to_audio` / `to_video` trong allowlist server để tương thích client cũ; client mới không phát chúng.
-  - `tests/test_web_listen.py`: metadata mặc định mô phỏng cả audio và video; ended mặc định phát trên audio; fake load phát pause nếu trước đó đang chạy. Thay test đổi phần tử bằng test audio-clock / video follower, điều chỉnh các clock injection cũ sang audio. `tests/test_web_watch_party.py`: validator / logger kiểm thêm `video_resync`.
-- Verification trong môi trường hiện tại:
-  - PASS: `PYTHONPATH=src python -m pytest tests/test_web_listen.py tests/test_web_watch_party.py -q -k '(player_js or static or countdown or overlay or log) and not http'` → **75 passed, 105 deselected**, 7.47 s.
-  - PASS hồi quy rộng hơn: `PYTHONPATH=src python -m pytest tests/test_web_listen.py tests/test_web_watch_party.py -q -k 'not http'` → **169 passed, 11 deselected**, 9.82 s. Bao gồm danh sách / nhóm / tim / nhớ vị trí / tab, editor solo / phòng, WATCH1, optimistic next / 409 và validator log không dùng socket.
-  - PASS: `node --check` cho `player.js`, `listen.js`; `git diff --check`.
-  - Lệnh nguyên văn yêu cầu đã thử với giới hạn chờ: `timeout 20s env PYTHONPATH=src python -m pytest tests/test_web_listen.py tests/test_web_watch_party.py -q -k "player_js or static or countdown or overlay or log"` → **exit 124**, không có kết quả tổng kết PASS. `--collect-only` xác nhận chọn **76 / 180** test, gồm `test_http_log_auth_validation_rate_and_records` dùng TestClient. 75 test không HTTP nêu trên đã chạy PASS; test HTTP này còn chờ ngoài sandbox. Không chờ tiếp / không claim lệnh đầy đủ PASS.
-- AC → test (tên rút gọn có prefix `test_player_js_`, trừ tên ghi đầy đủ):
+- Amendment E: pause video có userActivation active dừng audio ngay; còn lại chờ 1500 ms và kiểm cùng bài / còn visible / video dừng / audio phát. Hủy timer khi visibilitychange, đổi bài hoặc Play; mirror không tự play video trong lúc chờ. Giữ nguyên logic retry / log của D, không thêm helper.
+- AC 12: `test_player_js_video_pause_requires_activation_or_visible_grace` có 3 ca PASS. Lệnh listen `-k "player_js"`: **58 passed, 26 deselected**, 4.19 s; lệnh watch-party `-k "player_js or static"`: **115 deselected, exit 5** (không có test khớp, không claim PASS).
+- Chỉ sửa E trong `player.js`, harness / 3 ca tại `tests/test_web_listen.py` và ba dòng Result này; giữ các thay đổi D chưa commit. Không chạy thêm test / full suite, không commit; còn thử lại điện thoại / 8080.
 
-  | AC | Bằng chứng |
+- Amendment D — IMPLEMENTER handoff (2026-11-15), base `4e14886`: hoàn tất, không commit. Chỉ sửa player, validator log, hai file test và Result này; không sửa audio-clock / editor / optimistic next của C / B / A.
+- `player.js`: thay ngưỡng attempts 6 / flat 2 bằng hạn 300000 ms từ lần dừng. Retry ở 1 / 3 / 10 giây rồi mỗi 15 giây; chỉ gọi play khi hidden, muốn phát, cùng sourceKey, audio đang dừng / chưa ended. Play thành công nhưng chưa tiến thời gian không xóa vòng retry. Tiến độ qua timeupdate, kiểm tra 2 giây sau retry hoặc callback retry sẽ reset hạn / attempts. Pause, hiện trang hoặc đổi bài hủy timer; Media Session Play reset vòng và bỏ token playPending cũ để vẫn phát được sau give-up / promise cũ bị treo. Nút Play / control video dùng cùng reset.
+- Log: thêm document `freeze` / `resume`, freeze dùng flushLog beacon hiện có; `pause_hidden` luôn kèm `rs` / `ns` của audio. `routes/watch.py` nhận hai type và kiểm rs là int 0–4, ns là int 0–3 (không nhận bool / chuỗi / float). Giới hạn batch / rate / auth giữ nguyên.
+- Verification: **PASS 86 test, 110 deselected, 11.73 s** bằng `PYTHONPATH=src python -m pytest tests/test_web_listen.py tests/test_web_watch_party.py -q -k '(player_js or static or log) and not http'`. Loại HTTP theo giới hạn sandbox và TestClient đã treo ở các lượt trước; không thử lại test đã biết treo. PASS `node --check src/auto_short/web/static/player.js`, `git diff --check`. Không chạy full suite hay nhóm toàn bộ `not http`; ORCHESTRATOR chạy full suite.
+- AC 11 → test:
+
+  | Test | Bằng chứng |
   |---|---|
-  | 5′ | `audio_clock_survives_visibility_and_video_controls` (solo / phòng): Play từ video gọi audio.play trước metadata audio khi trang còn sáng; seek / rate / pause / play điều khiển audio, pause trước metadata cũng dừng video; mirror không echo lệnh; ẩn / hiện không tăng audio play / pause / load; browser pause video không sinh pause_hidden; video hiện lại theo vị trí / rate audio. `video_follows_new_source_and_ignores_late_play`: cả hai src đổi trong audio ended, audio tiếp tục khi video metadata / play trễ và qua visibility; video bắt kịp audio. `paused_audio_never_starts_from_visibility`: paused / suspend không tự phát, control sau resume vẫn hoạt động. PASS |
-  | 10′ | `room_hidden_advance_reconciles_without_double_skip` (3 trang × ACK / 409 trùng / 409 khác): audio load + play ngay trước POST / timer / metadata, hai lần next đúng version, ACK trùng không reload, 409 không double skip. `room_audio_remote_controls_preserve_pause_and_seek_guards`: remote pause / play / seek / next, Media Session, pauseTimer / syncBlocked / seek_skipped_hidden / poll nền. `room_ended_fallbacks_keep_server_countdown`: auto off / cuối danh sách dùng ended cũ, visible countdown server. 14 ca PASS trên audio luôn hoạt động |
-  | 6, 7 | `hidden_advance_is_synchronous_across_groups`: solo qua tập / phần, auto off / cuối danh sách dừng. `audio_clock_survives_visibility_and_video_controls`: Media Session / save đọc audio. `audio_retry_progress_giveup_and_log_batches`: retry / progress / give-up / log đọc audio. PASS |
-  | 8 | `visible_room_and_pip_follow_audio`: video muted khi visible / PiP; video ended không advance; ra / vào PiP không phát lại hoặc dừng audio, countdown vẫn theo audio. PASS |
-  | 9 | `audio_clock_survives_visibility_and_video_controls`: log video_resync có thực và 10 lần resync liên tiếp vẫn chỉ ghi một event trong cửa sổ 5 s, không phát to_audio / to_video. `audio_retry_progress_giveup_and_log_batches`: cap batch / retry không đổi. `test_log_route_accepts_pip_and_retry_cap_events`: server nhận và ghi video_resync cùng các event cũ. PASS |
-  | 1–4 | Các test editor / API doubles của solo và phòng trong hai nhóm PASS phía trên: lazy view, editable / deleted / khóa job / restore / lỗi, chống phản hồi trễ, save không đổi nguồn hay ngắt media, title cục bộ vẫn giữ qua full / cached room poll. |
+  | `test_player_js_background_retry_five_minute_limit_and_lock_screen_restart` | Solo / phòng × play bị từ chối / thành công rồi bị pause lại / promise treo: đúng mốc 1, 3, 10, 25 giây; vượt 6 lần vẫn thử, 299999 ms chưa give-up, 300000 ms dừng; màn hình khóa Play phát lại và reset vòng; freeze / resume và rs / ns được ghi. 6 ca PASS |
+  | `test_player_js_background_retry_resets_on_progress_and_cancels_on_controls` | Tiến độ ngay trước hạn cũ mở lại thời hạn; pause, hiện trang, đổi bài hủy retry cũ. 4 ca PASS |
+  | `test_player_js_audio_retry_progress_giveup_and_log_batches` | Test cũ (~949) đổi assertion flat / give-up sớm thành reset khi có tiến độ và give-up sau 5 phút; giữ retry_ok / retry_blocked / cap batch. PASS |
 
-- Test cũ thay theo AC 5′ / 10′:
-  - `test_player_js_audio_handoff_session_controls_and_position` → `test_player_js_audio_clock_survives_visibility_and_video_controls` (thêm param solo / phòng).
-  - `test_player_js_new_video_after_hidden_advance_and_late_media_events` → `test_player_js_video_follows_new_source_and_ignores_late_play`.
-  - `test_player_js_paused_or_suspended_visibility_never_starts_playback` → `test_player_js_paused_audio_never_starts_from_visibility`.
-  - `test_player_js_visible_room_and_pip_keep_video` → `test_player_js_visible_room_and_pip_follow_audio`.
-  - Các assertion còn lại khẳng định media đổi sang video khi hiện lại / audio chưa từng phát khi visible đã đổi sang media luôn là audio; nằm trong `hidden_advance_is_synchronous_across_groups`, `room_hidden_advance_reconciles_without_double_skip`, `room_audio_remote_controls_preserve_pause_and_seek_guards`, `room_ended_fallbacks_keep_server_countdown`. Giữ các kiểm tra next / version / 409 / countdown / guard.
-  - Ba test legacy `test_favorites_click_filter_end_card_and_unheart`, `test_favorites_resume_identity_and_room_group_payload`, `test_favorites_tab_suspends_and_can_resume_same_track` bơm thời gian vào audio thay vì video; assertion vị trí nhớ / payload phòng / video theo audio vẫn giữ. Test retry bơm audio clock, dùng event visibility thay cho to_audio đã bỏ để kiểm cap batch. Không bỏ test để che lỗi.
-- Diff riêng Amendment C so với `01b73ae` (không tính docs): **app +129 / −111; test +105 / −82**.
-- Helper / reuse:
-  - Đã tìm `rg -n 'arm\(|isProgrammed|playMedia|recover|syncVideo|visibilityChanged|video_resync' src/auto_short/web/static/player.js src/auto_short/web/routes/watch.py`. Dùng lại `arm`, `isProgrammed`, `playMedia`, `recover`, `record`, `logMarks`, load / state / room command / sourceKey hiện có. `syncVideo` là helper mới vì `sync` cũ kéo media theo đồng hồ phòng với chính sách hidden và ngưỡng 1 s; video follower cần bám audio ở ngưỡng 0.5 s, chỉ sửa video và không gọi đường retry / action audio. Hai helper đổi phần tử cũ đã xóa, không giữ bản dư.
-  - Harness tái dùng `run_player_js`, `Element`, metadata / ended / visibility, `useRoomTransport`, editor / API doubles có sẵn; không thêm fixture / dependency.
-- Review / limitations: IMPLEMENTER đã rà diff với Amendment C và chạy các kiểm tra trên. Chưa chạy TestClient / full suite / 8080 / điện thoại thật cho bản C. Cần HUMAN LEAD thử solo và phòng qua ít nhất hai lần hidden advance, mở lại video, PiP và control khóa màn hình; các lượt PASS trước `01b73ae` không chứng minh bản C phát nền được trên điện thoại.
-- Integration: không commit / push / PR; không gọi agent khác hoặc mạng thật.
-
-- ORCHESTRATOR verification Amendment C 2026-11-15: full suite `-n auto` 4352 passed, 2 skipped (3 m 01 s).
+- `tests/test_web_watch_party.py`: mở rộng test logger hiện có (~525) cho freeze / resume / pause_hidden có rs / ns; thêm 6 payload rs / ns sai kiểu hoặc ngoài giới hạn vào test validator. Nhóm log PASS.
+- Diff riêng D so với `4e14886` (không tính docs): **app +55 / −34; test +80 / −6**.
+- Helper / reuse: đã tìm `rg -n 'hiddenRun|checkRetryProgress|giveUpRetry|attempts|\.flat|cancelRecovery|freeze|resume|networkState' src/auto_short/web/static/player.js tests/test_web_listen.py src/auto_short/web/routes/watch.py`. Dùng lại recover / playMedia / progressChecks / record / flushLog / harness; thêm `resetRetry` vì cancelRecovery cũ chỉ hủy timer, không reset hạn, attempts, give-up hoặc token play đang treo. Không dependency / module mới.
+- Giới hạn: chưa thử D trên điện thoại / 8080; timer vẫn chịu scheduling / freeze của trình duyệt, callback dùng elapsed time để kiểm hạn khi chạy lại. Full suite và kiểm chứng thực tế thuộc ORCHESTRATOR / HUMAN LEAD. Không claim full suite hoặc thử thật PASS cho D; không commit / push / PR, không gọi agent khác hay mạng thật.
+- ORCHESTRATOR verification Amendment D + E 2026-11-15: full suite `-n auto` 4371 passed, 2 skipped (2 m 46 s).

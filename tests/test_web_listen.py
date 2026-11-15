@@ -235,7 +235,7 @@ function tick(ms) {
 class Element {
   constructor(tag = "div") {
     this.tagName = tag; this.children = []; this.dataset = {}; this.attrs = {}; this.events = {};
-    this.style = {}; this.hidden = false; this.value = ""; this._text = ""; this.loads = 0; this.plays = 0; this.pauses = 0;
+    this.style = {}; this.hidden = false; this.value = ""; this._text = ""; this.loads = 0; this.plays = 0; this.pauses = 0; this.networkState = 2;
     this.classList = {toggle() {}}; this.paused = true; this.currentTime = 0; this.duration = 60; this.playbackRate = 1;
   }
   set textContent(value) { this._text = String(value); this.children = []; }
@@ -278,9 +278,10 @@ global.document = {visibilityState: "visible", pictureInPictureEnabled: false,
 const windowEvents = {};
 global.addEventListener = (name, fn) => (windowEvents[name] ||= []).push(fn);
 global.dispatchEvent = event => { for (const fn of windowEvents[event.type] || []) fn(event); return true; };
-const sessionActions = {}, logBatches = [];
+const sessionActions = {}, logBatches = [], beacons = [];
 Object.defineProperty(global, "navigator", {configurable: true, value: {
-  mediaSession: {setActionHandler: (name, fn) => sessionActions[name] = fn}, sendBeacon: () => true}});
+  userActivation: {isActive: true},
+  mediaSession: {setActionHandler: (name, fn) => sessionActions[name] = fn}, sendBeacon: (path, body) => {beacons.push(body); return true;}}});
 global.MediaMetadata = class { constructor(data) { Object.assign(this, data); } };
 const storage = new Map();
 global.localStorage = {getItem: k => storage.get(k) || null, setItem: (k, v) => storage.set(k, v)};
@@ -835,6 +836,38 @@ assert.equal(video.currentTime, 23.25); assert.ok(!video.paused); assert.ok(!aud
 ''')
 
 
+@pytest.mark.parametrize("cause", ["hide", "active", "inactive"])
+def test_player_js_video_pause_requires_activation_or_visible_grace(run_player_js, cause):  # Amendment E AC12
+    run_player_js(r'''
+sourceItems = [item(1, 1), item(1, 2)]; await boot(); await metadata(); await $("play").fire("click");
+const video = $("video"), audio = activePlayer.audio, actions = [], original = activePlayer.onAction, cause = CAUSE;
+activePlayer.onAction = (action, ...args) => { actions.push(action); return original(action, ...args); };
+navigator.userActivation = cause === "inactive" ? undefined : {isActive: cause === "active"};
+video.pause(); await settled();
+if (cause === "active") {
+  assert.ok(audio.paused); assert.deepEqual(actions, ["pause"]);
+  tick(2000); await settled(); assert.deepEqual(actions, ["pause"]); return;
+}
+assert.ok(!audio.paused); assert.deepEqual(actions, []);
+tick(100); await audio.fire("timeupdate"); assert.ok(video.paused); // The mirror must preserve the grace window.
+if (cause === "hide") {
+  const plays = audio.plays, pauses = audio.pauses;
+  await visibility(true); tick(2000); await settled();
+  assert.ok(!audio.paused); assert.deepEqual(actions, []); assert.equal(audio.plays, plays); assert.equal(audio.pauses, pauses);
+  await visibility(false); assert.ok(!video.paused); return;
+}
+tick(1399); await settled(); assert.ok(!audio.paused); assert.deepEqual(actions, []);
+tick(1); await settled(); assert.ok(audio.paused); assert.deepEqual(actions, ["pause"]);
+// A new track or explicit Play cancels an older deferred pause, including when audio is already playing.
+await $("play").fire("click"); await settled(); video.pause(); await settled();
+sessionActions.nexttrack(); await settled(); await metadata(); const pauses = actions.filter(a => a === "pause").length;
+tick(2000); await settled(); assert.ok(!audio.paused); assert.equal(actions.filter(a => a === "pause").length, pauses);
+video.pause(); await settled(); sessionActions.play(); await settled();
+tick(2000); await settled(); assert.ok(!audio.paused); assert.ok(!video.paused);
+assert.equal(actions.filter(a => a === "pause").length, pauses);
+'''.replace("CAUSE", json.dumps(cause)))
+
+
 @pytest.mark.parametrize("pause_at", ["before_hide", "while_hidden", "suspended", "suspended_audio"])
 def test_player_js_paused_audio_never_starts_from_visibility(run_player_js, pause_at):  # Amendment C AC5'
     run_player_js(r'''
@@ -938,10 +971,14 @@ sourceItems = [item(1, 1)]; await boot(); await metadata(); await $("play").fire
 activePlayer.audio.currentTime = 10; await activePlayer.audio.fire("timeupdate"); await visibility(true);
 const audio = activePlayer.audio; await metadata(audio);
 audio.pause(); await settled(); tick(1000); await settled();
-audio.currentTime = 13; tick(2000); await settled(); assert.equal(activePlayer.hiddenRun.flat, 0);
-for (let n = 0; n < 2; n++) {
+audio.currentTime = 13; tick(2000); await settled();
+assert.equal(activePlayer.hiddenRun.since, null); assert.equal(activePlayer.hiddenRun.attempts, 0);
+for (let n = 0; n < 8; n++) {
   audio.pause(); await settled(); tick(1000); await settled(); tick(2000); await settled();
 }
+assert.ok(!activePlayer.hiddenRun.gaveUp); // Flat retries no longer give up after 2 checks / 6 attempts.
+const deadline = activePlayer.hiddenRun.since + 300000;
+while (now < deadline) { tick(Math.min(15000, deadline - now)); await settled(); }
 assert.ok(activePlayer.hiddenRun.gaveUp); const plays = audio.plays;
 audio.pause(); await settled(); tick(10000); await settled(); assert.equal(audio.plays, plays);
 const events = [...logBatches.flatMap(b => b.events), ...activePlayer.events];
@@ -955,6 +992,73 @@ for (let i = 0; i < 30; i++) activePlayer.record("visibility");
 assert.equal(activePlayer.events.length, 20); tick(5000); await settled();
 assert.ok(logBatches.every(batch => batch.events.length <= 20 && new TextEncoder().encode(JSON.stringify(batch)).length <= 2048));
 ''')
+
+
+@pytest.mark.parametrize("mode", ["rejected", "spurious", "pending"])
+@pytest.mark.parametrize("room", [False, True])
+def test_player_js_background_retry_five_minute_limit_and_lock_screen_restart(run_player_js, mode, room):  # Amendment D AC11
+    run_player_js(r'''
+sourceItems = [item(1, 1)]; if (ROOM) useRoomTransport();
+await boot(); await metadata(); await $("play").fire("click");
+if (ROOM) { await $("watch").fire("click"); await settled(); await metadata(); }
+await visibility(true);
+const audio = activePlayer.audio, nativePlay = audio.play.bind(audio), calls = [], mode = MODE;
+audio.play = () => {
+  calls.push(now);
+  if (mode === "pending") return new Promise(() => {});
+  if (mode === "rejected") return Promise.reject(Object.assign(new Error("blocked"), {name: "NotAllowedError"}));
+  const result = nativePlay(); queueMicrotask(() => audio.pause()); return result;
+};
+audio.pause(); await settled(); const start = now;
+for (const delay of [1000, 2000, 7000, 15000]) { tick(delay); await settled(); }
+assert.deepEqual(calls, (mode === "pending" ? [1000] : [1000, 3000, 10000, 25000]).map(t => start + t));
+while (now < start + 295000) { tick(15000); await settled(); assert.ok(!activePlayer.hiddenRun.gaveUp); }
+if (mode !== "pending") assert.ok(calls.length > 6);
+tick(4999); await settled(); assert.ok(!activePlayer.hiddenRun.gaveUp);
+tick(1); await settled(); assert.ok(activePlayer.hiddenRun.gaveUp);
+const count = calls.length; tick(30000); await settled(); assert.equal(calls.length, count);
+document.dispatchEvent(new Event("freeze")); await settled();
+document.dispatchEvent(new Event("resume")); tick(5000); await settled();
+// An unresolved previous play promise must not prevent the lock-screen Play from starting audio.
+audio.play = nativePlay; sessionActions.play(); await settled();
+assert.ok(!audio.paused); assert.ok(!activePlayer.hiddenRun.gaveUp);
+assert.equal(activePlayer.hiddenRun.since, null); assert.equal(activePlayer.hiddenRun.attempts, 0);
+audio.pause(); await settled(); tick(1000); await settled(); audio.currentTime += 1; await audio.fire("timeupdate");
+assert.equal(activePlayer.hiddenRun.since, null); assert.equal(activePlayer.hiddenRun.attempts, 0);
+const events = [...logBatches.flatMap(b => b.events), ...activePlayer.events,
+  ...(await Promise.all(beacons.map(b => b.text()))).flatMap(b => JSON.parse(b).events)];
+assert.equal(events.filter(e => e.type === "retry_gave_up").length, 1);
+assert.ok(events.some(e => e.type === "freeze")); assert.ok(events.some(e => e.type === "resume"));
+assert.ok(events.some(e => e.type === "pause_hidden" && e.rs === 1 && e.ns === 2));
+'''.replace("MODE", json.dumps(mode)).replace("ROOM", json.dumps(room)))
+
+
+@pytest.mark.parametrize("stop", ["progress", "pause", "visible", "next"])
+def test_player_js_background_retry_resets_on_progress_and_cancels_on_controls(run_player_js, stop):  # Amendment D AC11
+    run_player_js(r'''
+sourceItems = [item(1, 1), item(1, 2)]; await boot(); await metadata(); await $("play").fire("click"); await visibility(true);
+const audio = activePlayer.audio, nativePlay = audio.play.bind(audio), stop = STOP;
+audio.play = () => Promise.reject(new Error("blocked"));
+audio.pause(); await settled(); const start = now;
+while (now < start + 295000) { tick(Math.min(15000, start + 295000 - now)); await settled(); }
+assert.ok(!activePlayer.hiddenRun.gaveUp);
+audio.play = nativePlay;
+if (stop === "progress") {
+  // Progress just before the old deadline buys a fresh five-minute window for a subsequent stall.
+  audio.currentTime += 1; await audio.fire("timeupdate");
+  assert.equal(activePlayer.hiddenRun.since, null); assert.equal(activePlayer.hiddenRun.attempts, 0);
+  activePlayer.recover(); tick(6000); await settled(); assert.ok(!activePlayer.hiddenRun.gaveUp);
+} else {
+  if (stop === "pause") { sessionActions.pause(); await settled(); }
+  if (stop === "visible") await visibility(false);
+  if (stop === "next") { sessionActions.nexttrack(); await settled(); }
+  const plays = audio.plays;
+  tick(400000); await settled();
+  assert.equal(audio.plays, plays); assert.ok(!activePlayer.hiddenRun?.gaveUp);
+  if (stop === "pause") assert.ok(audio.paused);
+  if (stop === "next") assert.equal(audio.src, sourceItems[1].video_url);
+}
+'''.replace("STOP", json.dumps(stop)))
 
 
 @pytest.mark.parametrize("page", ["/episodes/ep1", "/playlists/PLtest/favorites", "/watch"])

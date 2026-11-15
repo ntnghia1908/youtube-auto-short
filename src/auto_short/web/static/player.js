@@ -17,7 +17,7 @@
       this.programmed = new Map(); this.sourceKey = null; this.active = true;
       this.receivedAt = 0; this.loading = false; this.state = null;
       this.pipActive = document.pictureInPictureElement === this.video;
-      this.hiddenRun = this.isHidden() ? { attempts: 0, flat: 0, gaveUp: false, skipped: false } : null;
+      this.hiddenRun = this.isHidden() ? { attempts: 0, since: null, position: null, gaveUp: false, skipped: false } : null;
       this.progressChecks = new Set();
       this.setupPiP();
       const current = this.audio;
@@ -30,7 +30,10 @@
         current.addEventListener(event, () => {
           this.syncVideo();
           if (event === "play" || event === "pause") this.updatePlaybackState();
-          if (event === "play") this.cancelRecovery();
+          if (event === "play") {
+            clearTimeout(this.videoPauseTimer); this.videoPauseTimer = null;
+            if (!this.isHidden()) this.cancelRecovery();
+          }
           if (this.isProgrammed(event) || !this.active || !this.state?.video_url
               || (event === "pause" && current.ended)) return;
           if (event === "pause" && this.isHidden() && this.wantsPlay()) {
@@ -71,7 +74,14 @@
       for (const event of ["stalled", "waiting"]) current.addEventListener(event, () => {
         if (this.active && this.isHidden()) this.record(event);
       });
-      this.audio.addEventListener("timeupdate", () => this.syncVideo());
+      this.audio.addEventListener("timeupdate", () => {
+        this.syncVideo();
+        if (this.hiddenRun?.since != null && this.audio.currentTime > this.hiddenRun.position) this.resetRetry();
+      });
+      for (const event of ["freeze", "resume"]) document.addEventListener(event, () => {
+        if (this.active) this.record(event);
+        if (event === "freeze") this.flushLog(true);
+      });
       this.video.addEventListener("loadedmetadata", () => this.syncVideo(true));
       this.video.addEventListener("volumechange", () => { this.video.muted = true; });
       for (const [event, action] of [["play", "play"], ["pause", "pause"], ["seeked", "seek"], ["ratechange", "rate"]]) {
@@ -81,11 +91,23 @@
           const current = this.media();
           if (action === "play" || action === "seek") this.hideNotice();
           if (action === "play") {
-            this.cancelRecovery(); this.allowHiddenPlay = true;
+            this.resetRetry(true); this.allowHiddenPlay = true;
             this.onAction("play", { position: this.loading ? this.targetPosition() : current.currentTime }, true);
             this.playMedia(current);
           } else {
-            if (action === "pause") { this.arm("pause", true); current.pause(); }
+            if (action === "pause") {
+              clearTimeout(this.videoPauseTimer);
+              const key = this.sourceKey;
+              const pause = () => {
+                this.videoPauseTimer = null;
+                if (!this.active || this.isHidden() || key !== this.sourceKey || !this.video.paused || current.paused) return;
+                this.arm("pause", true); current.pause();
+                this.onAction("pause", { position: current.currentTime });
+              };
+              if (navigator.userActivation?.isActive) pause();
+              else this.videoPauseTimer = setTimeout(pause, 1500);
+              return;
+            }
             if (action === "seek") { this.arm("seeked", this.video.currentTime); current.currentTime = this.video.currentTime; }
             if (action === "rate") { this.arm("ratechange", this.video.playbackRate); current.playbackRate = this.video.playbackRate; }
             this.onAction(action, { position: current.currentTime, ...(action === "rate" ? { rate: current.playbackRate } : {}) });
@@ -115,7 +137,7 @@
       $("next").addEventListener("click", () => this.onNavigate("next"));
       $("play").addEventListener("click", () => {
         if (!this.active || !this.state?.video_url) return;
-        this.hideNotice(); this.cancelRecovery(); this.allowHiddenPlay = true;
+        this.hideNotice(); this.resetRetry(true); this.allowHiddenPlay = true;
         this.onAction("play", { position: this.loading ? this.targetPosition() : this.media().currentTime }, true);
         this.playMedia(this.media());
       });
@@ -123,10 +145,11 @@
     inPiP() { return this.pipActive; }
     isHidden() { return document.visibilityState === "hidden" && !this.inPiP(); }
     visibilityChanged() {
+      clearTimeout(this.videoPauseTimer); this.videoPauseTimer = null;
       const hidden = this.isHidden();
       if (hidden !== !!this.hiddenRun) {
         this.cancelRecovery(); this.clearProgressChecks();
-        this.hiddenRun = hidden ? { attempts: 0, flat: 0, gaveUp: false, skipped: false } : null;
+        this.hiddenRun = hidden ? { attempts: 0, since: null, position: null, gaveUp: false, skipped: false } : null;
       }
       if (!this.active) return;
       this.record("visibility");
@@ -195,7 +218,7 @@
       if (video.playbackRate !== audio.playbackRate) {
         this.arm("ratechange", audio.playbackRate, video); video.playbackRate = audio.playbackRate;
       }
-      if (!audio.paused && !audio.ended && video.paused && !this.videoPlayPending) {
+      if (!audio.paused && !audio.ended && video.paused && !this.videoPlayPending && !this.videoPauseTimer) {
         const mark = this.arm("play", false, video), attempt = { key: this.sourceKey };
         this.videoPlayPending = attempt;
         video.play().then(() => {
@@ -400,67 +423,80 @@
     clearProgressChecks() {
       this.progressChecks.forEach(clearTimeout); this.progressChecks.clear();
     }
+    resetRetry(userPlay = false) {
+      this.cancelRecovery(); this.clearProgressChecks();
+      if (this.hiddenRun) Object.assign(this.hiddenRun, { attempts: 0, since: null, position: null, gaveUp: false });
+      if (userPlay) {
+        this.playPending = null;
+        clearTimeout(this.videoPauseTimer); this.videoPauseTimer = null;
+      }
+    }
     giveUpRetry() {
       const run = this.hiddenRun;
-      if (!run || run.gaveUp) return;
+      if (!run || run.gaveUp || run.since == null || performance.now() - run.since < 300000) return;
       run.gaveUp = true; this.cancelRecovery(); this.clearProgressChecks();
       this.record("retry_gave_up");
     }
-    checkRetryProgress(run, key, started, number) {
+    checkRetryProgress(run, key, started) {
       const timer = setTimeout(() => {
         this.progressChecks.delete(timer);
         if (this.hiddenRun !== run || run.gaveUp || !this.isHidden() || key !== this.sourceKey || !this.wantsPlay()) return;
-        const progressed = this.media().currentTime > started;
-        run.flat = progressed ? 0 : run.lastFlat === number - 1 ? run.flat + 1 : 1;
-        run.lastFlat = progressed ? null : number;
-        if (run.flat >= 2) this.giveUpRetry();
+        if (this.media().currentTime > started) {
+          this.resetRetry();
+          if (this.media().paused && !this.media().ended) this.recover();
+        }
       }, 2000);
       this.progressChecks.add(timer);
     }
     recover() {
-      if (!this.isHidden() || !this.hiddenRun || this.hiddenRun.gaveUp) return;
-      if (this.hiddenRun.attempts >= 6) { this.giveUpRetry(); return; }
-      if (this.recovery || !this.wantsPlay() || this.media().ended) return;
+      const run = this.hiddenRun, current = this.media();
+      if (!this.isHidden() || !run || run.gaveUp || this.recovery || !this.wantsPlay() || current.ended) return;
+      run.since ??= performance.now(); run.position ??= current.currentTime;
       const cycle = { key: this.sourceKey, timers: [] };
       this.recovery = cycle;
-      // Deadlines from this pause, not a new attempt on each room poll.
-      cycle.timers = [1000, 3000, 10000].map((delay) => setTimeout(() => {
-        if (this.recovery === cycle && cycle.key === this.sourceKey && this.wantsPlay()
-            && this.isHidden() && this.media().paused && !this.media().ended) {
-          this.playMedia(this.media(), cycle);
+      const retry = () => {
+        if (this.recovery !== cycle || cycle.key !== this.sourceKey || !this.wantsPlay() || !this.isHidden() || current.ended) return;
+        if (current.currentTime > run.position) {
+          this.resetRetry();
+          if (current.paused) this.recover();
+          return;
         }
-      }, delay));
+        const elapsed = performance.now() - run.since;
+        if (elapsed >= 300000) { this.giveUpRetry(); return; }
+        if (current.paused) this.playMedia(current, cycle);
+        const next = [1000, 3000, 10000].find((at) => at > elapsed);
+        cycle.timers = [setTimeout(retry, Math.min(next ? next - elapsed : 15000, 300000 - elapsed))];
+      };
+      cycle.timers = [setTimeout(retry, 1000)];
     }
     playMedia(current, recovery = null) {
       if (!this.active || this.playPending) return;
       const run = recovery ? this.hiddenRun : null;
       if (recovery) {
         if (!run || run.gaveUp) return;
-        if (run.attempts >= 6) { this.giveUpRetry(); return; }
+        if (performance.now() - run.since >= 300000) { this.giveUpRetry(); return; }
         run.attempts++;
       }
-      const playMark = this.arm("play", false), attempt = { key: this.sourceKey, number: run?.attempts };
+      const playMark = this.arm("play", false), attempt = { key: this.sourceKey };
       this.playPending = attempt;
       const stillCurrent = () => this.playPending === attempt && attempt.key === this.sourceKey && current === this.media();
       current.play().then(() => {
         if (!stillCurrent()) return;
         if (!this.wantsPlay()) { this.arm("pause", true); current.pause(); return; }
         if (recovery && this.hiddenRun === run && !run.gaveUp) {
-          this.record("retry_ok"); this.checkRetryProgress(run, attempt.key, current.currentTime, attempt.number);
+          this.record("retry_ok"); this.checkRetryProgress(run, attempt.key, current.currentTime);
         }
         if (current.paused) return;
-        this.$("play").hidden = true; this.cancelRecovery();
+        this.$("play").hidden = true; if (!recovery) this.cancelRecovery();
       }).catch((error) => {
         if (this.programmed.get("play") === playMark) this.programmed.delete("play");
         if (!stillCurrent()) return;
         if (recovery && this.hiddenRun === run && !run.gaveUp) {
-          run.flat = 0;
           this.record("retry_blocked", { err: String(error.name || "Error").slice(0, 80) });
         }
         if (this.wantsPlay()) this.$("play").hidden = false;
       }).finally(() => {
         if (this.playPending === attempt) this.playPending = null;
-        if (recovery && this.hiddenRun === run && run.attempts >= 6) this.giveUpRetry();
       });
     }
     sync() {
@@ -497,6 +533,7 @@
         this.logMarks.set(type, now);
       }
       const event = { type, hidden: this.isHidden(), ...extra };
+      if (type === "pause_hidden") Object.assign(event, { rs: this.audio.readyState, ns: this.audio.networkState });
       if (Number.isFinite(this.media().currentTime)) event.t = Math.round(this.media().currentTime * 1000) / 1000;
       this.events.push(event);
       if (this.events.length > 20) this.events.shift();
@@ -545,14 +582,13 @@
         this.allowHiddenPlay ||= !state.paused && (previous.paused || jumped);
       }
       if (state.paused || !state.video_url) {
-        this.cancelRecovery(); this.clearProgressChecks();
-        if (this.hiddenRun) this.hiddenRun.flat = 0;
+        this.resetRetry();
       }
       this.state = state; this.receivedAt = performance.now(); this.syncBlocked = blocked;
       const key = state.video_url ? JSON.stringify([state.index, state.video_url]) : null;
       if (key !== this.sourceKey) {
-        this.cancelRecovery(); this.clearProgressChecks();
-        if (this.hiddenRun) this.hiddenRun.flat = 0;
+        clearTimeout(this.videoPauseTimer); this.videoPauseTimer = null;
+        this.resetRetry();
         this.hideNotice(); this.sourceKey = key; this.playPending = null;
         this.seekRequested = true; this.allowHiddenPlay = true;
         if (key === null) {
@@ -601,7 +637,7 @@
             if (action === "prev" || action === "next") this.onNavigate(action);
             else {
               this.hideNotice(); this.cancelRecovery();
-              if (action === "play") this.allowHiddenPlay = true;
+              if (action === "play") { this.resetRetry(true); this.allowHiddenPlay = true; }
               this.onAction(action, { position: this.loading ? this.targetPosition() : this.media().currentTime }, true);
               if (action === "play") this.playMedia(this.media());
             }

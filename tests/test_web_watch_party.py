@@ -496,6 +496,8 @@ def test_log_route_records_sanitized_events_and_limits_rate(cfg, monkeypatch, ca
     log_batch(events=[{"type": "waiting", "t": 10 ** 400}]),
     log_batch(events=[{"type": "waiting", "hidden": 1}]), log_batch(events=[{"type": "retry_blocked", "err": 4}]),
     log_batch(events=[{"type": "visibility", "unknown": True}]), log_batch(extra="unknown"),
+    *[log_batch(events=[{"type": "pause_hidden", **fields}]) for fields in (
+        {"rs": True}, {"rs": -1}, {"rs": 5}, {"rs": "1"}, {"ns": 4}, {"ns": 2.5})],
 ])
 def test_log_route_rejects_invalid_without_logging_or_rate_charge(cfg, payload, caplog):
     from web_helpers import make_app
@@ -526,7 +528,8 @@ def test_log_route_accepts_pip_and_retry_cap_events(cfg, caplog):  # LISTEN1 AC1
               {"type": "pip_enter", "hidden": False}, {"type": "pip_leave", "hidden": True}]
     events += [{"type": "pip_unsupported", "err": reason} for reason in ("insecure", "disabled", "api-missing")]
     events += [{"type": name, "t": 31.25, "hidden": name != "to_video"}
-               for name in ("to_audio", "to_video", "hidden_advance", "video_resync")]
+               for name in ("to_audio", "to_video", "hidden_advance", "video_resync", "freeze", "resume")]
+    events += [{"type": "pause_hidden", "hidden": True, "rs": 1, "ns": 2}]
     with caplog.at_level(logging.INFO, logger="auto_short.web.watch"):
         assert asyncio.run(post(log_request(log_batch(page="listen", events=events)))).status_code == 200
     records = [r for r in caplog.records if r.name == "auto_short.web.watch"]
