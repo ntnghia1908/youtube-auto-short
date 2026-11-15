@@ -118,7 +118,7 @@
   const player = new AutoShortPlayer("listen", {
     client: W.client, request, message,
     getItems: curItems,
-    getNext: () => curItems()[curIndex() + 1],
+    getNext: () => curItems()[(player.state?.index ?? curIndex()) + 1],
     onNavigate: (action) => inRoom ? roomNavigate(action) : navigate(action),
     onGroup(id) {
       if (inRoom) {
@@ -195,7 +195,7 @@
     const item = currentItem;
     if (inRoom || !storageKey || !item || !started || player.loading) return;
     write(storageKey, { episode_id: item.episode_id, clip_id: item.clip_id,
-      position: Number.isFinite(player.media().currentTime) ? player.media().currentTime : 0 });
+      position: Number.isFinite(player.position()) ? player.position() : 0 });
   }
   function renderJump() {
     const eps = player.groups(), signature = JSON.stringify(eps);
@@ -245,7 +245,7 @@
       fav: item?.fav || null, index, version: ++version, paused: !autoplay,
       position, rate: 1, server_time: 0, updated_at: 0 };
     player.setState(state); renderCurrent(!scroll);
-    if (autoplay) player.playMedia(player.media());
+    if (autoplay && player.media().paused) player.playMedia(player.media());
     message(item ? "" : "Chưa có mục đã render trong lựa chọn này.");
     if (scroll) player.scrollToVideo();
   }
@@ -255,7 +255,7 @@
     if (next >= 0 && next < items.length) choose(next, true);
     else if (action === "next") {
       save();
-      state = { ...state, paused: true, position: player.media().currentTime, server_time: 0, updated_at: 0 };
+      state = { ...state, paused: true, position: player.position(), server_time: 0, updated_at: 0 };
       player.setState(state); renderCurrent();
     }
   }
@@ -329,7 +329,7 @@
     pruningRoom = true;
     try {
       await roomCommand("set", { queue: grouped, index: queue.findIndex((entry) => entry.url === current),
-        position: player.loading ? player.targetPosition() : player.media().currentTime,
+        position: player.loading ? player.targetPosition() : player.position(),
         paused: rstate.paused, rate: rstate.rate }, true);
     } catch (error) { message(error.message); }
     finally { pruningRoom = false; }
@@ -337,7 +337,7 @@
   // Back to solo at the item / position the room was on.
   function exitRoom() {
     const last = rstate, playing = !player.media().paused;
-    const position = player.loading || !Number.isFinite(player.media().currentTime) ? (last?.position || 0) : player.media().currentTime;
+    const position = player.loading || !Number.isFinite(player.position()) ? (last?.position || 0) : player.position();
     setRoomMode(false);
     let found = last ? items.findIndex((item) => item.video_url === last.video_url) : -1;
     if (found < 0) found = index >= 0 ? index : startingIndex();
@@ -351,7 +351,7 @@
       // The whole list (AC 35); above the room cap send a window that still holds the playing item.
       const from = items.length > ROOM_MAX ? Math.max(0, Math.min(index - ROOM_MAX / 2, items.length - ROOM_MAX)) : 0;
       const queue = items.slice(from, from + ROOM_MAX).map(roomEntry);
-      const position = player.loading ? state.position : player.media().currentTime;
+      const position = player.loading ? state.position : player.position();
       setRoomMode(true);
       await roomCommand("set", { queue, index: index - from, position, paused: state.paused }, true);
       await roomCommand("auto", { auto }, true);
@@ -378,7 +378,7 @@
   });
 
   $("filter").querySelectorAll("[data-kind]").forEach((button) => button.addEventListener("click", () => {
-    const previous = items[index], position = player.media().currentTime;
+    const previous = items[index], position = player.position();
     const playing = player.active && !!state && !player.media().paused;
     save(); filter = button.dataset.kind; write("auto-short-listen-filter", filter); renderFilter();
     rebuildItems();
@@ -386,7 +386,8 @@
     choose(retained < 0 ? startingIndex() : retained, playing, retained < 0 ? 0 : position);
   }));
   $("jump").addEventListener("change", () => player.onGroup($("jump").value));
-  player.audio.addEventListener("timeupdate", () => {
+  for (const audio of player.audios) audio.addEventListener("timeupdate", () => {
+    if (audio !== player.media()) return;
     if (performance.now() - lastSave > 3000) { lastSave = performance.now(); save(); }
   });
   function switchTab(name) {
@@ -394,7 +395,7 @@
     else {
       save();
       if (state && !inRoom) {
-        state = { ...state, paused: true, position: player.loading ? state.position : player.media().currentTime,
+        state = { ...state, paused: true, position: player.loading ? state.position : player.position(),
           server_time: 0, updated_at: 0 };
         player.setState(state, false);
       }

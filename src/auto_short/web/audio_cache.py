@@ -13,6 +13,7 @@ from ..store.client import StoreClient, StoreMismatch
 from .episodes import StoredShort
 
 MAX_BYTES = 2 * 1024**3
+AUDIO_PAD = 1.5
 # Fixed stripes bound lock memory while serializing extraction of the same cache key.
 _locks = [threading.Lock() for _ in range(64)]
 _prune_lock = threading.Lock()
@@ -30,13 +31,13 @@ def _prune(root: Path, keep: Path) -> None:
 
 
 def cached_audio(config: Config, episode_id: str, clip_id: str, source: Path | StoredShort) -> Path:
-    """Copy AAC without re-encoding; only complete files become visible to FileResponse."""
+    """Encode AAC with leading silence; only complete files become visible to FileResponse."""
     if isinstance(source, StoredShort):
         version = f"{source.sha256}:{source.size}"
     else:
         stat = source.stat()
         version = f"{source.resolve()}:{stat.st_size}:{stat.st_mtime_ns}:{stat.st_ctime_ns}"
-    key = hashlib.sha256(f"{episode_id}:{clip_id}:{version}".encode()).hexdigest()
+    key = hashlib.sha256(f"{episode_id}:{clip_id}:{version}:aac128-pad{AUDIO_PAD}".encode()).hexdigest()
     root = Path(config.workspace.dir) / "_audio_cache"
     root.mkdir(parents=True, exist_ok=True)
     target = root / f"{episode_id}.{clip_id}.{key}.m4a"
@@ -65,7 +66,8 @@ def cached_audio(config: Config, episode_id: str, clip_id: str, source: Path | S
                     stream.close()
             audio = tmp / "audio.m4a"
             proc = _run(["ffmpeg", "-nostdin", "-hide_banner", "-v", "error", "-y", "-i", str(media),
-                         "-map", "0:a:0", "-vn", "-c:a", "copy", "-movflags", "+faststart", str(audio)])
+                         "-map", "0:a:0", "-vn", "-af", f"adelay={round(AUDIO_PAD * 1000)}:all=1",
+                         "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(audio)])
             if proc.returncode or not audio.is_file() or not 0 < audio.stat().st_size <= MAX_BYTES:
                 raise RenderError("không tách được audio của Short")
             with _prune_lock:

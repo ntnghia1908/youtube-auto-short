@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS (Amendment F)
+- Status: IN_PROGRESS (Amendment G)
 - Type: FEATURE + BUG
 - Change class: S1 — chỉ client (HTML / JS / CSS) của tab Nghe, dùng lại endpoint sửa tiêu đề có sẵn; không endpoint mới, không dependency, không đổi security model / public API
 - Owner: HUMAN LEAD
@@ -107,6 +107,21 @@ Bằng chứng (trang thử `/static/bgtest.html` trên 8080, điện thoại HU
 - Out of scope ở F: cách chuyển bài khi ẩn (chờ kết quả thử chuyển bài, Amendment G).
 - AC 13: route trả audio-only (ffprobe chỉ có stream audio), Range 206, cache dùng lại (lần 2 không gọi ffmpeg), mp4 đổi → m4a mới, kho tắt → 503, id sai → 404, không tick đã tải. AC 14: client dùng `.m4a`, fallback mp4 khi lỗi.
 
+## Amendment G — chuyển bài khi ẩn: bài sau có 1,5 s im lặng ở đầu, bật sớm 0,5 s (2026-11-15)
+
+Thử thật trên trang `/static/bgtest.html` (file .m4a 25 s cuối của 3 Short, ẩn / tắt màn hình, HUMAN LEAD, ảnh nhật ký 19:20–19:27 và sau đó):
+- E (hết bài → đổi `src` + `play()` cùng phần tử): Chrome hoãn bài mới tới khi trang hiện lại.
+- F (phần tử thứ hai bật bài sau âm lượng đầy, sớm 1 s, dừng bài cũ): không dừng; "chuyển bài cảm giác hơi gấp".
+- G (mồi âm lượng 0 / 0.01): Chrome chặn (`AbortError`), cả hai bản như nhau.
+- H (như F, file bài sau có sẵn 1,5 s im lặng ở đầu, bật sớm 0,5 s): HUMAN LEAD "Cách H đã ổn".
+
+Làm H:
+- Server (`audio_cache.py`): bản `.m4a` có 1,5 s im lặng ở đầu: `-af adelay=1500:all=1 -c:a aac -b:a 128k` (mã hóa lại phần tiếng, ~1 s / Short). Hằng số `AUDIO_PAD = 1.5` ở một chỗ; cache key gồm bản pad để file cũ không pad bị thay.
+- Client: thời gian nội dung = `audio.currentTime − pad` (pad = 1.5 cho `.m4a`, 0 khi fallback mp4). Mọi vị trí ra ngoài / vào trong (state, phòng, nhớ chỗ nghe, tua, video muted theo audio, log `t`) dùng thời gian nội dung; bắt đầu / tua bài khi trang hiện thì đặt audio tại `vị trí + pad` (không nghe 1,5 s im lặng khi tự bấm).
+- Chuyển bài khi ẩn (một mình và Xem chung, theo luật auto / bài tiếp hiện có khi ẩn): hai phần tử `<audio>`; phần tử còn lại nạp sẵn `.m4a` bài sau khi bài hiện tại bắt đầu. Khi bài hiện tại còn ≤ 0,5 s (sự kiện `timeupdate`, không timer): phần tử sau `currentTime = 0`, âm lượng đầy, `play()`; khi resolve: dừng bài cũ, phần tử sau thành `media()`, cập nhật state như chuyển bài khi ẩn hiện nay (một mình `onNavigate("next")`; phòng state lạc quan + `next` với `expect_version`) mà **không nạp lại** audio. Nếu `ended` tới trước khi kịp bật sớm: `play()` phần tử sau ngay trong handler `ended` (đường cũ) + retry như D. Log `hidden_advance`, `early_start`, `early_blocked` (kèm `err`); thêm vào `LOG_TYPES`.
+- Màn hình sáng: giữ đếm ngược 3 s như cũ.
+- AC 15: route `.m4a` dài hơn mp4 ≈ 1,5 s, đầu file im lặng, cache key đổi theo pad; harness: vị trí nội dung = audio − pad (state, save, video sync, room); trang ẩn: bật sớm ở ≤ 0,5 s cuối, âm lượng đầy, từ 0, không `load()` lại, state đổi bài, phòng gửi `next` với `expect_version`; `ended` trước → đường cũ; fallback mp4 pad 0.
+
 ## Phải giữ nguyên
 
 - Tất cả hành vi LISTEN1 / WATCH1 đang có test: thứ tự danh sách, nhóm tập / phần Yêu thích, thẻ đếm ngược khi màn hình sáng, không cuộn trang khi tự chuyển, tim, nhớ chỗ nghe, Xem chung, PiP.
@@ -150,7 +165,15 @@ Không chạm database, security model hay public API contract → manual test l
 
 ## Result
 
-### Amendment F — READY implementation (base `93d7791`, chưa commit)
+### Amendment G (bản H) — READY implementation (base `25d62f5`, chưa commit)
+
+- `audio_cache.py`: `AUDIO_PAD = 1.5`, encode AAC 128k với `adelay`, cache key gồm pad / kiểu encode. `player.js` có hai audio, nạp trước bài kế, phát âm lượng 1 từ thời gian file 0 ở ≤ 0,5 s cuối khi ẩn; resolve mới dừng bài cũ và dùng luôn audio mới, không reload. `ended` trước thì phát phần tử đã nạp ngay trong handler; lỗi play nền vào retry D. Giữ countdown sáng, fallback mp4 pad 0, log `early_start` / `early_blocked` trong validator.
+- `position` / `seek` / `pad` quy đổi clock file ↔ nội dung cho state, phòng, video, log và save. `listen.js` nghe timeupdate cả hai audio (chỉ save phần tử đang phát), lấy next theo index lạc quan của player; giữ nguyên syncBlocked / pauseTimer / hiddenPause và xử lý 409. Promise trễ bị chặn sau pause / seek / auto off / hiện trang / đổi bài / suspend; nếu đã ended thì quay về đường kết thúc cũ.
+- AC 15 → `test_audio_route_only_audio_range_cache_and_render_version` kiểm duration +1,5 s, PCM đầu im lặng, thay pad đổi key (thay assertion AAC packet hash không đổi của F vì H encode lại). Harness mới: `test_player_js_padded_audio_keeps_external_content_clock` (2 ca), `test_player_js_hidden_early_start_reuses_preloaded_audio` (4 ca, đổi audio hai lần, solo / phòng / watch, expect_version), `test_player_js_early_start_failure_end_and_cancellation` (12 ca, gồm ended trước / play bị chặn + retry). Test cũ giữ tên; sửa clock thành thời gian nội dung và tham chiếu active audio sau handoff ở các ca video follows / hidden advance / room reconcile, giữ kiểm 409 không double skip.
+- Verification: `PYTHONPATH=src python -m pytest tests/test_web_listen.py tests/test_web_watch_party.py tests/test_web_audio.py -q -k "not http"` → **226 passed, 12 deselected, 15.01 s**; `git diff --check` PASS. Chỉ đổi 4 file app (`audio_cache.py`, `player.js`, `listen.js`, `routes/watch.py`), 3 file test nêu trên và contract; diff riêng G không tính docs: **app +228 / −113; test +204 / −55**.
+- Reuse: đã tìm `rg -n 'currentTime' src/auto_short/web/static/player.js src/auto_short/web/static/listen.js` cùng các điểm getNext / onHiddenAdvance / timeupdate; giữ arm / isProgrammed / loadMedia / playMedia / recover / record và callback điều hướng hiện có. Thêm helper clock / preload / handoff vì đường một audio không đổi được phần tử mà giữ playback; `advanceHidden` / `finishEnded` tách nguyên logic cũ để dùng lại, `programKey` tách event mark theo từng audio. Không đưa bgtest.html vào repo. HTTP bị loại theo filter; chưa chạy full suite hoặc thử bản tích hợp trên điện thoại / 8080. Không commit / push / PR, mạng thật hay agent khác.
+
+### Amendment F — kết quả trước G (đã commit `25d62f5`)
 
 - File đổi: `routes/files_catchall.py`, module mới `web/audio_cache.py`, `static/player.js`, `routes/watch.py`, `tests/test_web_audio.py` mới, `tests/test_web_listen.py`, `tests/test_web_watch_party.py`, contract này. `listen.js` dùng chung player nên không cần sửa: state / queue / sourceKey vẫn giữ URL mp4, chỉ nguồn audio đổi sang m4a (giữ query `v`); video vẫn mp4 muted.
 - Server: tách AAC `-vn -c:a copy`, FileResponse `audio/mp4` + Range; cache `<workspace>/_audio_cache` theo episode / clip / stat hoặc SHA bản kho, khóa cùng key, file tạm + rename, hạn 2 GiB xóa cũ nhất. Nguồn kho tải đủ byte, kiểm size / SHA, đóng stream và dọn tạm kể cả khi lỗi. M4a bỏ qua cả `tracked` và `mark_downloaded`, kể cả khi có `download` / `dl`.

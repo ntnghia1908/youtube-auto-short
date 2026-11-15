@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import subprocess
+from array import array
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
@@ -79,11 +80,15 @@ def test_audio_route_only_audio_range_cache_and_render_version(cfg, short, monke
                            check=True, capture_output=True, text=True)
     streams = json.loads(probe.stdout)["streams"]
     assert [(s["codec_type"], s["codec_name"]) for s in streams] == [("audio", "aac")]
-    # Byte-identical AAC packets: extracting the audio does not re-encode it.
-    def packet_hash(path):
-        return subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-map", "0:a:0", "-c:a", "copy",
-                               "-f", "hash", "-"], check=True, capture_output=True).stdout
-    assert packet_hash(short) == packet_hash(first.path)
+    def duration(path):
+        return float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of",
+                                     "default=nw=1:nk=1", str(path)], check=True, capture_output=True, text=True).stdout)
+    assert duration(first.path) - duration(short) == pytest.approx(audio_cache.AUDIO_PAD, abs=.08)
+    pcm = subprocess.run(["ffmpeg", "-v", "error", "-i", str(first.path), "-ac", "1", "-ar", "16000",
+                          "-f", "s16le", "-"], check=True, capture_output=True).stdout
+    samples = array("h", pcm)
+    assert max(abs(v) for v in samples[:int(1.4 * 16000)]) < 30
+    assert max(abs(v) for v in samples[int(1.6 * 16000):int(2 * 16000)]) > 1000
     second = route(EID, "k01.m4a")
     assert first.path == second.path and len(calls) == 1
     status, headers, chunk = serve(second, "bytes=10-29")
@@ -94,6 +99,10 @@ def test_audio_route_only_audio_range_cache_and_render_version(cfg, short, monke
     os.utime(short, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000))
     third = route(EID, "k01.m4a")
     assert third.path != first.path and len(calls) == 2
+    monkeypatch.setattr(audio_cache, "AUDIO_PAD", 2.0)
+    fourth = route(EID, "k01.m4a")
+    assert fourth.path != third.path and len(calls) == 3
+    assert duration(fourth.path) - duration(third.path) == pytest.approx(.5, abs=.08)
     assert list((Path(cfg.workspace.dir) / "_audio_cache").glob(".extract-*")) == []
 
 
