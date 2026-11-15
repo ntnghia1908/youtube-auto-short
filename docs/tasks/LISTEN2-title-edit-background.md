@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: READY (Amendment D + E; chờ HUMAN LEAD thử điện thoại ở 8080)
+- Status: IN_PROGRESS (Amendment F)
 - Type: FEATURE + BUG
 - Change class: S1 — chỉ client (HTML / JS / CSS) của tab Nghe, dùng lại endpoint sửa tiêu đề có sẵn; không endpoint mới, không dependency, không đổi security model / public API
 - Owner: HUMAN LEAD
@@ -12,7 +12,7 @@
 - Authorization mode: task
 - Authorization source: HUMAN LEAD 2026-11-15: "1. tôi muốn khung sửa tiêu đề nằm ngay trên trang nghe playlist để tôi nghe tới đâu sửa luôn; 2. nghe mà tắt màn hình vẫn bị vấn đề, chuyển bài không được… có phải do player hay không, có thể dùng một lib player nào đó có sẵn để fix"; chọn "Tự đổi khi tắt màn hình" và "Đồng ý, làm luôn"
 - Parallel group: —
-- Owned paths: `src/auto_short/web/static/player.js`, `listen.js`, `episode.html`, `favorites.html`, `app.js` (chỉ tách / dùng lại trình sửa tiêu đề), file JS mới cho trình sửa tiêu đề dùng chung (nếu tách), `style.css` (khối nhỏ), `tests/test_web_listen.py`, `src/auto_short/web/routes/watch.py` (chỉ thêm tên sự kiện log được phép — amendment 2026-11-15, Codex BLOCKED vì AC 9), `tests/test_web_watch_party.py` (test validator), `src/auto_short/web/static/watch.js` (Amendment A, nếu cần), file này
+- Owned paths: `src/auto_short/web/static/player.js`, `listen.js`, `episode.html`, `favorites.html`, `app.js` (chỉ tách / dùng lại trình sửa tiêu đề), file JS mới cho trình sửa tiêu đề dùng chung (nếu tách), `style.css` (khối nhỏ), `tests/test_web_listen.py`, `src/auto_short/web/routes/watch.py` (chỉ thêm tên sự kiện log được phép — amendment 2026-11-15, Codex BLOCKED vì AC 9), `tests/test_web_watch_party.py` (test validator), `src/auto_short/web/static/watch.js` (Amendment A, nếu cần), `src/auto_short/web/routes/files_catchall.py` + module mới cho cache audio (Amendment F), test mới cho route audio, file này
 - Dependencies: none
 - Base commit / branch: `68e4463` (origin/main) / `feature/listen2-title-background` (worktree `~/projects/yas-listen2`)
 - Human Lead approval: accepted 2026-11-15
@@ -97,6 +97,16 @@ Log `4e14886`: mỗi lần trang ẩn, ~10 ms sau `visibility hidden` có `pause
 - Video bị dừng mà không chuyển sang audio thì video theo lại audio khi trang hiện (`syncVideo`).
 - AC 12: pause của video lúc hiện rồi ẩn trong < 1500 ms không dừng audio, không gửi `onAction("pause")`; pause với userActivation đang active dừng audio ngay; pause không có activation mà trang vẫn hiện sau 1500 ms thì dừng audio.
 
+## Amendment F — bản chỉ có tiếng (.m4a) cho tab Nghe (2026-11-15)
+
+Bằng chứng (trang thử `/static/bgtest.html` trên 8080, điện thoại HUMAN LEAD, Chrome + Samsung Internet): phát Short **mp4** bằng `<audio>` (có / không có `<video>`) đều bị trình duyệt dừng khi ẩn / tắt màn hình (file có track hình → chính sách chặn video nền). Cùng 3 Short tách tiếng **.m4a** (`ffmpeg -vn -c:a copy`) thì ẩn trang / tắt màn hình phát liên tục, chuyển bài khi ẩn chạy 2/3 lần. Link mp3 ngoài cũng phát nền bình thường. HUMAN LEAD: "Rất tốt, chuyển trình duyệt hay tắt màn hình đều mượt mà không bị ngắt tiếng"; "Tiếp tục".
+
+- Route mới, sau login như `/files`: `GET /files/{episode_id}/{clip_id}.m4a` (cùng tham số `v`), trả audio-only AAC (`audio/mp4`, hỗ trợ Range). Tách bằng `ffmpeg -vn -c:a copy` (không mã hóa lại), cache dưới `<workspace>/_audio_cache/` theo episode + clip + dấu bản (sha / mtime của mp4) để bản render lại sinh file mới; khóa theo key để không tách trùng; ghi file tạm rồi đổi tên. Giới hạn dung lượng cache (vd. 2 GB, xóa cũ nhất). Short ở kho 3090 (`StoredShort`): lấy đủ byte qua `StoreClient` vào file tạm rồi tách; kho tắt → 503 như mp4.
+- Không đánh dấu "đã tải" (`ctx.tracked` / `mark_downloaded`) cho `.m4a`.
+- Client tab Nghe (một mình + Xem chung): audio phát URL `.m4a` tương ứng `video_url` (cùng `v`); video vẫn mp4 muted. Lỗi tải `.m4a` (404 / 503 / decode) → audio quay về mp4 của bài đó, ghi log `audio_fallback`.
+- Out of scope ở F: cách chuyển bài khi ẩn (chờ kết quả thử chuyển bài, Amendment G).
+- AC 13: route trả audio-only (ffprobe chỉ có stream audio), Range 206, cache dùng lại (lần 2 không gọi ffmpeg), mp4 đổi → m4a mới, kho tắt → 503, id sai → 404, không tick đã tải. AC 14: client dùng `.m4a`, fallback mp4 khi lỗi.
+
 ## Phải giữ nguyên
 
 - Tất cả hành vi LISTEN1 / WATCH1 đang có test: thứ tự danh sách, nhóm tập / phần Yêu thích, thẻ đếm ngược khi màn hình sáng, không cuộn trang khi tự chuyển, tim, nhớ chỗ nghe, Xem chung, PiP.
@@ -140,6 +150,23 @@ Không chạm database, security model hay public API contract → manual test l
 
 ## Result
 
+### Amendment F — READY implementation (base `93d7791`, chưa commit)
+
+- File đổi: `routes/files_catchall.py`, module mới `web/audio_cache.py`, `static/player.js`, `routes/watch.py`, `tests/test_web_audio.py` mới, `tests/test_web_listen.py`, `tests/test_web_watch_party.py`, contract này. `listen.js` dùng chung player nên không cần sửa: state / queue / sourceKey vẫn giữ URL mp4, chỉ nguồn audio đổi sang m4a (giữ query `v`); video vẫn mp4 muted.
+- Server: tách AAC `-vn -c:a copy`, FileResponse `audio/mp4` + Range; cache `<workspace>/_audio_cache` theo episode / clip / stat hoặc SHA bản kho, khóa cùng key, file tạm + rename, hạn 2 GiB xóa cũ nhất. Nguồn kho tải đủ byte, kiểm size / SHA, đóng stream và dọn tạm kể cả khi lỗi. M4a bỏ qua cả `tracked` và `mark_downloaded`, kể cả khi có `download` / `dl`.
+- Client: lỗi nguồn / decode m4a → fallback mp4 một lần mỗi bài, giữ vị trí / tốc độ / trạng thái pause, không reload video hoặc thay sourceKey; log `audio_fallback`. Đã đổi assertion audio.src trong các test nền / room / video hiện có sang m4a, giữ nguyên assertion video_url / sourceKey mp4; không xóa test cũ.
+- Reuse: đã tìm `rg -n 'ffmpeg|def open_stream' src/auto_short -g '*.py'` và `rg -n 'StoredShort|def short_locations' src/auto_short/web/episodes.py`; dùng lại `render.stage._run`, `ep.short_locations`, `ep.StoredShort`, `StoreClient.open_stream`, FileResponse, arm / playMedia / record. Thêm `cached_audio` / `_prune` vì chưa có cache tách AAC có version / khóa / quota; `audioUrl` / `loadMedia` gom ánh xạ URL và lập trình load dùng chung cho đổi bài / fallback.
+
+| AC | Test / kết quả trong sandbox |
+|---|---|
+| 13 | `test_audio_route_only_audio_range_cache_and_render_version`: ffprobe chỉ AAC, packet hash không đổi, Range 206 / 416, cache hit không gọi ffmpeg, đổi mtime sinh bản mới. Các test `invalid_or_missing`, `released_short_stream_and_failures`, `serializes_same_key_and_evicts_oldest`, `failed_extraction`, `uses_existing_files_login_boundary`: PASS; không tick / track, kho tắt 503, id sai 404, khóa / quota / dọn tạm / auth |
+| 14 | `test_player_js_audio_only_source_and_one_fallback_per_track`: solo / phòng × lỗi 404 / 503 / decode (6 ca PASS), query v, giữ clock / pause / video, không fallback lặp / reload khi poll, bài mới thử lại m4a; validator nhận `audio_fallback`: PASS |
+
+- Verification: `PYTHONPATH=src python -m pytest tests/test_web_audio.py tests/test_web_listen.py tests/test_web_watch_party.py -q -k '(audio_route or audio_cache or player_js or static or log) and not http'` → **109 passed, 111 deselected, 10.68 s**. `node --check src/auto_short/web/static/player.js` và `git diff --check` PASS. Diff riêng F (không tính docs): **app +127 / −10; test +285 / −14**.
+- Giới hạn: lượt đầu cùng nhóm test treo tại AnyIO worker I/O của FileResponse, đã dừng; lượt chẩn đoán `-vv -o faulthandler_timeout=15` xác nhận rồi dừng. Helper test `serve` chạy FileResponse / Range thật, chỉ thay worker I/O bằng gọi đồng bộ để không cần socket wakeup. Chưa chạy HTTP/TestClient (có thêm `test_http_audio_route_login_and_range` cho ORCHESTRATOR), full suite hoặc điện thoại / 8080; không claim các phần đó PASS. Không mạng thật, agent khác, commit / push / PR. Cách chuyển bài khi ẩn giữ nguyên, thuộc Amendment G nếu cần.
+
+### Kết quả trước F (đã commit trong `93d7791`)
+
 - Amendment E: pause video có userActivation active dừng audio ngay; còn lại chờ 1500 ms và kiểm cùng bài / còn visible / video dừng / audio phát. Hủy timer khi visibilitychange, đổi bài hoặc Play; mirror không tự play video trong lúc chờ. Giữ nguyên logic retry / log của D, không thêm helper.
 - AC 12: `test_player_js_video_pause_requires_activation_or_visible_grace` có 3 ca PASS. Lệnh listen `-k "player_js"`: **58 passed, 26 deselected**, 4.19 s; lệnh watch-party `-k "player_js or static"`: **115 deselected, exit 5** (không có test khớp, không claim PASS).
 - Chỉ sửa E trong `player.js`, harness / 3 ca tại `tests/test_web_listen.py` và ba dòng Result này; giữ các thay đổi D chưa commit. Không chạy thêm test / full suite, không commit; còn thử lại điện thoại / 8080.
@@ -161,3 +188,4 @@ Không chạm database, security model hay public API contract → manual test l
 - Helper / reuse: đã tìm `rg -n 'hiddenRun|checkRetryProgress|giveUpRetry|attempts|\.flat|cancelRecovery|freeze|resume|networkState' src/auto_short/web/static/player.js tests/test_web_listen.py src/auto_short/web/routes/watch.py`. Dùng lại recover / playMedia / progressChecks / record / flushLog / harness; thêm `resetRetry` vì cancelRecovery cũ chỉ hủy timer, không reset hạn, attempts, give-up hoặc token play đang treo. Không dependency / module mới.
 - Giới hạn: chưa thử D trên điện thoại / 8080; timer vẫn chịu scheduling / freeze của trình duyệt, callback dùng elapsed time để kiểm hạn khi chạy lại. Full suite và kiểm chứng thực tế thuộc ORCHESTRATOR / HUMAN LEAD. Không claim full suite hoặc thử thật PASS cho D; không commit / push / PR, không gọi agent khác hay mạng thật.
 - ORCHESTRATOR verification Amendment D + E 2026-11-15: full suite `-n auto` 4371 passed, 2 skipped (2 m 46 s).
+- ORCHESTRATOR verification Amendment F 2026-11-15: full suite `-n auto` 4392 passed, 2 skipped (2 m 45 s). Review OK.

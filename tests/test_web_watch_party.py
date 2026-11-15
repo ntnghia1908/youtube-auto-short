@@ -528,7 +528,7 @@ def test_log_route_accepts_pip_and_retry_cap_events(cfg, caplog):  # LISTEN1 AC1
               {"type": "pip_enter", "hidden": False}, {"type": "pip_leave", "hidden": True}]
     events += [{"type": "pip_unsupported", "err": reason} for reason in ("insecure", "disabled", "api-missing")]
     events += [{"type": name, "t": 31.25, "hidden": name != "to_video"}
-               for name in ("to_audio", "to_video", "hidden_advance", "video_resync", "freeze", "resume")]
+               for name in ("to_audio", "to_video", "hidden_advance", "video_resync", "freeze", "resume", "audio_fallback")]
     events += [{"type": "pause_hidden", "hidden": True, "rs": 1, "ns": 2}]
     with caplog.at_level(logging.INFO, logger="auto_short.web.watch"):
         assert asyncio.run(post(log_request(log_batch(page="listen", events=events)))).status_code == 200

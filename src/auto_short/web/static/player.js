@@ -24,7 +24,24 @@
       current.addEventListener("loadedmetadata", () => {
         if (!this.state?.video_url) return;
         this.loading = false;
-        this.sync();
+        // A fallback reload keeps the audio clock; a newer room state still wins.
+        const resume = this.fallbackResume;
+        this.fallbackResume = null;
+        if (resume?.state === this.state) {
+          this.arm("seeked", resume.position); current.currentTime = resume.position;
+        }
+        this.sync(resume?.state === this.state);
+      });
+      current.addEventListener("error", () => {
+        if (!this.active || !this.state?.video_url || !current.error || this.audioFallback
+            || current.getAttribute("src") !== this.audioUrl(this.state.video_url)
+            || current.getAttribute("src") === this.state.video_url) return;
+        const position = this.loading ? this.targetPosition() : current.currentTime;
+        this.record("audio_fallback", { err: String(current.error.code) });
+        this.fallbackResume = { state: this.state, position };
+        this.audioFallback = true; this.loading = true; this.playPending = null;
+        this.loadMedia(current, this.state.video_url, position, this.state.rate);
+        if (this.wantsPlay()) this.playMedia(current);
       });
       for (const [event, action] of [["play", "play"], ["pause", "pause"], ["seeked", "seek"], ["ratechange", "rate"]]) {
         current.addEventListener(event, () => {
@@ -499,7 +516,7 @@
         if (this.playPending === attempt) this.playPending = null;
       });
     }
-    sync() {
+    sync(keepPosition = false) {
       const current = this.media(), s = this.state;
       if (!this.active || !s?.video_url || this.syncBlocked) return;
       if (s.paused && !current.paused) { this.arm("pause", true); current.pause(); }
@@ -507,7 +524,7 @@
       const hidden = this.isHidden(), explicit = this.seekRequested;
       const target = Math.min(this.targetPosition(), Number.isFinite(current.duration) ? current.duration : Infinity);
       const drift = target - current.currentTime;
-      if (Math.abs(drift) > 1) {
+      if (!keepPosition && Math.abs(drift) > 1) {
         if (!hidden || explicit) { this.arm("seeked", target); current.currentTime = target; }
         else this.record("seek_skipped_hidden", { drift: Math.round(drift * 1000) / 1000 });
       }
@@ -560,14 +577,19 @@
       this.lastLogAt = performance.now(); this.events.splice(0, events.length);
       if (!beacon) this.scheduleLog();
     }
+    audioUrl(url) { return url.replace(/\.mp4(?=[?#]|$)/, ".m4a"); }
+    loadMedia(current, src, position, rate) {
+      if (!current.paused) this.arm("pause", true, current);
+      current.src = src; current.load();
+      this.arm("seeked", position, current); current.currentTime = position;
+      this.arm("ratechange", rate, current); current.playbackRate = rate;
+    }
     load() {
       this.loading = true; this.programmed.clear(); this.playPending = this.videoPlayPending = null;
-      this.video.muted = true;
+      this.video.muted = true; this.audioFallback = false; this.fallbackResume = null;
       for (const current of [this.audio, this.video]) {
-        if (!current.paused) this.arm("pause", true, current);
-        current.src = this.state.video_url; current.load();
-        this.arm("seeked", this.state.position, current); current.currentTime = this.state.position;
-        this.arm("ratechange", this.state.rate, current); current.playbackRate = this.state.rate;
+        const src = current === this.audio ? this.audioUrl(this.state.video_url) : this.state.video_url;
+        this.loadMedia(current, src, this.state.position, this.state.rate);
       }
       // Start the established audio element inside the click / ended handler, before metadata or a network reply.
       if (this.wantsPlay()) this.playMedia(this.audio);

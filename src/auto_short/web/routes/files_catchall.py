@@ -13,8 +13,10 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 
 from ... import khaithi
 from ...review import content_disposition
+from ...render.stage import RenderError
 from ...store.client import StoreClient, StoreMismatch, StoreRangeError, StoreUnavailable
 from .. import episodes as ep
+from ..audio_cache import cached_audio
 from ..context import WebContext, SOURCE_TYPES
 from .episodes import _StoreResponse
 
@@ -91,7 +93,7 @@ def build(ctx: WebContext) -> APIRouter:
               archive: str | None = None, request: Request = None):
         archive_mode = name == "all.zip" and archive == "1"
         response = _files_response(episode_id, name, download, archive_mode, request)
-        return response if archive_mode else ctx.tracked(dl, response)
+        return response if archive_mode or name.endswith(".m4a") else ctx.tracked(dl, response)
 
     def zip_body(items):
         if not any(isinstance(p, ep.StoredShort) for _, p, _ in items):
@@ -140,6 +142,25 @@ def build(ctx: WebContext) -> APIRouter:
             return FileResponse(found_src, media_type=SOURCE_TYPES.get(found_src.suffix.lower(),
                                                                        "application/octet-stream"),
                                 headers={"Cache-Control": "private, no-cache"})
+        if name.endswith(".m4a"):
+            clip_id = name[:-4]
+            if not ep.valid_clip_id(clip_id):
+                return JSONResponse({"detail": "không có file này"}, status_code=404)
+            source = next((p for cid, p, _ in ep.short_locations(ctx.config, episode_id) or []
+                           if cid == clip_id and p is not None), None)
+            if source is None:
+                return JSONResponse({"detail": "không có file này"}, status_code=404)
+            if isinstance(source, ep.StoredShort) and not ctx.config.store.enabled:
+                return JSONResponse({"detail": "3090 đang tắt"}, status_code=503)
+            try:
+                audio = cached_audio(ctx.config, episode_id, clip_id, source)
+            except StoreUnavailable:
+                return JSONResponse({"detail": "3090 đang tắt"}, status_code=503)
+            except (StoreMismatch, FileNotFoundError):
+                return JSONResponse({"detail": "không có file này"}, status_code=404)
+            except (RenderError, OSError):
+                return JSONResponse({"detail": "không tách được audio"}, status_code=500)
+            return FileResponse(audio, media_type="audio/mp4", headers={"Cache-Control": "private, no-cache"})
         clip_id = name[:-4] if name.endswith(".mp4") else ""
         if not ep.valid_clip_id(clip_id):
             return JSONResponse({"detail": "không có file này"}, status_code=404)

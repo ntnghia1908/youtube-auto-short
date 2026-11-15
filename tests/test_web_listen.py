@@ -258,7 +258,7 @@ class Element {
   }
   getBoundingClientRect() { return {top: 0, bottom: 10, height: 10}; }
   scrollIntoView(options) { scrolls.push([this, options]); }
-  load() { this.loads++; const wasPlaying = !this.paused; this.readyState = 0; this.currentTime = 0; this.paused = true; this.ended = false; if (wasPlaying) queueMicrotask(() => this.fire("pause")); }
+  load() { this.error = null; this.loads++; const wasPlaying = !this.paused; this.readyState = 0; this.currentTime = 0; this.paused = true; this.ended = false; if (wasPlaying) queueMicrotask(() => this.fire("pause")); }
   pause() { this.pauses++; const changed = !this.paused; this.paused = true; if (changed) queueMicrotask(() => this.fire("pause")); }
   play() { this.plays++; const changed = this.paused; this.paused = false; if (changed) queueMicrotask(() => this.fire("play")); return Promise.resolve(); }
 }
@@ -788,11 +788,11 @@ if (!ROOM) assert.equal(JSON.parse(storage.get("auto-short-listen-position:PLtes
 video.currentTime = 2; await video.fire("timeupdate");
 if (!ROOM) assert.equal(JSON.parse(storage.get("auto-short-listen-position:PLtest:fav")).position, 31.5);
 sessionActions.nexttrack(); await settled();
-assert.equal(audio.src, sourceItems[1].video_url); assert.equal(video.src, audio.src); assert.ok(!audio.paused);
+assert.equal(audio.src, sourceItems[1].video_url.replace(".mp4", ".m4a")); assert.equal(video.src, audio.src.replace(".m4a", ".mp4")); assert.ok(!audio.paused);
 await metadata(); sessionActions.pause(); await settled(); assert.ok(audio.paused); assert.ok(activePlayer.state.paused);
 sessionActions.play(); await settled(); assert.ok(!audio.paused); assert.ok(!activePlayer.state.paused);
 sessionActions.previoustrack(); await settled(); await metadata();
-assert.equal(audio.src, sourceItems[0].video_url); assert.equal(video.src, audio.src);
+assert.equal(audio.src, sourceItems[0].video_url.replace(".mp4", ".m4a")); assert.equal(video.src, audio.src.replace(".m4a", ".mp4"));
 audio.currentTime = 44.75; audio.playbackRate = 1.25; await audio.fire("ratechange"); await settled();
 const playing = [audio.currentTime, audio.plays, audio.pauses, audio.loads];
 await visibility(false);
@@ -813,13 +813,53 @@ assert.ok(!events.some(e => e.type === "pause_hidden")); // The browser's muted-
 '''.replace("ROOM", json.dumps(room)))
 
 
+@pytest.mark.parametrize("room", [False, True])
+@pytest.mark.parametrize("failure", ["404", "503", "decode"])
+def test_player_js_audio_only_source_and_one_fallback_per_track(run_player_js, room, failure):  # Amendment F AC14
+    run_player_js(r'''
+sourceItems = [item(1, 1), item(1, 2)];
+sourceItems[0].video_url += "?v=abc123";
+if (ROOM) useRoom();
+await boot();
+if (ROOM) { await $("watch").fire("click"); await settled(); }
+const audio = activePlayer.audio, video = $("video");
+assert.equal(audio.src, "/files/ep1/k1.m4a?v=abc123");
+assert.equal(video.src, "/files/ep1/k1.mp4?v=abc123"); assert.ok(video.muted);
+await metadata(); await $("play").fire("click"); await settled();
+audio.currentTime = 27.25; audio.playbackRate = 1.5;
+await audio.fire("ratechange"); await settled(); await visibility(true);
+const key = activePlayer.sourceKey, videoLoads = video.loads, audioLoads = audio.loads;
+// The media element reports HTTP failures as MEDIA_ERR_SRC_NOT_SUPPORTED (4).
+audio.error = {code: FAILURE === "decode" ? 3 : 4};
+await audio.fire("error"); await settled();
+assert.equal(audio.src, "/files/ep1/k1.mp4?v=abc123");
+assert.equal(audio.loads, audioLoads + 1); assert.equal(video.loads, videoLoads);
+assert.equal(activePlayer.sourceKey, key); assert.ok(!audio.paused);
+await metadata(audio); assert.equal(audio.currentTime, 27.25); assert.equal(audio.playbackRate, 1.5);
+await visibility(false); assert.equal(video.currentTime, 27.25);
+audio.error = {code: 3}; await audio.fire("error"); assert.equal(audio.loads, audioLoads + 1);
+if (ROOM) { await AutoShortWatch.poll(); assert.equal(audio.loads, audioLoads + 1); }
+const events = [...logBatches.flatMap(b => b.events), ...activePlayer.events];
+assert.equal(events.filter(e => e.type === "audio_fallback").length, 1);
+sessionActions.nexttrack(); await settled();
+assert.equal(audio.src, "/files/ep1/k2.m4a"); assert.equal(video.src, "/files/ep1/k2.mp4");
+const loads = audio.loads;
+await audio.fire("error"); assert.equal(audio.loads, loads); // A queued error from the old source has been cleared by load().
+await metadata(); sessionActions.pause(); await settled();
+if (ROOM) { tick(1500); await settled(); }
+audio.error = {code: 4}; await audio.fire("error"); await settled();
+assert.equal(audio.src, "/files/ep1/k2.mp4"); assert.ok(audio.paused); // Paused fallback never autoplays.
+await metadata(audio); assert.ok(audio.paused);
+'''.replace("ROOM", json.dumps(room)).replace("FAILURE", json.dumps(failure)))
+
+
 def test_player_js_video_follows_new_source_and_ignores_late_play(run_player_js):  # Amendment C AC5'
     run_player_js(r'''
 sourceItems = [item(1, 1), item(2, 1)];
 await boot(); await metadata(); await $("play").fire("click");
 const video = $("video"), audio = activePlayer.audio;
 audio.currentTime = 7; await audio.fire("timeupdate"); await visibility(true);
-await end(audio); assert.equal(video.src, sourceItems[1].video_url); assert.equal(video.src, audio.src); assert.ok(video.muted);
+await end(audio); assert.equal(video.src, sourceItems[1].video_url); assert.equal(video.src, audio.src.replace(".m4a", ".mp4")); assert.ok(video.muted);
 await metadata(audio); audio.currentTime = 23.25; audio.playbackRate = 1.75; await audio.fire("ratechange");
 await metadata(video); assert.ok(video.paused); assert.ok(!audio.paused);
 const nativePlay = video.play.bind(video); let releaseVideo;
@@ -915,11 +955,11 @@ for (let n = start; n < sourceItems.length; n++) {
   audio.currentTime = 60; audio.ended = true; audio.paused = true;
   const ended = audio.fire("ended");
   if (AUTO && n + 1 < sourceItems.length) {
-    assert.equal(audio.src, sourceItems[n + 1].video_url);
+    assert.equal(audio.src, sourceItems[n + 1].video_url.replace(".mp4", ".m4a"));
     assert.ok(audio.plays > plays); assert.ok(!audio.paused); assert.ok(activePlayer.loading);
     assert.ok(!timers.has(activePlayer.advanceTimer));
   } else {
-    assert.equal(audio.src, sourceItems[n].video_url); assert.equal(audio.plays, plays);
+    assert.equal(audio.src, sourceItems[n].video_url.replace(".mp4", ".m4a")); assert.equal(audio.plays, plays);
     assert.ok(activePlayer.state.paused); assert.equal(activePlayer.localAdvanceAt, null);
   }
   await ended;
@@ -1056,7 +1096,7 @@ if (stop === "progress") {
   tick(400000); await settled();
   assert.equal(audio.plays, plays); assert.ok(!activePlayer.hiddenRun?.gaveUp);
   if (stop === "pause") assert.ok(audio.paused);
-  if (stop === "next") assert.equal(audio.src, sourceItems[1].video_url);
+  if (stop === "next") assert.equal(audio.src, sourceItems[1].video_url.replace(".mp4", ".m4a"));
 }
 '''.replace("STOP", json.dumps(stop)))
 
@@ -1084,7 +1124,7 @@ interceptRoom = body => body?.action === "next" ? new Promise(resolve => release
 const version = activePlayer.state.version, plays = audio.plays, loads = audio.loads;
 audio.currentTime = 60; audio.ended = true; audio.paused = true;
 const ending = audio.fire("ended"); // Assertions before any network microtask / timer / metadata.
-assert.equal(audio.src, sourceItems[start + 1].video_url); assert.ok(audio.plays > plays); assert.ok(!audio.paused);
+assert.equal(audio.src, sourceItems[start + 1].video_url.replace(".mp4", ".m4a")); assert.ok(audio.plays > plays); assert.ok(!audio.paused);
 assert.equal(activePlayer.sourceKey, JSON.stringify([start + 1, sourceItems[start + 1].video_url]));
 assert.equal(audio.loads, loads + 1); assert.ok(activePlayer.loading);
 assert.equal(commands.filter(c => c.action === "next").length, 0); assert.ok(!timers.has(activePlayer.advanceTimer));
@@ -1102,7 +1142,7 @@ await settled(); await AutoShortWatch.sent(); await settled();
 assert.equal(commands.filter(c => c.action === "next").length, 1); // Never retry next after 409.
 const expected = REPLY === "conflict_other" ? start + 2 : start + 1;
 assert.equal(serverRoom.index, expected); assert.equal(activePlayer.state.index, expected);
-assert.equal(audio.src, sourceItems[expected].video_url); assert.ok(!audio.paused);
+assert.equal(audio.src, sourceItems[expected].video_url.replace(".mp4", ".m4a")); assert.ok(!audio.paused);
 assert.equal(audio.loads, optimisticLoads + (REPLY === "conflict_other" ? 1 : 0));
 if (REPLY !== "conflict_other") assert.equal(audio.currentTime, 4.5);
 else await metadata(audio);
@@ -1113,7 +1153,7 @@ assert.ok([...logBatches.flatMap(b => b.events), ...activePlayer.events].some(e 
 interceptRoom = null; const newVersion = activePlayer.state.version;
 await end(audio); await settled();
 assert.deepEqual(commands.filter(c => c.action === "next").map(c => c.expect_version), [version, newVersion]);
-assert.equal(audio.src, sourceItems[expected + 1].video_url); assert.equal(serverRoom.index, expected + 1);
+assert.equal(audio.src, sourceItems[expected + 1].video_url.replace(".mp4", ".m4a")); assert.equal(serverRoom.index, expected + 1);
 await metadata(audio); audio.currentTime = 2.25;
 // Align the room clock for the visible sync; verify video returns to the acknowledged current source.
 serverRoom.position = 2.25; serverRoom.updated_at = now / 1000; await AutoShortWatch.poll(true);
@@ -1160,9 +1200,9 @@ assert.ok(!audio.paused); assert.ok(!activePlayer.state.paused);
 backend.apply("seek", {position: 30}, "b"); await AutoShortWatch.poll(true); await settled();
 assert.equal(audio.currentTime, 30); // Explicit remote seek is still allowed.
 backend.apply("next", {expect_version: serverRoom.version}, "b"); await AutoShortWatch.poll(true); await settled();
-assert.equal(audio.src, sourceItems[1].video_url); assert.ok(!audio.paused); await metadata(audio);
-sessionActions.previoustrack(); await settled(); assert.equal(audio.src, sourceItems[0].video_url); await metadata(audio);
-sessionActions.nexttrack(); await settled(); assert.equal(audio.src, sourceItems[1].video_url); await metadata(audio);
+assert.equal(audio.src, sourceItems[1].video_url.replace(".mp4", ".m4a")); assert.ok(!audio.paused); await metadata(audio);
+sessionActions.previoustrack(); await settled(); assert.equal(audio.src, sourceItems[0].video_url.replace(".mp4", ".m4a")); await metadata(audio);
+sessionActions.nexttrack(); await settled(); assert.equal(audio.src, sourceItems[1].video_url.replace(".mp4", ".m4a")); await metadata(audio);
 sessionActions.pause(); await settled(); assert.ok(audio.paused); assert.ok(activePlayer.state.paused);
 sessionActions.play(); await settled(); assert.ok(!audio.paused); assert.ok(!activePlayer.state.paused);
 const reads = roomReads.length; tick(10000); await settled(); // Include the initial inactive invitation poll interval.
