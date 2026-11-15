@@ -386,8 +386,7 @@
     choose(retained < 0 ? startingIndex() : retained, playing, retained < 0 ? 0 : position);
   }));
   $("jump").addEventListener("change", () => player.onGroup($("jump").value));
-  for (const media of [player.video, player.audio]) media.addEventListener("timeupdate", () => {
-    if (media !== player.media()) return;
+  player.audio.addEventListener("timeupdate", () => {
     if (performance.now() - lastSave > 3000) { lastSave = performance.now(); save(); }
   });
   function switchTab(name) {

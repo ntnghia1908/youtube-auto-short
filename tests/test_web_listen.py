@@ -258,7 +258,7 @@ class Element {
   }
   getBoundingClientRect() { return {top: 0, bottom: 10, height: 10}; }
   scrollIntoView(options) { scrolls.push([this, options]); }
-  load() { this.loads++; this.readyState = 0; this.currentTime = 0; this.paused = true; this.ended = false; }
+  load() { this.loads++; const wasPlaying = !this.paused; this.readyState = 0; this.currentTime = 0; this.paused = true; this.ended = false; if (wasPlaying) queueMicrotask(() => this.fire("pause")); }
   pause() { this.pauses++; const changed = !this.paused; this.paused = true; if (changed) queueMicrotask(() => this.fire("pause")); }
   play() { this.plays++; const changed = this.paused; this.paused = false; if (changed) queueMicrotask(() => this.fire("play")); return Promise.resolve(); }
 }
@@ -391,8 +391,8 @@ function useRoomTransport(auto = true, initial = {}) {
 }
 async function settled() { for (let i = 0; i < 8; i++) await new Promise(setImmediate); }
 async function boot() { eval(fs.readFileSync("src/auto_short/web/static/listen.js", "utf8")); await settled(); }
-async function metadata(media = $("video")) { media.readyState = 1; await media.fire("loadedmetadata"); await settled(); }
-async function end(media = $("video")) { media.ended = true; media.paused = true; media.currentTime = 60; await media.fire("ended"); }
+async function metadata(media) { for (const current of media ? [media] : [activePlayer.audio, $("video")]) { current.readyState = 1; await current.fire("loadedmetadata"); } await settled(); }
+async function end(media = activePlayer.media()) { media.ended = true; media.paused = true; media.currentTime = 60; await media.fire("ended"); }
 async function visibility(hidden) { document.visibilityState = hidden ? "hidden" : "visible"; document.dispatchEvent(new Event("visibilitychange")); await settled(); }
 function titleView(eid, shorts = sourceItems.filter(i => i.episode_id === eid)) {
   const view = {id: eid, base_episode_id: eid.replace(/\.kt$/, ""), favorites: {playlist_id: "PLtest"}, max_title_chars: 60,
@@ -450,7 +450,7 @@ assert.equal($("queue").firstChild.textContent, "Phần 2 · 3 bài");
 await end(); assert.match($("notice").textContent, /Sau 3 s/);
 tick(3000); await metadata(); assert.equal($("video").src, sourceItems[36].video_url);
 // Filter changes regroup, retaining the same playable item and time.
-$("video").currentTime = 17;
+activePlayer.audio.currentTime = 17; await activePlayer.audio.fire("timeupdate");
 await $("filter").children[2].fire("click"); await metadata();
 assert.equal($("video").src, sourceItems[36].video_url); assert.equal($("video").currentTime, 17);
 assert.equal($("queue").firstChild.textContent, "Phần 1 · 38 bài");
@@ -475,8 +475,8 @@ sourceItems.splice(0, 10);
 await boot(); await metadata();
 assert.equal($("video").src, "/files/ep1/k43.mp4"); assert.equal($("video").currentTime, 23);
 assert.equal($("queue").firstChild.textContent, "Phần 1 · 35 bài"); assert.ok($("video").paused);
-await $("play").fire("click"); $("video").currentTime = 29;
-tick(4000); await $("video").fire("timeupdate");
+await $("play").fire("click"); activePlayer.audio.currentTime = 29;
+tick(4000); await activePlayer.audio.fire("timeupdate");
 assert.deepEqual(JSON.parse(storage.get(key)), {episode_id: "ep1", clip_id: "k43", position: 29});
 await $("watch").fire("click");
 const sent = commands.find(c => c.action === "set");
@@ -594,7 +594,7 @@ if (room) useRoom();
 await boot(); await metadata(); await $("play").fire("click");
 if (room) {await $("watch").fire("click"); await settled(); await metadata();}
 if (room) tick(17000); // the room clock and the media have both progressed 17 seconds
-$("video").currentTime = 17;
+activePlayer.audio.currentTime = 17; await activePlayer.audio.fire("timeupdate");
 assert.equal($("queue").firstChild.textContent, "Phần 1 · 15 bài");
 window.addEventListener("favorites-changed", () => { globalThis.themeRefreshes = (globalThis.themeRefreshes || 0) + 1; });
 await $("favorite").fire("click"); await settled();
@@ -754,88 +754,112 @@ assert.equal(requests.filter(p => p.startsWith("/api/episodes/")).length, count)
 ''')
 
 
-def test_player_js_audio_handoff_session_controls_and_position(run_player_js):  # LISTEN2 AC 5,7,9
+@pytest.mark.parametrize("room", [False, True])
+def test_player_js_audio_clock_survives_visibility_and_video_controls(run_player_js, room):  # Amendment C AC5',7,9
     run_player_js(r'''
 sourceItems = [item(1, 1), item(1, 2)];
-await boot(); await metadata(); await $("play").fire("click");
+if (ROOM) useRoomTransport();
+await boot(); await metadata($("video")); // Audio metadata has deliberately not arrived yet.
+if (ROOM) { await $("watch").fire("click"); await settled(); }
 const video = $("video"), audio = activePlayer.audio;
-video.currentTime = 17.25; video.playbackRate = 1.5; await video.fire("ratechange");
-await visibility(true);
-assert.equal(activePlayer.media(), audio); assert.equal(audio.src, video.src);
+assert.equal(activePlayer.media(), audio); assert.ok(video.muted); assert.equal(audio.plays, 0);
+await video.play(); await settled(); // The first native video Play starts audio while the page is visible.
+assert.ok(audio.plays > 0); assert.equal(audio.readyState, 0);
+sessionActions.pause(); await settled(); assert.ok(audio.paused); assert.ok(video.paused);
+await video.play(); await settled(); await metadata(audio);
+assert.ok(!audio.paused); assert.ok(!activePlayer.state.paused);
+video.currentTime = 17.25; await video.fire("seeked"); await settled();
+video.playbackRate = 1.5; await video.fire("ratechange"); await settled();
 assert.equal(audio.currentTime, 17.25); assert.equal(audio.playbackRate, 1.5);
-assert.ok(video.paused); assert.ok(!audio.paused); assert.ok(!activePlayer.state.paused);
-await metadata(audio); audio.currentTime = 31.5;
-tick(4000); await audio.fire("timeupdate");
-assert.equal(JSON.parse(storage.get("auto-short-listen-position:PLtest:fav")).position, 31.5);
+// Mirroring the clock / rate cannot echo another action back to the audio / room.
+const controls = ROOM ? commands.length : activePlayer.state.version;
+video.currentTime = 2; video.playbackRate = 1; await audio.fire("timeupdate");
+await video.fire("seeked"); await video.fire("ratechange"); await settled();
+assert.equal(video.currentTime, 17.25); assert.equal(ROOM ? commands.length : activePlayer.state.version, controls);
+for (let n = 0; n < 10; n++) { video.currentTime = 0; await audio.fire("timeupdate"); await video.fire("seeked"); }
+assert.equal([...logBatches.flatMap(b => b.events), ...activePlayer.events].filter(e => e.type === "video_resync").length, 1);
+const before = [audio.src, audio.currentTime, audio.plays, audio.pauses, audio.loads];
+await visibility(true); video.paused = true; await video.fire("pause"); await visibility(true);
+assert.deepEqual([audio.src, audio.currentTime, audio.plays, audio.pauses, audio.loads], before);
+assert.ok(!audio.paused); assert.ok(!activePlayer.state.paused); assert.ok(video.paused);
+audio.currentTime = 31.5; tick(4000); await audio.fire("timeupdate");
+if (!ROOM) assert.equal(JSON.parse(storage.get("auto-short-listen-position:PLtest:fav")).position, 31.5);
 video.currentTime = 2; await video.fire("timeupdate");
-assert.equal(JSON.parse(storage.get("auto-short-listen-position:PLtest:fav")).position, 31.5);
-const videoLoads = video.loads;
-sessionActions.nexttrack(); // inspect before metadata, promises or timers can run
-assert.equal(audio.src, sourceItems[1].video_url); assert.ok(!audio.paused); assert.equal(video.loads, videoLoads);
-sessionActions.pause(); assert.ok(audio.paused); assert.ok(activePlayer.state.paused);
-await settled(); sessionActions.play(); assert.ok(!audio.paused); assert.ok(!activePlayer.state.paused);
-await metadata(audio); sessionActions.previoustrack();
-assert.equal(audio.src, sourceItems[0].video_url); assert.ok(!audio.paused);
-await metadata(audio); audio.currentTime = 44.75; audio.playbackRate = 1.25; await audio.fire("ratechange");
+if (!ROOM) assert.equal(JSON.parse(storage.get("auto-short-listen-position:PLtest:fav")).position, 31.5);
+sessionActions.nexttrack(); await settled();
+assert.equal(audio.src, sourceItems[1].video_url); assert.equal(video.src, audio.src); assert.ok(!audio.paused);
+await metadata(); sessionActions.pause(); await settled(); assert.ok(audio.paused); assert.ok(activePlayer.state.paused);
+sessionActions.play(); await settled(); assert.ok(!audio.paused); assert.ok(!activePlayer.state.paused);
+sessionActions.previoustrack(); await settled(); await metadata();
+assert.equal(audio.src, sourceItems[0].video_url); assert.equal(video.src, audio.src);
+audio.currentTime = 44.75; audio.playbackRate = 1.25; await audio.fire("ratechange"); await settled();
+const playing = [audio.currentTime, audio.plays, audio.pauses, audio.loads];
 await visibility(false);
-assert.equal(activePlayer.media(), video); assert.ok(audio.paused); assert.ok(!video.paused);
+assert.equal(activePlayer.media(), audio); assert.deepEqual([audio.currentTime, audio.plays, audio.pauses, audio.loads], playing);
+assert.ok(!audio.paused); assert.ok(!video.paused); assert.ok(video.muted);
 assert.equal(video.currentTime, 44.75); assert.equal(video.playbackRate, 1.25);
 assert.equal(navigator.mediaSession.playbackState, "playing");
+video.muted = false; await video.fire("volumechange"); assert.ok(video.muted);
+// Native visible Pause is forwarded once; audio Pause is programmed so it cannot echo.
+if (ROOM) { tick(1600); await settled(); } // Outside WATCH1's existing visibility transition grace.
+await video.pause(); await settled();
+if (ROOM) { assert.ok(activePlayer.syncBlocked); tick(1500); await settled(); }
+assert.ok(audio.paused); assert.ok(activePlayer.state.paused);
+await video.play(); await settled(); assert.ok(!audio.paused); assert.ok(!activePlayer.state.paused);
 const events = [...logBatches.flatMap(b => b.events), ...activePlayer.events];
-assert.ok(events.some(e => e.type === "to_audio" && e.hidden && e.t === 17.25));
-assert.ok(events.some(e => e.type === "to_video" && !e.hidden && e.t === 44.75));
-// A late event from the inactive audio cannot pause or seek the video.
-await audio.fire("pause"); audio.currentTime = 1; await audio.fire("seeked");
-assert.ok(!activePlayer.state.paused); assert.equal(video.currentTime, 44.75);
-''')
+assert.ok(events.some(e => e.type === "video_resync")); assert.ok(!events.some(e => ["to_audio", "to_video"].includes(e.type)));
+assert.ok(!events.some(e => e.type === "pause_hidden")); // The browser's muted-video pause never starts audio recovery.
+'''.replace("ROOM", json.dumps(room)))
 
 
-def test_player_js_new_video_after_hidden_advance_and_late_media_events(run_player_js):  # LISTEN2 AC 5
+def test_player_js_video_follows_new_source_and_ignores_late_play(run_player_js):  # Amendment C AC5'
     run_player_js(r'''
 sourceItems = [item(1, 1), item(2, 1)];
 await boot(); await metadata(); await $("play").fire("click");
 const video = $("video"), audio = activePlayer.audio;
-video.currentTime = 7; await visibility(true); await metadata(audio);
-await end(audio); await metadata(audio);
-audio.currentTime = 23.25; audio.playbackRate = 1.75; await audio.fire("ratechange");
-// The video still has the previous episode. Returning must load the current one and play at the audio position.
+audio.currentTime = 7; await audio.fire("timeupdate"); await visibility(true);
+await end(audio); assert.equal(video.src, sourceItems[1].video_url); assert.equal(video.src, audio.src); assert.ok(video.muted);
+await metadata(audio); audio.currentTime = 23.25; audio.playbackRate = 1.75; await audio.fire("ratechange");
+await metadata(video); assert.ok(video.paused); assert.ok(!audio.paused);
 const nativePlay = video.play.bind(video); let releaseVideo;
 video.play = () => { nativePlay(); return new Promise(resolve => releaseVideo = resolve); };
+const before = [audio.src, audio.currentTime, audio.plays, audio.pauses, audio.loads];
 await visibility(false);
-assert.equal(video.src, sourceItems[1].video_url); assert.equal(video.currentTime, 23.25);
-assert.equal(video.playbackRate, 1.75); assert.ok(!video.paused); assert.ok(audio.paused);
-// Hide again before metadata / the previous play promise settles.
-await visibility(true); releaseVideo(); await settled();
-assert.equal(activePlayer.media(), audio); assert.ok(!audio.paused); assert.ok(video.paused);
-assert.equal(audio.currentTime, 23.25); assert.ok(!activePlayer.state.paused);
-await video.fire("loadedmetadata"); await video.fire("pause");
-assert.equal(activePlayer.media(), audio); assert.ok(!activePlayer.state.paused);
-video.play = nativePlay; await visibility(false); await metadata();
 assert.equal(video.currentTime, 23.25); assert.equal(video.playbackRate, 1.75); assert.ok(!video.paused);
+await visibility(true); video.paused = false; releaseVideo(); await settled();
+assert.equal(activePlayer.media(), audio); assert.ok(!audio.paused); assert.ok(video.paused);
+assert.deepEqual([audio.src, audio.currentTime, audio.plays, audio.pauses, audio.loads], before);
+await video.fire("loadedmetadata"); await video.fire("pause"); assert.ok(!activePlayer.state.paused);
+video.play = nativePlay; await visibility(false);
+assert.equal(video.currentTime, 23.25); assert.ok(!video.paused); assert.ok(!audio.paused);
 ''')
 
 
 @pytest.mark.parametrize("pause_at", ["before_hide", "while_hidden", "suspended", "suspended_audio"])
-def test_player_js_paused_or_suspended_visibility_never_starts_playback(run_player_js, pause_at):  # LISTEN2 AC 5
+def test_player_js_paused_audio_never_starts_from_visibility(run_player_js, pause_at):  # Amendment C AC5'
     run_player_js(r'''
 sourceItems = [item(1, 1)]; const when = PAUSE_AT;
 await boot(); await metadata();
 const video = $("video"), audio = activePlayer.audio;
 if (when !== "before_hide") await $("play").fire("click");
-video.currentTime = 12;
+audio.currentTime = 12; await audio.fire("timeupdate");
 if (when === "suspended") document.dispatchEvent(new CustomEvent("favorites-tab", {detail: "ai"}));
 await visibility(true);
-if (when === "suspended_audio") {
-  await metadata(audio); audio.currentTime = 27;
-  document.dispatchEvent(new CustomEvent("favorites-tab", {detail: "ai"}));
-} else if (when === "while_hidden") {
-  await metadata(audio); audio.currentTime = 27; sessionActions.pause(); await settled(); assert.ok(audio.paused);
-} else { assert.equal(activePlayer.media(), video); assert.equal(audio.plays, 0); }
-const plays = video.plays + audio.plays;
-await visibility(false); await metadata();
+if (["suspended_audio", "while_hidden"].includes(when)) {
+  audio.currentTime = 27;
+  if (when === "suspended_audio") document.dispatchEvent(new CustomEvent("favorites-tab", {detail: "ai"}));
+  else { sessionActions.pause(); await settled(); }
+}
+const plays = audio.plays;
+await visibility(false);
 if (when === "suspended_audio") document.dispatchEvent(new CustomEvent("favorites-tab", {detail: "listen"}));
-assert.equal(video.plays + audio.plays, plays); assert.ok(video.paused); assert.ok(audio.paused);
-if (["while_hidden", "suspended_audio"].includes(when)) { assert.equal(video.currentTime, 27); assert.equal(activePlayer.media(), video); }
+await settled(); assert.equal(audio.plays, plays); assert.ok(video.paused); assert.ok(audio.paused);
+assert.equal(activePlayer.media(), audio);
+if (["while_hidden", "suspended_audio"].includes(when)) assert.equal(video.currentTime, 27);
+if (when === "suspended_audio") {
+  await video.play(); await settled(); assert.ok(!audio.paused);
+  video.pause(); await settled(); assert.ok(audio.paused); assert.ok(activePlayer.state.paused);
+}
 '''.replace("PAUSE_AT", json.dumps(pause_at)))
 
 
@@ -875,37 +899,35 @@ const events = [...logBatches.flatMap(b => b.events), ...activePlayer.events];
 assert.equal(events.filter(e => e.type === "hidden_advance").length, AUTO ? 2 : 0);
 assert.ok(events.filter(e => e.type === "hidden_advance").every(e => e.hidden && e.t === 60));
 await visibility(false); await metadata();
-assert.equal(activePlayer.media(), $("video")); assert.ok(audio.paused);
+assert.equal(activePlayer.media(), audio); assert.ok(audio.paused);
 assert.equal($("video").src, sourceItems[AUTO ? sourceItems.length - 1 : start].video_url);
 assert.equal($("video").currentTime, 60); assert.ok($("video").paused);
 '''.replace("PAGE", json.dumps(page)).replace("AUTO", json.dumps(auto)))
 
 
 @pytest.mark.parametrize("mode", ["room", "pip"])
-def test_player_js_visible_room_and_pip_keep_video(run_player_js, mode):  # LISTEN2 AC 8; Amendment A supersedes hidden-room guard
+def test_player_js_visible_room_and_pip_follow_audio(run_player_js, mode):  # Amendment C AC8 / AC5'
     run_player_js(r'''
 sourceItems = [item(1, 1), item(1, 2)]; const mode = MODE;
 if (mode === "room") useRoom(true);
 await boot(); await metadata(); await $("play").fire("click");
 if (mode === "room") { await $("watch").fire("click"); await settled(); await metadata(); }
 else await $("video").fire("enterpictureinpicture");
-const audio = activePlayer.audio;
+const video = $("video"), audio = activePlayer.audio;
+const plays = audio.plays;
 if (mode === "pip") await visibility(true);
-assert.equal(activePlayer.media(), $("video")); assert.equal(audio.loads, 0); assert.equal(audio.plays, 0);
-assert.ok(!$("video").paused); assert.ok(!activePlayer.state.paused);
+assert.equal(activePlayer.media(), audio); assert.ok(video.muted); assert.ok(!audio.paused); assert.ok(!video.paused);
+video.ended = true; await video.fire("ended"); assert.ok(!audio.paused); assert.ok(!activePlayer.state.paused);
 await end(); await settled();
-if (mode === "room") {
-  assert.ok(commands.some(c => c.action === "ended")); assert.ok(!$("title-editor").hidden);
-} else assert.ok(activePlayer.localAdvanceAt != null);
-assert.equal(audio.plays, 0);
-await visibility(false); assert.equal(activePlayer.media(), $("video"));
+if (mode === "room") { assert.ok(commands.some(c => c.action === "ended")); assert.ok(!$("title-editor").hidden); }
+else assert.ok(activePlayer.localAdvanceAt != null);
+assert.equal(audio.plays, plays); assert.ok(audio.paused);
+await visibility(false); assert.equal(activePlayer.media(), audio);
 if (mode === "pip") {
-  // Leaving PiP while still hidden switches into audio; reentering returns to video.
-  await $("play").fire("click"); $("video").ended = false;
-  await visibility(true); await $("video").fire("leavepictureinpicture");
-  assert.equal(activePlayer.media(), audio); await metadata(audio);
-  await $("video").fire("enterpictureinpicture");
-  assert.equal(activePlayer.media(), $("video")); assert.ok(audio.paused);
+  await $("next").fire("click"); await metadata();
+  const before = audio.plays; await visibility(true); await video.fire("leavepictureinpicture");
+  assert.ok(video.paused); assert.ok(!audio.paused); assert.equal(audio.plays, before);
+  await video.fire("enterpictureinpicture"); assert.ok(!video.paused); assert.ok(!audio.paused); assert.equal(audio.plays, before);
 }
 '''.replace("MODE", json.dumps(mode)))
 
@@ -913,7 +935,7 @@ if (mode === "pip") {
 def test_player_js_audio_retry_progress_giveup_and_log_batches(run_player_js):  # LISTEN2 AC 7,9
     run_player_js(r'''
 sourceItems = [item(1, 1)]; await boot(); await metadata(); await $("play").fire("click");
-$("video").currentTime = 10; await visibility(true);
+activePlayer.audio.currentTime = 10; await activePlayer.audio.fire("timeupdate"); await visibility(true);
 const audio = activePlayer.audio; await metadata(audio);
 audio.pause(); await settled(); tick(1000); await settled();
 audio.currentTime = 13; tick(2000); await settled(); assert.equal(activePlayer.hiddenRun.flat, 0);
@@ -929,7 +951,7 @@ await visibility(false); await visibility(true); await metadata(audio);
 audio.play = () => { audio.plays++; return Promise.reject(Object.assign(new Error("blocked"), {name: "NotAllowedError"})); };
 audio.pause(); await settled(); tick(1000); await settled();
 assert.ok(activePlayer.events.some(e => e.type === "retry_blocked" && e.err === "NotAllowedError"));
-for (let i = 0; i < 30; i++) activePlayer.record("to_audio");
+for (let i = 0; i < 30; i++) activePlayer.record("visibility");
 assert.equal(activePlayer.events.length, 20); tick(5000); await settled();
 assert.ok(logBatches.every(batch => batch.events.length <= 20 && new TextEncoder().encode(JSON.stringify(batch)).length <= 2048));
 ''')
@@ -949,7 +971,7 @@ if (PAGE !== "/watch") {
   await $("play").fire("click"); await $("watch").fire("click"); await settled(); await metadata();
   if (start) { await AutoShortWatch.command("goto", {index: start}, true); await metadata(); }
 }
-$("video").currentTime = 17.25;
+activePlayer.audio.currentTime = 17.25;
 await visibility(true); const audio = activePlayer.audio; await metadata(audio);
 assert.equal(activePlayer.media(), audio); assert.ok($("video").paused); assert.ok(!audio.paused);
 const oldRow = $("queue").firstChild, oldHeading = $("title").textContent, oldScrolls = scrolls.length;
@@ -993,7 +1015,7 @@ await metadata(audio); audio.currentTime = 2.25;
 serverRoom.position = 2.25; serverRoom.updated_at = now / 1000; await AutoShortWatch.poll(true);
 await visibility(false); await metadata();
 assert.equal($("video").src, sourceItems[expected + 1].video_url); assert.equal($("video").currentTime, 2.25);
-assert.ok(!$("video").paused); assert.ok(audio.paused);
+assert.ok(!$("video").paused); assert.ok(!audio.paused);
 '''.replace("PAGE", json.dumps(page)).replace("REPLY", json.dumps(reply)))
 
 
@@ -1017,11 +1039,12 @@ if (!INITIALLY_PAUSED) { assert.equal(audio.currentTime, 17.25); assert.equal(au
 assert.ok(!activePlayer.syncBlocked); tick(1500); await settled();
 assert.equal(commands.filter(c => c.action === "pause").length, pauses); // Hiding cancels the room-wide pause.
 if (INITIALLY_PAUSED) {
-  assert.equal(activePlayer.media(), video); assert.equal(audio.plays, 0);
+  assert.equal(activePlayer.media(), audio); assert.ok(audio.paused);
   backend.apply("play", {position: 17.25}, "b"); await AutoShortWatch.poll(true); await settled();
 }
 assert.equal(activePlayer.media(), audio); await metadata(audio);
-assert.ok(video.paused); assert.ok(!audio.paused); assert.equal(audio.playbackRate, 1.5);
+assert.ok(video.paused); assert.equal(audio.playbackRate, 1.5);
+assert.ok(!audio.paused);
 // Same-version poll drift still takes WATCH1's seek_skipped_hidden path.
 audio.currentTime = 20; tick(4000); await settled(); await AutoShortWatch.poll(true);
 assert.equal(audio.currentTime, 20);
@@ -1058,7 +1081,7 @@ assert.deepEqual(commands.filter(c => c.action === "ended").map(c => [c.expect_v
 assert.equal(commands.filter(c => c.action === "next").length, 0);
 assert.equal(media.plays, plays); assert.ok(media.paused); assert.ok(activePlayer.state.finished);
 if (ending === "visible") {
-  assert.equal(activePlayer.media(), $("video")); assert.equal(activePlayer.audio.plays, 0);
+  assert.equal(activePlayer.media(), activePlayer.audio); assert.ok($("video").muted);
   assert.equal(activePlayer.state.advance_at, now / 1000 + 3); assert.match($("notice").textContent, /Sau 3 s/);
 } else { assert.equal(activePlayer.media(), activePlayer.audio); assert.equal(activePlayer.state.advance_at, null); }
 '''.replace("ENDING", json.dumps(ending)))
