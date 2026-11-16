@@ -18,6 +18,7 @@
       this.onHiddenAdvance = onHiddenAdvance;
       this.client = client; this.page = prefix; this.events = []; this.lastLogAt = -Infinity; this.logMarks = new Map();
       this.programmed = new Map(); this.sourceKey = null; this.active = true;
+      this.videoScrubUntil = 0;
       this.receivedAt = 0; this.loading = false; this.state = null;
       this.pipActive = document.pictureInPictureElement === this.video;
       this.hiddenRun = this.isHidden() ? { attempts: 0, since: null, position: null, gaveUp: false, skipped: false } : null;
@@ -103,6 +104,9 @@
       });
       this.video.addEventListener("loadedmetadata", () => this.syncVideo(true));
       this.video.addEventListener("volumechange", () => { this.video.muted = true; });
+      this.video.addEventListener("seeking", () => {
+        if (!this.isProgrammed("seeked", this.video, false)) this.videoScrubUntil = performance.now() + 1500;
+      });
       for (const [event, action] of [["play", "play"], ["pause", "pause"], ["seeked", "seek"], ["ratechange", "rate"]]) {
         this.video.addEventListener(event, () => {
           if (this.isProgrammed(event, this.video) || !this.active || !this.state?.video_url
@@ -128,7 +132,10 @@
               else this.videoPauseTimer = setTimeout(pause, 1500);
               return;
             }
-            if (action === "seek") { this.cancelEarly(); this.arm("seeked", this.video.currentTime); this.seek(this.video.currentTime, current); }
+            if (action === "seek") {
+              this.cancelEarly(); this.arm("seeked", this.video.currentTime); this.seek(this.video.currentTime, current);
+              this.videoScrubUntil = 0;
+            }
             if (action === "rate") { this.arm("ratechange", this.video.playbackRate); current.playbackRate = this.video.playbackRate; }
             this.onAction(action, { position: this.position(current), ...(action === "rate" ? { rate: current.playbackRate } : {}) });
             this.syncVideo();
@@ -310,7 +317,7 @@
       }
       if (!video.readyState || !audio.readyState) return;
       const drift = this.position(audio) - video.currentTime;
-      if (force || Math.abs(drift) > .5) {
+      if (force || (Math.abs(drift) > .5 && !video.seeking && performance.now() >= this.videoScrubUntil)) {
         this.arm("seeked", this.position(audio), video); video.currentTime = this.position(audio);
         if (Math.abs(drift) > .5) this.record("video_resync", { drift: Math.round(drift * 1000) / 1000 });
       }
@@ -497,7 +504,7 @@
       const mark = { value, media, until: performance.now() + 5000 };
       this.programmed.set(this.programKey(event, media), mark); return mark;
     }
-    isProgrammed(event, current = this.media()) {
+    isProgrammed(event, current = this.media(), consume = true) {
       const key = this.programKey(event, current);
       if (this.loading && current === this.audio) {
         const marked = this.programmed.has(key);
@@ -509,7 +516,7 @@
       if (!mark || mark.media !== current) return false;
       const actual = event === "seeked" ? this.position(current) : event === "ratechange" ? current.playbackRate : current.paused;
       const matches = typeof actual === "number" ? Math.abs(actual - mark.value) < (event === "ratechange" ? .001 : 1) : actual === mark.value;
-      this.programmed.delete(key);
+      if (consume) this.programmed.delete(key);
       return performance.now() < mark.until && matches;
     }
     targetPosition() {

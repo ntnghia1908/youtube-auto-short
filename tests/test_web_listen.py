@@ -814,6 +814,52 @@ assert.ok(!events.some(e => e.type === "pause_hidden")); // The browser's muted-
 
 
 @pytest.mark.parametrize("room", [False, True])
+def test_player_js_video_scrub_preserves_user_seek_and_resumes_sync(run_player_js, room):  # FIX-audio-pad-concat AC A1
+    run_player_js(r'''
+sourceItems = [item(1, 1), item(1, 2)];
+if (ROOM) useRoomTransport();
+await boot(); await metadata(); await $("play").fire("click");
+if (ROOM) { await $("watch").fire("click"); await settled(); await metadata(); }
+const audio = activePlayer.media(), video = $("video");
+await video.fire("seeked"); await settled();
+const actions = [], onAction = activePlayer.onAction;
+activePlayer.onAction = (...args) => { actions.push(args); return onAction(...args); };
+const resyncs = () => [...logBatches.flatMap(b => b.events), ...activePlayer.events].filter(e => e.type === "video_resync").length;
+const before = resyncs(), controls = commands.length;
+video.currentTime = 17.25; video.seeking = true; await video.fire("seeking");
+await audio.fire("timeupdate"); await settled();
+assert.equal(video.currentTime, 17.25); assert.equal(resyncs(), before);
+assert.equal(actions.length, 0); assert.equal(commands.length, controls);
+// Each seeking event renews the grace, including browsers briefly clearing seeking.
+tick(1000); video.currentTime = 27.25; await video.fire("seeking");
+video.seeking = false; tick(1000); await audio.fire("timeupdate");
+assert.equal(video.currentTime, 27.25); assert.equal(resyncs(), before);
+await video.fire("seeked"); await settled();
+assert.equal(audio.currentTime, 28.75); assert.equal(activePlayer.state.position, 27.25);
+assert.equal(activePlayer.videoScrubUntil, 0);
+assert.deepEqual(actions, [["seek", {position: 27.25}]]);
+if (ROOM) { assert.equal(commands.length, controls + 1); assert.equal(commands.at(-1).action, "seek"); }
+// seeked clears the grace immediately; ordinary drift still resyncs and logs.
+video.currentTime = 2; await audio.fire("timeupdate");
+assert.equal(video.currentTime, 27.25); assert.equal(resyncs(), before + 1);
+const mark = activePlayer.programmed.get(activePlayer.programKey("seeked", video));
+await video.fire("seeking");
+assert.equal(activePlayer.videoScrubUntil, 0);
+assert.equal(activePlayer.programmed.get(activePlayer.programKey("seeked", video)), mark);
+await video.fire("seeked"); await settled();
+assert.equal(actions.length, 1); assert.equal(commands.length, controls + (ROOM ? 1 : 0));
+// Native seeking still protects the drag after the grace expires.
+video.currentTime = 40; video.seeking = true; await video.fire("seeking");
+tick(1600); await audio.fire("timeupdate"); assert.equal(video.currentTime, 40);
+video.seeking = false; await audio.fire("timeupdate"); assert.equal(video.currentTime, 27.25);
+await video.fire("seeked"); await settled();
+// Forced synchronization retains its existing behavior during a drag.
+video.currentTime = 45; video.seeking = true; await video.fire("seeking");
+activePlayer.syncVideo(true); assert.equal(video.currentTime, 27.25);
+'''.replace("ROOM", json.dumps(room)))
+
+
+@pytest.mark.parametrize("room", [False, True])
 def test_player_js_padded_audio_keeps_external_content_clock(run_player_js, room):  # Amendment G AC15
     run_player_js(r'''
 sourceItems = [item(1, 1), item(1, 2)];
