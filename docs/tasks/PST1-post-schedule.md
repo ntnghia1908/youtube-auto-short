@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: IN_PROGRESS
 - Type: FEATURE
 - Change class: S1 — thêm trường đọc vào API bài đăng + file trạng thái mới; không đổi schema `posts.json` (CP8.15), không thêm thao tác ghi YouTube
 - Owner: HUMAN LEAD
@@ -76,3 +76,32 @@ Không chạm database, security model hay public API contract (thêm route đ�
 ## Result
 
 - Main changes:
+  - P1: LNK1 ghi giờ video cho mọi row khớp rõ ràng (`filled`, `unchanged`, `different`, `waiting`), bỏ row trùng / mâu thuẫn; giữ `slot_at`. File mới có dạng `{"schema_version": 1, "times": {"<episode_id>/<clip_id>": {"video_id": "…", "video_at": "…", "slot_at": "…"}}}`; riêng tư không lịch có `video_at: null`. Không đổi counts / rows / journal LNK1, kể cả khi file giờ hỏng (log cảnh báo, không ghi đè file hỏng).
+  - P2–P4: hàm thuần xếp ba khung giờ VN, mốc tối thiểu `now + 10 phút`, thứ tự giờ video / mã số tập / số clip; lịch dư trễ qua ngày sau. Chỉ bài đã tick có giờ lưu chiếm ô (kể cả Short sau đó bị xóa); tick cũ không giờ không chiếm ô. Route tick / bỏ tick cập nhật file giờ dưới `post_lock`.
+  - P5: API tính kế hoạch cả bộ bằng file local, ưu tiên bộ có `link_playlists`; trả `slot_at`, `slot_label`, `next_episode`. Tập kế loại cả Short / khai thị của video hiện tại vì hai phần dùng chung trang Bài đăng. Giữ response rỗng CP8.15 `{"posts": [], "post_error": null}` khi không có bài và không có tập kế; các response có bài luôn có `next_episode` (có thể `null`).
+  - Trang cũ hiện giờ VN, giữ nhóm Shorts / Khai thị; bài không có giờ vào nhóm cuối. Copy thành công + tick thành công → mờ bài, tải lại lịch, cuộn tới bài chưa đăng sớm nhất; hết bài hiện nút tập kế. Giữ cảnh báo AI, fallback HTTP, copy lại bài đã tick, và Tải ảnh.
+- Helpers mới / reuse:
+  - `post/schedule.py`: `slots_after`, `plan`, `slot_fields`, `video_at`; các helper IO / timestamp `path`, `read`, `write`, `timestamp`, `_iso` chỉ phục vụ file giờ / múi giờ mới. Tái dùng `workspace.atomic_write_json`, `read_json_dict`, `zoneinfo.ZoneInfo`.
+  - `PostLinks.schedule_view`: chọn bộ, dựng kế hoạch và tập kế dưới khóa do caller giữ; tái dùng `_targets` / `orders` LNK1, `store.read_posts`, `ep.hd_owner`.
+  - JS `postTimeOrder`, `scrollToNextPost`: so giờ và chọn thẻ bài để cuộn. Tái dùng `copyPostButton`, `tickPostedAfterCopy`, `loadPostsPage`; không tạo cơ chế clipboard mới.
+  - Đã tìm bằng `rg -n 'ZoneInfo|slot_label|slots_after' src/auto_short/post src/auto_short/web` và `rg -n 'scrollIntoView|slots_after|slot_label|post_times|ZoneInfo' src/auto_short`: chưa có helper xếp lịch / file giờ bài đăng; các nơi cuộn hiện có chọn video / mục kinh, không chọn bài chưa đăng.
+- AC → test (test mới; test cũ không sửa):
+
+  | AC | Test / bằng chứng |
+  |---|---|
+  | 1 | `test_post_schedule.py`: `test_sync_records_video_time_and_keeps_slot_without_changing_lnk1`, `test_sync_matched_rows_and_ambiguous_codes`, `test_time_file_corruption_is_not_overwritten_and_sync_result_survives` — PASS |
+  | 2 | `test_post_schedule.py`: `test_slots_after_boundaries_and_vietnam_timezone`, `test_plan_orders_reserves_only_ticked_slots_and_puts_unknown_last`, `test_plan_five_videos_per_day_delays_without_a_limit` — PASS |
+  | 3 | `test_plan_orders_reserves_only_ticked_slots_and_puts_unknown_last` — PASS; `test_web_post_schedule.py`: `test_tick_saves_proposal_untick_removes_it_and_legacy_ticks_reserve_nothing`, `test_posts_without_video_time_or_playlist_have_no_slot` — đã viết, chưa chạy |
+  | 4 | `test_schedule_view_selects_linked_playlist_and_isolates_channels` — PASS; `test_web_post_schedule.py`: `test_posts_api_adds_slots_and_next_episode_preserving_old_fields`, `test_posts_ui_copy_dim_scroll_next_and_failure_paths` — đã viết, chưa chạy |
+  | 5 | `tests/test_post_links.py` — 50 PASS; web posts / POSTCOPY1 cũ chưa chạy (ORCHESTRATOR) |
+
+- Diff ứng dụng: **+228 / −12**; test: **+373 / −0** (gồm file mới, đo `git diff --numstat` + `git diff --no-index --numstat /dev/null <file mới>`).
+- Verification IMPLEMENTER:
+  - Python mặc định thiếu pytest; dùng conda env `auto-short`.
+  - `conda run -n auto-short env PYTHONPATH=src python -m pytest -q tests/test_post_schedule.py tests/test_post_links.py` — **68 passed in 1.16s** ở lần cuối (18 ca PST1 + 50 ca LNK1 cũ).
+  - `node --check src/auto_short/web/static/app.js`, kiểm cú pháp Python bằng `ast.parse`, `git diff --check` — PASS.
+- Handoff: implementation hoàn tất trong Owned paths; **chưa READY toàn task** cho tới khi ORCHESTRATOR chạy verification còn lại. Không commit / push / PR, không gọi agent khác, không gọi mạng thật.
+- Các lệnh **chưa chạy** theo phân công / sandbox không có loopback; không claim PASS:
+  - `PYTHONPATH=src python -m pytest -q tests/test_web_post_schedule.py tests/test_web_post_links.py tests/test_post_links.py tests/test_web_post_cp815.py tests/test_web_post_cp816.py tests/test_web_cp817.py tests/test_web_post_doc_gate.py` — API / UI mới, posts và POSTCOPY1 cũ; giao ORCHESTRATOR (test web cần TestClient / socket).
+  - `PYTHONPATH=src python -m pytest -q -n auto` — full suite, giao ORCHESTRATOR.
+  - Sync thật 4 bộ + tập 21 CƯT, kiểm trên điện thoại và checklist Tech Lead — chưa chạy, giao ORCHESTRATOR / HUMAN LEAD.
