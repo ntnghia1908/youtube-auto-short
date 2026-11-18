@@ -8,7 +8,7 @@ from pathlib import Path
 
 from ..config import ConfigError, load
 from ..packaging import PackageError, episode
-from . import PublishError, kt, schedule, shorts, thumbs, youtube
+from . import PublishError, check, kt, playlists, schedule, shorts, thumbs, youtube
 
 
 def _episode_range(value):
@@ -56,6 +56,12 @@ def main(argv=None, *, transport=None, sleep=None, now=None):
     scheduler.add_argument("--apply", action="store_true")
     scheduler.add_argument("--only", help="id video YouTube, phân cách bằng dấu phẩy")
     scheduler.add_argument("--limit", type=int)
+    scheduler.add_argument("--playlist")
+    checker = commands.add_parser("check")
+    checker.add_argument("--playlist", required=True)
+    checker.add_argument("--add-playlists", action="store_true")
+    for command in (scheduler, checker):
+        command.add_argument("--refresh", action="store_true")
     for command in (kt_attach, short_attach):
         command.add_argument("--since", type=_since)
         command.add_argument("--episodes", type=_episode_range)
@@ -71,9 +77,26 @@ def main(argv=None, *, transport=None, sleep=None, now=None):
         cfg = load(args.config)
         if args.command == "auth":
             result = youtube.auth(args.client, args.token, transport=transport, sleep=sleep, now=now)
-        elif args.command == "schedule":
-            client = youtube.YouTube(args.client, args.token, transport=transport, now=now)
-            videos = client.all_videos()
+        elif args.command in ("schedule", "check"):
+            stock = check.inventory(cfg, args.playlist) if args.playlist else None
+            client = youtube.YouTube(args.client, args.token, transport=transport, now=now,
+                                     read_only=args.command == "check" and not args.add_playlists)
+            videos = client.all_videos(cache=Path(cfg.workspace.dir) / "_publish" / "videos", refresh=args.refresh)
+            # A response without an owner id cannot be used to assign channel playlists.
+            catalog = client.owned_playlists() if client._uploads_channel else []
+            memberships = playlists.Memberships(client)
+            if stock is not None:
+                checked = check.compare(videos, stock)
+                checked["rows"].extend(check.missing_playlists(videos, catalog, memberships))
+                check.report(checked)
+            print(f"Tổng YouTube: {len(videos)} video; search: {client.search_calls} lượt")
+            if args.command == "check":
+                if args.add_playlists:
+                    for row in checked["rows"]:
+                        if row["group"] == "playlist_missing":
+                            row["playlist_added"] = memberships.add(row)
+                print(json.dumps(checked, ensure_ascii=False, indent=2))
+                return 0
             moment = datetime.fromtimestamp(now(), timezone.utc) if now else datetime.now(timezone.utc)
             rows = schedule.plan(videos, moment)
             if args.only is not None:
@@ -83,20 +106,21 @@ def main(argv=None, *, transport=None, sleep=None, now=None):
                 selected = [row["youtube_id"] for row in rows if row["status"] == "sẵn sàng"][:args.limit]
                 ready = set(selected)
                 rows = [row for row in rows if row["status"] != "sẵn sàng" or row["youtube_id"] in ready]
-            print("Video YouTube\tLoại\tKhóa\tGiờ VN dự kiến\tTrạng thái / lý do")
+            rows = playlists.assign(rows, catalog)
+            print("Video YouTube\tLoại\tKhóa\tGiờ VN dự kiến\tTrạng thái / lý do\tDanh sách phát")
             for row in rows:
                 local = ""
                 if row["publish_at"]:
                     stamp = datetime.fromisoformat(row["publish_at"].replace("Z", "+00:00"))
                     local = stamp.astimezone(schedule.VN).strftime("%Y-%m-%d %H:%M")
                 print(f"{row['youtube_id']}\t{schedule.KINDS.get(row['kind'], '')}\t{row['key']}\t{local}\t"
-                      f"{row['status']} {row['reason']}")
+                      f"{row['status']} {row['reason']}\t{row['playlist_title'] or row['playlist_warning']}")
             for kind, label in schedule.KINDS.items():
                 group = [row for row in rows if row["kind"] == kind]
                 ready = sum(row["status"] == "sẵn sàng" for row in group)
                 print(f"Tổng {label}: {ready} sẵn sàng, {len(group) - ready} bỏ qua")
             result = dict(mode="apply" if args.apply else "chạy thử",
-                          rows=schedule.apply(cfg, rows, client) if args.apply else rows)
+                          rows=schedule.apply(cfg, rows, client, memberships=memberships) if args.apply else rows)
         else:
             # Validate local identity before reading the channel.
             episode.playlist(cfg, args.playlist)
