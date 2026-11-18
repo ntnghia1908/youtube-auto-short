@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import logging
 import threading
+from datetime import datetime
 from pathlib import Path
 
-from ..post import links, store
+from ..post import links, schedule, store
 from ..publish import youtube
 from ..store.cancellation import OffloadStopped, check_stop
 from ..workspace import atomic_write_json, read_json_dict, utc_now
@@ -38,6 +39,7 @@ class PostLinks:
         self.api_factory = api_factory or youtube.YouTube
         self._lock = threading.RLock()  # serialize add / sync / sync_all and journal writes only
         self.path = Path(ctx.config.workspace.dir) / "_publish/post_links.json"
+        self.times_path = schedule.path(ctx.config.workspace.dir)
 
     def view(self, playlist_id: str) -> dict:
         # Both documents are replaced atomically; page reads must not wait for network I/O.
@@ -115,6 +117,34 @@ class PostLinks:
                         targets.append(dict(code=code, episode_id=eid, clip_id=cid, khaithi=kt))
         return targets, orders
 
+    def schedule_view(self, episode_id: str, now: datetime) -> tuple[dict, str | None]:
+        """Plan one channel using only local files. Caller holds ctx.post_lock, also for tick writes."""
+        owner = ep.hd_owner(episode_id)
+        docs = [d for d in self.ctx.playlists.all()
+                if any(e.get("video_id") == owner for e in d["entries"])]
+        docs.sort(key=lambda d: (not bool(d.get("link_playlists")), d["playlist_id"]))
+        if not docs:
+            return {}, None
+        targets, orders = self._targets(docs[0])
+        by_target = {(t["episode_id"], t["clip_id"]): t for t in targets}
+        posts = []
+        for eid in orders:
+            try:
+                doc = store.read_posts(self.ctx.posts_path(eid), eid)
+            except store.PostsError:
+                continue  # one broken episode cannot hide every other episode's schedule
+            for post in doc["posts"]:
+                target = by_target.get((eid, post["clip_id"]))
+                if target or post["posted_at"]:
+                    # Saved slots stay occupied even if a ticked Short was subsequently deleted.
+                    posts.append({**post, "episode_id": eid, "code": target["code"] if target else ""})
+        slots = schedule.plan(posts, schedule.read(self.times_path), now)
+        unposted = {f'{p["episode_id"]}/{p["clip_id"]}': p for p in posts if not p["posted_at"]}
+        candidates = [(at, key) for key, at in slots.items() if at and key in unposted
+                      and ep.hd_owner(unposted[key]["episode_id"]) != owner]
+        next_episode = unposted[min(candidates)[1]]["episode_id"] if candidates else None
+        return slots, next_episode
+
     def sync(self, playlist_id: str) -> dict:
         with self._lock:
             doc = self.ctx.playlists.load(playlist_id)
@@ -154,6 +184,22 @@ class PostLinks:
                         changed.add(eid)
                     for eid in sorted(changed):
                         store.write(self.ctx.posts_path(eid), posts[eid])
+                    try:
+                        times = schedule.read(self.times_path)
+                        videos = {entry["id"]: entry for entry in entries}
+                        by_code = {t["code"]: t for t in targets}
+                        for row in result["rows"]:
+                            # Duplicate / conflicting codes are deliberately unresolved by LNK1.
+                            if row["code"] not in by_code or row["reason"] in {"duplicate", "unmatched", "no_code"}:
+                                continue
+                            target = by_code[row["code"]]
+                            key = f'{target["episode_id"]}/{target["clip_id"]}'
+                            times[key] = {**times.get(key, {}), "video_id": row["video_id"],
+                                          "video_at": schedule.video_at(videos[row["video_id"]])}
+                        schedule.write(self.times_path, times)
+                    except (ValueError, OSError):
+                        # Timing state must not change LNK1 counts, rows, or its scan journal.
+                        log.warning("web: không đọc / ghi được giờ video; kiểm tra post_times.json rồi cập nhật lại")
             except OffloadStopped:
                 raise
             except Exception:
