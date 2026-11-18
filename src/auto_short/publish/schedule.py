@@ -16,11 +16,8 @@ WRITABLE_STATUS = ("embeddable", "license", "publicStatsViewable", "selfDeclared
                    "containsSyntheticMedia")
 
 
-def classify(video):
-    """Use the original filename; fall back to title only when it is absent."""
-    name = (video.get("fileDetails") or {}).get("fileName")
-    if not isinstance(name, str) or not name.strip():
-        name = (video.get("snippet") or {}).get("title", "")
+def _classify_name(name):
+    """Recognize one filename/title, including the historical _TậpN_Doc form."""
     if not isinstance(name, str):
         return None
     name = nfc(name.strip())
@@ -32,13 +29,35 @@ def classify(video):
             return dict(kind=kind, series="", episode=number, clip_number=clip,
                         key=f"T{number}_{code}{clip:02d}")
     name = re.sub(r"\.mp4$", "", name, flags=re.I).strip()
+    legacy = re.fullmatch(r"(.+)_Tập([0-9]+)_Doc", name, re.I)
     match = re.search(r"Tập\s+([0-9]+)$", name, re.I)
-    if match and re.search(r"HD (?:Mobile|Dọc)", name, re.I):
-        series = re.sub(r"^hd (?:mobile|dọc)\b\s*", "", kt._title_key(name[:match.start()]))
-        number = int(match[1])
+    if legacy or match and re.search(r"HD (?:Mobile|Dọc)", name, re.I):
+        series = (kt._title_key(legacy[1]) if legacy else
+                  re.sub(r"^hd (?:mobile|dọc)\b\s*", "", kt._title_key(name[:match.start()])))
+        number = int(legacy[2] if legacy else match[1])
         return dict(kind="vertical", series=series, episode=number, clip_number=0,
                     key=f"{series}:T{number}")
     return None
+
+
+def classify(video):
+    """Prefer the filename; unknown filenames may fall back to a vertical title."""
+    name = (video.get("fileDetails") or {}).get("fileName")
+    fields = _classify_name(name)
+    if fields is not None:
+        return fields
+    title = _classify_name((video.get("snippet") or {}).get("title", ""))
+    if title is not None and (title["kind"] == "vertical" or not isinstance(name, str) or not name.strip()):
+        return title
+    return None
+
+
+def _duplicate_key(row):
+    """Ignore the optional presenter suffix only when reserving vertical copies."""
+    if row["kind"] == "vertical":
+        series = re.sub(r"\s+ps tịnh không$", "", row["series"])
+        return "vertical", f"{series}:T{row['episode']}"
+    return row["kind"], row["key"]
 
 
 def _timestamp(value):
@@ -78,7 +97,7 @@ def plan(videos, now):
         if not row["youtube_id"]:
             row["reason"] = "thiếu id video YouTube"
             continue
-        key = (row["kind"], row["key"])
+        key = _duplicate_key(row)
         scheduled = status.get("publishAt")
         if scheduled:
             stamp = _timestamp(scheduled)
@@ -100,7 +119,7 @@ def plan(videos, now):
     # Reserve existing public/unlisted/scheduled keys before resolving candidate duplicates.
     unique = []
     for row, uploaded in sorted(candidates, key=lambda item: (item[1], item[0]["youtube_id"])):
-        key = (row["kind"], row["key"])
+        key = _duplicate_key(row)
         if key in occupied:
             row["reason"] = f"đã có bản {occupied[key]}"
         else:
@@ -129,7 +148,7 @@ def _journal(config):
     return path, doc
 
 
-def apply(config, rows, client):
+def apply(config, rows, client, *, memberships=None):
     """Save each successful update atomically; propagate API errors immediately."""
     path, journal = _journal(config)
     result = []
@@ -147,4 +166,6 @@ def apply(config, rows, client):
         journal["records"] = [r for r in journal["records"] if r["youtube_id"] != row["youtube_id"]] + [record]
         atomic_write_json(path, journal)
         row["status"] = "đã đặt lịch"
+        if memberships is not None:
+            row["playlist_added"] = memberships.add(row)
     return result
