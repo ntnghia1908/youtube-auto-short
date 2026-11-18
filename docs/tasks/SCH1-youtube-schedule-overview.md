@@ -17,7 +17,7 @@
 - Dependencies: PUB3.1 (#219, lệnh `check` + bộ nhớ id), PST1 (`work/_publish/post_times.json`, `slot_at`). Bắt đầu implement sau khi cả hai merge; rebase lên `main` lúc đó.
 - Base commit / branch: `1502331` (contract) / `feature/sch1-schedule-overview`
 - Human Lead approval: accepted 2026-11-19 ("Đồng ý")
-- Implementation authorized: YES (sau khi dependencies merge)
+- Implementation authorized: YES (bắt đầu trên nền `test/pst1-pub31` 2026-11-19 theo yêu cầu HUMAN LEAD; rebase lên `main` sau khi #221 + #220 merge)
 
 ## Goal
 
