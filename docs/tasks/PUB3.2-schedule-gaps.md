@@ -56,7 +56,7 @@ Lịch mỗi loại (dọc / khai thị / Short) đi đúng thứ tự mã trên
 
 1. G2: thiếu T30_KT06 giữa T30_KT05 và T31_KT01 → T31_KT01 nhận khung sau khung giữ chỗ; mã cuối chưa upload không giữ chỗ.
 2. G3: upload T30_KT06 sau đó → nhận đúng khung giữ chỗ; hết khung giữa hai mốc → khung sớm nhất sau mã trước + cảnh báo "lệch thứ tự".
-3. G4: 2 nháp cùng mã, hoặc nháp + bản đã công khai / có lịch → không bản nháp nào được lên lịch, bảng ghi trùng.
+3. G4: 2 nháp cùng mã → đúng 1 bản (upload sớm nhất) được lên lịch, bản kia bỏ qua + có trong dòng tóm tắt; nháp + bản đã công khai / có lịch → nháp bỏ qua.
 4. G5 + test cũ PASS; `expected=None` giữ hành vi cũ.
 5. G6: `--reflow` dry-run không gọi ghi; chỉ dời video riêng tư có lịch ≥ now + 1 giờ phía sau mã thiếu; công khai / có lịch gần không đổi; thứ tự sau dời đúng G1–G2; `--apply` ghi `publishAt` + journal; hạn mức hết giữa chừng → dừng an toàn, chạy lại tiếp được (idempotent).
 
