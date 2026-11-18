@@ -10,6 +10,7 @@ from ..workspace import atomic_write_json, read_json_dict
 
 ZONE = ZoneInfo("Asia/Ho_Chi_Minh")
 SLOTS = (time(9), time(15), time(20, 30))
+LEGACY_BEFORE = datetime(2026, 11, 19, tzinfo=ZONE)
 
 
 def timestamp(value: str | datetime) -> datetime:
@@ -74,7 +75,7 @@ def plan(posts: list[dict], times: dict, now: datetime) -> dict[str, str | None]
     """One website playlist per call. Posts carry episode_id, clip_id, code, posted_at.
 
     Return key -> slot_at in video-time / numeric-code order, with unscheduled posts last.
-    Only ticked posts with a saved slot reserve capacity; legacy ticks reserve nothing.
+    P3a excludes unticked videos before LEGACY_BEFORE. Saved ticked slots still reserve capacity.
     """
     floor = timestamp(now) + timedelta(minutes=10)
     occupied, planned, pending = set(), {}, []
@@ -86,6 +87,9 @@ def plan(posts: list[dict], times: dict, now: datetime) -> dict[str, str | None]
             if saved.get("slot_at"):
                 occupied.add(timestamp(saved["slot_at"]))
         else:
+            if slot_group(post, saved, None) == "legacy":
+                planned[key] = None
+                continue
             at = timestamp(saved["video_at"]) if saved.get("video_at") else None
             numbers = tuple(int(n) for n in re.findall(r"\d+", post["code"]))
             pending.append((at, numbers, post["code"], key))
@@ -101,6 +105,15 @@ def plan(posts: list[dict], times: dict, now: datetime) -> dict[str, str | None]
         planned[key] = _iso(slot)
         slot = next(slots)
     return planned
+
+
+def slot_group(post: dict, saved: dict, slot_at: str | None) -> str:
+    if slot_at:
+        return "scheduled"
+    # Ticked legacy posts stay in the legacy section (they never get a saved slot).
+    if saved.get("video_at") and timestamp(saved["video_at"]) < LEGACY_BEFORE:
+        return "legacy"
+    return "unscheduled"
 
 
 def slot_fields(slot_at: str | None) -> dict:

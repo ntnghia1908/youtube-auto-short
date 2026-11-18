@@ -383,9 +383,10 @@ def build(ctx: WebContext) -> APIRouter:
             except post_store.PostsError as exc:
                 doc, post_error = post_store.empty_posts(episode_id), str(exc)
             try:
+                times = post_schedule.read(ctx.post_links.times_path)
                 slots, next_episode = ctx.post_links.schedule_view(episode_id, post_schedule.timestamp(ctx.post_now()))
             except (ValueError, OSError) as exc:
-                slots, next_episode = {}, None
+                times, slots, next_episode = {}, {}, None
                 post_error = post_error or str(exc)
         try:
             ep_src = post_source.load(episode_id, ctx.config)
@@ -402,7 +403,10 @@ def build(ctx: WebContext) -> APIRouter:
         posts = [ctx.post_entry_view(e, ep_src=ep_src, title=titles_by_clip.get(e["clip_id"]),
                                   header_fields=header_fields, hashtags_list=hashtags_list) for e in doc["posts"]]
         for post in posts:
-            post.update(post_schedule.slot_fields(slots.get(f'{episode_id}/{post["clip_id"]}')))
+            key = f'{episode_id}/{post["clip_id"]}'
+            slot = slots.get(key)
+            post.update(post_schedule.slot_fields(slot))
+            post["slot_group"] = post_schedule.slot_group(post, times.get(key, {}), slot)
         response = {"posts": posts, "post_error": post_error}
         if posts or next_episode:
             response["next_episode"] = next_episode
@@ -532,6 +536,8 @@ def build(ctx: WebContext) -> APIRouter:
                     slots, _ = ctx.post_links.schedule_view(episode_id, post_schedule.timestamp(now))
                     if slots.get(key):
                         times[key] = {**times.get(key, {}), "slot_at": slots[key]}
+                    elif not post_store.find(doc, clip)["posted_at"] and key in times:
+                        times[key].pop("slot_at", None)
                 elif key in times:
                     times[key].pop("slot_at", None)
                 post_schedule.write(ctx.post_links.times_path, times)

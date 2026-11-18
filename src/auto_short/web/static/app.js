@@ -1817,8 +1817,10 @@ const AutoShort = (() => {
     $("#posts-meta").textContent = titles.length ? titles[0] : postsPage.vid;
     const next = $("#posts-next");
     const nextEpisode = groups.map((g) => g.nextEpisode).find(Boolean);
-    const complete = total > 0 && groups.every((g) => renderedOf(g).every((s) =>
-      g.posts.some((p) => p.clip_id === s.clip_id && p.posted)));
+    const complete = total > 0 && groups.every((g) => renderedOf(g).every((s) => {
+      const p = g.posts.find((p) => p.clip_id === s.clip_id);
+      return postSlotGroup(p) !== "scheduled" || p.posted;
+    }));
     next.hidden = !complete || !nextEpisode;
     if (nextEpisode) next.href = "/episodes/" + encodeURIComponent(nextEpisode) + "/posts";
   }
@@ -1827,10 +1829,14 @@ const AutoShort = (() => {
     return (a && a.slot_at || "9999").localeCompare(b && b.slot_at || "9999");
   }
 
+  function postSlotGroup(p) {
+    return p && p.slot_group || (p && p.slot_at ? "scheduled" : "unscheduled");
+  }
+
   function scrollToNextPost() {
     const pending = postsPage.groups.flatMap((g) => renderedOf(g).map((s) => ({
       id: g.id + "|" + s.clip_id, post: g.posts.find((p) => p.clip_id === s.clip_id),
-    }))).filter((item) => !item.post || !item.post.posted);
+    }))).filter((item) => postSlotGroup(item.post) === "scheduled" && !item.post.posted);
     pending.sort((a, b) => postTimeOrder(a.post, b.post) || a.id.localeCompare(b.id));
     const target = pending.length ? (postsPage.nodes.get(pending[0].id) || {}).node : $("#posts-next");
     if (target && !target.hidden) target.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -1859,11 +1865,12 @@ const AutoShort = (() => {
       return;
     }
     const seen = new Set();
-    // Keep Shorts / khai thị labels, with all posts lacking a video time at the bottom.
-    const partitions = [false, true].flatMap((unknown) => groups.map((g) => ({ g, unknown })));
-    const sections = partitions.map(({ g, unknown }) => {
+    // Keep Shorts / khai thị labels; legacy backlog follows posts without a video schedule.
+    const partitions = ["scheduled", "unscheduled", "legacy"].flatMap((slotGroup) =>
+      groups.map((g) => ({ g, slotGroup })));
+    const sections = partitions.map(({ g, slotGroup }) => {
       const byClip = new Map(g.posts.map((p) => [p.clip_id, p]));
-      const shorts = renderedOf(g).filter((s) => (!byClip.get(s.clip_id)?.slot_at) === unknown)
+      const shorts = renderedOf(g).filter((s) => postSlotGroup(byClip.get(s.clip_id)) === slotGroup)
         .sort((a, b) => postTimeOrder(byClip.get(a.clip_id), byClip.get(b.clip_id)));
       if (!shorts.length) return null;
       const cards = shorts.map((s) => {
@@ -1888,7 +1895,8 @@ const AutoShort = (() => {
         } catch (e) { postsMsg(e.message, "error"); codexAll.disabled = false; }
       });
       const head = el("div", { class: "shorts-head" },
-        el("h2", { text: unknown ? g.label + " · Chưa có lịch video" : g.label }), codexAll,
+        el("h2", { text: slotGroup === "scheduled" ? g.label : g.label + " · " +
+          (slotGroup === "legacy" ? "Bài cũ chưa đăng" : "Chưa có lịch video") }), codexAll,
         g.postError ? el("p", { class: "error small", text: "Lỗi đọc bài đăng: " + g.postError }) : null);
       return el("section", { class: "card" }, head, el("div", { class: "posts-list" }, ...cards));
     }).filter(Boolean);
@@ -2112,7 +2120,8 @@ const AutoShort = (() => {
 
     function render() {
       card.className = "post-card" + (cur && cur.posted ? " post-posted" : "");
-      slotLabel.textContent = cur && cur.slot_label ? cur.slot_label + " (giờ VN)" : "Chưa có lịch video";
+      slotLabel.textContent = cur && cur.slot_label ? cur.slot_label + " (giờ VN)" :
+        postSlotGroup(cur) === "legacy" ? "Bài cũ chưa đăng" : "Chưa có lịch video";
       if (!cur) {
         const busy = jobActive(g.view.post_job);
         const btn = el("button", { class: "btn primary small", type: "button", text: "Soạn bài" });

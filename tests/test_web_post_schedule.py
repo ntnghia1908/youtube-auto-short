@@ -114,6 +114,41 @@ def test_posts_without_video_time_or_playlist_have_no_slot(web, without_playlist
         assert client.get(url).json() == {"posts": [], "post_error": None}  # CP8.15 empty response
 
 
+@pytest.mark.parametrize("already_posted", [False, True])
+def test_legacy_api_groups_next_episode_and_tick(web, already_posted):  # AC6
+    client, svc = web
+    login(client)
+    seed(svc.ctx, EID2, "k01", posted=already_posted)
+    seed(svc.ctx, EID2, "k02", posted=False)
+    times = schedule.read(svc.times_path)
+    for eid in (EID, EID + ".kt", EID2):
+        times[f"{eid}/k01"]["video_at"] = "2026-11-18T16:59:59Z"
+    times[f"{EID}/k01"]["slot_at"] = "2026-11-24T13:30:00Z"  # stale unticked state
+    times[f"{EID}/k02"]["video_at"] = None
+    if already_posted:
+        times[f"{EID2}/k01"]["slot_at"] = "2026-11-19T02:00:00Z"
+    times[f"{EID2}/k02"] = {"video_id": "youtube0005", "video_at": "2026-11-24T13:30:00Z"}
+    schedule.write(svc.times_path, times)
+    before = svc.ctx.posts_path(EID).read_bytes(), svc.times_path.read_bytes()
+    url = f"/api/episodes/{EID}/posts"
+    data = client.get(url).json()
+    assert data["next_episode"] == EID2
+    assert [(p["slot_group"], p["slot_at"], p["slot_label"]) for p in data["posts"]] == [
+        ("legacy", None, None), ("unscheduled", None, None)]
+    other = client.get(f"/api/episodes/{EID2}/posts").json()["posts"]
+    assert other[0]["slot_group"] == ("scheduled" if already_posted else "legacy")
+    assert other[0]["slot_at"] == ("2026-11-19T02:00:00Z" if already_posted else None)
+    assert other[1]["slot_group"] == "scheduled" and other[1]["slot_at"] == "2026-11-24T13:30:00Z"
+    assert (svc.ctx.posts_path(EID).read_bytes(), svc.times_path.read_bytes()) == before
+    assert client.post(url + "/k01/posted", json={"value": True}).status_code == 200
+    assert "slot_at" not in schedule.read(svc.times_path)[f"{EID}/k01"]
+    assert client.get(url).json()["posts"][0]["slot_at"] is None
+    times = schedule.read(svc.times_path)
+    times[f"{EID2}/k02"]["video_at"] = None
+    schedule.write(svc.times_path, times)
+    assert client.get(url).json()["next_episode"] is None  # an unticked old episode is never next
+
+
 # Reuse the existing POSTCOPY1 DOM / clipboard harness; add a resolving local API and scrolling.
 SCHEDULE_HARNESS = COPY_HARNESS.split("const ui = context.ui, origin =")[0].replace(
     "postCard, postBadges, copyTitleButton, initIndex,",
@@ -205,3 +240,33 @@ def test_posts_ui_copy_dim_scroll_next_and_failure_paths(mode, copy_ok):  # AC4�
         assert out["nextHref"] == "/episodes/next0000001/posts" and out["scrolledButton"]
     assert 'id="posts-next"' in (STATIC_DIR / "posts.html").read_text()
     assert ".post-card.post-posted" in (STATIC_DIR / "style.css").read_text()
+
+
+@pytest.mark.skipif(NODE is None, reason="node not installed")
+def test_legacy_ui_group_last_and_copy_scroll_skips_backlog():  # AC6
+    script = SCHEDULE_HARNESS.split("(async () => {")[0].replace(
+        'const groups = [',
+        'shortPosts.unshift({...makePost("k03", null, null), slot_group: "legacy"});\nconst groups = [',
+    ) + r"""
+(async () => {
+  ui.renderPostsPage();
+  const sections = select("#post-groups").children;
+  const headings = sections.map(s => s.children[0].children[0].textContent);
+  const oldCard = ui.postsPage.nodes.get("source00001|k03").node;
+  const legacyLabel = oldCard.querySelector(".post-slot").textContent;
+  await findButton(ui.postsPage.nodes.get("source00001.kt|k01").node, "Sao chép bài").click(); await settle();
+  const firstScroll = scrolled.at(-1) === ui.postsPage.nodes.get("source00001|k01").node;
+  await findButton(ui.postsPage.nodes.get("source00001|k01").node, "Sao chép bài").click(); await settle();
+  console.log(JSON.stringify({headings, legacyLabel, firstScroll, calls: posted.length,
+    nextVisible: !select("#posts-next").hidden, scrolledButton: scrolled.at(-1) === select("#posts-next"),
+    remaining: ui.postsPage.groups[0].posts.filter(p => !p.posted).map(p => p.clip_id).sort()}));
+})().catch(e => { console.error(e); process.exit(1); });
+"""
+    result = subprocess.run([NODE, "-e", script, str(APP_JS), "success", "true"],
+                            capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stderr
+    out = json.loads(result.stdout)
+    assert out["headings"][-2:] == ["Shorts · Chưa có lịch video", "Shorts · Bài cũ chưa đăng"]
+    assert out["legacyLabel"] == "Bài cũ chưa đăng"
+    assert out["firstScroll"] and out["scrolledButton"] and out["nextVisible"]
+    assert out["remaining"] == ["k02", "k03"] and out["calls"] == 2

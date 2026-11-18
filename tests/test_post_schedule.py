@@ -41,13 +41,13 @@ def test_plan_orders_reserves_only_ticked_slots_and_puts_unknown_last():  # AC2�
     times["two/k01"]["slot_at"] = "2026-11-19T08:00:00Z"  # unticked: not occupied
     before = repr((posts, times))
     planned = schedule.plan(posts, times, schedule.timestamp("2026-11-19T01:50:00Z"))
-    assert list(planned)[2:] == ["old/k01", "two/k01", "two/k02", "ten/k01", "future/k01", "unknown/k01"]
-    assert [planned[k] for k in list(planned)[2:]] == [
+    assert list(planned)[3:] == ["two/k01", "two/k02", "ten/k01", "future/k01", "unknown/k01"]
+    assert [planned[k] for k in list(planned)[3:]] == [
         "2026-11-19T08:00:00Z", "2026-11-19T13:30:00Z", "2026-11-20T02:00:00Z",
-        "2026-11-20T08:00:00Z", "2026-11-21T13:30:00Z", None,
+        "2026-11-21T13:30:00Z", None,
     ]
-    assert planned["legacy/k01"] is None and repr((posts, times)) == before
-    assert schedule.slot_fields(planned["old/k01"]) == {
+    assert planned["old/k01"] is None and planned["legacy/k01"] is None and repr((posts, times)) == before
+    assert schedule.slot_fields(planned["two/k01"]) == {
         "slot_at": "2026-11-19T08:00:00Z", "slot_label": "Thứ 5 19/11 15:00"}
     assert schedule.slot_fields("2026-11-22T02:00:00Z")["slot_label"] == "Chủ nhật 22/11 09:00"
 
@@ -164,3 +164,33 @@ def test_time_file_corruption_is_not_overwritten_and_sync_result_survives(servic
     scan = svc.add(PID, f"https://youtube.com/playlist?list={SHORTS}")["last_scan"]
     assert scan["counts"]["filled"] == 1 and scan["errors"] == []
     assert svc.times_path.read_text() == '{"schema_version": 9}'
+
+
+@pytest.mark.parametrize("video_at,group", [
+    ("2026-11-18T16:59:59Z", "legacy"),
+    ("2026-11-19T00:00:00+07:00", "scheduled"),
+    ("2026-11-18T17:00:01Z", "scheduled"),
+])
+def test_legacy_cutoff_backlog_does_not_delay_new_posts_or_release_saved_ticks(video_at, group):  # AC6
+    posts = [dict(episode_id=f"old{n}", clip_id="k01", code=f"T{n}_S01", posted_at=None)
+             for n in range(148)]
+    posts += [dict(episode_id=eid, clip_id="k01", code=f"T{n}_S01", posted_at="ticked" if eid == "saved" else None)
+              for n, eid in enumerate(("boundary", "future", "unknown", "saved"), 200)]
+    times = {f"old{n}/k01": {"video_at": "2026-11-18T16:59:59Z"} for n in range(148)}
+    times["old0/k01"]["slot_at"] = "2026-11-24T13:30:00Z"  # unticked saved state cannot reserve a slot
+    times.update({"boundary/k01": {"video_at": video_at},
+                  "future/k01": {"video_at": "2026-11-24T13:30:00Z"},
+                  "saved/k01": {"video_at": "2026-11-18T16:59:59Z", "slot_at": "2026-11-19T02:00:00Z"}})
+    before = repr((posts, times))
+    slots = schedule.plan(posts, times, schedule.timestamp("2026-11-19T00:00:00Z"))
+    assert schedule.LEGACY_BEFORE.isoformat() == "2026-11-19T00:00:00+07:00"
+    assert all(slots[f"old{n}/k01"] is None for n in range(148))
+    assert slots["boundary/k01"] == (None if group == "legacy" else "2026-11-19T08:00:00Z")
+    assert slots["future/k01"] == "2026-11-24T13:30:00Z"
+    assert slots["saved/k01"] == "2026-11-19T02:00:00Z" and slots["unknown/k01"] is None
+    by_id = {p["episode_id"]: p for p in posts}
+    for eid, expected in (("old0", "legacy"), ("boundary", group), ("future", "scheduled"),
+                          ("unknown", "unscheduled"), ("saved", "scheduled")):
+        key = f"{eid}/k01"
+        assert schedule.slot_group(by_id[eid], times.get(key, {}), slots[key]) == expected
+    assert repr((posts, times)) == before
