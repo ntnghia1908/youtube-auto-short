@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter
@@ -9,12 +10,15 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from ...post import images as post_images, kept
+from ...post import schedule as post_schedule, store as post_store
+from ...publish import overview
 from ...review import list_tombstones, remove_tombstone
 from ...workspace import WorkspaceError
 from .. import downloads as dl_mod
 from .. import episodes as ep
 from .. import monitor as monitor_mod
 from ..context import WebContext
+from ..playlists import PlaylistError
 from .models import PublishedIn
 
 
@@ -24,6 +28,55 @@ class QueuePauseIn(BaseModel):
 
 def build(ctx: WebContext) -> APIRouter:
     router = APIRouter()
+
+    @router.get("/api/schedule-overview")
+    def api_schedule_overview():
+        """SCH1: exclusively local snapshots and ticked community-post slots."""
+        now = datetime.now(timezone.utc)
+        channels = overview.read(ctx.config)
+        with ctx.post_lock:
+            try:
+                times = post_schedule.read(post_schedule.path(ctx.config.workspace.dir))
+                post_error = None
+            except (ValueError, OSError, TypeError):
+                times, post_error = {}, "Không đọc được giờ bài post"
+            for channel in channels:
+                posts, seen = [], set()
+                error = post_error
+                try:
+                    playlist = ctx.playlists.load(channel["playlist_id"])
+                except PlaylistError:
+                    playlist = None
+                if playlist is None:
+                    error = error or "Không có playlist website"
+                for entry in (playlist or {}).get("entries", []):
+                    base = entry.get("video_id")
+                    if not isinstance(base, str) or not ep.valid_episode_id(base):
+                        continue
+                    for eid in (ep.hd_owner(base), ep.hd_owner(base) + ".kt"):
+                        if eid in seen:
+                            continue
+                        seen.add(eid)
+                        try:
+                            doc = post_store.read_posts(ctx.posts_path(eid), eid)
+                        except post_store.PostsError:
+                            error = error or "Không đọc được một số bài post"
+                            continue
+                        ticked = [post for post in doc["posts"] if post["posted_at"]
+                                  and times.get(f'{eid}/{post["clip_id"]}', {}).get("slot_at")]
+                        if not ticked:
+                            continue
+                        prefixes = ep.copy_prefixes(ctx.config, eid, ep.render_manifest(ctx.config, eid) or {})
+                        posts.extend(dict(post, episode_id=eid,
+                                          code=prefixes.get(post["clip_id"], "").rstrip("_")
+                                          or f'{eid}/{post["clip_id"]}') for post in ticked)
+                channel["kinds"] = {kind: overview.coverage(group, now)
+                                    for kind, group in channel["kinds"].items()}
+                channel["kinds"]["post"] = overview.coverage(overview.summarize_posts(posts, times, now), now)
+                channel["post_error"] = error
+                channel["stale"] = overview.stale(channel, now)
+        return JSONResponse({"channels": channels, "now": overview._iso(now)},
+                            headers={"Cache-Control": "no-store"})
 
     @router.get("/api/kept-posts")
     def api_kept_posts():

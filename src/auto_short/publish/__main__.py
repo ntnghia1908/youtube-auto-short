@@ -8,7 +8,7 @@ from pathlib import Path
 
 from ..config import ConfigError, load
 from ..packaging import PackageError, episode
-from . import PublishError, check, kt, playlists, schedule, shorts, thumbs, youtube
+from . import PublishError, check, kt, overview, playlists, schedule, shorts, thumbs, youtube
 
 
 def _episode_range(value):
@@ -95,6 +95,15 @@ def main(argv=None, *, transport=None, sleep=None, now=None):
                     for row in checked["rows"]:
                         if row["group"] == "playlist_missing":
                             row["playlist_added"] = memberships.add(row)
+                if client._uploads_channel:
+                    moment = datetime.fromtimestamp(now(), timezone.utc) if now else datetime.now(timezone.utc)
+                    # Fresh video/playlist snippets already contain the owner's name.
+                    title = next((item.get("snippet", {}).get("channelTitle") for item in [*videos, *catalog]
+                                  if item.get("snippet", {}).get("channelTitle")), client._uploads_channel)
+                    overview.write(cfg, dict(schema_version=1, channel_id=client._uploads_channel,
+                                             channel_title=title, playlist_id=args.playlist,
+                                             updated_at=overview._iso(moment), kinds=overview.summarize(videos, moment),
+                                             **overview.issues(checked)))
                 print(json.dumps(checked, ensure_ascii=False, indent=2))
                 return 0
             moment = datetime.fromtimestamp(now(), timezone.utc) if now else datetime.now(timezone.utc)

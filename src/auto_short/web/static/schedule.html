@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lịch YouTube — Auto Short</title>
+<link rel="stylesheet" href="/static/style.css">
+<style>
+.topbar, .topnav { flex-wrap: wrap; gap: .6rem; }
+.schedule-table { min-width: 640px; table-layout: fixed; }
+.schedule-table td { vertical-align: top; }
+.schedule-table .note { border-radius: 0; }
+.schedule-date { white-space: nowrap; }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/">&larr; Auto Short</a>
+  <nav class="topnav"><a href="/monitor">Theo dõi</a> <a href="/storage">Bộ nhớ</a> <a href="/schedule" aria-current="page">Lịch YouTube</a> <a href="/sutras">Đọc Kinh</a> <a href="/images">Thư viện ảnh</a>
+  <form method="post" action="/logout"><button class="btn link" type="submit">Đăng xuất</button></form></nav>
+</header>
+<div id="disk-banner" class="disk-banner" hidden></div>
+<main class="container">
+  <section class="card">
+    <h1>Lịch YouTube</h1>
+    <p class="muted small">Ngày giờ Việt Nam · Số liệu YouTube cập nhật mỗi ngày. Ô dưới 7 ngày còn lịch được tô cảnh báo.</p>
+    <button id="schedule-refresh" class="btn" type="button">Đọc lại số liệu</button>
+    <p id="schedule-message" class="muted" role="status">Đang đọc…</p>
+  </section>
+  <div id="schedule-channels" class="container" style="padding: 0; margin: 0; max-width: 100%; min-width: 0"></div>
+</main>
+<script src="/static/app.js"></script>
+<script src="/static/schedule.js" defer></script>
+</body>
+</html>
