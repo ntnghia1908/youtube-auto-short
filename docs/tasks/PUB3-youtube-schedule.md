@@ -45,7 +45,7 @@ HUMAN LEAD upload video (Studio, để riêng tư / chưa lên lịch). `python 
   - `--only` / `--limit` lọc ứng viên SAU khi xếp: video được chọn giữ đúng giờ như khi chạy toàn bộ (chạy thử 1 video rồi chạy tiếp không đổi lịch).
 - **S6 ghi**: `PUT videos?part=status` thân `{"id", "status": {...}}`. Sao giữ mọi trường ghi được trong `status` hiện tại (`embeddable`, `license`, `publicStatsViewable`, `selfDeclaredMadeForKids`, `containsSyntheticMedia` nếu có), đặt `privacyStatus = "private"`, `publishAt` = RFC 3339 UTC (`…Z`). Content-Type `application/json`. Mỗi video thành công → ghi nhật ký `work/_publish/schedule.json` (atomic, `schema_version` 1: youtube_id, kind, key, publish_at, set_at). Lỗi `quotaExceeded` / 403 / 401 sau refresh → dừng, exit ≠ 0, video đã đặt vẫn trong nhật ký. Thiếu quyền (`insufficientPermissions` / scope) → báo "token chưa có quyền sửa video; chạy lại auth".
 - **S7 đọc video**: uploads (`videos()` có sẵn) + `search?forMine=true&type=video` phân trang để lấy video riêng tư uploads không trả về, rồi `videos.list part=fileDetails,snippet,status` cho id còn thiếu (theo lô 50). Đã kiểm tay 2026-11-18 (ops `attach.py`).
-- **S8 OAuth**: thêm `https://www.googleapis.com/auth/youtube.force-ssl` vào `SCOPES` (G4 sửa đổi). Token cũ vẫn dùng được cho lệnh thumbs / web đọc; `schedule --apply` cần token mới. Không log token / secret.
+- **S8 OAuth**: thêm `https://www.googleapis.com/auth/youtube.force-ssl` vào `SCOPES` (G4 sửa đổi). Token cũ vẫn dùng được cho lệnh thumbs / web đọc; `schedule --apply` cần token mới. Không log token / secret. Chạy thật 2026-11-18: device flow trả `invalid_scope` cho force-ssl → tự rơi về scope `youtube` đầy đủ (G4); 4 token đã đăng nhập lại với scope `youtube`.
 - Không thêm dependency (G5).
 
 ## Implementation approach
@@ -92,11 +92,11 @@ Chạm security model (scope OAuth mới, thao tác ghi trạng thái video) →
 
 ## Result
 
-- Main changes:
-- Tests:
-- Diff + / − (app, test):
-- Helper mới (đã tìm, lý do không tái dùng):
-- Review:
-- Important findings / decisions:
-- Known limitations:
+- Main changes: lệnh `schedule` (`publish/schedule.py`), `YouTube.all_videos()` / `update_status()`, scope force-ssl, báo lỗi thiếu quyền.
+- Tests: AC1 `test_classification_filename_priority_and_fallback`, `test_vertical_filename_and_generated_title_share_key`; AC2 `test_only_processed_unscheduled_private_videos_are_candidates`; AC3 `test_existing_public_unlisted_or_scheduled_copy_blocks_candidate`, `test_duplicate_candidates_keep_earliest_upload_and_kinds_are_independent`; AC4 `test_slots_append_after_latest_or_start_tomorrow_across_days`, `test_one_hour_guard_and_strictly_after_anchor`, `test_order_by_series_episode_clip_and_independent_kind_anchors`; AC5 `test_cli_filters_after_full_plan_and_dry_run_never_writes`; AC6 `test_apply_preserves_writable_status_and_journals_each_success`, `test_apply_api_error_stops_and_retains_prior_journal`, `test_invalid_schedule_journal_is_not_overwritten`; AC7 `test_force_ssl_scope_and_missing_permission_requires_auth`; AC8 `test_old_scope_read_and_thumbnail_still_work_and_web_cannot_update` + test publish cũ. Targeted 240 PASS; full suite `pytest -q -n auto` 4497 passed, 2 skipped (2026-11-18).
+- Diff + / − (app, test): app +235 / −9; test +301 / −0.
+- Helper mới (đã tìm, lý do không tái dùng): `_timestamp` / `_next_slot` (chưa có xử lý lịch); `_journal` (schema riêng); `_videos_by_ids` tách từ vòng lô 50 có sẵn để dùng chung.
+- Review: ORCHESTRATOR đọc diff — đúng S1–S8, inventory ⊆ Owned paths. Codex 1 vòng, 69 k token.
+- Important findings / decisions: chạy thử Tín Nguyện: 102 bản dọc T1–T102 sẵn sàng, 06:00 từ 2026-11-19 tới 2027-02-28; khai thị / Short không có ứng viên. Client chung (CƯT / VLT / NDCL) HTTP 429 ngày 2026-11-18 (hạn mức đã dùng cho gắn ảnh + search) → chạy thử sau reset.
+- Known limitations: `search` 100 đơn vị / trang (kênh 1.353 video ≈ 2.700 đơn vị mỗi lần chạy thử). Khóa Short / KT không gồm tên bộ.
 - PR:
