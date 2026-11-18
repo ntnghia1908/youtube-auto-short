@@ -18,6 +18,7 @@
 - Base commit / branch: `1502331` (contract) / `feature/sch1-schedule-overview`
 - Human Lead approval: accepted 2026-11-19 ("Đồng ý")
 - Amendment A (HUMAN LEAD 2026-11-19 "ok duyệt"): O6 thông báo chưa có số liệu / hạn mức, O7 hạn token, O8 nút lấy lại token (device flow) — xem Authority + AC6–8; Owned paths thêm ở dòng dưới.
+- Amendment B (HUMAN LEAD 2026-11-19 "chỉ check giúp tôi từ 1/11/2026 vì có vài cái lỗi tôi đã biết"): O1b lọc cảnh báo theo mốc — xem Authority + AC9; không thêm Owned paths.
 - Implementation authorized: YES (bắt đầu trên nền `test/pst1-pub31` 2026-11-19 theo yêu cầu HUMAN LEAD; rebase lên `main` sau khi #221 + #220 merge)
 
 ## Goal
@@ -33,6 +34,7 @@ Trang riêng **"Lịch YouTube"** (`/schedule`, link ở thanh menu trên cùng;
 
 - **O1 tóm tắt kênh**: mỗi lần `check` đọc xong (không lỗi), ghi `work/_publish/channels/<channel_id>.json` (atomic, `schema_version` 1): `channel_id`, `channel_title`, `playlist_id` (playlist website từ `--playlist`), `updated_at`, và cho mỗi loại `vertical` / `kt` / `short`: `last_scheduled` {`key`, `publish_at`}, `scheduled_count` (số video riêng tư có lịch trong tương lai), `last_public` {`key`, `published_at`}. Dùng `schedule.classify`; video không nhận ra loại bị bỏ qua. Không lưu token / tiêu đề video.
 - **O1a cảnh báo nháp (HUMAN LEAD 2026-11-19: "thêm cảnh báo đăng nháp thiếu bài nào để tôi biết đăng bổ sung")**: tóm tắt O1 lưu thêm kết quả `check.compare` của lần chạy đó: `missing` (mã thiếu trong lỗ hổng, theo loại), `duplicates` (mã + id các bản, bản giữ / bản nên xóa), `unrecognized_count`, `pending` (khoảng "chưa đăng T…–T…" mỗi loại). Trên trang, dưới dòng mỗi kênh: "⚠ Thiếu: T114 (dọc), T9_KT06, T14_KT04 — upload bổ sung"; "⚠ Trùng: T17_S09 — xóa bản b8Ep79QKIk4" (link Studio `https://studio.youtube.com/video/<id>/edit`); không có cảnh báo → không hiện dòng. Danh sách dài > 10 mã → hiện 10 + "và N mã khác" (bấm mở hết).
+- **O1b mốc cảnh báo (Amendment B)**: hằng số `ISSUES_SINCE = 2026-11-01T00:00+07:00` trong `publish/overview.py`. Tóm tắt O1a lưu thêm mốc ngày cho mỗi cảnh báo: trùng → `uploaded_at` mới nhất trong các bản; lạ (không nhận ra loại) → lưu danh sách `unrecognized` [{`youtube_id`, `uploaded_at`}] (thay chỉ đếm; giữ `unrecognized_count`); thiếu → `since` = `uploaded_at` của video cùng loại có mã liền trước gần nhất trên kênh (vd thiếu T30_KT06 → ngày upload của T30_KT05; không có mã trước → không có `since`). API / trang chỉ hiện cảnh báo có mốc ≥ `ISSUES_SINCE`; cảnh báo không có mốc thì ẩn. Lọc lúc đọc (API), nên đổi mốc không cần chạy lại `check`; tóm tắt cũ chưa có trường mốc → hiện như cũ. Trang ghi nhỏ "Chỉ cảnh báo từ 01/11/2026".
 - **O2 bài post**: cột Bài post lấy từ `post_times.json` (PST1): bài đã tick có `slot_at` thuộc các tập của playlist website đó → `slot_at` lớn nhất + mã bài; "công khai gần nhất" = `slot_at` lớn nhất ≤ now.
 - **O3 số ngày còn lịch**: `ceil((last_scheduled.publish_at − now) / 1 ngày)`, ≤ 0 → "hết lịch"; < 7 → cảnh báo. Tóm tắt cũ hơn 36 giờ → ghi "số liệu cũ (cập nhật dd/mm HH:MM)".
 - **O4 trang riêng**: route `GET /api/schedule-overview` đọc mọi file O1 + O2 (chỉ đọc file local), trả theo thứ tự tên kênh. Trang `/schedule` (card, kèm dòng cảnh báo O1a, mobile-first: bảng cuộn ngang hoặc mỗi kênh một khối) một card mỗi kênh.
@@ -64,6 +66,7 @@ Trang riêng **"Lịch YouTube"** (`/schedule`, link ở thanh menu trên cùng;
 5. Test cũ PASS không sửa.
 6. O6: không có tóm tắt → thông báo "Chưa có số liệu … 15:30"; nút Đọc lại có chú thích; `check` lỗi ghi / thành công xóa file lỗi, trang hiện lỗi gần nhất.
 7. O7: `auth` ghi `authorized_at`, refresh giữ; API trả hạn token đúng (còn N ngày / ≤ 2 cảnh báo / hết hạn / không rõ); không lộ secret.
+9. O1b: trùng / lạ / thiếu chỉ hiện khi mốc ≥ 01/11/2026 (giờ VN), ranh giới đúng; thiếu không có mã trước → ẩn; tóm tắt cũ không có mốc → hiện như cũ; số đếm trên trang khớp danh sách sau lọc.
 8. O8: route auth từ chối stem lạ / đường dẫn; bắt đầu trả mã + URL; thăm dò `authorization_pending` / `slow_down` / thành công ghi token giữ `client_path` + `authorized_at` / lỗi; một phiên mỗi token; transport giả trong test, không mạng.
 
 ## Required verification
