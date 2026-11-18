@@ -84,7 +84,7 @@ def test_cli_writes_snapshot_after_success_and_preserves_it_on_error(workspace, 
     assert saved == dict(schema_version=1, channel_id="UCoverview", channel_title="Kênh thử",
                          playlist_id=PID, updated_at=overview._iso(NOW),
                          kinds=overview.summarize(sources, NOW),
-                         **overview.issues(check.compare(sources, check.inventory(workspace, PID))))
+                         **overview.issues(check.compare(sources, check.inventory(workspace, PID)), sources))
     assert all(call[0] == "GET" for call in wire.calls) and not wire.responses
     output = capsys.readouterr().out
     assert "Trùng:" in output and "Tổng khai thị:" in output
@@ -204,3 +204,53 @@ def test_testing_token_lifetime_boundaries_and_secret_projection(age, days, warn
 def test_legacy_or_invalid_token_authorization_date_is_unknown(authorized):
     assert overview.token_status(dict(authorized_at=authorized), NOW) == dict(
         authorized_at=None, expires_at=None, days_left=None, warning=False, expired=False)
+
+
+def test_amendment_b_dates_numeric_predecessors_all_kinds_and_newest_duplicate():  # AC9
+    boundary = schedule._timestamp(overview.ISSUES_SINCE)
+    old = overview._iso(boundary - timedelta(seconds=1))
+    exact = overview._iso(boundary)
+    sources = [video("old-copy", "T9_KT05_a.mp4", uploaded=old),
+               video("new-copy", "T9_KT05_b.mp4", uploaded=exact),
+               video("later-kt", "T10_KT01_a.mp4", uploaded=old),
+               video("short", "T9_S09_a.mp4", uploaded=exact),
+               video("vertical", "Bộ kinh_Tập9_Doc.mp4", uploaded=exact),
+               video("vertical-later", "Bộ kinh_Tập11_Doc.mp4", uploaded=old),
+               video("invalid", "T11_KT01_a.mp4", uploaded="bad"),
+               video("last", "T12_KT01_a.mp4", uploaded=exact),
+               video("unknown", "plain.mp4", uploaded=exact)]
+    expected = {("kt", 9, 6), ("kt", 10, 2), ("kt", 11, 2), ("kt", 8, 1),
+                ("short", 9, 10), ("vertical", 10, 0)}
+    checked = check.compare(sources, expected)
+    before = deepcopy((sources, checked))
+    result = overview.issues(checked, sources)
+    assert result["missing"] == dict(
+        kt=[dict(key="T8_KT01", since=None), dict(key="T9_KT06", since=exact),
+            dict(key="T10_KT02", since=old), dict(key="T11_KT02", since=None)],
+        short=[dict(key="T9_S10", since=exact)], vertical=[dict(key="T10", since=exact)])
+    assert result["duplicates"] == [dict(kind="kt", key="T9_KT05", uploaded_at=exact, copies=[
+        dict(youtube_id="old-copy", keep=True), dict(youtube_id="new-copy", keep=False)])]
+    assert result["unrecognized"] == [dict(youtube_id="unknown", uploaded_at=exact)]
+    assert result["unrecognized_count"] == 1 and "title" not in json.dumps(result)
+    assert (sources, checked) == before
+    assert overview.visible_issues(overview.issues(checked)) == overview.issues(checked)
+    assert overview.visible_issues(result)["missing"]["kt"] == [dict(key="T9_KT06", since=exact)]
+
+
+@pytest.mark.parametrize("stamp,shown", [
+    ("2026-10-31T16:59:59Z", False), ("2026-10-31T17:00:00Z", True),
+    ("2026-11-01T00:00:00+07:00", True), ("2026-11-01T00:00:01+07:00", True),
+    (None, False), ("bad", False), ("2026-11-01T00:00:00", False),
+])
+def test_amendment_b_visible_boundaries_counts_no_mutation_and_changed_cutoff(stamp, shown):  # AC9
+    doc = dict(missing={"kt": [dict(key="T30_KT06", since=stamp)]},
+               duplicates=[dict(key="T1_S01", uploaded_at=stamp, copies=[])],
+               unrecognized=[dict(youtube_id="odd", uploaded_at=stamp)], unrecognized_count=99,
+               pending={"kt": dict(count=4, episodes=[31])})
+    before = deepcopy(doc)
+    result = overview.visible_issues(doc)
+    assert len(result["missing"]["kt"]) == len(result["duplicates"]) == len(result["unrecognized"]) == int(shown)
+    assert result["unrecognized_count"] == int(shown) and result["pending"] == doc["pending"]
+    assert doc == before
+    if shown:
+        assert overview.visible_issues(doc, "2027-01-01T00:00:00+07:00")["unrecognized_count"] == 0

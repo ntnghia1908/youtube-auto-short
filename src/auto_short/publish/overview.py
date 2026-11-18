@@ -5,7 +5,9 @@ from pathlib import Path
 import re
 
 from ..workspace import atomic_write_json, read_json_dict
-from . import PublishError, schedule, youtube
+from . import PublishError, check, schedule, youtube
+
+ISSUES_SINCE = "2026-11-01T00:00+07:00"
 
 
 def _iso(moment):
@@ -46,7 +48,7 @@ def _latest(group, field, key, date_field, stamp):
         group[field] = {"key": key, date_field: _iso(stamp)}
 
 
-def issues(checked):
+def issues(checked, videos=None):
     """Project check.compare's exact decisions without persisting video titles."""
     missing = {kind: [] for kind in schedule.KINDS}
     duplicates = {}
@@ -63,8 +65,60 @@ def issues(checked):
     pending = {kind: dict(count=checked["summary"][kind]["pending"],
                           episodes=list(checked["summary"][kind]["pending_episodes"]))
                for kind in schedule.KINDS}
-    return dict(missing=missing, duplicates=list(duplicates.values()),
-                unrecognized_count=unrecognized, pending=pending)
+    result = dict(missing=missing, duplicates=list(duplicates.values()),
+                  unrecognized_count=unrecognized, pending=pending)
+    if videos is None:
+        return result
+
+    # Walk numeric channel codes, including recognized videos absent from the website.
+    uploaded = {kind: {} for kind in schedule.KINDS}
+    for video in videos:
+        fields = schedule.classify(video)
+        if fields is None:
+            continue
+        kind = fields["kind"]
+        code = check._code((kind, fields["episode"], fields["clip_number"]))
+        stamp = schedule._timestamp((video.get("snippet") or {}).get("publishedAt"))
+        previous = uploaded[kind].get(code)
+        uploaded[kind][code] = max(previous, stamp) if previous and stamp else previous or stamp
+    for kind, codes in missing.items():
+        predecessor = None
+        dated = []
+        for code in sorted(set(codes) | uploaded[kind].keys(),
+                           key=lambda code: tuple(map(int, re.findall(r"\d+", code)))):
+            if code in uploaded[kind]:
+                predecessor = uploaded[kind][code]
+            else:
+                dated.append(dict(key=code, since=_iso(predecessor) if predecessor else None))
+        result["missing"][kind] = dated
+    for group in result["duplicates"]:
+        stamps = [schedule._timestamp(row.get("uploaded_at")) for row in checked["rows"]
+                  if row["group"] == "duplicate" and (row["kind"], row["key"]) == (group["kind"], group["key"])]
+        newest = max((stamp for stamp in stamps if stamp), default=None)
+        group["uploaded_at"] = _iso(newest) if newest else None
+    result["unrecognized"] = [dict(youtube_id=row["youtube_id"], uploaded_at=row.get("uploaded_at"))
+                              for row in checked["rows"] if row["group"] == "unexpected" and not row["kind"]]
+    return result
+
+
+def visible_issues(doc, since=ISSUES_SINCE):
+    """Filter dated snapshots on read; legacy snapshots retain their original warnings."""
+    if "unrecognized" not in doc:
+        return dict(doc)
+    cutoff = schedule._timestamp(since)
+    if cutoff is None:
+        raise PublishError("mốc cảnh báo phải có ngày giờ và múi giờ hợp lệ")
+
+    def visible(value):
+        stamp = schedule._timestamp(value)
+        return stamp is not None and stamp >= cutoff
+
+    unrecognized = [row for row in doc["unrecognized"] if visible(row.get("uploaded_at"))]
+    return dict(doc,
+                missing={kind: [row for row in rows if visible(row.get("since"))]
+                         for kind, rows in doc.get("missing", {}).items()},
+                duplicates=[row for row in doc.get("duplicates", []) if visible(row.get("uploaded_at"))],
+                unrecognized=unrecognized, unrecognized_count=len(unrecognized))
 
 
 def write(config, doc):

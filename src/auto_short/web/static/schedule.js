@@ -38,7 +38,7 @@
   function warnings(channel) {
     const box = el("div", { class: "schedule-warnings" });
     const missing = Object.entries(channel.missing || {}).flatMap(([kind, keys]) =>
-      keys.map(key => ({ key, kind })));
+      keys.map(row => ({ key: typeof row === "string" ? row : row.key, kind })));
     const duplicates = channel.duplicates || [];
     const absent = limited("⚠ Thiếu: ", missing,
       row => `${row.key} (${kinds[row.kind] || row.kind})`, " — upload bổ sung");
@@ -123,7 +123,8 @@
     return el("section", { class: "card" }, el("h2", { text: channel.channel_title }),
       el("p", { class: channel.stale ? "small note" : "small muted",
         text: `${channel.stale ? "Số liệu cũ (cập nhật " : "Cập nhật "}${date(channel.updated_at)}${channel.stale ? ")" : ""}` }),
-      el("div", { class: "table-wrap" }, table), warnings(channel),
+      el("div", { class: "table-wrap" }, table),
+      el("p", { class: "small muted", text: "Chỉ cảnh báo từ 01/11/2026" }), warnings(channel),
       ...errors.filter(error => error.token === channel.token).map(checkError),
       tokenControl(channel.token, tokens[channel.token]),
       channel.post_error ? el("p", { class: "error small", text: channel.post_error }) : null);

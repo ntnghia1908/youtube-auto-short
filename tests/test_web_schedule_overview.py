@@ -287,3 +287,46 @@ setImmediate(async () => {
         assert data["calls"] == [dict(path="/api/youtube-tokens/default/auth", options=dict(method="POST")),
                                   dict(path="/api/youtube-tokens/default/auth", options={})]
     assert "Chỉ đọc lại số liệu đã lưu, không gọi YouTube" in (STATIC_DIR / "schedule.html").read_text()
+
+
+def test_amendment_b_api_filters_on_read_and_page_uses_visible_lists(web):  # AC9
+    client, ctx, wire = web
+    doc = snapshot(ctx.config)
+    old, exact = "2026-10-31T16:59:59Z", "2026-10-31T17:00:00Z"
+    doc.update(missing={"kt": [dict(key="T30_KT06", since=exact), dict(key="T2_KT02", since=old),
+                               dict(key="T1_KT01", since=None)]},
+               duplicates=[dict(kind="short", key=key, uploaded_at=stamp,
+                                copies=[dict(youtube_id=key, keep=False)])
+                           for key, stamp in (("T30_S01", exact), ("T2_S01", old))],
+               unrecognized=[dict(youtube_id="new", uploaded_at=exact), dict(youtube_id="old", uploaded_at=old),
+                             dict(youtube_id="undated", uploaded_at=None)], unrecognized_count=3)
+    overview.write(ctx.config, doc)
+    legacy = snapshot(ctx.config, "UClegacy", "Legacy")
+    legacy.update(missing={"vertical": ["T1"]}, unrecognized_count=5,
+                  duplicates=[dict(kind="kt", key="T1_KT01", copies=[])])
+    overview.write(ctx.config, legacy)
+    files = list(ctx.config.workspace.dir.joinpath("_publish/channels").glob("*.json"))
+    before = {path: path.read_bytes() for path in files}
+    login(client)
+    rows = {row["channel_id"]: row for row in client.get("/api/schedule-overview").json()["channels"]}
+    filtered = rows["UC1"]
+    assert filtered["missing"]["kt"] == [dict(key="T30_KT06", since=exact)]
+    assert [row["key"] for row in filtered["duplicates"]] == ["T30_S01"]
+    assert filtered["unrecognized"] == [dict(youtube_id="new", uploaded_at=exact)]
+    assert filtered["unrecognized_count"] == 1
+    assert rows["UClegacy"]["missing"] == legacy["missing"]
+    assert rows["UClegacy"]["duplicates"] == legacy["duplicates"]
+    assert rows["UClegacy"]["unrecognized_count"] == 5
+    rendered = dom([filtered])["text"]
+    assert "T30_KT06" in rendered and "T30_S01" in rendered and "Không nhận ra loại: 1 video" in rendered
+    assert "T2_KT02" not in rendered and "T2_S01" not in rendered and "T1_KT01" not in rendered
+    assert "Chỉ cảnh báo từ 01/11/2026" in rendered
+    # A changed cutoff takes effect without rewriting / regenerating the snapshot.
+    from unittest.mock import patch
+    with patch.object(overview, "ISSUES_SINCE", "2027-01-01T00:00:00+07:00"):
+        rows = client.get("/api/schedule-overview").json()["channels"]
+    filtered = next(row for row in rows if row["channel_id"] == "UC1")
+    assert filtered["unrecognized_count"] == 0 and filtered["duplicates"] == []
+    assert filtered["missing"]["kt"] == []
+    assert not any(n["attrs"].get("class") == "schedule-warnings" for n in walk(dom([filtered])["tree"]))
+    assert {path: path.read_bytes() for path in files} == before and not wire.calls

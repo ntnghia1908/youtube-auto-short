@@ -110,7 +110,7 @@ def main(argv=None, *, transport=None, sleep=None, now=None):
                                              channel_title=title, playlist_id=args.playlist,
                                              **({"token": stem} if stem else {}),
                                              updated_at=overview._iso(moment), kinds=overview.summarize(videos, moment),
-                                             **overview.issues(checked)))
+                                             **overview.issues(checked, videos)))
                 moment = datetime.fromtimestamp(now(), timezone.utc) if now else datetime.now(timezone.utc)
                 overview.check_error(cfg, error_stem, moment)
                 print(json.dumps(checked, ensure_ascii=False, indent=2))

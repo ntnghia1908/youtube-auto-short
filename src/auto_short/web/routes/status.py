@@ -34,6 +34,7 @@ def build(ctx: WebContext) -> APIRouter:
         """SCH1: exclusively local snapshots and ticked community-post slots."""
         now = datetime.now(timezone.utc)
         channels, errors = overview.read(ctx.config, include_errors=True)
+        channels = [overview.visible_issues(channel, overview.ISSUES_SINCE) for channel in channels]
         with ctx.post_lock:
             try:
                 times = post_schedule.read(post_schedule.path(ctx.config.workspace.dir))

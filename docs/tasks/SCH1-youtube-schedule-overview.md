@@ -120,3 +120,21 @@ Không chạm database, security model hay public API contract.
 - Chưa chạy: toàn bộ ca TestClient trong `tests/test_web_schedule_overview.py` và `tests/test_web_youtube_auth.py`, test trang tĩnh / auth khác và full suite — thuộc ORCHESTRATOR theo phân công. Không tuyên bố PASS cho HTTP / full suite / chạy thật.
 - Dòng thêm / xóa (diff Amendment A so với `ac69b71`, gồm file mới chưa track): ứng dụng **+289 / −36**; test **+351 / −0**. Đếm từ `git diff --numstat` cộng số dòng file mới trong `git ls-files --others --exclude-standard`; không stage file để đếm.
 - Không commit / push / PR, không gọi agent khác, không gọi mạng thật. Chưa chạy cron, auth thật, sửa token thật hay triển khai 8080.
+
+### Amendment B — READY IMPLEMENTER, chờ review / verification ORCHESTRATOR
+
+- Base thực tế: `feature/sch1-schedule-overview` HEAD `1a95a2b` (commit docs Amendment B), working tree sạch trước khi sửa. Chỉ thực hiện O1b / AC9 trong owned paths.
+- `overview.issues(checked, videos=None)` giữ nguyên đầu ra legacy khi không truyền `videos`; CLI truyền danh sách video để lưu mã thiếu dạng `{key, since}`, mốc `uploaded_at` mới nhất của nhóm trùng, danh sách `unrecognized` `{youtube_id, uploaded_at}` và số đếm gốc. Mã trước gần nhất lấy trên toàn bộ video cùng loại qua `schedule.classify`, kể cả mã website không có; sắp theo số tập / clip, dùng ngày upload mới nhất nếu mã trước có nhiều bản. Mã trước không có ngày hợp lệ → `since: null`, không nhảy qua video đó lấy mốc xa hơn.
+- Hằng số `ISSUES_SINCE = "2026-11-01T00:00+07:00"`; hàm thuần `visible_issues(doc, since)` lọc khi API đọc, không sửa file snapshot. Snapshot mới được nhận diện bởi danh sách `unrecognized` (kể cả rỗng); snapshot cũ chưa có trường này giữ nguyên cảnh báo. Mốc thiếu / lỗi bị ẩn, ranh giới lấy bao gồm đúng thời điểm mốc, tính lại `unrecognized_count` sau lọc; pending giữ nguyên. API truyền hằng số mỗi lần đọc để thay mốc không cần chạy lại `check`.
+- Trang dùng danh sách API đã lọc, hỗ trợ mã thiếu legacy dạng chuỗi lẫn dạng mới, hiện dòng nhỏ “Chỉ cảnh báo từ 01/11/2026”. Không đổi quyết định / stdout của `check`, không sửa `schedule` / `check.py`.
+
+| AC | Test / bằng chứng |
+|---|---|
+| AC9 | `test_amendment_b_dates_numeric_predecessors_all_kinds_and_newest_duplicate`: ba loại, thứ tự số T9/T10 và clip 09/10, mã trước ngoài inventory, ngày thiếu/lỗi, trùng lấy mốc mới nhất, không lưu title / không mutate, legacy. `test_amendment_b_visible_boundaries_counts_no_mutation_and_changed_cutoff` (parametrize): trước / đúng / sau 00:00 giờ VN, UTC tương đương, mốc thiếu/lỗi/không timezone, số đếm khớp danh sách, đổi mốc trên snapshot cũ đã lưu. `test_amendment_b_api_filters_on_read_and_page_uses_visible_lists`: API local giữ nguyên file, legacy, đổi mốc lúc đọc; DOM chỉ hiện mã / số đếm còn lại và dòng chú thích, hết cảnh báo thì ẩn khối (đã viết, ORCHESTRATOR chạy). |
+
+- Chỉ thêm ba hàm test AC9 vào hai file được phép; sửa đúng một assertion test CLI cũ để truyền `sources` vào `issues` theo chữ ký mới tùy chọn. Không sửa test cũ khác.
+- Tái dùng / helper mới: tìm bằng `rg -n '^def (issues|visible_issues|classify|_timestamp|_code)' src/auto_short/publish/{overview,schedule,check}.py`; dùng lại `issues`, `schedule.classify`, `schedule._timestamp`, `check._code`, `_iso`. Helper mới `visible_issues` phục vụ lọc thuần lúc đọc theo O1b, chưa có helper tương đương; predicate `visible` nội bộ chỉ so mốc ngày.
+- Verification IMPLEMENTER: `conda run -n auto-short env PYTHONPATH=src python -m pytest -q tests/test_publish_overview.py tests/test_publish_check.py tests/test_publish_youtube_auth.py` → **83 passed in 0.78s**. `node --check src/auto_short/web/static/schedule.js`, `python -m py_compile` (conda `auto-short`) cho ba source Python và hai file test thay đổi, `git diff --check` PASS.
+- Chưa chạy test web (bao gồm test API/DOM AC9 mới), các test web khác / full suite / kiểm tra thật: ORCHESTRATOR phụ trách. READY ở phạm vi IMPLEMENTER; không tuyên bố PASS cho phần chưa chạy.
+- Dòng thêm / xóa Amendment B (`git diff --numstat` so với `1a95a2b`, không tính contract): ứng dụng **+63 / −7**; test **+94 / −1**.
+- Không commit / push / PR, không gọi agent khác, không gọi mạng thật; không sửa token thật / cron / triển khai.
