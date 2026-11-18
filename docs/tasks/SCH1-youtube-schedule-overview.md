@@ -31,9 +31,10 @@ Trang chủ web có mục **"Lịch YouTube"**: mỗi kênh một dòng, các c�
 ## Authority / key decisions
 
 - **O1 tóm tắt kênh**: mỗi lần `check` đọc xong (không lỗi), ghi `work/_publish/channels/<channel_id>.json` (atomic, `schema_version` 1): `channel_id`, `channel_title`, `playlist_id` (playlist website từ `--playlist`), `updated_at`, và cho mỗi loại `vertical` / `kt` / `short`: `last_scheduled` {`key`, `publish_at`}, `scheduled_count` (số video riêng tư có lịch trong tương lai), `last_public` {`key`, `published_at`}. Dùng `schedule.classify`; video không nhận ra loại bị bỏ qua. Không lưu token / tiêu đề video.
+- **O1a cảnh báo nháp (HUMAN LEAD 2026-11-19: "thêm cảnh báo đăng nháp thiếu bài nào để tôi biết đăng bổ sung")**: tóm tắt O1 lưu thêm kết quả `check.compare` của lần chạy đó: `missing` (mã thiếu trong lỗ hổng, theo loại), `duplicates` (mã + id các bản, bản giữ / bản nên xóa), `unrecognized_count`, `pending` (khoảng "chưa đăng T…–T…" mỗi loại). Trang chủ, dưới dòng mỗi kênh: "⚠ Thiếu: T114 (dọc), T9_KT06, T14_KT04 — upload bổ sung"; "⚠ Trùng: T17_S09 — xóa bản b8Ep79QKIk4" (link Studio `https://studio.youtube.com/video/<id>/edit`); không có cảnh báo → không hiện dòng. Danh sách dài > 10 mã → hiện 10 + "và N mã khác" (bấm mở hết).
 - **O2 bài post**: cột Bài post lấy từ `post_times.json` (PST1): bài đã tick có `slot_at` thuộc các tập của playlist website đó → `slot_at` lớn nhất + mã bài; "công khai gần nhất" = `slot_at` lớn nhất ≤ now.
 - **O3 số ngày còn lịch**: `ceil((last_scheduled.publish_at − now) / 1 ngày)`, ≤ 0 → "hết lịch"; < 7 → cảnh báo. Tóm tắt cũ hơn 36 giờ → ghi "số liệu cũ (cập nhật dd/mm HH:MM)".
-- **O4 trang chủ**: route `GET /api/schedule-overview` đọc mọi file O1 + O2 (chỉ đọc file local), trả theo thứ tự tên kênh. Mục "Lịch YouTube" (card, mobile-first: bảng cuộn ngang hoặc mỗi kênh một khối) đặt trên đầu trang chủ.
+- **O4 trang chủ**: route `GET /api/schedule-overview` đọc mọi file O1 + O2 (chỉ đọc file local), trả theo thứ tự tên kênh. Mục "Lịch YouTube" (card, kèm dòng cảnh báo O1a, mobile-first: bảng cuộn ngang hoặc mỗi kênh một khối) đặt trên đầu trang chủ.
 - **O5 cron (ops, ORCHESTRATOR, không trong repo)**: `~/.local/bin/auto-short-youtube-check` chạy `python -m auto_short.publish --token <token> check --playlist <PID>` cho 4 kênh (ánh xạ PUB3.1 C5), crontab 08:30 UTC = 15:30 giờ VN, log `~/.local/share/auto-short/youtube-check.log`. Mỗi kênh ~1 lượt search.
 
 ## Implementation approach
@@ -53,9 +54,10 @@ Trang chủ web có mục **"Lịch YouTube"**: mỗi kênh một dòng, các c�
 ## Acceptance Criteria
 
 1. O1: `summarize` đúng mục cuối đã lên lịch / công khai gần nhất / số đếm cho mỗi loại; `check` ghi file sau khi đọc thành công, không ghi khi lỗi.
-2. O2 / O3: cột bài post đúng từ `slot_at`; số ngày, "hết lịch", cảnh báo < 7 ngày, "số liệu cũ" > 36 giờ đúng.
-3. O4: API đọc file local (không gọi mạng), trang chủ hiện mục với 4 kênh; thiếu file → kênh không hiện / thông báo "chưa có số liệu".
-4. Test cũ PASS không sửa.
+2. O1a: tóm tắt lưu thiếu / trùng / lạ / chưa đăng đúng như `check`; trang chủ hiện cảnh báo thiếu (theo loại) và trùng (id nên xóa + link Studio), rút gọn > 10 mã; không cảnh báo → không hiện.
+3. O2 / O3: cột bài post đúng từ `slot_at`; số ngày, "hết lịch", cảnh báo < 7 ngày, "số liệu cũ" > 36 giờ đúng.
+4. O4: API đọc file local (không gọi mạng), trang chủ hiện mục với 4 kênh; thiếu file → kênh không hiện / thông báo "chưa có số liệu".
+5. Test cũ PASS không sửa.
 
 ## Required verification
 
