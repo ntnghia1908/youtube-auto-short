@@ -57,6 +57,7 @@ def main(argv=None, *, transport=None, sleep=None, now=None):
     scheduler.add_argument("--only", help="id video YouTube, phân cách bằng dấu phẩy")
     scheduler.add_argument("--limit", type=int)
     scheduler.add_argument("--playlist")
+    scheduler.add_argument("--reflow", action="store_true", help="dời lịch riêng tư để chừa chỗ cho mã thiếu")
     checker = commands.add_parser("check")
     checker.add_argument("--playlist", required=True)
     checker.add_argument("--add-playlists", action="store_true")
@@ -73,6 +74,8 @@ def main(argv=None, *, transport=None, sleep=None, now=None):
     args = parser.parse_args(argv)
     if args.command == "schedule" and args.limit is not None and args.limit < 1:
         parser.error("--limit phải là số nguyên dương")
+    if args.command == "schedule" and args.reflow and not args.playlist:
+        parser.error("--reflow cần --playlist để xác định mã thiếu trên website")
     try:
         cfg = load(args.config)
         if args.command == "auth":
@@ -107,14 +110,14 @@ def main(argv=None, *, transport=None, sleep=None, now=None):
                 print(json.dumps(checked, ensure_ascii=False, indent=2))
                 return 0
             moment = datetime.fromtimestamp(now(), timezone.utc) if now else datetime.now(timezone.utc)
-            rows = schedule.plan(videos, moment)
+            rows = schedule.plan(videos, moment, expected=stock, reflow=args.reflow)
             if args.only is not None:
                 selected = {ident.strip() for ident in args.only.split(",") if ident.strip()}
                 rows = [row for row in rows if row["youtube_id"] in selected]
             if args.limit is not None:
-                selected = [row["youtube_id"] for row in rows if row["status"] == "sẵn sàng"][:args.limit]
+                selected = [row["youtube_id"] for row in rows if row["status"] in ("sẵn sàng", "dời")][:args.limit]
                 ready = set(selected)
-                rows = [row for row in rows if row["status"] != "sẵn sàng" or row["youtube_id"] in ready]
+                rows = [row for row in rows if row["status"] not in ("sẵn sàng", "dời") or row["youtube_id"] in ready]
             rows = playlists.assign(rows, catalog)
             print("Video YouTube\tLoại\tKhóa\tGiờ VN dự kiến\tTrạng thái / lý do\tDanh sách phát")
             for row in rows:
@@ -122,12 +125,24 @@ def main(argv=None, *, transport=None, sleep=None, now=None):
                 if row["publish_at"]:
                     stamp = datetime.fromisoformat(row["publish_at"].replace("Z", "+00:00"))
                     local = stamp.astimezone(schedule.VN).strftime("%Y-%m-%d %H:%M")
+                if row["status"] == "dời":
+                    old = datetime.fromisoformat(row["previous_publish_at"].replace("Z", "+00:00"))
+                    local = (old.astimezone(schedule.VN).strftime("%d/%m %H:%M") + " → " +
+                             stamp.astimezone(schedule.VN).strftime("%d/%m %H:%M"))
+                note = row["reason"]
+                if note.startswith("đã có bản "):
+                    note = "trùng — chưa lên lịch; " + note
                 print(f"{row['youtube_id']}\t{schedule.KINDS.get(row['kind'], '')}\t{row['key']}\t{local}\t"
-                      f"{row['status']} {row['reason']}\t{row['playlist_title'] or row['playlist_warning']}")
+                      f"{row['status']} {note}\t{row['playlist_title'] or row['playlist_warning']}")
             for kind, label in schedule.KINDS.items():
                 group = [row for row in rows if row["kind"] == kind]
                 ready = sum(row["status"] == "sẵn sàng" for row in group)
-                print(f"Tổng {label}: {ready} sẵn sàng, {len(group) - ready} bỏ qua")
+                moving = sum(row["status"] == "dời" for row in group)
+                reserved = sum(row["status"] == "giữ chỗ" for row in group)
+                print(f"Tổng {label}: {ready} sẵn sàng, {moving} dời, {reserved} giữ chỗ, "
+                      f"{len(group) - ready - moving - reserved} bỏ qua")
+            duplicates = [row["youtube_id"] for row in rows if row["reason"].startswith("đã có bản ")]
+            print(f"Trùng — chưa lên lịch ({len(duplicates)}): {', '.join(duplicates) or 'không có'}")
             result = dict(mode="apply" if args.apply else "chạy thử",
                           rows=schedule.apply(cfg, rows, client, memberships=memberships) if args.apply else rows)
         else:
