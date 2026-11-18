@@ -51,6 +51,10 @@ def build(ctx: WebContext) -> APIRouter:
     async def storage_page():
         return FileResponse(ctx.static_dir / "storage.html", headers={"Cache-Control": "no-cache"})
 
+    @router.get("/schedule")
+    async def schedule_page():
+        return FileResponse(ctx.static_dir / "schedule.html", headers={"Cache-Control": "no-cache"})
+
     @router.get("/images")
     async def images_page():
         return FileResponse(ctx.static_dir / "images.html", headers={"Cache-Control": "no-cache"})

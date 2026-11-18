@@ -75,3 +75,17 @@ Không chạm database, security model hay public API contract.
 ## Result
 
 - Main changes:
+  - Thêm `publish/overview.py`: `summarize` (thuần, phân loại bằng `schedule.classify`, đếm id riêng biệt), `issues` (chiếu nguyên quyết định `check.compare`, bỏ title), `write` / `read` snapshot atomic và helper `summarize_posts`, `coverage`, `stale`.
+  - Lệnh `check` ghi `work/_publish/channels/<channel_id>.json` schema 1 sau khi đọc / kiểm tra thành công; lỗi giữ snapshot trước. Không đổi stdout hay đường chạy `schedule`; không thêm lượt mạng. Tên kênh lấy từ `channelTitle` của snippet video / playlist đã đọc, dự phòng channel id khi kênh rỗng không có snippet tên.
+  - API `GET /api/schedule-overview` chỉ đọc snapshot và local playlist / bài post / `post_times.json`; chỉ tính `slot_at` của bài đã tick, gồm Short và khai thị, bỏ bài ngoài playlist. Tính lại số ngày và stale mỗi lần đọc; lỗi giờ post được báo riêng, vẫn giữ dữ liệu video.
+  - Trang riêng `/schedule`: một card/kênh, bảng cuộn ngang, giờ VN, cảnh báo < 7 ngày / > 36 giờ, thiếu / trùng với link Studio và mở rộng sau 10 mã; hiện pending / số video không nhận ra. Thêm đúng một link topnav cho mỗi trang hiện có topnav.
+- AC → test:
+  - AC1: `tests/test_publish_overview.py` — đủ ba loại, cuối theo thời gian, id riêng biệt, public / private / unlisted, ngày lỗi, snapshot thành công và giữ nguyên / không tạo khi API lỗi.
+  - AC2: `tests/test_publish_overview.py` — thiếu / trùng / lạ / pending khớp `check.compare`, không lưu title; `tests/test_web_schedule_overview.py` — cảnh báo, link Studio, rút gọn 10 mã, không có cảnh báo thì ẩn dòng.
+  - AC3: `tests/test_publish_overview.py` — slot bài đã tick, hết lịch, ceil, ranh giới 7 ngày / 36 giờ; `tests/test_web_schedule_overview.py` — tách playlist, giờ VN, bài legacy không slot, bài đã bỏ render.
+  - AC4: `tests/test_web_schedule_overview.py` — auth, API local không ghi / không gọi YouTube, bốn kênh theo tên, trang / menu, dữ liệu thiếu / lỗi, DOM an toàn và bảng cuộn.
+  - AC5: `tests/test_publish_check.py` cũ không sửa, PASS trong lần chạy bên dưới; các regression khác chờ ORCHESTRATOR.
+- Verification IMPLEMENTER: `conda run -n auto-short env PYTHONPATH=src python -m pytest -q tests/test_publish_overview.py tests/test_publish_check.py` → **39 passed in 0.65s**. Python env mặc định thiếu pytest nên dùng env `auto-short` theo chỉ dẫn. `git diff --check` sạch.
+- Chưa chạy: `tests/test_web_schedule_overview.py` (đã viết, gồm HTTP/auth và DOM Node), test trang tĩnh / auth hiện có và full suite — ORCHESTRATOR chạy vì sandbox IMPLEMENTER không có loopback và phạm vi lệnh test được giới hạn.
+- O5 cron / chạy thật bốn kênh / đối chiếu Studio / checklist điện thoại: chưa thực hiện, thuộc ORCHESTRATOR / HUMAN LEAD. Không gọi mạng thật; không commit / push / PR; không giao agent khác.
+- ORCHESTRATOR 2026-11-19: `check._keep_order` xếp hạng công khai / không công khai > đã lên lịch > còn lại (trước đây bản lên lịch upload sớm hơn thắng bản công khai — CƯT T17_S09); test `test_compare_public_copy_wins_over_earlier_scheduled_copy`. Targeted `tests/test_publish_overview.py tests/test_web_schedule_overview.py tests/test_publish_check.py`: 46 passed.

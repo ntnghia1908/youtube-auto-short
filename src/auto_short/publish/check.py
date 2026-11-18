@@ -27,11 +27,11 @@ def _code(key):
 
 
 def _keep_order(video):
-    """PUB3 S4: existing publication/schedule wins, otherwise earliest upload."""
+    """PUB3 S4: public / unlisted copy wins, then a scheduled copy, otherwise earliest upload."""
     status = video.get("status") or {}
-    occupied = status.get("privacyStatus") in ("public", "unlisted") or bool(status.get("publishAt"))
+    rank = 0 if status.get("privacyStatus") in ("public", "unlisted") else 1 if status.get("publishAt") else 2
     uploaded = schedule._timestamp((video.get("snippet") or {}).get("publishedAt"))
-    return (not occupied, uploaded or datetime.max.replace(tzinfo=timezone.utc), video.get("id", ""))
+    return (rank, uploaded or datetime.max.replace(tzinfo=timezone.utc), video.get("id", ""))
 
 
 def _video_row(video):

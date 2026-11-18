@@ -114,6 +114,14 @@ def test_compare_duplicate_keep_priority_and_earliest_upload(privacy, publish_at
     assert (sources, stock) == before
 
 
+def test_compare_public_copy_wins_over_earlier_scheduled_copy():  # CƯT T17_S09
+    sources = [video("scheduled", "T17_S09_a.mp4", privacy="private", publish_at="2026-11-25T00:00:00Z",
+                     uploaded="2026-11-01T00:00:00Z"),
+               video("public", "T17_S09_a.mp4", privacy="public", uploaded="2026-11-10T00:00:00Z")]
+    duplicates = [r for r in check.compare(sources, {("short", 17, 9)})["rows"] if r["group"] == "duplicate"]
+    assert {r["youtube_id"]: r["keep"] for r in duplicates} == {"public": True, "scheduled": False}
+
+
 def test_compare_holes_pending_and_unexpected_by_independent_kind():
     stock = {(kind, n, 0 if kind == "vertical" else clip)
              for kind in schedule.KINDS for n in (1, 2, 3, 4) for clip in (1, 2)}
