@@ -13,10 +13,11 @@
 - Authorization mode: task
 - Authorization source: HUMAN LEAD 2026-11-19 "Trên web nên có thêm mục hiển thị video và bài đăng đã lên lịch của mỗi kênh trên youtube đã đến tập mấy ngày nào" → đề xuất (mục trang chủ, cảnh báo < 7 ngày, `check` tự chạy 15:30 giờ VN mỗi ngày) → "Đồng ý"
 - Parallel group: —
-- Owned paths: `src/auto_short/publish/check.py`, `src/auto_short/publish/overview.py` (mới), `src/auto_short/publish/__main__.py`, `src/auto_short/web/routes/status.py` (route đọc mới), `src/auto_short/web/routes/pages.py` (route trang), `src/auto_short/web/static/schedule.html` + `schedule.js` (mới), link "Lịch YouTube" trong `topnav` của các trang tĩnh (`src/auto_short/web/static/*.html`, chỉ thêm một thẻ `<a>`), `tests/test_publish_overview.py` + `tests/test_web_schedule_overview.py` (mới), contract này
+- Owned paths: `src/auto_short/publish/check.py`, `src/auto_short/publish/overview.py` (mới), `src/auto_short/publish/__main__.py`, `src/auto_short/web/routes/status.py` (route đọc mới), `src/auto_short/web/routes/pages.py` (route trang), `src/auto_short/web/static/schedule.html` + `schedule.js` (mới), link "Lịch YouTube" trong `topnav` của các trang tĩnh (`src/auto_short/web/static/*.html`, chỉ thêm một thẻ `<a>`), `tests/test_publish_overview.py` + `tests/test_web_schedule_overview.py` (mới), contract này; **Amendment A**: `src/auto_short/publish/youtube.py` (chỉ ghi / giữ `authorized_at`, helper liệt kê token, hàm auth chia bước bắt đầu / thăm dò), `src/auto_short/web/routes/youtube_auth.py` (mới) + đăng ký router trong `src/auto_short/web/app.py`, `tests/test_publish_youtube_auth.py` + `tests/test_web_youtube_auth.py` (mới)
 - Dependencies: PUB3.1 (#219, lệnh `check` + bộ nhớ id), PST1 (`work/_publish/post_times.json`, `slot_at`). Bắt đầu implement sau khi cả hai merge; rebase lên `main` lúc đó.
 - Base commit / branch: `1502331` (contract) / `feature/sch1-schedule-overview`
 - Human Lead approval: accepted 2026-11-19 ("Đồng ý")
+- Amendment A (HUMAN LEAD 2026-11-19 "ok duyệt"): O6 thông báo chưa có số liệu / hạn mức, O7 hạn token, O8 nút lấy lại token (device flow) — xem Authority + AC6–8; Owned paths thêm ở dòng dưới.
 - Implementation authorized: YES (bắt đầu trên nền `test/pst1-pub31` 2026-11-19 theo yêu cầu HUMAN LEAD; rebase lên `main` sau khi #221 + #220 merge)
 
 ## Goal
@@ -35,6 +36,9 @@ Trang riêng **"Lịch YouTube"** (`/schedule`, link ở thanh menu trên cùng;
 - **O2 bài post**: cột Bài post lấy từ `post_times.json` (PST1): bài đã tick có `slot_at` thuộc các tập của playlist website đó → `slot_at` lớn nhất + mã bài; "công khai gần nhất" = `slot_at` lớn nhất ≤ now.
 - **O3 số ngày còn lịch**: `ceil((last_scheduled.publish_at − now) / 1 ngày)`, ≤ 0 → "hết lịch"; < 7 → cảnh báo. Tóm tắt cũ hơn 36 giờ → ghi "số liệu cũ (cập nhật dd/mm HH:MM)".
 - **O4 trang riêng**: route `GET /api/schedule-overview` đọc mọi file O1 + O2 (chỉ đọc file local), trả theo thứ tự tên kênh. Trang `/schedule` (card, kèm dòng cảnh báo O1a, mobile-first: bảng cuộn ngang hoặc mỗi kênh một khối) một card mỗi kênh.
+- **O6 thông báo trạng thái (Amendment A)**: trang hiện khối thông báo rõ ràng thay vì trống: không có file tóm tắt nào → "Chưa có số liệu. Số liệu cập nhật tự động lúc 15:30 giờ VN mỗi ngày (sau khi hạn mức YouTube mở lại lúc 15:00)."; nút "Đọc lại" chỉ đọc lại file trên máy chủ — ghi rõ dưới nút "Chỉ đọc lại số liệu đã lưu, không gọi YouTube". `check` lỗi (hạn mức / 429 / đăng nhập) → ghi `work/_publish/channels/<token_stem>.error.json` {`at`, `message`} (không token, không tiêu đề video); lần `check` thành công xóa file lỗi đó. Trang hiện lỗi gần nhất của kênh: "Lần đọc dd/mm HH:MM lỗi: hết hạn mức YouTube — tự thử lại 15:30".
+- **O7 hạn token (Amendment A)**: tóm tắt O1 lưu thêm `token` = tên file token (stem, vd `cam-ung-thien`; NDCL token mặc định → `default`), không lưu nội dung token. `auth` ghi thêm `authorized_at` (epoch) vào token; refresh giữ nguyên trường này. Ứng dụng OAuth đang ở chế độ Testing → refresh token hết hạn 7 ngày sau `authorized_at`. API trả mỗi token: `authorized_at`, `expires_at = authorized_at + 7 ngày`, `days_left`; thiếu `authorized_at` → "không rõ hạn" (token cũ; các token hiện tại auth 2026-11-18 — ORCHESTRATOR điền tay `authorized_at` một lần). Trang: dòng "Token còn N ngày (hết dd/mm)", ≤ 2 ngày tô cảnh báo, hết hạn → đỏ "Token hết hạn — lấy lại token".
+- **O8 nút lấy lại token (Amendment A)**: trên mỗi kênh nút "Lấy lại token". `POST /api/youtube-tokens/{stem}/auth` (stem phải là file có sẵn trong thư mục token hoặc `default`; không nhận đường dẫn) bắt đầu device flow bằng `client_path` ghi trong token đó, trả `verification_url` + `user_code` + `expires_in`; một luồng nền thăm dò (dùng lại logic `auth`, chia bước bắt đầu / thăm dò) và khi xong ghi token nguyên tử (giữ `client_path`, ghi `authorized_at`). `GET /api/youtube-tokens/{stem}/auth` trả trạng thái `waiting` / `done` / `error` (+ thông báo). Mỗi token tối đa một phiên đang chờ (bấm lại trả phiên đang chờ). Trang hiện mã to + link mở `https://www.google.com/device`, tự hỏi trạng thái mỗi 5 giây, xong → "Đã lấy token mới". Không bao giờ trả access / refresh token hay client secret qua API; route sau đăng nhập web như các route khác.
 - **O5 cron (ops, ORCHESTRATOR, không trong repo)**: `~/.local/bin/auto-short-youtube-check` chạy `python -m auto_short.publish --token <token> check --playlist <PID>` cho 4 kênh (ánh xạ PUB3.1 C5), crontab 08:30 UTC = 15:30 giờ VN, log `~/.local/share/auto-short/youtube-check.log`. Mỗi kênh ~1 lượt search.
 
 ## Implementation approach
@@ -58,6 +62,9 @@ Trang riêng **"Lịch YouTube"** (`/schedule`, link ở thanh menu trên cùng;
 3. O2 / O3: cột bài post đúng từ `slot_at`; số ngày, "hết lịch", cảnh báo < 7 ngày, "số liệu cũ" > 36 giờ đúng.
 4. O4: API đọc file local (không gọi mạng), trang `/schedule` hiện 4 kênh, link menu có trên các trang; thiếu file → kênh không hiện / thông báo "chưa có số liệu".
 5. Test cũ PASS không sửa.
+6. O6: không có tóm tắt → thông báo "Chưa có số liệu … 15:30"; nút Đọc lại có chú thích; `check` lỗi ghi / thành công xóa file lỗi, trang hiện lỗi gần nhất.
+7. O7: `auth` ghi `authorized_at`, refresh giữ; API trả hạn token đúng (còn N ngày / ≤ 2 cảnh báo / hết hạn / không rõ); không lộ secret.
+8. O8: route auth từ chối stem lạ / đường dẫn; bắt đầu trả mã + URL; thăm dò `authorization_pending` / `slow_down` / thành công ghi token giữ `client_path` + `authorized_at` / lỗi; một phiên mỗi token; transport giả trong test, không mạng.
 
 ## Required verification
 
