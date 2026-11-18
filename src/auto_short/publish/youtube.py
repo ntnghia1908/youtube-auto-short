@@ -1,9 +1,10 @@
-"""YouTube device authorization and the four PUB2 API operations."""
+"""YouTube device authorization, owned videos, thumbnails and scheduling."""
 from __future__ import annotations
 
 import json
 import math
 import os
+import re
 import tempfile
 import time
 import urllib.error
@@ -20,7 +21,8 @@ DEVICE_URL = "https://oauth2.googleapis.com/device/code"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 API_URL = "https://www.googleapis.com/youtube/v3/"
 UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/thumbnails/set"
-SCOPES = "https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/youtube.upload"
+SCOPES = ("https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/youtube.upload "
+          "https://www.googleapis.com/auth/youtube.force-ssl")
 FULL_SCOPE = "https://www.googleapis.com/auth/youtube"
 
 
@@ -104,9 +106,13 @@ def _token_doc(doc, now, previous=None, scope=None):
     refresh = doc.get("refresh_token") or (previous or {}).get("refresh_token")
     if not isinstance(refresh, str) or not refresh:
         raise PublishError("phản hồi OAuth thiếu refresh token; chạy lại auth")
-    return dict(access_token=doc["access_token"], refresh_token=refresh,
-                expires_at=now + _positive(doc.get("expires_in"), "expires_in"),
-                scope=scope or (previous or {}).get("scope", SCOPES))
+    token = dict(access_token=doc["access_token"], refresh_token=refresh,
+                 expires_at=now + _positive(doc.get("expires_in"), "expires_in"),
+                 scope=scope or (previous or {}).get("scope", SCOPES))
+    client = (previous or {}).get("client_path")
+    if isinstance(client, str) and client.strip():
+        token["client_path"] = client
+    return token
 
 
 def _exchange(send, method, url, headers, body):
@@ -139,7 +145,8 @@ def _oauth_error(doc):
 def auth(client_path=None, token_path=None, *, transport=None, sleep=None, now=None, output=print):
     """Authorize on a second device; only the user code and URL are displayed."""
     send, sleep, now = transport or urllib_transport, sleep or time.sleep, now or time.time
-    credentials = _credentials(client_path or default_client())
+    client_path = Path(client_path or default_client()).expanduser().resolve()
+    credentials = _credentials(client_path)
     for scope in (SCOPES, FULL_SCOPE):
         status, device = _form(send, DEVICE_URL, dict(client_id=credentials["client_id"], scope=scope))
         if device.get("error") == "invalid_scope" and scope == SCOPES:
@@ -171,7 +178,8 @@ def auth(client_path=None, token_path=None, *, transport=None, sleep=None, now=N
                 break
             if status != 200 or doc.get("error"):
                 _oauth_error(doc)
-            _save_token(token_path or default_token(), _token_doc(doc, now(), scope=scope))
+            _save_token(token_path or default_token(),
+                        _token_doc(doc, now(), previous=dict(client_path=str(client_path)), scope=scope))
             return {"status": "đã đăng nhập", "scope": scope}
 
 
@@ -180,6 +188,11 @@ def _api_error(status, doc):
     errors = error.get("errors", []) if isinstance(error, dict) else []
     errors = errors if isinstance(errors, list) else []
     reasons = {e.get("reason") for e in errors if isinstance(e, dict) and isinstance(e.get("reason"), str)}
+    details = error.get("details", []) if isinstance(error, dict) else []
+    if isinstance(details, list):
+        reasons.update(e["reason"] for e in details if isinstance(e, dict) and isinstance(e.get("reason"), str))
+    if reasons & {"insufficientPermissions", "ACCESS_TOKEN_SCOPE_INSUFFICIENT"}:
+        raise PublishError("token chưa có quyền sửa video; chạy lại auth")
     if status == 401:
         raise PublishError("YouTube từ chối đăng nhập sau refresh; chạy lại auth")
     if status == 403 and "quotaExceeded" in reasons:
@@ -189,16 +202,37 @@ def _api_error(status, doc):
     raise PublishError(f"YouTube trả lỗi HTTP {status}; đã dừng")
 
 
+def _video_cache(path, channel):
+    """A damaged or foreign cache is never used to shorten a search scan."""
+    doc = read_json_dict(path)
+    if doc is None or doc.get("schema_version") != 1 or doc.get("channel_id") != channel \
+            or not isinstance(doc.get("ids"), list) \
+            or any(not isinstance(ident, str) or not ident.strip() for ident in doc["ids"]):
+        return None
+    for key in ("full_scan_at", "updated_at"):
+        try:
+            stamp = datetime.fromisoformat(doc[key].replace("Z", "+00:00"))
+            if stamp.tzinfo is None:
+                return None
+        except (KeyError, AttributeError, TypeError, ValueError):
+            return None
+    return doc
+
+
 class YouTube:
-    """Read owned uploads and set thumbnails, refreshing once on HTTP 401."""
+    """Read owned videos and update thumbnails/status, refreshing once on HTTP 401."""
 
     def __init__(self, client_path=None, token_path=None, *, transport=None, now=None, read_only=False):
-        self.client_path = client_path or default_client()
         self.token_path = token_path or default_token()
         self.send = transport or urllib_transport
         self.now = now or time.time
         self.read_only = read_only
+        self.search_calls = 0
+        self._uploads_channel = None
         self.token = read_json_dict(Path(self.token_path)) or {}
+        linked = self.token.get("client_path")
+        linked = Path(linked) if isinstance(linked, str) and linked.strip() else None
+        self.client_path = client_path if client_path is not None else linked or default_client()
 
     def _refresh(self):
         refresh = self.token.get("refresh_token")
@@ -212,7 +246,7 @@ class YouTube:
         _save_token(self.token_path, token)
         self.token = token
 
-    def _request(self, method, url, body=None):
+    def _request(self, method, url, body=None, *, content_type="image/jpeg"):
         check_stop()
         if self.read_only and method != "GET":
             raise PublishError("web chỉ được đọc YouTube (GET)")
@@ -223,7 +257,7 @@ class YouTube:
         for attempt in range(2):
             headers = {"Authorization": "Bearer " + self.token["access_token"]}
             if body is not None:
-                headers["Content-Type"] = "image/jpeg"
+                headers["Content-Type"] = content_type
             status, doc = _exchange(self.send, method, url, headers, body)
             if status == 401 and attempt == 0:
                 self._refresh()
@@ -238,13 +272,69 @@ class YouTube:
     def videos(self):
         """Enumerate every uploads page, then request fileDetails in batches of 50."""
         channel = self._list("channels", part="contentDetails", mine="true")
+        self._uploads_channel = None
         try:
             uploads = channel["items"][0]["contentDetails"]["relatedPlaylists"]["uploads"]
             if not isinstance(uploads, str) or not uploads:
                 raise ValueError
+            self._uploads_channel = channel["items"][0].get("id")
         except (KeyError, IndexError, TypeError, ValueError):
             raise PublishError("không tìm thấy playlist uploads của kênh") from None
         return self._playlist_videos(uploads, part="fileDetails,snippet,status", label="uploads")
+
+    def all_videos(self, cache=None, refresh=False):
+        """Read fresh metadata, retaining only ids in an optional per-channel cache directory."""
+        self.search_calls = 0
+        result = self.videos()
+        channel = self._uploads_channel
+        # Without a channel identity there is no safe cache key; use the full scan.
+        path = (Path(cache) / f"{channel}.json" if cache is not None and isinstance(channel, str)
+                and re.fullmatch(r"[A-Za-z0-9_-]+", channel) else None)
+        saved = _video_cache(path, channel) if path is not None else None
+        seen_ids = {video["id"] for video in result}
+        if saved is not None:
+            result.extend(self._videos_by_ids([ident for ident in saved["ids"] if ident not in seen_ids],
+                                             part="fileDetails,snippet,status"))
+            seen_ids.update(video["id"] for video in result)
+        known = set(saved["ids"]) if saved is not None else set()
+        missing, seen_pages, page = [], set(), None
+        while True:
+            params = dict(part="id", forMine="true", type="video", maxResults=50)
+            if cache is not None:
+                params["order"] = "date"
+            if page:
+                params["pageToken"] = page
+            self.search_calls += 1
+            doc = self._list("search", **params)
+            new_ids = set()
+            try:
+                for item in doc["items"]:
+                    ident = item["id"]["videoId"]
+                    if not isinstance(ident, str) or not ident:
+                        raise ValueError
+                    new_ids.add(ident)
+                    if ident not in seen_ids:
+                        missing.append(ident)
+                        seen_ids.add(ident)
+            except (KeyError, TypeError, ValueError):
+                raise PublishError("danh sách search không hợp lệ") from None
+            if saved is not None and not refresh and not new_ids.difference(known):
+                break
+            known.update(new_ids)
+            page = doc.get("nextPageToken")
+            if not page:
+                break
+            if not isinstance(page, str) or page in seen_pages:
+                raise PublishError("phân trang search không hợp lệ")
+            seen_pages.add(page)
+        result.extend(self._videos_by_ids(missing, part="fileDetails,snippet,status"))
+        if path is not None:
+            stamp = datetime.fromtimestamp(self.now(), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            atomic_write_json(path, dict(schema_version=1, channel_id=channel,
+                                        ids=list(dict.fromkeys(video["id"] for video in result)),
+                                        full_scan_at=stamp if saved is None or refresh else saved["full_scan_at"],
+                                        updated_at=stamp))
+        return result
 
     def channel_id(self):
         doc = self._list("channels", part="id", mine="true")
@@ -271,30 +361,55 @@ class YouTube:
     def playlist_videos(self, playlist_id):
         return self._playlist_videos(playlist_id, part="fileDetails,snippet,status", label="playlist")
 
-    def _playlist_videos(self, playlist_id, *, part, label):
-        """Shared pagination and 50-id batches; repeated playlist items count once."""
-        ids, seen_ids, seen_pages, page = [], set(), set(), None
+    def _pages(self, resource, label, **params):
+        """Validate pagination once for owned playlists and their member ids."""
+        seen_pages, page = set(), None
         while True:
-            params = dict(part="contentDetails", playlistId=playlist_id, maxResults=50)
+            query = dict(params)
             if page:
-                params["pageToken"] = page
-            doc = self._list("playlistItems", **params)
-            try:
-                for item in doc["items"]:
-                    ident = item["contentDetails"]["videoId"]
-                    if not isinstance(ident, str) or not ident:
-                        raise ValueError
-                    if ident not in seen_ids:
-                        ids.append(ident)
-                        seen_ids.add(ident)
-            except (KeyError, TypeError, ValueError):
-                raise PublishError(f"danh sách {label} không hợp lệ") from None
+                query["pageToken"] = page
+            doc = self._list(resource, **query)
+            if not isinstance(doc.get("items"), list):
+                raise PublishError(f"danh sách {label} không hợp lệ")
+            yield from doc["items"]
             page = doc.get("nextPageToken")
             if not page:
                 break
             if not isinstance(page, str) or page in seen_pages:
                 raise PublishError(f"phân trang {label} không hợp lệ")
             seen_pages.add(page)
+
+    def owned_playlists(self):
+        result = {}
+        for item in self._pages("playlists", "playlist", part="snippet", mine="true", maxResults=50):
+            try:
+                ident, title = item["id"], item["snippet"]["title"]
+                if not isinstance(ident, str) or not ident or not isinstance(title, str):
+                    raise ValueError
+            except (KeyError, TypeError, ValueError):
+                raise PublishError("danh sách playlist không hợp lệ") from None
+            result.setdefault(ident, item)
+        return list(result.values())
+
+    def playlist_ids(self, playlist_id, *, label="playlist"):
+        """Read membership without fetching video metadata; accept either API id field."""
+        ids = {}
+        for item in self._pages("playlistItems", label, part="contentDetails", playlistId=playlist_id, maxResults=50):
+            try:
+                ident = (item.get("contentDetails") or {}).get("videoId") or \
+                        (item.get("snippet") or {}).get("resourceId", {}).get("videoId")
+                if not isinstance(ident, str) or not ident:
+                    raise ValueError
+            except (AttributeError, TypeError, ValueError):
+                raise PublishError(f"danh sách {label} không hợp lệ") from None
+            ids.setdefault(ident, None)
+        return list(ids)
+
+    def _playlist_videos(self, playlist_id, *, part, label):
+        return self._videos_by_ids(self.playlist_ids(playlist_id, label=label), part=part)
+
+    def _videos_by_ids(self, ids, *, part):
+        """Fetch metadata in API-sized batches for uploads, playlists and search."""
         result = []
         for offset in range(0, len(ids), 50):
             doc = self._list("videos", part=part, id=",".join(ids[offset:offset + 50]))
@@ -306,3 +421,14 @@ class YouTube:
     def set_thumbnail(self, youtube_id, body):
         return self._request("POST", UPLOAD_URL + "?" + urllib.parse.urlencode(
             dict(videoId=youtube_id, uploadType="media")), body)
+
+    def update_status(self, youtube_id, status):
+        return self._request("PUT", API_URL + "videos?part=status",
+                             json.dumps(dict(id=youtube_id, status=status)).encode(),
+                             content_type="application/json")
+
+    def add_to_playlist(self, playlist_id, youtube_id):
+        body = dict(snippet=dict(playlistId=playlist_id,
+                                resourceId=dict(kind="youtube#video", videoId=youtube_id)))
+        return self._request("POST", API_URL + "playlistItems?part=snippet",
+                             json.dumps(body).encode(), content_type="application/json")
