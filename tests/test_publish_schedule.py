@@ -203,6 +203,9 @@ def test_apply_preserves_writable_status_and_journals_each_success(local, capsys
     assert put[2]["Content-Type"] == "application/json"
     assert json.loads(put[3]) == dict(id=source["id"], status=dict(fields, privacyStatus="private",
                                                                publishAt="2026-11-19T00:00:00Z"))
+    # Amendment A: audience is always declared "not made for kids", even when the draft left it unset.
+    second = json.loads([call for call in wire.calls if call[0] == "PUT"][1][3])
+    assert second["id"] == "next" and second["status"]["selfDeclaredMadeForKids"] is False
     journal = read_json_dict(cfg.workspace.dir / "_publish" / "schedule.json")
     assert len(writes) == 2 and [len(doc["records"]) for doc in writes] == [1, 2]
     assert journal == writes[-1] and journal["schema_version"] == 1

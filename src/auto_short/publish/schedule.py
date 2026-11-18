@@ -139,7 +139,8 @@ def apply(config, rows, client):
         if row["status"] != "sẵn sàng":
             continue
         status = {key: row["video_status"][key] for key in WRITABLE_STATUS if key in row["video_status"]}
-        status.update(privacyStatus="private", publishAt=row["publish_at"])
+        # Amendment A (HUMAN LEAD 2026-11-18): every scheduled video is declared "not made for kids".
+        status.update(privacyStatus="private", publishAt=row["publish_at"], selfDeclaredMadeForKids=False)
         client.update_status(row["youtube_id"], status)
         record = {key: row[key] for key in ("youtube_id", "kind", "key", "publish_at")}
         record["set_at"] = utc_now()
