@@ -1,8 +1,9 @@
-/* SCH1: render local channel snapshots. No YouTube API calls. */
+/* SCH1: local snapshots; explicit token renewal uses server-side OAuth device flow. */
 (() => {
   "use strict";
   const { el, api } = AutoShort;
   const kinds = { vertical: "Bản dọc", kt: "Khai thị", short: "Short", post: "Bài post" };
+  const authSessions = new Map();
   const clock = new Intl.DateTimeFormat("vi-VN", {
     timeZone: "Asia/Ho_Chi_Minh", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit",
     hourCycle: "h23",
@@ -63,7 +64,59 @@
     }
     return box.childNodes.length ? box : null;
   }
-  function render(channel) {
+  function tokenControl(stem, token) {
+    if (!stem || !token) return null;
+    const state = authSessions.get(stem) || {};
+    authSessions.set(stem, state);
+    const label = token.days_left == null ? "Token không rõ hạn" : token.expired ?
+      "Token hết hạn — lấy lại token" : `Token còn ${token.days_left} ngày (hết ${date(token.expires_at * 1000)})`;
+    const button = el("button", { class: "btn small", type: "button", text: "Lấy lại token" });
+    const box = el("div", { role: "status", "aria-live": "polite" });
+    state.update = () => {
+      const data = state.data || {};
+      button.disabled = data.status === "waiting";
+      box.replaceChildren(...(data.status === "waiting" ? [
+        el("p", { text: "Mở trang Google và nhập mã để lấy lại token:" }),
+        el("strong", { class: "device-code", text: data.user_code }),
+        el("a", { href: "https://www.google.com/device", target: "_blank", rel: "noopener noreferrer",
+          text: "https://www.google.com/device" }),
+      ] : [el("p", { class: data.status === "error" ? "error small" : "small", text: data.message || "" })]));
+    };
+    const endpoint = `/api/youtube-tokens/${encodeURIComponent(stem)}/auth`;
+    async function poll() {
+      try {
+        state.data = await api(endpoint);
+        state.update();
+        if (state.data.status === "waiting") state.timer = setTimeout(poll, 5000);
+        else if (state.data.status === "done") load();
+      } catch (err) {
+        state.data = { status: "error", message: err.message };
+        state.update();
+      }
+    }
+    button.addEventListener("click", async () => {
+      button.disabled = true;
+      try {
+        state.data = await api(endpoint, { method: "POST" });
+        state.update();
+        if (state.data.status === "waiting") {
+          clearTimeout(state.timer);
+          state.timer = setTimeout(poll, 5000);
+        }
+      } catch (err) {
+        state.data = { status: "error", message: err.message };
+        state.update();
+      }
+    });
+    state.update();
+    return el("div", {}, el("p", { class: token.expired ? "error small" : token.warning ? "note small" : "muted small",
+      text: label }), button, box);
+  }
+  function checkError(error) {
+    return el("p", { class: "error small", text:
+      `Lần đọc ${date(error.at)} lỗi: ${error.message} — tự thử lại 15:30` });
+  }
+  function render(channel, tokens, errors) {
     const table = el("table", { class: "storage-table schedule-table" },
       el("thead", {}, el("tr", {}, ...Object.values(kinds).map(text => el("th", { scope: "col", text })))),
       el("tbody", {}, el("tr", {}, ...Object.keys(kinds).map(kind => cell(channel.kinds[kind] || {})))));
@@ -71,6 +124,8 @@
       el("p", { class: channel.stale ? "small note" : "small muted",
         text: `${channel.stale ? "Số liệu cũ (cập nhật " : "Cập nhật "}${date(channel.updated_at)}${channel.stale ? ")" : ""}` }),
       el("div", { class: "table-wrap" }, table), warnings(channel),
+      ...errors.filter(error => error.token === channel.token).map(checkError),
+      tokenControl(channel.token, tokens[channel.token]),
       channel.post_error ? el("p", { class: "error small", text: channel.post_error }) : null);
   }
   async function load() {
@@ -79,7 +134,16 @@
     button.disabled = true;
     try {
       const data = await api("/api/schedule-overview");
-      document.querySelector("#schedule-channels").replaceChildren(...data.channels.map(render));
+      const tokens = data.tokens || {}, errors = data.errors || [];
+      const known = new Set(data.channels.map(channel => channel.token));
+      const extra = Object.keys(tokens).filter(stem => !known.has(stem));
+      document.querySelector("#schedule-channels").replaceChildren(
+        ...(!data.channels.length ? [el("p", { class: "card note", text:
+          "Chưa có số liệu. Số liệu cập nhật tự động lúc 15:30 giờ VN mỗi ngày (sau khi hạn mức YouTube mở lại lúc 15:00)." })] : []),
+        ...data.channels.map(channel => render(channel, tokens, errors)),
+        ...extra.map(stem => el("section", { class: "card" }, el("h2", { text: stem }),
+          ...errors.filter(error => error.token === stem).map(checkError), tokenControl(stem, tokens[stem]))),
+        ...errors.filter(error => !known.has(error.token) && !tokens[error.token]).map(checkError));
       message.className = "muted";
       message.textContent = data.channels.length ? "" : "Chưa có số liệu";
     } catch (err) {

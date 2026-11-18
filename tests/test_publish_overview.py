@@ -148,3 +148,59 @@ def test_post_summary_only_ticked_saved_slots_instant_boundary_and_final_past_sl
     group = overview.summarize_posts(posts, times, later)
     assert group["last_scheduled"]["key"] == group["last_public"]["key"] == "T1_S03"
     assert overview.coverage(group, later)["days_remaining"] == 0
+
+
+@pytest.mark.parametrize("named", [False, True])
+@pytest.mark.parametrize("failure,message", [(403, "hết hạn mức YouTube"), (429, "hết hạn mức YouTube"),
+                                             (401, "token hỏng hoặc hết hạn — lấy lại token")])
+def test_check_error_saved_sanitized_then_cleared_and_snapshot_links_registered_token(
+        workspace, cli, monkeypatch, named, failure, message):
+    from pathlib import Path
+    from auto_short.publish import youtube
+
+    original = Path(cli[cli.index("--token") + 1])
+    folder = original.parent / "tokens"
+    path = folder / "channel-a.json" if named else original
+    atomic_write_json(path, read_json_dict(original))
+    monkeypatch.setattr(youtube, "default_tokens_dir", lambda: folder)
+    monkeypatch.setattr(youtube, "default_token", lambda: original)
+    stem = "channel-a" if named else "default"
+    args = ["check", "--playlist", PID, *cli[5:], "--token", str(path)]
+    response = (failure, dict(error=dict(errors=[dict(reason="quotaExceeded" if failure == 403 else "denied")],
+                                        message=" ".join(SECRETS))))
+    # HTTP 401 retries once after an access-token refresh before reporting auth failure.
+    wire = Wire(response, dict(access_token="renewed", expires_in=3600), response) if failure == 401 else Wire(response)
+    assert main(args, transport=wire, now=NOW.timestamp) == 1
+    error = workspace.workspace.dir / f"_publish/channels/{stem}.error.json"
+    assert read_json_dict(error) == dict(at=overview._iso(NOW), message=message)
+    assert not any(secret in error.read_text() for secret in SECRETS)
+    assert overview.read(workspace, include_errors=True) == ([], [dict(
+        token=stem, at=overview._iso(NOW), message=message)])
+    sources = [video("uploaded", "T11_KT01_a.mp4")]
+    replies = listing(*sources)
+    replies[0]["items"][0]["id"] = "UCtest"
+    wire = Wire(*replies, dict(items=[]), dict(items=[]))
+    assert main(args, transport=wire, now=NOW.timestamp) == 0 and not wire.responses
+    assert not error.exists() and overview.read(workspace)[0]["token"] == stem
+    # Bad local files cannot pollute the error projection or hide the snapshot.
+    atomic_write_json(error, dict(at="bad", message="ignored"))
+    assert overview.read(workspace, include_errors=True)[1] == []
+
+
+@pytest.mark.parametrize("age,days,warning,expired", [
+    (0, 7, False, False), (5 * 86400 - 1, 3, False, False), (5 * 86400, 2, True, False),
+    (7 * 86400 - 1, 1, True, False), (7 * 86400, 0, True, True), (8 * 86400, 0, True, True),
+])
+def test_testing_token_lifetime_boundaries_and_secret_projection(age, days, warning, expired):
+    authorized = NOW.timestamp() - age
+    result = overview.token_status(dict(authorized_at=authorized, access_token="private", refresh_token="private",
+                                        client_path="private", client_secret="private"), NOW)
+    assert result == dict(authorized_at=authorized, expires_at=authorized + 7 * 86400,
+                          days_left=days, warning=warning, expired=expired)
+    assert "private" not in json.dumps(result)
+
+
+@pytest.mark.parametrize("authorized", [None, "old", True, float("nan"), -1])
+def test_legacy_or_invalid_token_authorization_date_is_unknown(authorized):
+    assert overview.token_status(dict(authorized_at=authorized), NOW) == dict(
+        authorized_at=None, expires_at=None, days_left=None, warning=False, expired=False)

@@ -212,3 +212,78 @@ def test_page_renders_warning_limit_studio_links_vietnam_time_and_no_empty_warni
     doc["missing"], doc["duplicates"] = {}, []
     assert not any(n["attrs"].get("class") == "schedule-warnings" for n in walk(dom([doc])["tree"]))
     assert dom([])["message"] == "Chưa có số liệu"
+
+
+@pytest.mark.parametrize("age", [None, 0, 5 * 86400, 7 * 86400])
+def test_amendment_api_local_errors_and_testing_token_metadata_without_secrets(web, age):  # AC6–7
+    client, ctx, wire = web
+    path = youtube.default_token()
+    token = dict(read_json_dict(path), client_path="private-client", client_secret="private-secret")
+    if age is not None:
+        token["authorized_at"] = NOW.timestamp() - age
+    atomic_write_json(path, token)
+    doc = dict(snapshot(ctx.config), token="default")
+    overview.write(ctx.config, doc)
+    overview.check_error(ctx.config, "default", NOW, "quotaExceeded private-secret")
+    paths = [path, *ctx.config.workspace.dir.joinpath("_publish/channels").glob("*.json")]
+    before = {path: path.read_bytes() for path in paths}
+    login(client)
+    response = client.get("/api/schedule-overview")
+    data = response.json()
+    assert data["channels"][0]["token"] == "default"
+    assert data["errors"] == [dict(token="default", at=overview._iso(NOW), message="hết hạn mức YouTube")]
+    assert data["tokens"]["default"] == overview.token_status(token, NOW)
+    assert data["tokens"]["b"]["days_left"] is None
+    assert not any(secret in response.text for secret in ("private-client", "private-secret", token["access_token"],
+                                                         token["refresh_token"]))
+    assert {path: path.read_bytes() for path in paths} == before and not wire.calls
+
+
+def test_amendment_page_empty_errors_token_expiry_and_device_flow_dom(service):  # AC6–8
+    if not shutil.which("node"):
+        pytest.skip("node required for page DOM verification")
+    _, ctx, _ = service
+    doc = dict(snapshot(ctx.config), token="default")
+    # Extend the existing DOM harness to exercise the actual click handler and queued 5s poll.
+    script = DOM_SCRIPT.replace("addEventListener() {}", "addEventListener(kind, fn) { this[kind] = fn; }")
+    script = script.replace("vm.runInNewContext", "const calls = [], timers = [];\nvm.runInNewContext")
+    script = script.replace("api: async path =>", "api: async (path, options = {}) =>")
+    script = script.replace("if (path !== '/api/schedule-overview') throw Error('unexpected URL'); return { channels: payload.channels };",
+                            "if (path === '/api/schedule-overview') return payload; "
+                            "calls.push({path, options}); return payload.auth.shift();")
+    script = script.replace("}, Intl, Date,", "}, Intl, Date, setTimeout: (fn, ms) => { timers.push({fn, ms}); return 1; }, "
+                            "clearTimeout: () => {},")
+    script = script[:script.index("setImmediate(() => process.stdout.write")]+ r"""
+function all(n) { return [n, ...(n.childNodes || []).flatMap(c => typeof c === 'object' ? all(c) : [])]; }
+setImmediate(async () => {
+  const button = all(nodes['schedule-channels']).find(n => n.tag === 'button');
+  const initial = nodes['schedule-channels'].textContent;
+  await button.click();
+  const waiting = nodes['schedule-channels'].textContent;
+  const link = all(nodes['schedule-channels']).find(n => n.attrs.href === 'https://www.google.com/device');
+  const delay = timers[0].ms;
+  await timers[0].fn();
+  await Promise.resolve();
+  process.stdout.write(JSON.stringify({initial, waiting, final: nodes['schedule-channels'].textContent,
+    link: link.attrs.href, delay, calls}));
+});
+"""
+    for channels, days in (([], None), ([doc], 2), ([doc], 0)):
+        payload = dict(script=str(STATIC_DIR / "schedule.js"), channels=channels,
+                       tokens={"default": dict(days_left=days, expires_at=NOW.timestamp(), warning=days is not None,
+                                               expired=days == 0)},
+                       errors=[dict(token="default", at=overview._iso(NOW), message="hết hạn mức YouTube")],
+                       auth=[dict(status="waiting", user_code="ABCD-EFGH", verification_url="https://www.google.com/device",
+                                  expires_in=60), dict(status="done", message="Đã lấy token mới")])
+        result = subprocess.run(["node", "-e", script], input=json.dumps(payload), text=True,
+                                capture_output=True, timeout=10, check=True)
+        data = json.loads(result.stdout)
+        assert "Lần đọc" in data["initial"] and "hết hạn mức YouTube — tự thử lại 15:30" in data["initial"]
+        if not channels:
+            assert "Chưa có số liệu. Số liệu cập nhật tự động lúc 15:30" in data["initial"]
+        assert ("Token không rõ hạn" if days is None else "Token còn 2 ngày" if days else "Token hết hạn") in data["initial"]
+        assert "ABCD-EFGH" in data["waiting"] and data["link"] == "https://www.google.com/device"
+        assert data["delay"] == 5000 and "Đã lấy token mới" in data["final"]
+        assert data["calls"] == [dict(path="/api/youtube-tokens/default/auth", options=dict(method="POST")),
+                                  dict(path="/api/youtube-tokens/default/auth", options={})]
+    assert "Chỉ đọc lại số liệu đã lưu, không gọi YouTube" in (STATIC_DIR / "schedule.html").read_text()

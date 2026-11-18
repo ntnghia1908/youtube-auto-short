@@ -1,11 +1,11 @@
 """SCH1: local channel snapshots and pure schedule coverage helpers."""
 from datetime import timedelta, timezone
-from math import ceil
+from math import ceil, isfinite
 from pathlib import Path
 import re
 
 from ..workspace import atomic_write_json, read_json_dict
-from . import PublishError, schedule
+from . import PublishError, schedule, youtube
 
 
 def _iso(moment):
@@ -74,18 +74,57 @@ def write(config, doc):
     atomic_write_json(Path(config.workspace.dir) / "_publish" / "channels" / f"{ident}.json", doc)
 
 
-def read(config):
+def check_error(config, stem, now, message=None):
+    """Persist only a safe check failure summary, or clear it after a successful check."""
+    if not isinstance(stem, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", stem):
+        raise PublishError("tên token không hợp lệ")
+    path = Path(config.workspace.dir) / "_publish" / "channels" / f"{stem}.error.json"
+    if message is None:
+        path.unlink(missing_ok=True)
+        return
+    if any(word in message for word in ("quotaExceeded", "hạn mức", "429")):
+        safe = "hết hạn mức YouTube"
+    elif any(word in message for word in ("OAuth", "auth", "đăng nhập", "token")):
+        safe = "token hỏng hoặc hết hạn — lấy lại token"
+    else:
+        safe = "không đọc được YouTube / số liệu; hãy thử lại"
+    atomic_write_json(path, dict(at=_iso(now), message=safe))
+
+
+def read(config, *, include_errors=False):
     """Missing/broken snapshots do not hide healthy channels."""
-    docs = []
+    docs, errors = [], []
     for file in (Path(config.workspace.dir) / "_publish" / "channels").glob("*.json"):
         doc = read_json_dict(file)
+        if file.name.endswith(".error.json"):
+            stem = file.name[:-len(".error.json")]
+            if doc and re.fullmatch(r"[A-Za-z0-9_-]+", stem) \
+                    and schedule._timestamp(doc.get("at")) is not None and isinstance(doc.get("message"), str):
+                errors.append(dict(token=stem, at=doc["at"], message=doc["message"]))
+            continue
         if doc and doc.get("schema_version") == 1 and doc.get("channel_id") == file.stem \
                 and isinstance(doc.get("channel_title"), str) and isinstance(doc.get("playlist_id"), str) \
                 and schedule._timestamp(doc.get("updated_at")) is not None \
                 and isinstance(doc.get("kinds"), dict) \
                 and all(isinstance(doc["kinds"].get(kind), dict) for kind in schedule.KINDS):
             docs.append(doc)
-    return sorted(docs, key=lambda doc: (doc["channel_title"].casefold(), doc["channel_id"]))
+    docs.sort(key=lambda doc: (doc["channel_title"].casefold(), doc["channel_id"]))
+    return (docs, sorted(errors, key=lambda doc: (doc["at"], doc["token"]), reverse=True)) if include_errors else docs
+
+
+def token_status(doc, now):
+    """Testing refresh-token lifetime; deliberately project no credentials or client paths."""
+    authorized = doc.get("authorized_at")
+    if type(authorized) not in (int, float) or not isfinite(authorized) or authorized < 0:
+        return dict(authorized_at=None, expires_at=None, days_left=None, warning=False, expired=False)
+    expires = authorized + 7 * 86400
+    days = max(0, ceil((expires - now.timestamp()) / 86400))
+    return dict(authorized_at=authorized, expires_at=expires, days_left=days,
+                warning=days <= 2, expired=expires <= now.timestamp())
+
+
+def tokens(now):
+    return {stem: token_status(read_json_dict(path) or {}, now) for stem, path in youtube.token_paths().items()}
 
 
 def summarize_posts(posts, times, now):

@@ -58,6 +58,30 @@ def default_token_dir():
     return Path.home() / ".local/share/auto-short/youtube-tokens"
 
 
+def default_tokens_dir():
+    """Directory of named tokens (keep the original singular helper compatible)."""
+    return default_token_dir()
+
+
+def token_paths():
+    """Existing web-eligible tokens only; no paths or symlinks supplied by callers."""
+    folder = default_tokens_dir().resolve()
+    paths = {path.stem: path for path in sorted(folder.glob("*.json"))
+             if re.fullmatch(r"[A-Za-z0-9_-]+", path.stem) and path.stem != "default"
+             and path.is_file() and not path.is_symlink()}
+    if default_token().is_file() and not default_token().is_symlink():
+        paths["default"] = default_token()
+    return paths
+
+
+def token_stem(path=None):
+    """Map a CLI token to the same safe identifier the web can authorize."""
+    target = Path(path or default_token()).expanduser().resolve()
+    if target == default_token().resolve():
+        return "default"
+    return next((stem for stem, file in token_paths().items() if file.resolve() == target), None)
+
+
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
@@ -112,6 +136,8 @@ def _token_doc(doc, now, previous=None, scope=None):
     client = (previous or {}).get("client_path")
     if isinstance(client, str) and client.strip():
         token["client_path"] = client
+    if previous and "authorized_at" in previous:
+        token["authorized_at"] = previous["authorized_at"]
     return token
 
 
@@ -142,12 +168,12 @@ def _oauth_error(doc):
     raise PublishError("OAuth thất bại; kiểm tra OAuth client và chạy lại auth")
 
 
-def auth(client_path=None, token_path=None, *, transport=None, sleep=None, now=None, output=print):
-    """Authorize on a second device; only the user code and URL are displayed."""
-    send, sleep, now = transport or urllib_transport, sleep or time.sleep, now or time.time
+def start_device(client_path=None, *, transport=None, now=None, scope=SCOPES):
+    """Start device authorization. The returned session is private, never an API response."""
+    send, now = transport or urllib_transport, now or time.time
     client_path = Path(client_path or default_client()).expanduser().resolve()
     credentials = _credentials(client_path)
-    for scope in (SCOPES, FULL_SCOPE):
+    for scope in ((SCOPES, FULL_SCOPE) if scope == SCOPES else (scope,)):
         status, device = _form(send, DEVICE_URL, dict(client_id=credentials["client_id"], scope=scope))
         if device.get("error") == "invalid_scope" and scope == SCOPES:
             continue
@@ -160,27 +186,46 @@ def auth(client_path=None, token_path=None, *, transport=None, sleep=None, now=N
         if not isinstance(url, str) or not url.startswith("https://"):
             raise PublishError("phản hồi OAuth thiếu URL xác minh")
         interval = _positive(device.get("interval", 5), "interval")
-        deadline = now() + _positive(device.get("expires_in"), "expires_in")
-        output(f"Scope: {scope}")
-        output(f"Đăng nhập tại {url} — mã: {device['user_code']}")
-        while True:
-            sleep(max(0, min(interval, deadline - now())))
-            if now() >= deadline:
-                raise PublishError("mã đăng nhập đã hết hạn; chạy lại auth")
-            status, doc = _form(send, TOKEN_URL, dict(credentials, device_code=device["device_code"],
-                               grant_type="urn:ietf:params:oauth:grant-type:device_code"))
-            if doc.get("error") == "authorization_pending":
-                continue
-            if doc.get("error") == "slow_down":
-                interval += 5
-                continue
-            if doc.get("error") == "invalid_scope" and scope == SCOPES:
-                break
-            if status != 200 or doc.get("error"):
-                _oauth_error(doc)
-            _save_token(token_path or default_token(),
-                        _token_doc(doc, now(), previous=dict(client_path=str(client_path)), scope=scope))
-            return {"status": "đã đăng nhập", "scope": scope}
+        expires = _positive(device.get("expires_in"), "expires_in")
+        return dict(client_path=str(client_path), credentials=credentials, scope=scope,
+                    device_code=device["device_code"], user_code=device["user_code"], verification_url=url,
+                    interval=interval, expires_in=expires, deadline=now() + expires)
+
+
+def poll_device(session, token_path=None, *, transport=None, sleep=None, now=None, output=lambda _: None):
+    """Wait for authorization, preserving the CLI's scope fallback and private atomic write."""
+    send, sleep, now = transport or urllib_transport, sleep or time.sleep, now or time.time
+    interval = session["interval"]
+    while True:
+        sleep(max(0, min(interval, session["deadline"] - now())))
+        if now() >= session["deadline"]:
+            raise PublishError("mã đăng nhập đã hết hạn; chạy lại auth")
+        status, doc = _form(send, TOKEN_URL, dict(session["credentials"], device_code=session["device_code"],
+                           grant_type="urn:ietf:params:oauth:grant-type:device_code"))
+        if doc.get("error") == "authorization_pending":
+            continue
+        if doc.get("error") == "slow_down":
+            interval += 5
+            continue
+        if doc.get("error") == "invalid_scope" and session["scope"] == SCOPES:
+            session.update(start_device(session["client_path"], transport=send, now=now, scope=FULL_SCOPE))
+            interval = session["interval"]
+            output(f"Scope: {session['scope']}")
+            output(f"Đăng nhập tại {session['verification_url']} — mã: {session['user_code']}")
+            continue
+        if status != 200 or doc.get("error"):
+            _oauth_error(doc)
+        _save_token(token_path or default_token(), _token_doc(
+            doc, now(), previous=dict(client_path=session["client_path"], authorized_at=now()), scope=session["scope"]))
+        return {"status": "đã đăng nhập", "scope": session["scope"]}
+
+
+def auth(client_path=None, token_path=None, *, transport=None, sleep=None, now=None, output=print):
+    """Authorize on a second device; only the user code and URL are displayed."""
+    session = start_device(client_path, transport=transport, now=now)
+    output(f"Scope: {session['scope']}")
+    output(f"Đăng nhập tại {session['verification_url']} — mã: {session['user_code']}")
+    return poll_device(session, token_path, transport=transport, sleep=sleep, now=now, output=output)
 
 
 def _api_error(status, doc):

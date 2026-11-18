@@ -73,8 +73,14 @@ def main(argv=None, *, transport=None, sleep=None, now=None):
     args = parser.parse_args(argv)
     if args.command == "schedule" and args.limit is not None and args.limit < 1:
         parser.error("--limit phải là số nguyên dương")
+    cfg = None
+    stem = error_stem = None
     try:
         cfg = load(args.config)
+        if args.command == "check":
+            # Only registered/default token paths have a web authorization target.
+            stem = youtube.token_stem(args.token)
+            error_stem = stem or Path(args.token or youtube.default_token()).stem
         if args.command == "auth":
             result = youtube.auth(args.client, args.token, transport=transport, sleep=sleep, now=now)
         elif args.command in ("schedule", "check"):
@@ -102,8 +108,11 @@ def main(argv=None, *, transport=None, sleep=None, now=None):
                                   if item.get("snippet", {}).get("channelTitle")), client._uploads_channel)
                     overview.write(cfg, dict(schema_version=1, channel_id=client._uploads_channel,
                                              channel_title=title, playlist_id=args.playlist,
+                                             **({"token": stem} if stem else {}),
                                              updated_at=overview._iso(moment), kinds=overview.summarize(videos, moment),
                                              **overview.issues(checked)))
+                moment = datetime.fromtimestamp(now(), timezone.utc) if now else datetime.now(timezone.utc)
+                overview.check_error(cfg, error_stem, moment)
                 print(json.dumps(checked, ensure_ascii=False, indent=2))
                 return 0
             moment = datetime.fromtimestamp(now(), timezone.utc) if now else datetime.now(timezone.utc)
@@ -165,9 +174,21 @@ def main(argv=None, *, transport=None, sleep=None, now=None):
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     except (ConfigError, PackageError, PublishError) as exc:
+        if args.command == "check" and cfg is not None:
+            moment = datetime.fromtimestamp(now(), timezone.utc) if now else datetime.now(timezone.utc)
+            try:
+                overview.check_error(cfg, error_stem, moment, str(exc))
+            except (OSError, PublishError):
+                pass  # Preserve the original CLI failure even when local error storage is unavailable.
         print(str(exc), file=sys.stderr)
         return 1
     except OSError:
+        if args.command == "check" and cfg is not None:
+            moment = datetime.fromtimestamp(now(), timezone.utc) if now else datetime.now(timezone.utc)
+            try:
+                overview.check_error(cfg, error_stem, moment, "file error")
+            except (OSError, PublishError):
+                pass
         journal = "lịch đăng" if args.command == "schedule" else "thumbnail"
         print(f"không đọc / ghi được file cấu hình, OAuth hoặc nhật ký {journal}", file=sys.stderr)
         return 1

@@ -11,6 +11,7 @@
 .schedule-table td { vertical-align: top; }
 .schedule-table .note { border-radius: 0; }
 .schedule-date { white-space: nowrap; }
+.device-code { display: block; font-size: 2rem; letter-spacing: .15em; margin: .75rem 0; overflow-wrap: anywhere; }
 </style>
 </head>
 <body>
@@ -24,7 +25,8 @@
   <section class="card">
     <h1>Lịch YouTube</h1>
     <p class="muted small">Ngày giờ Việt Nam · Số liệu YouTube cập nhật mỗi ngày. Ô dưới 7 ngày còn lịch được tô cảnh báo.</p>
-    <button id="schedule-refresh" class="btn" type="button">Đọc lại số liệu</button>
+    <button id="schedule-refresh" class="btn" type="button">Đọc lại</button>
+    <p class="muted small">Chỉ đọc lại số liệu đã lưu, không gọi YouTube</p>
     <p id="schedule-message" class="muted" role="status">Đang đọc…</p>
   </section>
   <div id="schedule-channels" class="container" style="padding: 0; margin: 0; max-width: 100%; min-width: 0"></div>
