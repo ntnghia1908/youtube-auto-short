@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from ...pipeline import PreflightError
 from ...post import (
     corrections as post_corrections, images as post_images, logic as post_logic,
-    source as post_source, stage as post_stage, store as post_store,
+    schedule as post_schedule, source as post_source, stage as post_stage, store as post_store,
 )
 from ...review import (
     ReviewError, TitlePreview, is_archived, list_titles, preview_title,
@@ -382,6 +382,12 @@ def build(ctx: WebContext) -> APIRouter:
                 post_error = None
             except post_store.PostsError as exc:
                 doc, post_error = post_store.empty_posts(episode_id), str(exc)
+            try:
+                times = post_schedule.read(ctx.post_links.times_path)
+                slots, next_episode = ctx.post_links.schedule_view(episode_id, post_schedule.timestamp(ctx.post_now()))
+            except (ValueError, OSError) as exc:
+                times, slots, next_episode = {}, {}, None
+                post_error = post_error or str(exc)
         try:
             ep_src = post_source.load(episode_id, ctx.config)
         except post_source.PostSourceError:
@@ -396,7 +402,15 @@ def build(ctx: WebContext) -> APIRouter:
         hashtags_list = review_hashtags(series, tags)
         posts = [ctx.post_entry_view(e, ep_src=ep_src, title=titles_by_clip.get(e["clip_id"]),
                                   header_fields=header_fields, hashtags_list=hashtags_list) for e in doc["posts"]]
-        return {"posts": posts, "post_error": post_error}
+        for post in posts:
+            key = f'{episode_id}/{post["clip_id"]}'
+            slot = slots.get(key)
+            post.update(post_schedule.slot_fields(slot))
+            post["slot_group"] = post_schedule.slot_group(post, times.get(key, {}), slot)
+        response = {"posts": posts, "post_error": post_error}
+        if posts or next_episode:
+            response["next_episode"] = next_episode
+        return response
 
     def _post_clips(body: PostComposeIn) -> "list[str] | str | JSONResponse":
         raw = body.clips
@@ -514,10 +528,23 @@ def build(ctx: WebContext) -> APIRouter:
         with ctx.post_lock:
             try:
                 doc = post_store.read_posts(ctx.posts_path(episode_id), episode_id)
-                doc = post_store.with_posted(doc, order, clip, body.value, now=ctx.post_now())
-            except post_store.PostsError as exc:
+                now = ctx.post_now()
+                updated = post_store.with_posted(doc, order, clip, body.value, now=now)
+                times = post_schedule.read(ctx.post_links.times_path)
+                key = f"{episode_id}/{clip}"
+                if body.value:
+                    slots, _ = ctx.post_links.schedule_view(episode_id, post_schedule.timestamp(now))
+                    if slots.get(key):
+                        times[key] = {**times.get(key, {}), "slot_at": slots[key]}
+                    elif not post_store.find(doc, clip)["posted_at"] and key in times:
+                        times[key].pop("slot_at", None)
+                elif key in times:
+                    times[key].pop("slot_at", None)
+                post_schedule.write(ctx.post_links.times_path, times)
+                post_store.write(ctx.posts_path(episode_id), updated)
+                doc = updated
+            except (post_store.PostsError, ValueError, OSError) as exc:
                 return JSONResponse({"detail": str(exc)}, status_code=422)
-            post_store.write(ctx.posts_path(episode_id), doc)
         entry = post_store.find(doc, clip)
         log.info("web: post %s [%s] %s \"Đã đăng bài\"", clip, episode_id, "tick" if body.value else "untick")
         return {"clip_id": clip, "posted": entry["posted_at"] is not None, "posted_at": entry["posted_at"]}
