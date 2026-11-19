@@ -79,7 +79,7 @@ def _next_slot(kind, after, earliest):
         day += timedelta(days=1)
 
 
-def plan(videos, now):
+def plan(videos, now, expected=None, reflow=False):
     """Pure full-channel plan. Filtering must happen only after slots are assigned."""
     if now.tzinfo is None:
         raise PublishError("thời điểm lập lịch phải có múi giờ")
@@ -127,6 +127,8 @@ def plan(videos, now):
             unique.append((row, uploaded))
     unique.sort(key=lambda item: (list(SLOTS).index(item[0]["kind"]), item[0]["series"],
                                  item[0]["episode"], item[0]["clip_number"], item[1], item[0]["youtube_id"]))
+    if expected is not None:
+        return _plan_expected(videos, rows, unique, now, expected, reflow)
     tomorrow = datetime.combine(now.astimezone(VN).date(), time(23, 59, 59), VN)
     for row, _ in unique:
         slot = _next_slot(row["kind"], last.get(row["kind"], tomorrow), now + timedelta(hours=1))
@@ -134,6 +136,88 @@ def plan(videos, now):
         row.update(status="sẵn sàng", publish_at=slot.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
     # Keep ready rows in planning order, so --limit selects the first assigned videos.
     return [row for row in rows if row["status"] != "sẵn sàng"] + [row for row, _ in unique]
+
+
+def _free_slot(kind, after, earliest, used):
+    """Walk the existing slot calendar, excluding fixed and newly assigned times."""
+    slot = _next_slot(kind, after, earliest)
+    while slot in used:
+        slot = _next_slot(kind, slot, earliest)
+    return slot
+
+
+def _plan_expected(videos, rows, unique, now, expected, reflow):
+    """Allocate code-ordered gaps and drafts between immutable channel anchors."""
+    # Local import: check uses this module's classification and timestamp helpers.
+    from . import check
+
+    expected = set(expected)
+    holes = [row for row in check.compare(videos, expected)["rows"] if row["group"] == "missing"]
+    codes = {(kind, check._code((kind, number, clip))): (number, clip) for kind, number, clip in expected}
+    candidates = {id(row) for row, _ in unique}
+    uploads = {video.get("id"): _timestamp((video.get("snippet") or {}).get("publishedAt")) for video in videos}
+    earliest = now + timedelta(hours=1)
+    tomorrow = datetime.combine(now.astimezone(VN).date(), time(23, 59, 59), VN)
+    planned = []
+    for kind in SLOTS:
+        channel = [row for row in rows if row["kind"] == kind and row["youtube_id"]]
+        if not channel:
+            continue
+        # Inventory follows check's channel key (no series); associate a vertical
+        # hole with the nearest following episode's series for ordering purposes.
+        gaps = []
+        for hole in holes:
+            if hole["kind"] != kind:
+                continue
+            number, clip = codes[kind, hole["key"]]
+            following = sorted(channel, key=lambda row: (row["episode"] < number, row["episode"], row["series"]))
+            gaps.append(dict(youtube_id="", kind=kind, key=hole["key"], series=following[0]["series"],
+                             episode=number, clip_number=clip, publish_at="", video_status={},
+                             status="giữ chỗ", reason=f"giữ chỗ cho {hole['key']} (thiếu)"))
+        # The duplicate key already normalizes legacy / modern vertical series.
+        order = lambda row: (_duplicate_key(row)[1].rpartition(":")[0], row["episode"], row["clip_number"])
+        first_gap = min(map(order, gaps), default=None)
+        fixed, moving, used = {}, set(), set()
+        for row in channel:
+            status = row["video_status"]
+            stamp = _timestamp(status.get("publishAt"))
+            if reflow and first_gap is not None and order(row) > first_gap \
+                    and status.get("privacyStatus") == "private" and stamp is not None and stamp >= earliest:
+                moving.add(id(row))
+            elif stamp is not None:
+                fixed[id(row)] = stamp
+                used.add(stamp)
+            elif status.get("privacyStatus") in ("public", "unlisted"):
+                fixed[id(row)] = uploads[row["youtube_id"]] or now
+        active = candidates | moving | fixed.keys()
+        sequence = sorted([row for row in channel if id(row) in active] + gaps, key=order)
+        after = None
+        for index, row in enumerate(sequence):
+            if id(row) in fixed:
+                after = fixed[id(row)]
+                continue
+            # A preceding public anchor can be in the past; otherwise preserve
+            # PUB3's start-tomorrow rule when there is no earlier channel anchor.
+            slot = _free_slot(kind, after if after is not None else tomorrow, earliest, used)
+            successor = next((fixed[id(other)] for other in sequence[index + 1:] if id(other) in fixed), None)
+            if successor is not None and slot >= successor:
+                if not row["youtube_id"]:
+                    row.update(status="bỏ qua", reason=f"thiếu {row['key']}; không còn khung giữ chỗ trước mã sau")
+                    planned.append(row)
+                    continue
+                row["reason"] = "lệch thứ tự: không còn khung trống trước mã sau"
+            used.add(slot)
+            after = slot
+            publish_at = slot.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            if id(row) in moving:
+                old = row["video_status"]["publishAt"]
+                if _timestamp(old) == slot:
+                    continue
+                row.update(status="dời", previous_publish_at=old, publish_at=publish_at)
+            else:
+                row.update(status="sẵn sàng" if row["youtube_id"] else "giữ chỗ", publish_at=publish_at)
+            planned.append(row)
+    return [row for row in rows if row["status"] not in ("sẵn sàng", "dời")] + planned
 
 
 def _journal(config):
@@ -155,17 +239,22 @@ def apply(config, rows, client, *, memberships=None):
     for original in rows:
         row = dict(original)
         result.append(row)
-        if row["status"] != "sẵn sàng":
+        if row["status"] not in ("sẵn sàng", "dời"):
             continue
+        moving = row["status"] == "dời"
         status = {key: row["video_status"][key] for key in WRITABLE_STATUS if key in row["video_status"]}
         # Amendment A (HUMAN LEAD 2026-11-18): every scheduled video is declared "not made for kids".
-        status.update(privacyStatus="private", publishAt=row["publish_at"], selfDeclaredMadeForKids=False)
+        status.update(privacyStatus="private", publishAt=row["publish_at"])
+        if not moving:
+            status["selfDeclaredMadeForKids"] = False
         client.update_status(row["youtube_id"], status)
         record = {key: row[key] for key in ("youtube_id", "kind", "key", "publish_at")}
         record["set_at"] = utc_now()
-        journal["records"] = [r for r in journal["records"] if r["youtube_id"] != row["youtube_id"]] + [record]
+        if not moving:
+            journal["records"] = [r for r in journal["records"] if r["youtube_id"] != row["youtube_id"]]
+        journal["records"].append(record)
         atomic_write_json(path, journal)
-        row["status"] = "đã đặt lịch"
+        row["status"] = "đã dời" if moving else "đã đặt lịch"
         if memberships is not None:
             row["playlist_added"] = memberships.add(row)
     return result
