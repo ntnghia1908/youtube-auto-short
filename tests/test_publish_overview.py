@@ -84,7 +84,7 @@ def test_cli_writes_snapshot_after_success_and_preserves_it_on_error(workspace, 
     assert saved == dict(schema_version=1, channel_id="UCoverview", channel_title="Kênh thử",
                          playlist_id=PID, updated_at=overview._iso(NOW),
                          kinds=overview.summarize(sources, NOW),
-                         **overview.issues(check.compare(sources, check.inventory(workspace, PID))))
+                         **overview.issues(check.compare(sources, check.inventory(workspace, PID)), sources))
     assert all(call[0] == "GET" for call in wire.calls) and not wire.responses
     output = capsys.readouterr().out
     assert "Trùng:" in output and "Tổng khai thị:" in output
@@ -148,3 +148,109 @@ def test_post_summary_only_ticked_saved_slots_instant_boundary_and_final_past_sl
     group = overview.summarize_posts(posts, times, later)
     assert group["last_scheduled"]["key"] == group["last_public"]["key"] == "T1_S03"
     assert overview.coverage(group, later)["days_remaining"] == 0
+
+
+@pytest.mark.parametrize("named", [False, True])
+@pytest.mark.parametrize("failure,message", [(403, "hết hạn mức YouTube"), (429, "hết hạn mức YouTube"),
+                                             (401, "token hỏng hoặc hết hạn — lấy lại token")])
+def test_check_error_saved_sanitized_then_cleared_and_snapshot_links_registered_token(
+        workspace, cli, monkeypatch, named, failure, message):
+    from pathlib import Path
+    from auto_short.publish import youtube
+
+    original = Path(cli[cli.index("--token") + 1])
+    folder = original.parent / "tokens"
+    path = folder / "channel-a.json" if named else original
+    atomic_write_json(path, read_json_dict(original))
+    monkeypatch.setattr(youtube, "default_tokens_dir", lambda: folder)
+    monkeypatch.setattr(youtube, "default_token", lambda: original)
+    stem = "channel-a" if named else "default"
+    args = ["check", "--playlist", PID, *cli[5:], "--token", str(path)]
+    response = (failure, dict(error=dict(errors=[dict(reason="quotaExceeded" if failure == 403 else "denied")],
+                                        message=" ".join(SECRETS))))
+    # HTTP 401 retries once after an access-token refresh before reporting auth failure.
+    wire = Wire(response, dict(access_token="renewed", expires_in=3600), response) if failure == 401 else Wire(response)
+    assert main(args, transport=wire, now=NOW.timestamp) == 1
+    error = workspace.workspace.dir / f"_publish/channels/{stem}.error.json"
+    assert read_json_dict(error) == dict(at=overview._iso(NOW), message=message)
+    assert not any(secret in error.read_text() for secret in SECRETS)
+    assert overview.read(workspace, include_errors=True) == ([], [dict(
+        token=stem, at=overview._iso(NOW), message=message)])
+    sources = [video("uploaded", "T11_KT01_a.mp4")]
+    replies = listing(*sources)
+    replies[0]["items"][0]["id"] = "UCtest"
+    wire = Wire(*replies, dict(items=[]), dict(items=[]))
+    assert main(args, transport=wire, now=NOW.timestamp) == 0 and not wire.responses
+    assert not error.exists() and overview.read(workspace)[0]["token"] == stem
+    # Bad local files cannot pollute the error projection or hide the snapshot.
+    atomic_write_json(error, dict(at="bad", message="ignored"))
+    assert overview.read(workspace, include_errors=True)[1] == []
+
+
+@pytest.mark.parametrize("age,days,warning,expired", [
+    (0, 7, False, False), (5 * 86400 - 1, 3, False, False), (5 * 86400, 2, True, False),
+    (7 * 86400 - 1, 1, True, False), (7 * 86400, 0, True, True), (8 * 86400, 0, True, True),
+])
+def test_testing_token_lifetime_boundaries_and_secret_projection(age, days, warning, expired):
+    authorized = NOW.timestamp() - age
+    result = overview.token_status(dict(authorized_at=authorized, access_token="private", refresh_token="private",
+                                        client_path="private", client_secret="private"), NOW)
+    assert result == dict(authorized_at=authorized, expires_at=authorized + 7 * 86400,
+                          days_left=days, warning=warning, expired=expired)
+    assert "private" not in json.dumps(result)
+
+
+@pytest.mark.parametrize("authorized", [None, "old", True, float("nan"), -1])
+def test_legacy_or_invalid_token_authorization_date_is_unknown(authorized):
+    assert overview.token_status(dict(authorized_at=authorized), NOW) == dict(
+        authorized_at=None, expires_at=None, days_left=None, warning=False, expired=False)
+
+
+def test_amendment_b_dates_numeric_predecessors_all_kinds_and_newest_duplicate():  # AC9
+    boundary = schedule._timestamp(overview.ISSUES_SINCE)
+    old = overview._iso(boundary - timedelta(seconds=1))
+    exact = overview._iso(boundary)
+    sources = [video("old-copy", "T9_KT05_a.mp4", uploaded=old),
+               video("new-copy", "T9_KT05_b.mp4", uploaded=exact),
+               video("later-kt", "T10_KT01_a.mp4", uploaded=old),
+               video("short", "T9_S09_a.mp4", uploaded=exact),
+               video("vertical", "Bộ kinh_Tập9_Doc.mp4", uploaded=exact),
+               video("vertical-later", "Bộ kinh_Tập11_Doc.mp4", uploaded=old),
+               video("invalid", "T11_KT01_a.mp4", uploaded="bad"),
+               video("last", "T12_KT01_a.mp4", uploaded=exact),
+               video("unknown", "plain.mp4", uploaded=exact)]
+    expected = {("kt", 9, 6), ("kt", 10, 2), ("kt", 11, 2), ("kt", 8, 1),
+                ("short", 9, 10), ("vertical", 10, 0)}
+    checked = check.compare(sources, expected)
+    before = deepcopy((sources, checked))
+    result = overview.issues(checked, sources)
+    assert result["missing"] == dict(
+        kt=[dict(key="T8_KT01", since=None), dict(key="T9_KT06", since=exact),
+            dict(key="T10_KT02", since=old), dict(key="T11_KT02", since=None)],
+        short=[dict(key="T9_S10", since=exact)], vertical=[dict(key="T10", since=exact)])
+    assert result["duplicates"] == [dict(kind="kt", key="T9_KT05", uploaded_at=exact, copies=[
+        dict(youtube_id="old-copy", keep=True), dict(youtube_id="new-copy", keep=False)])]
+    assert result["unrecognized"] == [dict(youtube_id="unknown", uploaded_at=exact)]
+    assert result["unrecognized_count"] == 1 and "title" not in json.dumps(result)
+    assert (sources, checked) == before
+    assert overview.visible_issues(overview.issues(checked)) == overview.issues(checked)
+    assert overview.visible_issues(result)["missing"]["kt"] == [dict(key="T9_KT06", since=exact)]
+
+
+@pytest.mark.parametrize("stamp,shown", [
+    ("2026-10-31T16:59:59Z", False), ("2026-10-31T17:00:00Z", True),
+    ("2026-11-01T00:00:00+07:00", True), ("2026-11-01T00:00:01+07:00", True),
+    (None, False), ("bad", False), ("2026-11-01T00:00:00", False),
+])
+def test_amendment_b_visible_boundaries_counts_no_mutation_and_changed_cutoff(stamp, shown):  # AC9
+    doc = dict(missing={"kt": [dict(key="T30_KT06", since=stamp)]},
+               duplicates=[dict(key="T1_S01", uploaded_at=stamp, copies=[])],
+               unrecognized=[dict(youtube_id="odd", uploaded_at=stamp)], unrecognized_count=99,
+               pending={"kt": dict(count=4, episodes=[31])})
+    before = deepcopy(doc)
+    result = overview.visible_issues(doc)
+    assert len(result["missing"]["kt"]) == len(result["duplicates"]) == len(result["unrecognized"]) == int(shown)
+    assert result["unrecognized_count"] == int(shown) and result["pending"] == doc["pending"]
+    assert doc == before
+    if shown:
+        assert overview.visible_issues(doc, "2027-01-01T00:00:00+07:00")["unrecognized_count"] == 0

@@ -33,7 +33,8 @@ def build(ctx: WebContext) -> APIRouter:
     def api_schedule_overview():
         """SCH1: exclusively local snapshots and ticked community-post slots."""
         now = datetime.now(timezone.utc)
-        channels = overview.read(ctx.config)
+        channels, errors = overview.read(ctx.config, include_errors=True)
+        channels = [overview.visible_issues(channel, overview.ISSUES_SINCE) for channel in channels]
         with ctx.post_lock:
             try:
                 times = post_schedule.read(post_schedule.path(ctx.config.workspace.dir))
@@ -75,7 +76,8 @@ def build(ctx: WebContext) -> APIRouter:
                 channel["kinds"]["post"] = overview.coverage(overview.summarize_posts(posts, times, now), now)
                 channel["post_error"] = error
                 channel["stale"] = overview.stale(channel, now)
-        return JSONResponse({"channels": channels, "now": overview._iso(now)},
+        return JSONResponse({"channels": channels, "errors": errors, "tokens": overview.tokens(now),
+                             "now": overview._iso(now)},
                             headers={"Cache-Control": "no-store"})
 
     @router.get("/api/kept-posts")

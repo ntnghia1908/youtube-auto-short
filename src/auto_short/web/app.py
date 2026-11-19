@@ -50,6 +50,7 @@ from .routes import (
     auth,
     pages,
     status,
+    youtube_auth,
     watch as watch_routes,
     reading_api,
     files,
@@ -1293,6 +1294,7 @@ def create_app(config: Config, password: str, *, runner: JobRunner | None = None
     app.include_router(auth.build(ctx))
     app.include_router(pages.build(ctx))
     app.include_router(status.build(ctx))
+    app.include_router(youtube_auth.build(ctx))
     app.include_router(watch_routes.build(ctx))  # WATCH1
     app.include_router(reading_api.build(ctx))
     app.include_router(files.build(ctx))
