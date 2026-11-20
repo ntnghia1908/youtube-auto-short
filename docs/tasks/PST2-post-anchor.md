@@ -88,6 +88,10 @@ Sau task này:
 
 - **Q10 nhãn mã bài trên 2 nút (Amendment E, HUMAN LEAD 2026-11-20: "Thêm thông tin tập và số sót cho hai nút Xem tiếp này. viết tắt theo tên bài")**: nút hiện mã bài dạng viết tắt như tên bài (`T35_S11`, `T36_KT04`): "Bài đăng tiếp T35_S11 →", "Nghe tiếp T37_S04 →"; hết bài → "Hết bài đăng" / "Đã nghe hết" (vô hiệu). Trang chủ và trang bộ kinh gọi `next-post` / `next-listen` sau khi hiện danh sách (không chặn danh sách, lỗi → nhãn mặc định, bấm vẫn gọi lại); bấm dùng kết quả mới nhất (gọi lại API để không mở bài cũ). Thay quy tắc "chỉ gọi API khi bấm" của Q6.
 
+- **Q11 hết bài → tập kế chưa xử lý (Amendment F, HUMAN LEAD 2026-11-20: "Hết bài đăng hoặc đã nghe hết thì đưa tới tập tiếp theo chứ nhỉ" → chọn "Mở tập kế chưa xử lý")**:
+  - Khi `next-post` / `next-listen` không còn bài, API trả thêm `next_unprocessed: {episode_id, label}`. Đó là tập đầu tiên theo thứ tự playlist, nằm sau tập cuối đã có nội dung, mà chưa có Short dựng xong. `label` là số tập theo cách đánh số hiện có, ví dụ `T51`. Không có tập nào như vậy thì trả `null`.
+  - Nút hiện "Chưa xử lý T51 →" và mở `/episodes/<episode_id>`. Cả `null` thì giữ "Hết bài đăng" / "Đã nghe hết" và vô hiệu nút.
+
 ## Implementation approach
 
 - `post/schedule.py`:
@@ -118,6 +122,7 @@ Sau task này:
 8. Q8: `next-listen` trả đúng bài sau bài đã xem cuối (chưa xem → bài đầu; hết → null; 404); nút mở đúng bài (`clip`) + giây nếu có; nghe hết bài (solo) → tick Đã xem; room / Yêu thích không tự tick.
 9. Q9: room — bài phát hết → tick Đã xem đúng bài; tick lỗi không ảnh hưởng phòng; Yêu thích không tick.
 10. Q10: nút hiện mã bài sau khi tải; hết bài → nhãn hết + vô hiệu; lỗi → nhãn mặc định; bấm mở đúng bài.
+11. Q11: hết bài + còn tập chưa xử lý → `next_unprocessed` đúng tập kế; nút "Chưa xử lý T<n> →" mở trang tập; không còn → nhãn hết + vô hiệu.
 6. Q6: `next-post` trả đúng bài (có mốc, không mốc, hết bài → null, bộ lạ → 404); nút ở trang chủ + trang bộ kinh mở đúng tập + cuộn đúng bài (hash).
 
 ## Required verification
