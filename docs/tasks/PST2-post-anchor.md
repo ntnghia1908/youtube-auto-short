@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: IN_PROGRESS
+- Status: READY
 - Type: CHANGE
 - Change class: S1 — thêm khóa vào file trạng thái nội bộ `post_times.json`, đổi luật xếp giờ PST1 cho bộ có mốc; không đổi schema `posts.json`, không ghi YouTube
 - Owner: HUMAN LEAD
@@ -171,4 +171,5 @@ Không chạm database, security model hay public API contract (route nội bộ
 - Amendment E (Codex vòng 6, effort medium): `loadNextLabel` hiện mã bài trên 2 nút; app +19, test +104 / −14 (test cũ "chỉ fetch khi click" đổi theo Q10).
 - Amendment F (Codex vòng 7, effort medium): `listen.next_unprocessed`; `next-post` / `next-listen` thêm `next_unprocessed` khi hết bài; nút "Chưa xử lý T<n> →"; app +37 / −6, test +103 / −16.
 - Known limitations: LNK1 sync của code cũ (trước PST2) ghi `post_times.json` sẽ xóa `anchors`. 8080 phải chạy code PST2.
-- PR:
+- Manual test: HUMAN LEAD thử trên điện thoại PASS (2026-11-20).
+- PR: #225 (base main).
