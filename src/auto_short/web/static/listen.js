@@ -149,6 +149,13 @@
       player.render();
     },
   });
+  for (const media of player.audios) media.addEventListener("ended", (event) => {
+    if (!event.isTrusted || inRoom || favPid || media !== player.media() || !player.active || player.loading
+        || !media.ended || media.seeking || !currentItem) return;
+    const item = currentItem;
+    request("POST", { value: true }, `/api/episodes/${encodeURIComponent(item.episode_id)}/shorts/${encodeURIComponent(item.clip_id)}/watched`)
+      .catch(() => {});
+  }, true); // Capture the completed identity before the player's ended handler advances the queue.
   const roomEnded = (position) => { cancelPause(); roomCommand("ended", { expect_version: rstate.version, position }, true).catch(() => {}); };
   const roomHiddenAdvance = (version) => {
     cancelPause(); rstate = player.state; // Follow the optimistic index while the command is in flight.
@@ -465,15 +472,19 @@
       $("series").textContent = favPid ? `Yêu thích — ${data.title}` : data.title;
       rebuildItems();
       const saved = read(storageKey);
-      const resume = all.find((item) => same(item, saved));
-      const validResume = resume && Number.isFinite(saved.position) && saved.position >= 0;
-      const requestedResume = !favPid && !inRoom && new URLSearchParams(location.search).get("resume") === "1";
+      const params = new URLSearchParams(location.search);
+      const requestedResume = !favPid && !inRoom && params.get("resume") === "1";
+      const requestedClip = requestedResume ? params.get("clip") : null;
+      const resume = all.find((item) => requestedClip !== null
+        ? item.episode_id === episodeId && item.clip_id === requestedClip : same(item, saved));
+      const savedPosition = same(resume, saved) && Number.isFinite(saved.position) && saved.position >= 0;
+      const validResume = resume && (requestedClip !== null || savedPosition);
       // Favorites reopen at the saved identity/part, paused; ordinary episode pages keep the resume button.
       if ((favPid || requestedResume) && validResume) {
         if (!items.some((item) => same(item, resume))) {
           filter = "both"; renderFilter(); write("auto-short-listen-filter", filter); rebuildItems();
         }
-        choose(items.findIndex((item) => same(item, resume)), false, saved.position, requestedResume);
+        choose(items.findIndex((item) => same(item, resume)), false, savedPosition ? saved.position : 0, requestedResume);
         if (requestedResume) {
           // Seek while paused before trying autoplay, so a blocked play keeps the saved clock intact.
           const selected = state, media = player.media();
@@ -488,8 +499,8 @@
       } else choose(startingIndex());
       if (requestedResume) {
         $("resume").hidden = true;
-        const params = new URLSearchParams(location.search);
         params.delete("resume");
+        params.delete("clip");
         history.replaceState(history.state, "", location.pathname + (params.size ? `?${params}` : "") + (location.hash || ""));
       }
       if (validResume && !requestedResume) {

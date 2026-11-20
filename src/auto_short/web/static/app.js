@@ -399,15 +399,12 @@ const AutoShort = (() => {
     finally { button.disabled = false; }
   }
 
-  function openListenResume(id) {
-    let saved;
-    try { saved = JSON.parse(store(`auto-short-listen-position:${id}`)); } catch (_) { /* Invalid local state. */ }
-    if (typeof saved?.episode_id !== "string" || !saved.episode_id || typeof saved.clip_id !== "string"
-        || !saved.clip_id || !Number.isFinite(saved.position) || saved.position < 0) {
-      alert("Chưa nghe bộ này trên máy này");
-      return;
-    }
-    location.href = `/episodes/${encodeURIComponent(saved.episode_id)}?resume=1`;
+  async function openListenResume(id) {
+    try {
+      const result = await api(`/api/playlists/${encodeURIComponent(id)}/next-listen`);
+      if (result.item) location.href = `/episodes/${encodeURIComponent(result.item.episode_id)}?resume=1&clip=${encodeURIComponent(result.item.clip_id)}`;
+      else alert("Đã nghe hết bộ này");
+    } catch (e) { alert(e.message); }
   }
 
   // CP8.31 A3 (was CP8.13 G3 text): coloured badges, same style as the A2 row badges (text + colour). Only

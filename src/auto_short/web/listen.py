@@ -78,3 +78,18 @@ def playlist_listen(config: Config, doc: dict, favorites: Iterable[Item], favori
                               "fav": {"playlist_id": pid, "episode_id": eid, "clip": clip,
                                       "favorite": (eid, clip) in hearted}})
     return {"playlist_id": pid, "title": doc.get("title") or pid, "items": items}
+
+
+def next_listen(config: Config, doc: dict) -> dict | None:
+    """The queue item immediately after the last watched item, including gaps before it."""
+    items = playlist_listen(config, doc, [])["items"]
+    watched, last = {}, -1
+    for index, item in enumerate(items):
+        eid = item["episode_id"]
+        if eid not in watched:
+            watched[eid] = ep._watched(config, eid, ep.render_manifest(config, eid) or {})
+        if watched[eid].get(item["clip_id"], {}).get("watched"):
+            last = index
+    if last + 1 >= len(items):
+        return None
+    return {key: items[last + 1][key] for key in ("episode_id", "clip_id", "code")}

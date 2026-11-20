@@ -110,14 +110,14 @@ def test_codes_use_download_labels_positions_and_width_including_skipped(library
         assert name.startswith(item["code"] + "_")
 
 
-def endpoint(app):
+def endpoint(app, path="/api/playlists/{playlist_id}/listen"):
     # Same nested router traversal as test_web_watch_party / test_store_download.
     routes = list(app.routes)
     while routes:
         route = routes.pop(0)
         if hasattr(route, "original_router"):
             routes[0:0] = route.original_router.routes
-        elif getattr(route, "path", None) == "/api/playlists/{playlist_id}/listen":
+        elif getattr(route, "path", None) == path:
             return route.endpoint
     raise AssertionError("missing listen route")
 
@@ -130,6 +130,96 @@ def test_route_fresh_favorites_and_404(library):
     assert get(PID)["items"][0]["fav"]["favorite"] is False
     store.write_favorites(app.state.compilations.folder(PID), [Item(FIRST, "k09")])
     assert get(PID)["items"][0]["fav"]["favorite"] is True
+
+
+@pytest.mark.parametrize("mode,next_index", [
+    ("unwatched", 0), ("gap", 3), ("shorts-done", 2), ("episode-done", 4),
+    ("finished", None), ("broken", 0), ("bad-schema", 0), ("broken-earlier", 4), ("empty", None),
+])
+def test_next_listen_route_uses_last_watched_in_full_queue(library, mode, next_index):  # PST2 AC8, no sockets
+    from auto_short.review.watched import set_watched
+
+    items = playlist_listen(library, document(), [])["items"]
+    marked = {"gap": [2], "shorts-done": [0, 1], "episode-done": [3], "finished": [4],
+              "broken-earlier": [3]}.get(mode, [])
+    for index in marked:
+        item = items[index]
+        set_watched(item["episode_id"], library, item["clip_id"], True)
+    if mode in {"broken", "bad-schema", "broken-earlier"}:
+        (Path(library.workspace.dir) / FIRST / "watched.json").write_text(
+            '{"schema_version": 9}' if mode == "bad-schema" else "{broken", encoding="utf-8")
+    if mode == "empty":
+        for eid in (FIRST, FIRST + ".kt", SECOND):
+            (Path(library.render.output_dir) / eid / "render_manifest.json").unlink()
+    app = make_app(library)
+    get = endpoint(app, "/api/playlists/{playlist_id}/next-listen")
+    before = {p: p.read_bytes() for p in Path(library.workspace.dir).rglob("watched.json")}
+    expected = {key: items[next_index][key] for key in ("episode_id", "clip_id", "code")} if next_index is not None else None
+    assert get(PID) == {"item": expected}
+    assert get("PLmissing001").status_code == 404 and get("invalid!").status_code == 404
+    assert before == {p: p.read_bytes() for p in Path(library.workspace.dir).rglob("watched.json")}
+
+
+@pytest.mark.parametrize("saved_mode,position", [("same", 23.5), ("other-clip", 0), ("other-episode", 0),
+                                                 ("missing", 0), ("broken", 0), ("negative", 0)])
+def test_player_js_resume_clip_uses_episode_identity_and_only_its_saved_position(run_player_js, saved_mode, position):  # PST2 AC8
+    run_player_js(r'''
+location.pathname = "/episodes/ep2.kt";
+location.search = "?keep=1&resume=1&clip=k2";
+location.hash = "#retained";
+const replaced = [];
+global.history = {state: null, replaceState: (...args) => replaced.push(args)};
+sourceItems = [item(1, 1), item(2, 2), item(2, 1, "khaithi"), item(2, 2, "khaithi")];
+const mode = SAVED_MODE;
+const saved = {episode_id: mode === "other-episode" ? "ep2" : "ep2.kt",
+  clip_id: mode === "other-clip" ? "k1" : "k2", position: mode === "negative" ? -1 : 23.5};
+if (mode !== "missing") storage.set("auto-short-listen-position:PLtest", mode === "broken" ? "{" : JSON.stringify(saved));
+storage.set("auto-short-listen-filter", '"short"');
+await boot(); tick(5000); await metadata();
+assert.equal(activePlayer.state.episode_id, "ep2.kt"); assert.equal(activePlayer.state.clip_id, "k2");
+assert.equal(activePlayer.position(), POSITION);
+assert.equal(storage.get("auto-short-listen-filter"), '"both"');
+assert.ok(!activePlayer.media().paused); assert.ok($("resume").hidden);
+assert.ok(scrolls.some(([node]) => node === $("video")));
+assert.deepEqual(replaced, [[null, "", "/episodes/ep2.kt?keep=1#retained"]]);
+'''.replace("SAVED_MODE", json.dumps(saved_mode)).replace("POSITION", json.dumps(position)))
+
+
+@pytest.mark.parametrize("mode", ["solo", "hidden", "error", "pending", "fake", "seek", "skip", "favorites", "room"])
+def test_player_js_solo_real_ended_ticks_completed_identity_without_waiting(run_player_js, mode):  # PST2 AC8
+    run_player_js(r'''
+const mode = MODE_VALUE;
+location.pathname = mode === "favorites" ? "/playlists/PLtest/favorites" : "/episodes/ep1";
+sourceItems = [item(1, 1), item(1, 2), item(2, 1)];
+const watched = [];
+respond = async (path, options) => {
+  if (!path.endsWith("/watched")) return null;
+  watched.push({path, method: options.method, body: JSON.parse(options.body)});
+  if (mode === "pending") return new Promise(() => {});
+  if (mode === "error") throw Error("write failed");
+  return {ok: true, json: async () => ({watched: true})};
+};
+await boot(); await metadata(); await $("play").fire("click"); await settled();
+if (mode === "room") { useRoom(); await $("watch").fire("click"); await settled(); await metadata(); }
+const audio = activePlayer.media();
+if (mode === "hidden") await visibility(true);
+if (mode === "fake") {
+  audio.ended = true; await audio.fire("ended", {isTrusted: false});
+} else if (mode === "seek") {
+  audio.seeking = true; await end(audio);
+} else if (mode === "skip") {
+  await $("next").fire("click"); await metadata();
+  await audio.fire("ended");  // stale notification after the source changed
+} else await end(audio);
+await settled();
+const eligible = ["solo", "hidden", "error", "pending"].includes(mode);
+assert.deepEqual(watched, eligible ? [{path: "/api/episodes/ep1/shorts/k1/watched", method: "POST", body: {value: true}}] : []);
+if (eligible) {
+  if (mode !== "hidden") tick(3001);
+  await settled(); await metadata();
+  assert.equal(activePlayer.state.clip_id, "k2"); assert.ok(!activePlayer.media().paused);
+}
+'''.replace("MODE_VALUE", json.dumps(mode)))
 
 
 def test_http_listen_auth_404_and_queue(library):  # AC1,2: full middleware path
@@ -247,8 +337,12 @@ class Element {
   setAttribute(k, v) { this.attrs[k] = String(v); if (k === "hidden") this.hidden = true; if (k === "value") this.value = String(v); }
   getAttribute(k) { return k === "src" ? this.src || null : this.attrs[k] ?? null; }
   removeAttribute(k) { delete this.attrs[k]; if (k === "src") this.src = ""; }
-  addEventListener(name, fn) { (this.events[name] ||= []).push(fn); }
-  async fire(name) { if (name === "click" && this.disabled) return; await Promise.all((this.events[name] || []).map(fn => fn({target: this}))); }
+  addEventListener(name, fn, options) {
+    const listeners = this.events[name] ||= [];
+    // At-target capture handlers run before ordinary handlers, as in the browser.
+    if (options === true || options?.capture) listeners.unshift(fn); else listeners.push(fn);
+  }
+  async fire(name, extra = {}) { if (name === "click" && this.disabled) return; await Promise.all((this.events[name] || []).map(fn => fn({target: this, isTrusted: true, ...extra}))); }
   focus() {}
   querySelectorAll(selector) {
     const matches = (e) => selector === "[data-kind]" ? !!e.dataset.kind

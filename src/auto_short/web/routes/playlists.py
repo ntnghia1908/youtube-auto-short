@@ -83,6 +83,15 @@ def build(ctx: WebContext) -> APIRouter:
             return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
         return playlist_listen(ctx.config, doc, ctx.compilations.favorites(playlist_id), favorites_only=favorites)
 
+    @router.get("/api/playlists/{playlist_id}/next-listen")
+    def api_next_listen(playlist_id: str):
+        from ..listen import next_listen
+
+        doc = ctx.playlist_or_404(playlist_id)
+        if doc is None:
+            return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
+        return {"item": next_listen(ctx.config, doc)}
+
     @router.get("/api/playlists/{playlist_id}/link-playlists")
     def api_link_playlists(playlist_id: str):
         if ctx.playlist_or_404(playlist_id) is None:

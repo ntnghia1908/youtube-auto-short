@@ -561,35 +561,29 @@ ktPosts[0].slot_at = "2026-11-20T08:00:00Z";  // earliest slot is Short k01; KT 
 
 
 @pytest.mark.skipif(NODE is None, reason="node not installed")
-@pytest.mark.parametrize("mode", ["saved", "zero", "missing", "broken", "incomplete", "negative", "denied"])
-def test_listen_resume_buttons_read_playlist_local_position(mode):  # PST2 AC7
+@pytest.mark.parametrize("mode", ["target", "empty", "error"])
+def test_listen_resume_buttons_fetch_next_listen_without_reading_position(mode):  # PST2 AC8 replaces Q7 selection
     script = SCHEDULE_HARNESS.split("(async () => {")[0].replace(
         "return { postCard, postBadges, copyTitleButton, postsPage, renderPostsPage, initIndex,",
         "initPlKinds = initHashtags = initSeries = initDoc = initLinkPlaylists = initDownloadQueue = "
         "loadPlaylist = checkDisk = () => {}; "
         "return { postCard, postBadges, copyTitleButton, postsPage, renderPostsPage, loadPlaylists, initIndex,",
     ) + r"""
-const requests = [], reads = [];
+const requests = [], positionReads = [];
 context.document.querySelectorAll = () => [];
 context.fetch = async url => {
   requests.push(url);
-  return {ok: true, status: 200, json: async () => ({playlists: [
+  if (url === "/api/playlists") return {ok: true, status: 200, json: async () => ({playlists: [
     {id: "PLsource00001", title: "Bộ một", count: 2}, {id: "PLsource00002", title: "Bộ hai", count: 1},
   ]})};
+  return {ok: mode !== "error", status: mode === "error" ? 422 : 200, json: async () => mode === "error"
+    ? {detail: "Không đọc được bài nghe"} : {item: mode === "empty" ? null :
+      {episode_id: url.includes("PLsource00001") ? "source00001.kt" : "source00002", clip_id: "k02", code: "T2_S02"}}};
 };
-for (const [id, episode] of [["PLsource00001", "source00001.kt"], ["PLsource00002", "source00002"]]) {
-  const key = "auto-short-listen-position:" + id;
-  const saved = {episode_id: episode, clip_id: "k02", position: mode === "zero" ? 0 : 23.5};
-  if (mode === "negative") saved.position = -1;
-  if (mode === "incomplete") delete saved.clip_id;
-  if (mode !== "missing") storage.set(key, mode === "broken" ? "{" : JSON.stringify(saved));
-  storage.set(key + ":fav", JSON.stringify({...saved, episode_id: "favorites-only"}));
-}
 const get = context.localStorage.getItem;
 context.localStorage.getItem = key => {
   if (key.startsWith("auto-short-listen-position:")) {
-    reads.push(key);
-    if (mode === "denied") throw Error("storage disabled");
+    positionReads.push(key); throw Error("button must use the server's watched state");
   }
   return get(key);
 };
@@ -600,25 +594,28 @@ context.localStorage.getItem = key => {
   const outsideLink = listen.parent === row && row.children[1].textContent === "Bài đăng tiếp →";
   context.location = {pathname: "/playlists/PLsource00002", href: "/playlists/PLsource00002", hash: ""};
   ui.initPlaylist();
+  const beforeClick = requests.slice();
   await listen.click();
   const homeHref = context.location.href;
   context.location.href = "/playlists/PLsource00002";
   await select("#pl-listen-resume").click();
-  console.log(JSON.stringify({outsideLink, reads, requests, homeHref, playlistHref: context.location.href, alerts}));
+  console.log(JSON.stringify({outsideLink, beforeClick, requests, positionReads, homeHref, playlistHref: context.location.href, alerts}));
 })().catch(e => { console.error(e); process.exit(1); });
 """
     result = subprocess.run([NODE, "-e", script, str(APP_JS), mode, "true"],
                             capture_output=True, text=True, timeout=20)
     assert result.returncode == 0, result.stderr
     out = json.loads(result.stdout)
-    assert out["outsideLink"] and out["requests"] == ["/api/playlists"]
-    assert out["reads"] == [f"auto-short-listen-position:{PID}", "auto-short-listen-position:PLsource00002"]
-    if mode in {"saved", "zero"}:
-        assert out["homeHref"] == "/episodes/source00001.kt?resume=1"
-        assert out["playlistHref"] == "/episodes/source00002?resume=1" and out["alerts"] == []
+    assert out["outsideLink"] and out["beforeClick"] == ["/api/playlists"]
+    assert out["positionReads"] == []
+    assert out["requests"] == ["/api/playlists", f"/api/playlists/{PID}/next-listen",
+                               "/api/playlists/PLsource00002/next-listen"]
+    if mode == "target":
+        assert out["homeHref"] == "/episodes/source00001.kt?resume=1&clip=k02"
+        assert out["playlistHref"] == "/episodes/source00002?resume=1&clip=k02" and out["alerts"] == []
     else:
         assert out["homeHref"] == out["playlistHref"] == "/playlists/PLsource00002"
-        assert out["alerts"] == ["Chưa nghe bộ này trên máy này"] * 2
+        assert out["alerts"] == ["Đã nghe hết bộ này" if mode == "empty" else "Không đọc được bài nghe"] * 2
     assert 'id="pl-listen-resume" class="btn small"' in (STATIC_DIR / "playlist.html").read_text()
 
 
