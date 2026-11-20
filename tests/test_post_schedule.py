@@ -305,3 +305,71 @@ def test_anchor_schedule_view_uses_selected_playlist_and_sync_keeps_anchor(servi
     with ctx.post_lock:
         other, nxt = svc.schedule_view(EID2, schedule.timestamp("2026-11-20T00:00:00Z"))
     assert all(slot is None for slot in other.values()) and nxt is None
+
+
+@pytest.mark.parametrize("mode,expected", [
+    ("scheduled", (EID + ".kt", "k01", "T1_KT01", "2026-11-19T02:00:00Z")),
+    ("anchor", (EID, "k02", "T1_S02", "2027-05-31T02:00:00Z")),
+    ("fallback", (EID, "k01", "T1_S01", None)),
+    ("legacy", (EID, "k02", "T1_S02", None)),
+    ("ticked", None), ("manual", None), ("all-legacy", None), ("no-code", None),
+])
+def test_next_post_selects_channel_slot_or_numeric_fallback(service, mode, expected):  # PST2 AC6
+    svc, ctx, _ = service
+    for eid, cid in ((EID, "k02"), (EID, "k01"), (EID + ".kt", "k01"), (EID2, "k01")):
+        seed(ctx, eid, cid, posted=mode == "ticked")
+    times = {f"{EID2}/k01": {"video_at": "2026-11-19T00:00:00Z"}}  # another channel never wins
+    anchors = {}
+    if mode == "scheduled":
+        times[f"{EID}/k01"] = {"video_at": "2026-11-20T00:00:00Z"}
+        times[f"{EID}.kt/k01"] = {"video_at": "2026-11-19T00:00:00Z"}
+    if mode in {"legacy", "all-legacy"}:
+        for eid, cid in ((EID, "k01"), (EID, "k02"), (EID + ".kt", "k01")):
+            if mode == "all-legacy" or cid == "k01":
+                times[f"{eid}/{cid}"] = {"video_at": "2026-11-18T00:00:00Z"}
+    if mode in {"anchor", "manual"}:
+        anchors[PID] = {"code": "T1_S01" if mode == "anchor" else "T99_KT07",
+                        "slot_at": "2027-05-30T13:30:00Z"}
+    if mode == "no-code":
+        for eid in (EID, EID + ".kt"):
+            atomic_write_json(ctx.config.workspace.dir / eid / "titles.json", {"header": {"fields": {}}})
+    schedule.write(svc.times_path, times, anchors)
+    before = svc.times_path.read_bytes(), ctx.posts_path(EID).read_bytes()
+    with ctx.post_lock:
+        result = svc.next_post(PID, schedule.timestamp("2026-11-19T01:50:00Z"))
+        slots, _ = svc.schedule_view(EID, schedule.timestamp("2026-11-19T01:50:00Z"))
+    if expected is None:
+        assert result is None
+    else:
+        eid, clip, code, at = expected
+        assert result == dict(episode_id=eid, clip_id=clip, code=code, **schedule.slot_fields(at))
+        assert result["slot_at"] == slots[f"{eid}/{clip}"]
+    assert (svc.times_path.read_bytes(), ctx.posts_path(EID).read_bytes()) == before
+
+
+def test_next_post_route_lock_missing_playlist_and_read_error(service, monkeypatch):  # PST2 AC6; no TestClient
+    import json
+
+    from auto_short.web.routes import playlists as playlist_routes
+
+    svc, ctx, _ = service
+    ctx.post_links = svc
+    ctx.post_now = lambda: "2026-11-19T01:50:00Z"
+    ctx.playlist_or_404 = ctx.playlists.load
+    router = playlist_routes.build(ctx)
+    endpoint = next(r.endpoint for r in router.routes if r.path == "/api/playlists/{playlist_id}/next-post")
+    seed(ctx, posted=False)
+    original = svc.next_post
+    def locked_next(*args):
+        assert ctx.post_lock.locked()
+        return original(*args)
+    monkeypatch.setattr(svc, "next_post", locked_next)
+    assert endpoint(PID) == {"post": dict(episode_id=EID, clip_id="k01", code="T1_S01",
+                                         slot_at=None, slot_label=None)}
+    assert endpoint("PLunknown001").status_code == 404
+    with ctx.post_lock, pytest.raises(FileNotFoundError):
+        original("PLunknown001", schedule.timestamp(ctx.post_now()))
+    svc.times_path.parent.mkdir(parents=True, exist_ok=True)
+    svc.times_path.write_text('{"schema_version": 9}')
+    response = endpoint(PID)
+    assert response.status_code == 422 and "schema" in json.loads(response.body)["detail"]

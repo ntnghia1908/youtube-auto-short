@@ -378,10 +378,36 @@ const AutoShort = (() => {
       list.replaceChildren(el("li", { class: "muted", text: "Chưa có bộ kinh nào — dán link playlist ở trên." }));
       return;
     }
-    list.replaceChildren(...data.playlists.map((p) => el("li", {},
-      el("a", { href: "/playlists/" + encodeURIComponent(p.id) },
+    list.replaceChildren(...data.playlists.map((p) => {
+      const next = el("button", { class: "btn small", type: "button", text: "Bài đăng tiếp →" });
+      next.addEventListener("click", () => openNextPost(p.id, next));
+      const listen = el("button", { class: "btn small", type: "button", text: "Nghe tiếp →" });
+      listen.addEventListener("click", () => openListenResume(p.id));
+      return el("li", {}, el("a", { href: "/playlists/" + encodeURIComponent(p.id) },
         el("span", { class: "ep-name", text: p.title || p.id }),
-        playlistBadges(p)))));
+        playlistBadges(p)), next, listen);
+    }));
+  }
+
+  async function openNextPost(id, button) {
+    button.disabled = true;
+    try {
+      const result = await api(`/api/playlists/${encodeURIComponent(id)}/next-post`);
+      if (result.post) location.href = `/episodes/${encodeURIComponent(result.post.episode_id)}/posts#post-${encodeURIComponent(result.post.clip_id)}`;
+      else alert("Hết bài cần đăng");
+    } catch (e) { alert(e.message); }
+    finally { button.disabled = false; }
+  }
+
+  function openListenResume(id) {
+    let saved;
+    try { saved = JSON.parse(store(`auto-short-listen-position:${id}`)); } catch (_) { /* Invalid local state. */ }
+    if (typeof saved?.episode_id !== "string" || !saved.episode_id || typeof saved.clip_id !== "string"
+        || !saved.clip_id || !Number.isFinite(saved.position) || saved.position < 0) {
+      alert("Chưa nghe bộ này trên máy này");
+      return;
+    }
+    location.href = `/episodes/${encodeURIComponent(saved.episode_id)}?resume=1`;
   }
 
   // CP8.31 A3 (was CP8.13 G3 text): coloured badges, same style as the A2 row badges (text + colour). Only
@@ -490,6 +516,7 @@ const AutoShort = (() => {
     // LISTEN1: keep the existing management DOM and handlers intact across tab changes.
     let episodeTab = "listen";
     try { if (localStorage.getItem("auto-short-episode-tab") === "manage") episodeTab = "manage"; } catch (_) { /* Private mode. */ }
+    if (new URLSearchParams(location.search).get("resume") === "1") episodeTab = "listen";
     function selectEpisodeTab(tab) {
       const listening = tab === "listen";
       if (listening) {
@@ -1721,7 +1748,8 @@ const AutoShort = (() => {
     return el("span", { class: "copy-wrap" }, copy, warning);
   }
 
-  const postsPage = { vid: null, groups: [], autoTried: false, timer: null, nodes: new Map(), loaded: false, backlog: null };
+  const postsPage = { vid: null, groups: [], autoTried: false, timer: null, nodes: new Map(), loaded: false,
+    initialScrolled: false, backlog: null };
 
   function renderedOf(g) { return g.view.shorts.filter((s) => s.status === "rendered"); }
 
@@ -1925,6 +1953,13 @@ const AutoShort = (() => {
     }
     for (const id of [...postsPage.nodes.keys()]) if (!seen.has(id)) postsPage.nodes.delete(id);
     root.replaceChildren(...sections);
+    if (postsPage.loaded && !postsPage.initialScrolled) {
+      postsPage.initialScrolled = true;
+      const clip = location.hash.startsWith("#post-") ? location.hash.slice(6) : "";
+      const target = clip && postsPage.nodes.get((episodeId || postsPage.vid) + "|" + clip);
+      if (target) target.node.scrollIntoView({ behavior: "smooth", block: "start" });
+      else scrollToNextPost();
+    }
   }
 
   async function loadPostsPage() {
@@ -3221,6 +3256,8 @@ const AutoShort = (() => {
   function initPlaylist() {
     playlistId = decodeURIComponent(location.pathname.split("/").filter(Boolean)[1] || "");
     $("#pl-thumbs").href = `/playlists/${encodeURIComponent(playlistId)}/thumbs`;
+    $("#pl-next-post").addEventListener("click", () => openNextPost(playlistId, $("#pl-next-post")));
+    $("#pl-listen-resume").addEventListener("click", () => openListenResume(playlistId));
     const savedFilter = store("autoShort.plFilter");
     if (PL_FILTERS.includes(savedFilter)) plFilter = savedFilter;
     document.querySelectorAll("#pl-filters [data-filter]").forEach((b) => b.addEventListener("click", () => {

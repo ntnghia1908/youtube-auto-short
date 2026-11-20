@@ -467,14 +467,32 @@
       const saved = read(storageKey);
       const resume = all.find((item) => same(item, saved));
       const validResume = resume && Number.isFinite(saved.position) && saved.position >= 0;
+      const requestedResume = !favPid && !inRoom && new URLSearchParams(location.search).get("resume") === "1";
       // Favorites reopen at the saved identity/part, paused; ordinary episode pages keep the resume button.
-      if (favPid && validResume) {
+      if ((favPid || requestedResume) && validResume) {
         if (!items.some((item) => same(item, resume))) {
           filter = "both"; renderFilter(); write("auto-short-listen-filter", filter); rebuildItems();
         }
-        choose(items.findIndex((item) => same(item, resume)), false, saved.position);
+        choose(items.findIndex((item) => same(item, resume)), false, saved.position, requestedResume);
+        if (requestedResume) {
+          // Seek while paused before trying autoplay, so a blocked play keeps the saved clock intact.
+          const selected = state, media = player.media();
+          const tryPlay = () => {
+            if (state !== selected || inRoom || !player.active) return;
+            // The player's existing media events update solo state on a successful play.
+            media.play().catch(() => {});
+          };
+          if (player.loading) media.addEventListener("loadedmetadata", tryPlay, { once: true });
+          else tryPlay();
+        }
       } else choose(startingIndex());
-      if (validResume) {
+      if (requestedResume) {
+        $("resume").hidden = true;
+        const params = new URLSearchParams(location.search);
+        params.delete("resume");
+        history.replaceState(history.state, "", location.pathname + (params.size ? `?${params}` : "") + (location.hash || ""));
+      }
+      if (validResume && !requestedResume) {
         const seconds = Math.floor(saved.position);
         $("resume").textContent = `Nghe tiếp từ ${epLabel(resume)} · ${kindLabel(resume)} · ${resume.title || resume.clip_id} (${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")})`;
         $("resume").hidden = false;

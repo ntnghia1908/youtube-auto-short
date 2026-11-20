@@ -16,7 +16,7 @@ from ...compilation import CID_RE as CID_RE, CompilationError, Item
 from ...enhance import state as enh_state
 from ...review import backup as review_backup
 from ...enhance.state import EnhanceError
-from ...post import doc as post_doc, stage as post_stage, store as post_store
+from ...post import doc as post_doc, schedule as post_schedule, stage as post_stage, store as post_store
 from ...render import full as render_full
 from ..context import WebContext, RANGE_SIZE, KINDS
 from .. import episodes as ep, playlists as playlists_mod
@@ -61,6 +61,18 @@ class FavoriteIn(BaseModel):
 
 def build(ctx: WebContext) -> APIRouter:
     router = APIRouter()
+
+    @router.get("/api/playlists/{playlist_id}/next-post")
+    def api_next_post(playlist_id: str):
+        with ctx.post_lock:
+            if ctx.playlist_or_404(playlist_id) is None:
+                return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
+            try:
+                return {"post": ctx.post_links.next_post(playlist_id, post_schedule.timestamp(ctx.post_now()))}
+            except FileNotFoundError:
+                return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
+            except (ValueError, OSError) as exc:
+                return JSONResponse({"detail": str(exc)}, status_code=422)
 
     @router.get("/api/playlists/{playlist_id}/listen")
     def api_listen(playlist_id: str, favorites: bool = False):

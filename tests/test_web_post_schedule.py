@@ -15,6 +15,7 @@ from auto_short.web.app import STATIC_DIR
 from auto_short.workspace import atomic_write_json
 from test_post_links import EID, EID2, PID, SHORTS, seed, service
 from test_web_post_doc_gate import APP_JS, HARNESS as COPY_HARNESS, NODE
+from test_web_listen import run_player_js
 from web_helpers import login, make_app
 
 NOW = "2026-11-19T01:50:00Z"
@@ -161,6 +162,7 @@ function select(sel) {
   return nodes.get(sel);
 }
 context.document.querySelector = select;
+context.location = {pathname: "/episodes/source00001/posts", hash: ""};
 context.clearTimeout = () => {};
 const makePost = (clip, at, label) => ({ clip_id: clip, origin: "manual", text: "Bài đầy đủ",
   paragraphs: ["Nội dung."], image: "picture.png", chars: 11, posted: false,
@@ -446,3 +448,255 @@ process.env.TZ = "America/New_York";
         {"url": f"/api/episodes/{EID}/posts/anchor", "payload":
          {"code": "T1_S01", "slot_at": "2027-05-30T20:30:00+07:00"}} for _ in range(2)] + [
         {"url": f"/api/episodes/{EID}/posts/anchor", "payload": {}} for _ in range(2)]
+
+
+@pytest.mark.parametrize("anchor_code,expected", [(None, "T1_S01"), ("T1_S01", "T1_S02"), ("T99_KT07", None)])
+def test_playlist_next_post_api(web, anchor_code, expected):  # PST2 AC6; ORCHESTRATOR / TestClient
+    client, svc = web
+    url = f"/api/playlists/{PID}/next-post"
+    assert client.get(url).status_code == 401
+    login(client)
+    if anchor_code:
+        schedule.write(svc.times_path, schedule.read(svc.times_path), {
+            PID: {"code": anchor_code, "slot_at": "2027-05-30T13:30:00Z"}})
+    response = client.get(url)
+    assert response.status_code == 200
+    post = response.json()["post"]
+    if expected is None:
+        assert post is None
+    else:
+        assert post["code"] == expected
+        assert post == {"episode_id": EID, "clip_id": "k01" if not anchor_code else "k02", "code": expected,
+                        **schedule.slot_fields("2026-11-19T02:00:00Z" if not anchor_code else "2027-05-31T02:00:00Z")}
+    assert client.get("/api/playlists/PLunknown001/next-post").status_code == 404
+
+
+@pytest.mark.skipif(NODE is None, reason="node not installed")
+@pytest.mark.parametrize("mode", ["target", "empty", "error"])
+def test_next_post_buttons_fetch_only_on_click_and_open_exact_post(mode):  # PST2 AC6
+    # Stub unrelated playlist initializers only in the VM; run the real initPlaylist button binding.
+    script = SCHEDULE_HARNESS.split("(async () => {")[0].replace(
+        "return { postCard, postBadges, copyTitleButton, postsPage, renderPostsPage, initIndex,",
+        "initPlKinds = initHashtags = initSeries = initDoc = initLinkPlaylists = initDownloadQueue = "
+        "loadPlaylist = checkDisk = () => {}; "
+        "return { postCard, postBadges, copyTitleButton, postsPage, renderPostsPage, loadPlaylists, initIndex,",
+    ) + r"""
+const requests = [], busy = [];
+context.document.querySelectorAll = () => [];
+context.fetch = async url => {
+  requests.push(url);
+  if (url === "/api/playlists") return {ok: true, status: 200, json: async () => ({playlists: [
+    {id: "PLsource00001", title: "Bộ một", processed: 1, count: 2},
+    {id: "PLsource00002", title: "Bộ hai", processed: 0, count: 1},
+  ]})};
+  busy.push(activeButton.disabled);
+  return {ok: mode !== "error", status: mode === "error" ? 422 : 200, json: async () =>
+    mode === "error" ? {detail: "Không đọc được giờ bài đăng"} : {post: mode === "empty" ? null :
+      {episode_id: "source00001.kt", clip_id: "k02", code: "T1_KT02", slot_at: null, slot_label: null}}};
+};
+let activeButton;
+(async () => {
+  await ui.loadPlaylists();
+  const rows = select("#playlists").children;
+  const buttons = rows.map(row => findButton(row, "Bài đăng tiếp →"));
+  const outsideLinks = buttons.every((b, i) => b.parent === rows[i] && b.parent.tag === "li"
+    && rows[i].children[0].tag === "a");
+  context.location = {pathname: "/playlists/PLsource00002", hash: "", href: "/playlists/PLsource00002"};
+  ui.initPlaylist();
+  const lazyRequests = requests.slice();
+  activeButton = buttons[0];
+  await activeButton.click();
+  const homeHref = context.location.href, homeEnabled = !activeButton.disabled;
+  context.location.href = "/playlists/PLsource00002";
+  activeButton = select("#pl-next-post");
+  await activeButton.click();
+  console.log(JSON.stringify({outsideLinks, lazyRequests, requests, busy, homeHref,
+    playlistHref: context.location.href, enabled: homeEnabled && !activeButton.disabled, alerts}));
+})().catch(e => { console.error(e); process.exit(1); });
+"""
+    result = subprocess.run([NODE, "-e", script, str(APP_JS), mode, "true"],
+                            capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stderr
+    out = json.loads(result.stdout)
+    assert out["outsideLinks"] and out["enabled"] and out["busy"] == [True, True]
+    assert out["lazyRequests"] == ["/api/playlists"]
+    assert out["requests"] == ["/api/playlists", f"/api/playlists/{PID}/next-post",
+                               "/api/playlists/PLsource00002/next-post"]
+    assert out["homeHref"] == out["playlistHref"] == (
+        "/episodes/source00001.kt/posts#post-k02" if mode == "target" else "/playlists/PLsource00002")
+    assert out["alerts"] == ([] if mode == "target" else
+                             ["Hết bài cần đăng" if mode == "empty" else "Không đọc được giờ bài đăng"] * 2)
+    assert 'id="pl-next-post" class="btn small"' in (STATIC_DIR / "playlist.html").read_text()
+
+
+@pytest.mark.skipif(NODE is None, reason="node not installed")
+@pytest.mark.parametrize("episode,hash_value,target", [
+    (EID, "#post-k01", EID + "|k01"), (EID, "#post-k02", EID + "|k02"),
+    (EID + ".kt", "#post-k01", EID + ".kt|k01"),
+    (EID + ".kt", "#post-k02", EID + "|k01"),  # hash exists only in the other episode
+    (EID, "#post-missing", EID + "|k01"), (EID, "", EID + "|k01"),
+])
+def test_posts_initial_hash_scroll_is_scoped_and_runs_once(episode, hash_value, target):  # PST2 AC6
+    script = SCHEDULE_HARNESS.split("(async () => {")[0].replace(
+        "postsPage, renderPostsPage, initIndex,",
+        "postsPage, renderPostsPage, loadPostsPage, setEpisodeForTest: id => { episodeId = id; }, initIndex,",
+    ) + r"""
+context.location.hash = process.argv[4];
+ui.setEpisodeForTest(process.argv[5]);
+ktPosts[0].slot_at = "2026-11-20T08:00:00Z";  // earliest slot is Short k01; KT hash must still win
+(async () => {
+  await ui.loadPostsPage();
+  const expected = ui.postsPage.nodes.get(process.argv[6]).node;
+  const exact = scrolled.length === 1 && scrolled[0] === expected;
+  context.location.hash = "#post-k02";
+  ui.renderPostsPage();
+  await ui.loadPostsPage();
+  console.log(JSON.stringify({exact, count: scrolled.length}));
+})().catch(e => { console.error(e); process.exit(1); });
+"""
+    result = subprocess.run([NODE, "-e", script, str(APP_JS), "success", "true", hash_value, episode, target],
+                            capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"exact": True, "count": 1}
+
+
+@pytest.mark.skipif(NODE is None, reason="node not installed")
+@pytest.mark.parametrize("mode", ["saved", "zero", "missing", "broken", "incomplete", "negative", "denied"])
+def test_listen_resume_buttons_read_playlist_local_position(mode):  # PST2 AC7
+    script = SCHEDULE_HARNESS.split("(async () => {")[0].replace(
+        "return { postCard, postBadges, copyTitleButton, postsPage, renderPostsPage, initIndex,",
+        "initPlKinds = initHashtags = initSeries = initDoc = initLinkPlaylists = initDownloadQueue = "
+        "loadPlaylist = checkDisk = () => {}; "
+        "return { postCard, postBadges, copyTitleButton, postsPage, renderPostsPage, loadPlaylists, initIndex,",
+    ) + r"""
+const requests = [], reads = [];
+context.document.querySelectorAll = () => [];
+context.fetch = async url => {
+  requests.push(url);
+  return {ok: true, status: 200, json: async () => ({playlists: [
+    {id: "PLsource00001", title: "Bộ một", count: 2}, {id: "PLsource00002", title: "Bộ hai", count: 1},
+  ]})};
+};
+for (const [id, episode] of [["PLsource00001", "source00001.kt"], ["PLsource00002", "source00002"]]) {
+  const key = "auto-short-listen-position:" + id;
+  const saved = {episode_id: episode, clip_id: "k02", position: mode === "zero" ? 0 : 23.5};
+  if (mode === "negative") saved.position = -1;
+  if (mode === "incomplete") delete saved.clip_id;
+  if (mode !== "missing") storage.set(key, mode === "broken" ? "{" : JSON.stringify(saved));
+  storage.set(key + ":fav", JSON.stringify({...saved, episode_id: "favorites-only"}));
+}
+const get = context.localStorage.getItem;
+context.localStorage.getItem = key => {
+  if (key.startsWith("auto-short-listen-position:")) {
+    reads.push(key);
+    if (mode === "denied") throw Error("storage disabled");
+  }
+  return get(key);
+};
+(async () => {
+  await ui.loadPlaylists();
+  const row = select("#playlists").children[0];
+  const listen = findButton(row, "Nghe tiếp →");
+  const outsideLink = listen.parent === row && row.children[1].textContent === "Bài đăng tiếp →";
+  context.location = {pathname: "/playlists/PLsource00002", href: "/playlists/PLsource00002", hash: ""};
+  ui.initPlaylist();
+  await listen.click();
+  const homeHref = context.location.href;
+  context.location.href = "/playlists/PLsource00002";
+  await select("#pl-listen-resume").click();
+  console.log(JSON.stringify({outsideLink, reads, requests, homeHref, playlistHref: context.location.href, alerts}));
+})().catch(e => { console.error(e); process.exit(1); });
+"""
+    result = subprocess.run([NODE, "-e", script, str(APP_JS), mode, "true"],
+                            capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stderr
+    out = json.loads(result.stdout)
+    assert out["outsideLink"] and out["requests"] == ["/api/playlists"]
+    assert out["reads"] == [f"auto-short-listen-position:{PID}", "auto-short-listen-position:PLsource00002"]
+    if mode in {"saved", "zero"}:
+        assert out["homeHref"] == "/episodes/source00001.kt?resume=1"
+        assert out["playlistHref"] == "/episodes/source00002?resume=1" and out["alerts"] == []
+    else:
+        assert out["homeHref"] == out["playlistHref"] == "/playlists/PLsource00002"
+        assert out["alerts"] == ["Chưa nghe bộ này trên máy này"] * 2
+    assert 'id="pl-listen-resume" class="btn small"' in (STATIC_DIR / "playlist.html").read_text()
+
+
+@pytest.mark.skipif(NODE is None, reason="node not installed")
+@pytest.mark.parametrize("mode", ["play", "blocked", "normal", "missing", "broken", "negative", "stale", "favorites", "room"])
+def test_listen_url_resume_selects_saved_identity_and_keeps_old_modes(run_player_js, mode):  # PST2 AC7
+    run_player_js(r'''
+const mode = MODE_VALUE, replaced = [];
+location.pathname = mode === "favorites" ? "/playlists/PLtest/favorites" : mode === "room" ? "/watch" : "/episodes/ep1";
+location.search = mode === "normal" ? "?keep=1" : "?keep=1&resume=1";
+location.hash = "#retained";
+global.history = {state: {keep: true}, replaceState: (...args) => replaced.push(args)};
+sourceItems = [item(1, 1), item(2, 1), item(2, 2, "khaithi")];
+storage.set("auto-short-listen-filter", '"short"');
+const saved = {episode_id: mode === "stale" ? "deleted" : "ep2.kt", clip_id: "k2", position: mode === "negative" ? -1 : 23.5};
+const key = "auto-short-listen-position:PLtest" + (mode === "favorites" ? ":fav" : "");
+if (mode !== "missing") storage.set(key, mode === "broken" ? "{" : JSON.stringify(saved));
+const originalPlay = Element.prototype.play;
+if (mode === "blocked") Element.prototype.play = function() {
+  this.plays++; return Promise.reject(Object.assign(new Error("autoplay blocked"), {name: "NotAllowedError"}));
+};
+await boot();
+tick(5000);  // metadata may arrive late; resume must seek to the saved second, without advancing its clock
+await metadata();
+const automatic = ["play", "blocked"].includes(mode);
+if (automatic || mode === "favorites") {
+  assert.equal(activePlayer.state.episode_id, "ep2.kt"); assert.equal(activePlayer.state.clip_id, "k2");
+  assert.equal(activePlayer.position(), 23.5);
+  assert.equal(storage.get("auto-short-listen-filter"), '"both"');
+  assert.equal(activePlayer.media().paused, mode !== "play");
+  if (mode === "blocked") {
+    assert.ok(!$("play").hidden); assert.ok(activePlayer.state.paused);
+    tick(10000); await visibility(true); await visibility(false);
+    assert.equal(activePlayer.position(), 23.5);
+    Element.prototype.play = originalPlay;
+    await $("play").fire("click"); await settled();
+    assert.ok(!activePlayer.media().paused); assert.equal(activePlayer.position(), 23.5);
+  }
+} else if (mode !== "room") {
+  assert.equal(activePlayer.state.episode_id, "ep1"); assert.equal(activePlayer.position(), 0);
+  assert.ok(activePlayer.media().paused);
+}
+if (!["normal", "favorites", "room"].includes(mode)) {
+  assert.ok($("resume").hidden);
+  assert.deepEqual(replaced, [[{keep: true}, "", "/episodes/ep1?keep=1#retained"]]);
+  if (automatic) assert.ok(scrolls.some(([node]) => node === $("video")));
+} else {
+  assert.equal(replaced.length, 0);
+  if (mode !== "room") assert.ok(!$("resume").hidden);
+  if (mode === "normal") {
+    await $("resume").fire("click"); await metadata();
+    assert.equal(activePlayer.state.episode_id, "ep2.kt"); assert.equal(activePlayer.position(), 23.5);
+    assert.ok(!activePlayer.media().paused); assert.ok($("resume").hidden);
+  }
+}
+'''.replace("MODE_VALUE", json.dumps(mode)))
+
+
+@pytest.mark.skipif(NODE is None, reason="node not installed")
+@pytest.mark.parametrize("query,tab", [("?resume=1", "listen"), ("?resume=0", "manage"), ("", "manage")])
+def test_listen_url_resume_opens_listen_tab_without_changing_normal_preference(query, tab):  # PST2 AC7
+    script = SCHEDULE_HARNESS.split("(async () => {")[0].replace(
+        "return { postCard, postBadges, copyTitleButton, postsPage, renderPostsPage, initIndex,",
+        "initAddDialog = refreshEpisode = checkDisk = () => {}; loadUi = () => Promise.resolve(); "
+        "return { postCard, postBadges, copyTitleButton, postsPage, renderPostsPage, initIndex,",
+    ) + r"""
+context.document.querySelectorAll = () => [];
+context.document.dispatchEvent = () => {};
+context.CustomEvent = class {constructor(type, value) {this.type = type; this.detail = value.detail;}};
+context.URLSearchParams = URLSearchParams;
+context.location.search = process.argv[4];
+storage.set("auto-short-episode-tab", "manage");
+for (const name of ["listen", "manage"]) select("#episode-tab-" + name).classList = {toggle() {}};
+ui.initEpisode();
+console.log(JSON.stringify({listenHidden: select("#episode-listen").hidden,
+  manageHidden: select("#episode-manage").hidden, savedTab: storage.get("auto-short-episode-tab")}));
+"""
+    result = subprocess.run([NODE, "-e", script, str(APP_JS), "success", "true", query],
+                            capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"listenHidden": tab != "listen", "manageHidden": tab == "listen", "savedTab": tab}

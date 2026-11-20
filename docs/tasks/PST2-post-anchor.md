@@ -140,5 +140,10 @@ Không chạm database, security model hay public API contract (route nội bộ
   - Sửa 1 assert của test PST1 `test_legacy_ui_group_last_and_copy_scroll_skips_backlog`: hết bài có giờ thì cuộn tới bài chưa đăng kế (k02) thay vì nút cuối trang. Đây là thay đổi do Q4 / "Code bị thay: scrollToNextPost".
   - Chỉnh assert tương ứng trong test mới.
 - Codex: 1 vòng, 90k token, session `01a1f8fc-d8a1-7071-b0db-117aff72fcca`.
+- Amendment A + B (Codex vòng 2–3, resume session; 145k + 202k token):
+  - `PostLinks._schedule_playlist` (tách từ `schedule_view`) và `next_post`; route `GET /api/playlists/{id}/next-post`.
+  - Nút "Bài đăng tiếp →" / "Nghe tiếp →" ở trang chủ và trang bộ kinh; cuộn theo hash `#post-<clip>`; `listen.js` hỗ trợ `?resume=1`.
+  - App +117 / −20, test +322.
+  - Full suite 4784 PASS, 2 skip.
 - Known limitations: LNK1 sync của code cũ (trước PST2) ghi `post_times.json` sẽ xóa `anchors`. 8080 phải chạy code PST2.
 - PR:

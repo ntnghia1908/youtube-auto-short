@@ -117,17 +117,10 @@ class PostLinks:
                         targets.append(dict(code=code, episode_id=eid, clip_id=cid, khaithi=kt))
         return targets, orders
 
-    def schedule_view(self, episode_id: str, now: datetime, *, with_anchor: bool = False) -> tuple:
-        """Plan local files under ctx.post_lock. with_anchor adds playlist id and anchor to the result."""
-        owner = ep.hd_owner(episode_id)
-        docs = [d for d in self.ctx.playlists.all()
-                if any(e.get("video_id") == owner for e in d["entries"])]
-        docs.sort(key=lambda d: (not bool(d.get("link_playlists")), d["playlist_id"]))
-        if not docs:
-            return ({}, None, None, None) if with_anchor else ({}, None)
-        playlist_id = docs[0]["playlist_id"]
-        anchor = schedule.read_anchors(self.times_path).get(playlist_id)
-        targets, orders = self._targets(docs[0])
+    def _schedule_playlist(self, doc: dict, now: datetime) -> tuple:
+        """Build the channel's posts and plan from local files; caller holds ctx.post_lock."""
+        anchor = schedule.read_anchors(self.times_path).get(doc["playlist_id"])
+        targets, orders = self._targets(doc)
         by_target = {(t["episode_id"], t["clip_id"]): t for t in targets}
         posts = []
         for eid in orders:
@@ -140,12 +133,45 @@ class PostLinks:
                 if target or post["posted_at"]:
                     # Saved slots stay occupied even if a ticked Short was subsequently deleted.
                     posts.append({**post, "episode_id": eid, "code": target["code"] if target else ""})
-        slots = schedule.plan(posts, schedule.read(self.times_path), now, anchor)
+        times = schedule.read(self.times_path)
+        return posts, times, schedule.plan(posts, times, now, anchor), anchor
+
+    def schedule_view(self, episode_id: str, now: datetime, *, with_anchor: bool = False) -> tuple:
+        """Plan local files under ctx.post_lock. with_anchor adds playlist id and anchor to the result."""
+        owner = ep.hd_owner(episode_id)
+        docs = [d for d in self.ctx.playlists.all()
+                if any(e.get("video_id") == owner for e in d["entries"])]
+        docs.sort(key=lambda d: (not bool(d.get("link_playlists")), d["playlist_id"]))
+        if not docs:
+            return ({}, None, None, None) if with_anchor else ({}, None)
+        playlist_id = docs[0]["playlist_id"]
+        posts, _, slots, anchor = self._schedule_playlist(docs[0], now)
         unposted = {f'{p["episode_id"]}/{p["clip_id"]}': p for p in posts if not p["posted_at"]}
         candidates = [(at, key) for key, at in slots.items() if at and key in unposted
                       and ep.hd_owner(unposted[key]["episode_id"]) != owner]
         next_episode = unposted[min(candidates)[1]]["episode_id"] if candidates else None
         return (slots, next_episode, playlist_id, anchor) if with_anchor else (slots, next_episode)
+
+    def next_post(self, playlist_id: str, now: datetime) -> dict | None:
+        """Earliest unticked slot, then numeric-code fallback. Caller holds ctx.post_lock."""
+        doc = self.ctx.playlists.load(playlist_id)
+        if doc is None:
+            raise FileNotFoundError(playlist_id)
+        posts, times, slots, anchor = self._schedule_playlist(doc, now)
+        candidates = []
+        for post in posts:
+            if post["posted_at"] or not post["code"] or links.parse_code(post["code"]) != post["code"]:
+                continue
+            key = f'{post["episode_id"]}/{post["clip_id"]}'
+            at = slots.get(key)
+            if schedule.slot_group(post, times.get(key, {}), at, anchor) in {"manual", "legacy"}:
+                continue
+            candidates.append((at is None, schedule.timestamp(at) if at else now,
+                               schedule.code_order(post["code"]), key, post))
+        if not candidates:
+            return None
+        _, _, _, key, post = min(candidates, key=lambda row: row[:4])
+        return {field: post[field] for field in ("episode_id", "clip_id", "code")} | schedule.slot_fields(slots.get(key))
 
     def sync(self, playlist_id: str) -> dict:
         with self._lock:
