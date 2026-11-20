@@ -13,7 +13,7 @@
 - Authorization mode: task
 - Authorization source: HUMAN LEAD 2026-11-20: "Trang đăng bài mỗi lần Đăng tự cuộn xuống cuối Trang chứ không phải đúng bài tiếp theo và hiện tại chưa hiện ngày giờ đăng cho từng bài" → "Tôi đã lên lịch tới T35-S6 rơi vào ngày 30-5-27 20:30 chỉ cần lên lịch từ đây các bài Phía Trước bỏ qua"
 - Parallel group: —
-- Owned paths: `src/auto_short/post/schedule.py`, `src/auto_short/web/post_links.py` (`schedule_view`), `src/auto_short/web/routes/episode_edit.py` (route `GET …/posts`, `/posted`, route đặt mốc mới), `src/auto_short/web/static/app.js` (phần trang Bài đăng), `src/auto_short/web/static/style.css` (nếu cần), `tests/test_post_schedule.py`, `tests/test_web_post_schedule.py`, contract này
+- Owned paths: `src/auto_short/post/schedule.py`, `src/auto_short/web/post_links.py` (`schedule_view`, next-post), `src/auto_short/web/routes/playlists.py` (route `next-post`, Amendment A), `src/auto_short/web/static/index.html` + `playlist.html` (nút, Amendment A), `src/auto_short/web/routes/episode_edit.py` (route `GET …/posts`, `/posted`, route đặt mốc mới), `src/auto_short/web/static/app.js` (phần trang Bài đăng), `src/auto_short/web/static/style.css` (nếu cần), `tests/test_post_schedule.py`, `tests/test_web_post_schedule.py`, contract này
 - Dependencies: PST1 (đã merge)
 - Base commit / branch: `bbd1df5` / `feature/pst2-post-anchor` (worktree `~/projects/yas-pst2`)
 - Human Lead approval: accepted 2026-11-20 ("Duyệt, CƯT đăng tới T30 kt07 ngày 15:00 06/03/27. VLT tơi T33-S01 20:30 11/3/2027")
@@ -59,6 +59,13 @@ Sau task này:
 
 - **Q5 nhãn giờ (HUMAN LEAD 2026-11-20: "Với mốc thời gian bỏ thứ đi không cần")**: `slot_label` = `dd/mm h:MM AM|PM` (bỏ thứ; HUMAN LEAD sau đó: "Đặt theo giờ am, pm"), cho mọi bài và mốc.
 
+- **Q6 nút "Bài đăng tiếp →" (Amendment A, HUMAN LEAD 2026-11-20: "Thêm một nút ngoài bộ kinh khi click vào thì dẫn tới đúng bài Cần Đăng tiếp theo bởi vì mỗi lần tôi đăng bài phải dò lại trên YouTube tôi đăng tới bài mấy rất phiền")**:
+  - Route mới `GET /api/playlists/{playlist_id}/next-post` trả `{episode_id, clip_id, code, slot_at, slot_label}`, hoặc `null` khi hết bài.
+  - Bài được chọn là bài chưa tick có giờ sớm nhất của bộ, tính đúng như `schedule_view` / `plan`: có mốc thì dùng mốc, không có thì theo PST1.
+  - Nếu bộ không còn bài có giờ thì chọn bài chưa tick đầu tiên theo thứ tự mã, bỏ qua nhóm manual và legacy.
+  - Nút nằm cạnh mỗi bộ ở danh sách trang chủ và trên trang bộ kinh. Bấm mới gọi API (không tính sẵn khi tải danh sách). Có bài thì mở `/episodes/{episode_id}/posts#post-{clip_id}`. Hết bài thì báo "Hết bài cần đăng".
+  - Khi mở, trang Bài đăng cuộn tới bài trong hash (`#post-{clip_id}`, thuộc tập đang mở). Không có hash thì cuộn như `scrollToNextPost`.
+
 ## Implementation approach
 
 - `post/schedule.py`:
@@ -85,6 +92,7 @@ Sau task này:
 3. Q3: bài ≤ mốc chưa tick → `slot_group = "manual"`, không giờ, không chiếm ô, không thành `next_episode`.
 4. Q4: trang có bài có giờ → cuộn tới bài đó. Không có → cuộn tới bài chưa đăng kế tiếp. Hết → "Tập kế tiếp".
 5. Bộ không mốc: test PST1 cũ PASS không sửa.
+6. Q6: `next-post` trả đúng bài (có mốc, không mốc, hết bài → null, bộ lạ → 404); nút ở trang chủ + trang bộ kinh mở đúng tập + cuộn đúng bài (hash).
 
 ## Required verification
 
