@@ -86,6 +86,8 @@ Sau task này:
 
 - **Q9 tự tick trong Nghe chung (Amendment D, HUMAN LEAD 2026-11-20: "Làm luôn cho phận Nghe Chung")**: ở chế độ phòng nghe / xem chung (room), khi bài hiện tại phát tới hết (luồng `ended` của room), tự tick "Đã xem" cho đúng bài đó (episode_id + clip_id theo hàng đợi Nghe), giống solo. Nhiều máy trong phòng cùng gửi tick là chấp nhận được (tick lặp vô hại). Lỗi tick không chặn phòng. Trang Yêu thích vẫn không tự tick.
 
+- **Q10 nhãn mã bài trên 2 nút (Amendment E, HUMAN LEAD 2026-11-20: "Thêm thông tin tập và số sót cho hai nút Xem tiếp này. viết tắt theo tên bài")**: nút hiện mã bài dạng viết tắt như tên bài (`T35_S11`, `T36_KT04`): "Bài đăng tiếp T35_S11 →", "Nghe tiếp T37_S04 →"; hết bài → "Hết bài đăng" / "Đã nghe hết" (vô hiệu). Trang chủ và trang bộ kinh gọi `next-post` / `next-listen` sau khi hiện danh sách (không chặn danh sách, lỗi → nhãn mặc định, bấm vẫn gọi lại); bấm dùng kết quả mới nhất (gọi lại API để không mở bài cũ). Thay quy tắc "chỉ gọi API khi bấm" của Q6.
+
 ## Implementation approach
 
 - `post/schedule.py`:
@@ -115,6 +117,7 @@ Sau task này:
 7. Q7: nút "Nghe tiếp →" đọc đúng khóa localStorage của bộ → mở đúng tập; `?resume=1` chọn đúng phần + giây; không có vị trí → thông báo; không `?resume=1` → hành vi cũ.
 8. Q8: `next-listen` trả đúng bài sau bài đã xem cuối (chưa xem → bài đầu; hết → null; 404); nút mở đúng bài (`clip`) + giây nếu có; nghe hết bài (solo) → tick Đã xem; room / Yêu thích không tự tick.
 9. Q9: room — bài phát hết → tick Đã xem đúng bài; tick lỗi không ảnh hưởng phòng; Yêu thích không tick.
+10. Q10: nút hiện mã bài sau khi tải; hết bài → nhãn hết + vô hiệu; lỗi → nhãn mặc định; bấm mở đúng bài.
 6. Q6: `next-post` trả đúng bài (có mốc, không mốc, hết bài → null, bộ lạ → 404); nút ở trang chủ + trang bộ kinh mở đúng tập + cuộn đúng bài (hash).
 
 ## Required verification
