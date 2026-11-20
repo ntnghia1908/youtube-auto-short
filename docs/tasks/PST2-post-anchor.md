@@ -169,5 +169,6 @@ Không chạm database, security model hay public API contract (route nội bộ
   - Full suite 4784 PASS, 2 skip.
 - Amendment D (Codex vòng 5, effort medium): `listen.js` tự tick trong room theo identity hàng đợi; app +11 / −3, test +59 / −2.
 - Amendment E (Codex vòng 6, effort medium): `loadNextLabel` hiện mã bài trên 2 nút; app +19, test +104 / −14 (test cũ "chỉ fetch khi click" đổi theo Q10).
+- Amendment F (Codex vòng 7, effort medium): `listen.next_unprocessed`; `next-post` / `next-listen` thêm `next_unprocessed` khi hết bài; nút "Chưa xử lý T<n> →"; app +37 / −6, test +103 / −16.
 - Known limitations: LNK1 sync của code cũ (trước PST2) ghi `post_times.json` sẽ xóa `anchors`. 8080 phải chạy code PST2.
 - PR:

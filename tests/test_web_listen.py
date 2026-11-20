@@ -155,9 +155,85 @@ def test_next_listen_route_uses_last_watched_in_full_queue(library, mode, next_i
     get = endpoint(app, "/api/playlists/{playlist_id}/next-listen")
     before = {p: p.read_bytes() for p in Path(library.workspace.dir).rglob("watched.json")}
     expected = {key: items[next_index][key] for key in ("episode_id", "clip_id", "code")} if next_index is not None else None
-    assert get(PID) == {"item": expected}
+    response = {"item": expected}
+    if expected is None:
+        response["next_unprocessed"] = {"episode_id": FIRST if mode == "empty" else THIRD,
+                                        "label": "T1" if mode == "empty" else "T3"}
+    assert get(PID) == response
     assert get("PLmissing001").status_code == 404 and get("invalid!").status_code == 404
     assert before == {p: p.read_bytes() for p in Path(library.workspace.dir).rglob("watched.json")}
+
+
+@pytest.mark.parametrize("mode,label", [("entry", "T51"), ("numeric-id", "T51"), ("header", "T052"), ("title", "T51"),
+                                       ("index", "T7"), ("skipped", "T51"), ("broken", "T51"),
+                                       ("kt-last", "T52"), ("no-content", "T1"), ("finished", None)])
+def test_next_unprocessed_follows_last_content_and_reuses_episode_numbers(library, mode, label):  # PST2 AC11
+    from auto_short.web.listen import next_unprocessed
+
+    doc = {"entries": [
+        {"index": 7, "video_id": THIRD, "available": True, "episode": "51", "title": "Không nhận số"},
+        {"index": 6, "video_id": "youtube0042", "available": False},
+        {"index": 5, "video_id": "bad!", "available": True},
+        {"index": 4, "video_id": SECOND, "available": True},
+        {"index": 2, "video_id": "youtube0040", "available": True},  # earlier gap must not be selected
+        {"index": 1, "video_id": FIRST, "available": True},
+    ]}
+    write_episode(library, "youtube0042")  # unavailable content must not move the last-content boundary
+    if mode == "numeric-id":
+        doc["entries"][0]["video_id"] = "12345678901"
+    if mode == "header":
+        folder = Path(library.workspace.dir) / THIRD
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "titles.json").write_text(json.dumps({"header": {"fields": {"episode": "052"}}}))
+    if mode in {"title", "index"}:
+        doc["entries"][0]["episode"] = None
+        doc["entries"][0]["title"] = "Kinh Vô Lượng Thọ tập 51" if mode == "title" else "Không nhận số"
+    if mode == "skipped":
+        write_episode(library, THIRD, clips=(), extra_shorts=[{"clip_id": "k01", "status": "skipped"}])
+    if mode == "broken":
+        folder = Path(library.render.output_dir) / THIRD
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "render_manifest.json").write_text("{broken")
+    if mode == "kt-last":
+        write_episode(library, THIRD + ".kt")
+        doc["entries"].append({"index": 8, "video_id": "youtube0052", "available": True, "episode": "52"})
+    if mode == "no-content":
+        for eid in (FIRST, FIRST + ".kt", SECOND):
+            (Path(library.render.output_dir) / eid / "render_manifest.json").unlink()
+    if mode == "finished":
+        doc["entries"] = [e for e in doc["entries"] if e["video_id"] != THIRD]
+    eid = (FIRST if mode == "no-content" else "youtube0052" if mode == "kt-last" else
+           "12345678901" if mode == "numeric-id" else THIRD)
+    assert next_unprocessed(library, doc) == ({"episode_id": eid, "label": label} if label else None)
+
+
+@pytest.mark.parametrize("kind", ["post", "listen"])
+@pytest.mark.parametrize("mode", ["unprocessed", "finished", "has-item"])
+def test_next_routes_add_unprocessed_only_when_no_item(library, monkeypatch, kind, mode):  # PST2 AC11, no sockets
+    from auto_short.review.watched import set_watched
+    from auto_short.web import listen
+
+    if mode == "finished":
+        file = Path(library.workspace.dir) / "_playlists" / (PID + ".json")
+        doc = json.loads(file.read_text())
+        doc["entries"] = [e for e in doc["entries"] if e["video_id"] != THIRD]
+        file.write_text(json.dumps(doc))
+    if mode != "has-item":
+        set_watched(SECOND, library, "k05", True)
+    app = make_app(library)
+    if mode == "has-item":
+        monkeypatch.setattr(app.state.post_links, "next_post", lambda *args: {"episode_id": FIRST, "clip_id": "k09", "code": "T1_S01"})
+        def unexpected(*args):
+            pytest.fail("fallback must not be computed while a next item exists")
+        monkeypatch.setattr(listen, "next_unprocessed", unexpected)
+    get = endpoint(app, f"/api/playlists/{{playlist_id}}/next-{kind}")
+    response = get(PID)
+    key = "post" if kind == "post" else "item"
+    if mode == "has-item":
+        assert response[key] and "next_unprocessed" not in response
+    else:
+        assert response == {key: None, "next_unprocessed":
+                            {"episode_id": THIRD, "label": "T3"} if mode == "unprocessed" else None}
 
 
 @pytest.mark.parametrize("saved_mode,position", [("same", 23.5), ("other-clip", 0), ("other-episode", 0),

@@ -472,7 +472,7 @@ def test_playlist_next_post_api(web, anchor_code, expected):  # PST2 AC6; ORCHES
 
 
 @pytest.mark.skipif(NODE is None, reason="node not installed")
-@pytest.mark.parametrize("mode", ["target", "empty", "error"])
+@pytest.mark.parametrize("mode", ["target", "empty", "error", "unprocessed"])
 def test_next_post_buttons_prefetch_labels_then_refetch_exact_post_on_click(mode):  # PST2 AC6,10
     # Stub unrelated playlist initializers only in the VM; run the real initPlaylist button binding.
     script = SCHEDULE_HARNESS.split("(async () => {")[0].replace(
@@ -491,12 +491,15 @@ context.fetch = async url => {
     {id: "PLsource00002", title: "Bộ hai", processed: 0, count: 1},
   ]})};
   if (phase === "labels") return {ok: true, status: 200, json: async () => ({
-    [url.endsWith("next-listen") ? "item" : "post"]: {episode_id: "stale000001", clip_id: "k99", code: "T99_S99"},
+    [url.endsWith("next-listen") ? "item" : "post"]: mode === "unprocessed" ? null :
+      {episode_id: "stale000001", clip_id: "k99", code: "T99_S99"},
+    next_unprocessed: mode === "unprocessed" ? {episode_id: "source00009", label: "T50"} : null,
   })};
   busy.push(activeButton.disabled);
   return {ok: mode !== "error", status: mode === "error" ? 422 : 200, json: async () =>
-    mode === "error" ? {detail: "Không đọc được giờ bài đăng"} : {post: mode === "empty" ? null :
-      {episode_id: "source00001.kt", clip_id: "k02", code: "T1_KT02", slot_at: null, slot_label: null}}};
+    mode === "error" ? {detail: "Không đọc được giờ bài đăng"} : {post: ["empty", "unprocessed"].includes(mode) ? null :
+      {episode_id: "source00001.kt", clip_id: "k02", code: "T1_KT02", slot_at: null, slot_label: null},
+      next_unprocessed: mode === "unprocessed" ? {episode_id: "source00003", label: "T51"} : null}};
 };
 let activeButton;
 (async () => {
@@ -530,11 +533,12 @@ let activeButton;
                   "/api/playlists/PLsource00002/next-post", "/api/playlists/PLsource00002/next-listen"]
     background += background[-2:]
     assert out["backgroundRequests"] == background
-    assert out["labels"] == ["Bài đăng tiếp T99_S99 →"] * 2
+    assert out["labels"] == ["Chưa xử lý T50 →" if mode == "unprocessed" else "Bài đăng tiếp T99_S99 →"] * 2
     assert out["requests"] == background + [f"/api/playlists/{PID}/next-post", "/api/playlists/PLsource00002/next-post"]
     assert out["homeHref"] == out["playlistHref"] == (
-        "/episodes/source00001.kt/posts#post-k02" if mode == "target" else "/playlists/PLsource00002")
-    assert out["alerts"] == ([] if mode == "target" else
+        "/episodes/source00001.kt/posts#post-k02" if mode == "target" else
+        "/episodes/source00003" if mode == "unprocessed" else "/playlists/PLsource00002")
+    assert out["alerts"] == ([] if mode in {"target", "unprocessed"} else
                              ["Hết bài cần đăng" if mode == "empty" else "Không đọc được giờ bài đăng"] * 2)
     assert 'id="pl-next-post" class="btn small"' in (STATIC_DIR / "playlist.html").read_text()
 
@@ -571,7 +575,7 @@ ktPosts[0].slot_at = "2026-11-20T08:00:00Z";  // earliest slot is Short k01; KT 
 
 
 @pytest.mark.skipif(NODE is None, reason="node not installed")
-@pytest.mark.parametrize("mode", ["target", "empty", "error"])
+@pytest.mark.parametrize("mode", ["target", "empty", "error", "unprocessed"])
 def test_listen_resume_buttons_prefetch_labels_then_refetch_without_reading_position(mode):  # PST2 AC8,10
     script = SCHEDULE_HARNESS.split("(async () => {")[0].replace(
         "return { postCard, postBadges, copyTitleButton, postsPage, renderPostsPage, initIndex,",
@@ -588,11 +592,14 @@ context.fetch = async url => {
     {id: "PLsource00001", title: "Bộ một", count: 2}, {id: "PLsource00002", title: "Bộ hai", count: 1},
   ]})};
   if (phase === "labels") return {ok: true, status: 200, json: async () => ({
-    [url.endsWith("next-listen") ? "item" : "post"]: {episode_id: "stale000001", clip_id: "k99", code: "T99_KT99"},
+    [url.endsWith("next-listen") ? "item" : "post"]: mode === "unprocessed" ? null :
+      {episode_id: "stale000001", clip_id: "k99", code: "T99_KT99"},
+    next_unprocessed: mode === "unprocessed" ? {episode_id: "source00009", label: "T50"} : null,
   })};
   return {ok: mode !== "error", status: mode === "error" ? 422 : 200, json: async () => mode === "error"
-    ? {detail: "Không đọc được bài nghe"} : {item: mode === "empty" ? null :
-      {episode_id: url.includes("PLsource00001") ? "source00001.kt" : "source00002", clip_id: "k02", code: "T2_S02"}}};
+    ? {detail: "Không đọc được bài nghe"} : {item: ["empty", "unprocessed"].includes(mode) ? null :
+      {episode_id: url.includes("PLsource00001") ? "source00001.kt" : "source00002", clip_id: "k02", code: "T2_S02"},
+      next_unprocessed: mode === "unprocessed" ? {episode_id: "source00003", label: "T51"} : null}};
 };
 const get = context.localStorage.getItem;
 context.localStorage.getItem = key => {
@@ -627,12 +634,14 @@ context.localStorage.getItem = key => {
                   "/api/playlists/PLsource00002/next-post", "/api/playlists/PLsource00002/next-listen"]
     background += background[-2:]
     assert out["outsideLink"] and out["beforeClick"] == background
-    assert out["labels"] == ["Nghe tiếp T99_KT99 →"] * 2
+    assert out["labels"] == ["Chưa xử lý T50 →" if mode == "unprocessed" else "Nghe tiếp T99_KT99 →"] * 2
     assert out["positionReads"] == []
     assert out["requests"] == background + [f"/api/playlists/{PID}/next-listen", "/api/playlists/PLsource00002/next-listen"]
     if mode == "target":
         assert out["homeHref"] == "/episodes/source00001.kt?resume=1&clip=k02"
         assert out["playlistHref"] == "/episodes/source00002?resume=1&clip=k02" and out["alerts"] == []
+    elif mode == "unprocessed":
+        assert out["homeHref"] == out["playlistHref"] == "/episodes/source00003" and out["alerts"] == []
     else:
         assert out["homeHref"] == out["playlistHref"] == "/playlists/PLsource00002"
         assert out["alerts"] == ["Đã nghe hết bộ này" if mode == "empty" else "Không đọc được bài nghe"] * 2
@@ -640,7 +649,7 @@ context.localStorage.getItem = key => {
 
 
 @pytest.mark.skipif(NODE is None, reason="node not installed")
-@pytest.mark.parametrize("mode", ["target", "empty", "error"])
+@pytest.mark.parametrize("mode", ["target", "empty", "error", "unprocessed"])
 def test_next_button_labels_load_in_parallel_after_render_without_blocking(mode):  # PST2 AC10
     script = SCHEDULE_HARNESS.split("(async () => {")[0].replace(
         "return { postCard, postBadges, copyTitleButton, postsPage, renderPostsPage, initIndex,",
@@ -671,8 +680,9 @@ context.fetch = async url => {
   const parallel = pending.length === 6;
   for (const call of pending) call.resolve({ok: mode !== "error", status: mode === "error" ? 422 : 200,
     json: async () => mode === "error" ? {detail: "Không tải được nhãn"} : {
-      [call.url.endsWith("next-listen") ? "item" : "post"]: mode === "empty" ? null :
+      [call.url.endsWith("next-listen") ? "item" : "post"]: ["empty", "unprocessed"].includes(mode) ? null :
         {code: call.url.endsWith("next-listen") ? "T36_KT04" : "T35_S11"},
+      next_unprocessed: mode === "unprocessed" ? {episode_id: "source00003", label: "T51"} : null,
     }});
   await settle();
   console.log(JSON.stringify({rendered, rows: rows.length, parallel, defaults, alerts,
@@ -691,7 +701,8 @@ context.fetch = async url => {
     if mode == "error":
         assert out["results"] == defaults
     else:
-        labels = ("Bài đăng tiếp T35_S11 →", "Nghe tiếp T36_KT04 →") if mode == "target" else ("Hết bài đăng", "Đã nghe hết")
+        labels = (("Bài đăng tiếp T35_S11 →", "Nghe tiếp T36_KT04 →") if mode == "target" else
+                  ("Chưa xử lý T51 →", "Chưa xử lý T51 →") if mode == "unprocessed" else ("Hết bài đăng", "Đã nghe hết"))
         assert out["results"] == [{"text": text, "disabled": mode == "empty"} for text in labels] * 3
 
 

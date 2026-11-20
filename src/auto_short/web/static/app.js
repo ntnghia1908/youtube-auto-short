@@ -401,8 +401,9 @@ const AutoShort = (() => {
       const result = await api(`/api/playlists/${encodeURIComponent(id)}/next-${kind}`);
       const item = result[listening ? "item" : "post"];
       button.textContent = item ? `${listening ? "Nghe" : "Bài đăng"} tiếp${item.code ? " " + item.code : ""} →`
-        : listening ? "Đã nghe hết" : "Hết bài đăng";
-      button.disabled = !item;
+        : result.next_unprocessed ? `Chưa xử lý ${result.next_unprocessed.label} →`
+          : listening ? "Đã nghe hết" : "Hết bài đăng";
+      button.disabled = !item && !result.next_unprocessed;
     } catch (_) { /* Keep the default label and let a click retry. */ }
   }
 
@@ -411,6 +412,7 @@ const AutoShort = (() => {
     try {
       const result = await api(`/api/playlists/${encodeURIComponent(id)}/next-post`);
       if (result.post) location.href = `/episodes/${encodeURIComponent(result.post.episode_id)}/posts#post-${encodeURIComponent(result.post.clip_id)}`;
+      else if (result.next_unprocessed) location.href = `/episodes/${encodeURIComponent(result.next_unprocessed.episode_id)}`;
       else alert("Hết bài cần đăng");
     } catch (e) { alert(e.message); }
     finally { button.disabled = false; }
@@ -420,6 +422,7 @@ const AutoShort = (() => {
     try {
       const result = await api(`/api/playlists/${encodeURIComponent(id)}/next-listen`);
       if (result.item) location.href = `/episodes/${encodeURIComponent(result.item.episode_id)}?resume=1&clip=${encodeURIComponent(result.item.clip_id)}`;
+      else if (result.next_unprocessed) location.href = `/episodes/${encodeURIComponent(result.next_unprocessed.episode_id)}`;
       else alert("Đã nghe hết bộ này");
     } catch (e) { alert(e.message); }
   }

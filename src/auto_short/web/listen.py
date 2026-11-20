@@ -14,6 +14,7 @@ from ..review import REVIEW_NAME, ReviewError
 from ..review.logic import read_review
 from ..review.names import short_code
 from . import episodes as ep
+from .playlists import episode_number
 
 
 def clip_metadata(config: Config, episode_id: str, manifest: dict | None = None) -> dict[str, dict]:
@@ -93,3 +94,25 @@ def next_listen(config: Config, doc: dict) -> dict | None:
     if last + 1 >= len(items):
         return None
     return {key: items[last + 1][key] for key in ("episode_id", "clip_id", "code")}
+
+
+def next_unprocessed(config: Config, doc: dict) -> dict | None:
+    """First available episode after the last entry with a rendered Short or khai thị."""
+    entries = sorted((entry for entry in doc["entries"] if isinstance(entry, dict) and entry.get("available")
+                      and isinstance(entry.get("video_id"), str) and ep.valid_episode_id(entry["video_id"])),
+                     key=lambda entry: entry.get("index", 0))
+    last = -1
+    for index, entry in enumerate(entries):
+        if any(isinstance(short, dict) and short.get("status") == "rendered"
+               for eid in (entry["video_id"], entry["video_id"] + ".kt")
+               for short in (ep.render_manifest(config, eid) or {}).get("shorts", [])):
+            last = index
+    if last + 1 >= len(entries):
+        return None
+    entry = entries[last + 1]
+    number = ep.label(config, entry["video_id"])
+    if number == entry["video_id"] or not number.isdecimal():
+        number = entry.get("episode")
+        if not isinstance(number, str) or not number.isdecimal():
+            number = episode_number(entry.get("title"), config) or str(entry.get("index", 0))
+    return {"episode_id": entry["video_id"], "label": f"T{number}"}

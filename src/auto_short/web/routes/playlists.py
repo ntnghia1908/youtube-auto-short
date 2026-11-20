@@ -64,11 +64,15 @@ def build(ctx: WebContext) -> APIRouter:
 
     @router.get("/api/playlists/{playlist_id}/next-post")
     def api_next_post(playlist_id: str):
+        from ..listen import next_unprocessed
+
         with ctx.post_lock:
-            if ctx.playlist_or_404(playlist_id) is None:
+            doc = ctx.playlist_or_404(playlist_id)
+            if doc is None:
                 return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
             try:
-                return {"post": ctx.post_links.next_post(playlist_id, post_schedule.timestamp(ctx.post_now()))}
+                post = ctx.post_links.next_post(playlist_id, post_schedule.timestamp(ctx.post_now()))
+                return {"post": post} if post else {"post": None, "next_unprocessed": next_unprocessed(ctx.config, doc)}
             except FileNotFoundError:
                 return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
             except (ValueError, OSError) as exc:
@@ -85,12 +89,13 @@ def build(ctx: WebContext) -> APIRouter:
 
     @router.get("/api/playlists/{playlist_id}/next-listen")
     def api_next_listen(playlist_id: str):
-        from ..listen import next_listen
+        from ..listen import next_listen, next_unprocessed
 
         doc = ctx.playlist_or_404(playlist_id)
         if doc is None:
             return JSONResponse({"detail": "không có bộ kinh này"}, status_code=404)
-        return {"item": next_listen(ctx.config, doc)}
+        item = next_listen(ctx.config, doc)
+        return {"item": item} if item else {"item": None, "next_unprocessed": next_unprocessed(ctx.config, doc)}
 
     @router.get("/api/playlists/{playlist_id}/link-playlists")
     def api_link_playlists(playlist_id: str):
