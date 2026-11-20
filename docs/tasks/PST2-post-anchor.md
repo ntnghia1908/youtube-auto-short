@@ -159,5 +159,6 @@ Không chạm database, security model hay public API contract (route nội bộ
   - Nút "Bài đăng tiếp →" / "Nghe tiếp →" ở trang chủ và trang bộ kinh; cuộn theo hash `#post-<clip>`; `listen.js` hỗ trợ `?resume=1`.
   - App +117 / −20, test +322.
   - Full suite 4784 PASS, 2 skip.
+- Amendment D (Codex vòng 5, effort medium): `listen.js` tự tick trong room theo identity hàng đợi; app +11 / −3, test +59 / −2.
 - Known limitations: LNK1 sync của code cũ (trước PST2) ghi `post_times.json` sẽ xóa `anchors`. 8080 phải chạy code PST2.
 - PR:

@@ -150,9 +150,17 @@
     },
   });
   for (const media of player.audios) media.addEventListener("ended", (event) => {
-    if (!event.isTrusted || inRoom || favPid || media !== player.media() || !player.active || player.loading
-        || !media.ended || media.seeking || !currentItem) return;
-    const item = currentItem;
+    if (!event.isTrusted || favPid || media !== player.media() || !player.active || player.loading
+        || !media.ended || media.seeking) return;
+    let item = currentItem;
+    if (inRoom) {
+      const playing = player.state, entry = playing?.queue?.[playing.index];
+      const url = entry?.url || entry?.video_url;
+      // /watch has no solo list; its queue already carries identity decorated by the watch API.
+      item = url && url === playing.video_url ? all.find((item) => item.video_url === url)
+        || (entry.episode_id && entry.clip_id ? entry : null) : null;
+    }
+    if (!item) return;
     request("POST", { value: true }, `/api/episodes/${encodeURIComponent(item.episode_id)}/shorts/${encodeURIComponent(item.clip_id)}/watched`)
       .catch(() => {});
   }, true); // Capture the completed identity before the player's ended handler advances the queue.

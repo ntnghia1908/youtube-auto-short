@@ -185,7 +185,7 @@ assert.deepEqual(replaced, [[null, "", "/episodes/ep2.kt?keep=1#retained"]]);
 '''.replace("SAVED_MODE", json.dumps(saved_mode)).replace("POSITION", json.dumps(position)))
 
 
-@pytest.mark.parametrize("mode", ["solo", "hidden", "error", "pending", "fake", "seek", "skip", "favorites", "room"])
+@pytest.mark.parametrize("mode", ["solo", "hidden", "error", "pending", "fake", "seek", "skip", "favorites"])
 def test_player_js_solo_real_ended_ticks_completed_identity_without_waiting(run_player_js, mode):  # PST2 AC8
     run_player_js(r'''
 const mode = MODE_VALUE;
@@ -200,7 +200,6 @@ respond = async (path, options) => {
   return {ok: true, json: async () => ({watched: true})};
 };
 await boot(); await metadata(); await $("play").fire("click"); await settled();
-if (mode === "room") { useRoom(); await $("watch").fire("click"); await settled(); await metadata(); }
 const audio = activePlayer.media();
 if (mode === "hidden") await visibility(true);
 if (mode === "fake") {
@@ -218,6 +217,64 @@ if (eligible) {
   if (mode !== "hidden") tick(3001);
   await settled(); await metadata();
   assert.equal(activePlayer.state.clip_id, "k2"); assert.ok(!activePlayer.media().paused);
+}
+'''.replace("MODE_VALUE", json.dumps(mode)))
+
+
+@pytest.mark.parametrize("mode", ["ended", "hidden", "shell", "error", "pending", "fake", "seek", "skip",
+                                  "inactive-media", "unknown", "mismatch", "favorites"])
+def test_player_js_room_real_ended_ticks_room_identity_before_advancing(run_player_js, mode):  # PST2 AC9
+    run_player_js(r'''
+const mode = MODE_VALUE, watched = [], order = [];
+location.pathname = mode === "favorites" ? "/playlists/PLtest/favorites" : mode === "shell" ? "/watch" : "/episodes/ep1";
+sourceItems = [item(1, 1), item(2, 2), item(3, 7, "khaithi"), item(4, 8)];
+storage.set("auto-short-listen-filter", '"short"');  // Room's KT item is absent from the solo filtered queue.
+respond = async (path, options) => {
+  if (!path.endsWith("/watched")) return null;
+  order.push("watched");
+  watched.push({path, method: options.method, body: JSON.parse(options.body)});
+  if (mode === "pending") return new Promise(() => {});
+  if (mode === "error") throw Error("write failed");
+  return {ok: true, json: async () => ({watched: true})};
+};
+await boot(); await metadata();
+if (mode !== "shell") { await $("play").fire("click"); await settled(); }
+useRoom();
+if (mode !== "shell") { await $("watch").fire("click"); await settled(); await metadata(); }
+const queue = sourceItems.map(i => ({url: i.video_url, title: i.title, group: {id: "shared", label: "Bộ"}}));
+if (mode === "shell") queue.forEach((entry, i) => Object.assign(entry, {
+  episode_id: sourceItems[i].episode_id, clip_id: sourceItems[i].clip_id,
+}));  // The watch API decorates queue entries even for /watch clients without a solo list.
+if (mode === "unknown") queue[2].url = "/files/unmapped/k1.mp4";
+await AutoShortWatch.command("set", {queue, index: 2, position: 0, rate: 1, paused: false});
+await settled(); await metadata();
+const command = AutoShortWatch.command;
+AutoShortWatch.command = async (action, ...args) => {order.push(action); return command(action, ...args);};
+const audio = activePlayer.media();
+if (mode === "hidden") await visibility(true);
+if (mode === "fake") {
+  audio.ended = true; await audio.fire("ended", {isTrusted: false});
+} else if (mode === "seek") {
+  audio.seeking = true; await end(audio);
+} else if (mode === "skip") {
+  await AutoShortWatch.command("next", {expect_version: serverRoom.version}); await settled(); await metadata();
+  await audio.fire("ended");  // The previous item has already been replaced.
+} else if (mode === "inactive-media") {
+  const other = activePlayer.audios.find(m => m !== audio);
+  other.ended = true; await other.fire("ended");
+} else {
+  if (mode === "mismatch") activePlayer.state.queue[2].url = sourceItems[0].video_url;
+  await end(audio);
+}
+await settled();
+const eligible = ["ended", "hidden", "shell", "error", "pending"].includes(mode);
+assert.deepEqual(watched, eligible ? [{path: "/api/episodes/ep3.kt/shorts/k7/watched", method: "POST", body: {value: true}}] : []);
+if (eligible) {
+  const nextAction = mode === "hidden" ? "next" : "ended";
+  assert.ok(order.indexOf("watched") < order.indexOf(nextAction));
+  assert.ok(commands.some(c => c.action === nextAction));
+  if (mode === "hidden") assert.equal(activePlayer.state.video_url, sourceItems[3].video_url);
+  else assert.ok(serverRoom.finished);
 }
 '''.replace("MODE_VALUE", json.dumps(mode)))
 
