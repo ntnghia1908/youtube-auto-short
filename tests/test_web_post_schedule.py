@@ -56,7 +56,7 @@ def test_posts_api_adds_slots_and_next_episode_preserving_old_fields(web):  # AC
     data = response.json()
     assert data["post_error"] is None and data["next_episode"] == EID2
     assert [p["slot_at"] for p in data["posts"]] == ["2026-11-19T02:00:00Z", "2026-11-19T13:30:00Z"]
-    assert [p["slot_label"] for p in data["posts"]] == ["Thứ 5 19/11 09:00", "Thứ 5 19/11 20:30"]
+    assert [p["slot_label"] for p in data["posts"]] == ["19/11 09:00", "19/11 20:30"]
     for raw, view in zip(before["posts"], data["posts"]):
         for field in ("clip_id", "paragraphs", "origin", "image", "link", "posted_at"):
             assert view[field] == raw[field]
@@ -288,7 +288,7 @@ def test_anchor_api_roundtrip_tick_and_channel_isolation(web):  # PST2 AC1–3
     assert response.status_code == 200
     anchor = response.json()["anchor"]
     assert anchor == {"code": "T1_S01", "slot_at": "2027-05-30T13:30:00Z",
-                      "slot_label": "Chủ nhật 30/05 20:30"}
+                      "slot_label": "30/05 20:30"}
     data = client.get(url).json()
     assert data["anchor"] == anchor and data["next_episode"] == EID2
     assert [(p["code"], p["slot_group"], p["slot_at"]) for p in data["posts"]] == [

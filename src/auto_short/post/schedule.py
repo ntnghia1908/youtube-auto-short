@@ -168,6 +168,5 @@ def slot_fields(slot_at: str | None) -> dict:
     label = None
     if slot_at:
         local = timestamp(slot_at).astimezone(ZONE)
-        weekday = "Chủ nhật" if local.weekday() == 6 else f"Thứ {local.weekday() + 2}"
-        label = f"{weekday} {local:%d/%m %H:%M}"
+        label = f"{local:%d/%m %H:%M}"  # PST2: HUMAN LEAD 2026-11-20 bỏ thứ
     return {"slot_at": slot_at, "slot_label": label}
