@@ -13,7 +13,7 @@
 - Authorization mode: task
 - Authorization source: HUMAN LEAD 2026-11-20: "Trang đăng bài mỗi lần Đăng tự cuộn xuống cuối Trang chứ không phải đúng bài tiếp theo và hiện tại chưa hiện ngày giờ đăng cho từng bài" → "Tôi đã lên lịch tới T35-S6 rơi vào ngày 30-5-27 20:30 chỉ cần lên lịch từ đây các bài Phía Trước bỏ qua"
 - Parallel group: —
-- Owned paths: `src/auto_short/post/schedule.py`, `src/auto_short/web/post_links.py` (`schedule_view`, next-post), `src/auto_short/web/routes/playlists.py` (route `next-post`, Amendment A), `src/auto_short/web/static/index.html` + `playlist.html` (nút, Amendment A), `src/auto_short/web/routes/episode_edit.py` (route `GET …/posts`, `/posted`, route đặt mốc mới), `src/auto_short/web/static/app.js` (phần trang Bài đăng), `src/auto_short/web/static/style.css` (nếu cần), `tests/test_post_schedule.py`, `tests/test_web_post_schedule.py`, contract này
+- Owned paths: `src/auto_short/post/schedule.py`, `src/auto_short/web/post_links.py` (`schedule_view`, next-post), `src/auto_short/web/routes/playlists.py` (route `next-post`, Amendment A), `src/auto_short/web/static/index.html` + `playlist.html` (nút, Amendment A), `src/auto_short/web/static/listen.js` (`?resume=1`, Amendment B), `src/auto_short/web/routes/episode_edit.py` (route `GET …/posts`, `/posted`, route đặt mốc mới), `src/auto_short/web/static/app.js` (phần trang Bài đăng), `src/auto_short/web/static/style.css` (nếu cần), `tests/test_post_schedule.py`, `tests/test_web_post_schedule.py`, contract này
 - Dependencies: PST1 (đã merge)
 - Base commit / branch: `bbd1df5` / `feature/pst2-post-anchor` (worktree `~/projects/yas-pst2`)
 - Human Lead approval: accepted 2026-11-20 ("Duyệt, CƯT đăng tới T30 kt07 ngày 15:00 06/03/27. VLT tơi T33-S01 20:30 11/3/2027")
@@ -66,6 +66,14 @@ Sau task này:
   - Nút nằm cạnh mỗi bộ ở danh sách trang chủ và trên trang bộ kinh. Bấm mới gọi API (không tính sẵn khi tải danh sách). Có bài thì mở `/episodes/{episode_id}/posts#post-{clip_id}`. Hết bài thì báo "Hết bài cần đăng".
   - Khi mở, trang Bài đăng cuộn tới bài trong hash (`#post-{clip_id}`, thuộc tập đang mở). Không có hash thì cuộn như `scrollToNextPost`.
 
+- **Q7 nút "Nghe tiếp →" (Amendment B, HUMAN LEAD 2026-11-20: "Làm một nút tương tự cho bài nghe tiếp theo luôn nghĩa là bấm vào nút đó thì sẽ chuyển trực tiếp tới trang nghe và đúng tập tôi dừng trước đó")**:
+  - Chỉ sửa client, không thêm route.
+  - Vị trí nghe đã lưu sẵn trong `localStorage` `auto-short-listen-position:<playlist id>` (`{episode_id, clip_id, position}`, LISTEN1). Vị trí này lưu riêng trên từng máy / trình duyệt.
+  - Nút "Nghe tiếp →" nằm cạnh nút "Bài đăng tiếp →" ở trang chủ và trang bộ kinh.
+  - Có vị trí đã lưu: mở `/episodes/<episode_id>?resume=1`. Tab Nghe mở với đúng phần đó tại đúng giây đã dừng. Nếu trình duyệt chặn tự phát thì để tạm dừng ở đúng vị trí, nút ▶ sẵn sàng.
+  - Chưa có vị trí đã lưu: thông báo "Chưa nghe bộ này trên máy này".
+  - Không có `?resume=1` thì trang Nghe giữ hành vi cũ, gồm cả nút "Nghe tiếp từ …".
+
 ## Implementation approach
 
 - `post/schedule.py`:
@@ -92,6 +100,7 @@ Sau task này:
 3. Q3: bài ≤ mốc chưa tick → `slot_group = "manual"`, không giờ, không chiếm ô, không thành `next_episode`.
 4. Q4: trang có bài có giờ → cuộn tới bài đó. Không có → cuộn tới bài chưa đăng kế tiếp. Hết → "Tập kế tiếp".
 5. Bộ không mốc: test PST1 cũ PASS không sửa.
+7. Q7: nút "Nghe tiếp →" đọc đúng khóa localStorage của bộ → mở đúng tập; `?resume=1` chọn đúng phần + giây; không có vị trí → thông báo; không `?resume=1` → hành vi cũ.
 6. Q6: `next-post` trả đúng bài (có mốc, không mốc, hết bài → null, bộ lạ → 404); nút ở trang chủ + trang bộ kinh mở đúng tập + cuộn đúng bài (hash).
 
 ## Required verification
