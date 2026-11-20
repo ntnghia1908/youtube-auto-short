@@ -473,7 +473,7 @@ def test_playlist_next_post_api(web, anchor_code, expected):  # PST2 AC6; ORCHES
 
 @pytest.mark.skipif(NODE is None, reason="node not installed")
 @pytest.mark.parametrize("mode", ["target", "empty", "error"])
-def test_next_post_buttons_fetch_only_on_click_and_open_exact_post(mode):  # PST2 AC6
+def test_next_post_buttons_prefetch_labels_then_refetch_exact_post_on_click(mode):  # PST2 AC6,10
     # Stub unrelated playlist initializers only in the VM; run the real initPlaylist button binding.
     script = SCHEDULE_HARNESS.split("(async () => {")[0].replace(
         "return { postCard, postBadges, copyTitleButton, postsPage, renderPostsPage, initIndex,",
@@ -482,6 +482,7 @@ def test_next_post_buttons_fetch_only_on_click_and_open_exact_post(mode):  # PST
         "return { postCard, postBadges, copyTitleButton, postsPage, renderPostsPage, loadPlaylists, initIndex,",
     ) + r"""
 const requests = [], busy = [];
+let phase = "labels";
 context.document.querySelectorAll = () => [];
 context.fetch = async url => {
   requests.push(url);
@@ -489,6 +490,9 @@ context.fetch = async url => {
     {id: "PLsource00001", title: "Bộ một", processed: 1, count: 2},
     {id: "PLsource00002", title: "Bộ hai", processed: 0, count: 1},
   ]})};
+  if (phase === "labels") return {ok: true, status: 200, json: async () => ({
+    [url.endsWith("next-listen") ? "item" : "post"]: {episode_id: "stale000001", clip_id: "k99", code: "T99_S99"},
+  })};
   busy.push(activeButton.disabled);
   return {ok: mode !== "error", status: mode === "error" ? 422 : 200, json: async () =>
     mode === "error" ? {detail: "Không đọc được giờ bài đăng"} : {post: mode === "empty" ? null :
@@ -498,19 +502,22 @@ let activeButton;
 (async () => {
   await ui.loadPlaylists();
   const rows = select("#playlists").children;
-  const buttons = rows.map(row => findButton(row, "Bài đăng tiếp →"));
+  const buttons = rows.map(row => row.children[1]);
   const outsideLinks = buttons.every((b, i) => b.parent === rows[i] && b.parent.tag === "li"
     && rows[i].children[0].tag === "a");
   context.location = {pathname: "/playlists/PLsource00002", hash: "", href: "/playlists/PLsource00002"};
   ui.initPlaylist();
-  const lazyRequests = requests.slice();
+  await settle();
+  const backgroundRequests = requests.slice();
+  const labels = [buttons[0].textContent, select("#pl-next-post").textContent];
+  phase = "click";
   activeButton = buttons[0];
   await activeButton.click();
   const homeHref = context.location.href, homeEnabled = !activeButton.disabled;
   context.location.href = "/playlists/PLsource00002";
   activeButton = select("#pl-next-post");
   await activeButton.click();
-  console.log(JSON.stringify({outsideLinks, lazyRequests, requests, busy, homeHref,
+  console.log(JSON.stringify({outsideLinks, backgroundRequests, labels, requests, busy, homeHref,
     playlistHref: context.location.href, enabled: homeEnabled && !activeButton.disabled, alerts}));
 })().catch(e => { console.error(e); process.exit(1); });
 """
@@ -519,9 +526,12 @@ let activeButton;
     assert result.returncode == 0, result.stderr
     out = json.loads(result.stdout)
     assert out["outsideLinks"] and out["enabled"] and out["busy"] == [True, True]
-    assert out["lazyRequests"] == ["/api/playlists"]
-    assert out["requests"] == ["/api/playlists", f"/api/playlists/{PID}/next-post",
-                               "/api/playlists/PLsource00002/next-post"]
+    background = ["/api/playlists", f"/api/playlists/{PID}/next-post", f"/api/playlists/{PID}/next-listen",
+                  "/api/playlists/PLsource00002/next-post", "/api/playlists/PLsource00002/next-listen"]
+    background += background[-2:]
+    assert out["backgroundRequests"] == background
+    assert out["labels"] == ["Bài đăng tiếp T99_S99 →"] * 2
+    assert out["requests"] == background + [f"/api/playlists/{PID}/next-post", "/api/playlists/PLsource00002/next-post"]
     assert out["homeHref"] == out["playlistHref"] == (
         "/episodes/source00001.kt/posts#post-k02" if mode == "target" else "/playlists/PLsource00002")
     assert out["alerts"] == ([] if mode == "target" else
@@ -562,7 +572,7 @@ ktPosts[0].slot_at = "2026-11-20T08:00:00Z";  // earliest slot is Short k01; KT 
 
 @pytest.mark.skipif(NODE is None, reason="node not installed")
 @pytest.mark.parametrize("mode", ["target", "empty", "error"])
-def test_listen_resume_buttons_fetch_next_listen_without_reading_position(mode):  # PST2 AC8 replaces Q7 selection
+def test_listen_resume_buttons_prefetch_labels_then_refetch_without_reading_position(mode):  # PST2 AC8,10
     script = SCHEDULE_HARNESS.split("(async () => {")[0].replace(
         "return { postCard, postBadges, copyTitleButton, postsPage, renderPostsPage, initIndex,",
         "initPlKinds = initHashtags = initSeries = initDoc = initLinkPlaylists = initDownloadQueue = "
@@ -570,12 +580,16 @@ def test_listen_resume_buttons_fetch_next_listen_without_reading_position(mode):
         "return { postCard, postBadges, copyTitleButton, postsPage, renderPostsPage, loadPlaylists, initIndex,",
     ) + r"""
 const requests = [], positionReads = [];
+let phase = "labels";
 context.document.querySelectorAll = () => [];
 context.fetch = async url => {
   requests.push(url);
   if (url === "/api/playlists") return {ok: true, status: 200, json: async () => ({playlists: [
     {id: "PLsource00001", title: "Bộ một", count: 2}, {id: "PLsource00002", title: "Bộ hai", count: 1},
   ]})};
+  if (phase === "labels") return {ok: true, status: 200, json: async () => ({
+    [url.endsWith("next-listen") ? "item" : "post"]: {episode_id: "stale000001", clip_id: "k99", code: "T99_KT99"},
+  })};
   return {ok: mode !== "error", status: mode === "error" ? 422 : 200, json: async () => mode === "error"
     ? {detail: "Không đọc được bài nghe"} : {item: mode === "empty" ? null :
       {episode_id: url.includes("PLsource00001") ? "source00001.kt" : "source00002", clip_id: "k02", code: "T2_S02"}}};
@@ -590,26 +604,32 @@ context.localStorage.getItem = key => {
 (async () => {
   await ui.loadPlaylists();
   const row = select("#playlists").children[0];
-  const listen = findButton(row, "Nghe tiếp →");
-  const outsideLink = listen.parent === row && row.children[1].textContent === "Bài đăng tiếp →";
+  const listen = row.children[2];
+  const outsideLink = listen.parent === row && row.children[1].tag === "button";
   context.location = {pathname: "/playlists/PLsource00002", href: "/playlists/PLsource00002", hash: ""};
   ui.initPlaylist();
+  await settle();
   const beforeClick = requests.slice();
+  const labels = [listen.textContent, select("#pl-listen-resume").textContent];
+  phase = "click";
   await listen.click();
   const homeHref = context.location.href;
   context.location.href = "/playlists/PLsource00002";
   await select("#pl-listen-resume").click();
-  console.log(JSON.stringify({outsideLink, beforeClick, requests, positionReads, homeHref, playlistHref: context.location.href, alerts}));
+  console.log(JSON.stringify({outsideLink, beforeClick, labels, requests, positionReads, homeHref, playlistHref: context.location.href, alerts}));
 })().catch(e => { console.error(e); process.exit(1); });
 """
     result = subprocess.run([NODE, "-e", script, str(APP_JS), mode, "true"],
                             capture_output=True, text=True, timeout=20)
     assert result.returncode == 0, result.stderr
     out = json.loads(result.stdout)
-    assert out["outsideLink"] and out["beforeClick"] == ["/api/playlists"]
+    background = ["/api/playlists", f"/api/playlists/{PID}/next-post", f"/api/playlists/{PID}/next-listen",
+                  "/api/playlists/PLsource00002/next-post", "/api/playlists/PLsource00002/next-listen"]
+    background += background[-2:]
+    assert out["outsideLink"] and out["beforeClick"] == background
+    assert out["labels"] == ["Nghe tiếp T99_KT99 →"] * 2
     assert out["positionReads"] == []
-    assert out["requests"] == ["/api/playlists", f"/api/playlists/{PID}/next-listen",
-                               "/api/playlists/PLsource00002/next-listen"]
+    assert out["requests"] == background + [f"/api/playlists/{PID}/next-listen", "/api/playlists/PLsource00002/next-listen"]
     if mode == "target":
         assert out["homeHref"] == "/episodes/source00001.kt?resume=1&clip=k02"
         assert out["playlistHref"] == "/episodes/source00002?resume=1&clip=k02" and out["alerts"] == []
@@ -617,6 +637,62 @@ context.localStorage.getItem = key => {
         assert out["homeHref"] == out["playlistHref"] == "/playlists/PLsource00002"
         assert out["alerts"] == ["Đã nghe hết bộ này" if mode == "empty" else "Không đọc được bài nghe"] * 2
     assert 'id="pl-listen-resume" class="btn small"' in (STATIC_DIR / "playlist.html").read_text()
+
+
+@pytest.mark.skipif(NODE is None, reason="node not installed")
+@pytest.mark.parametrize("mode", ["target", "empty", "error"])
+def test_next_button_labels_load_in_parallel_after_render_without_blocking(mode):  # PST2 AC10
+    script = SCHEDULE_HARNESS.split("(async () => {")[0].replace(
+        "return { postCard, postBadges, copyTitleButton, postsPage, renderPostsPage, initIndex,",
+        "initPlKinds = initHashtags = initSeries = initDoc = initLinkPlaylists = initDownloadQueue = "
+        "loadPlaylist = checkDisk = () => {}; "
+        "return { postCard, postBadges, copyTitleButton, postsPage, renderPostsPage, loadPlaylists, initIndex,",
+    ) + r"""
+const pending = [];
+context.document.querySelectorAll = () => [];
+context.fetch = async url => {
+  if (url === "/api/playlists") return {ok: true, status: 200, json: async () => ({playlists: [
+    {id: "PLsource00001", title: "Bộ một", count: 2}, {id: "PLsource00002", title: "Bộ hai", count: 1},
+  ]})};
+  return new Promise(resolve => pending.push({url, resolve, renderedRows: select("#playlists").children.length}));
+};
+(async () => {
+  let rendered = false;
+  ui.loadPlaylists().then(() => {rendered = true;});
+  await settle();
+  const rows = select("#playlists").children;
+  const homeButtons = rows.flatMap(row => row.children.slice(1));
+  const post = select("#pl-next-post"), listen = select("#pl-listen-resume");
+  post.textContent = "Bài đăng tiếp →"; listen.textContent = "Nghe tiếp →"; // server-rendered HTML
+  context.location = {pathname: "/playlists/PLsource00002", href: "/playlists/PLsource00002", hash: ""};
+  ui.initPlaylist();
+  const buttons = [...homeButtons, post, listen];
+  const defaults = buttons.map(b => ({text: b.textContent, disabled: !!b.disabled}));
+  const parallel = pending.length === 6;
+  for (const call of pending) call.resolve({ok: mode !== "error", status: mode === "error" ? 422 : 200,
+    json: async () => mode === "error" ? {detail: "Không tải được nhãn"} : {
+      [call.url.endsWith("next-listen") ? "item" : "post"]: mode === "empty" ? null :
+        {code: call.url.endsWith("next-listen") ? "T36_KT04" : "T35_S11"},
+    }});
+  await settle();
+  console.log(JSON.stringify({rendered, rows: rows.length, parallel, defaults, alerts,
+    renderedBeforeFetch: pending.every(call => call.renderedRows === 2),
+    results: buttons.map(b => ({text: b.textContent, disabled: !!b.disabled}))}));
+})().catch(e => { console.error(e); process.exit(1); });
+"""
+    result = subprocess.run([NODE, "-e", script, str(APP_JS), mode, "true"],
+                            capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stderr
+    out = json.loads(result.stdout)
+    assert out["rendered"] and out["rows"] == 2 and out["parallel"] and out["renderedBeforeFetch"]
+    assert out["alerts"] == []
+    defaults = [{"text": text, "disabled": False} for text in ("Bài đăng tiếp →", "Nghe tiếp →")] * 3
+    assert out["defaults"] == defaults
+    if mode == "error":
+        assert out["results"] == defaults
+    else:
+        labels = ("Bài đăng tiếp T35_S11 →", "Nghe tiếp T36_KT04 →") if mode == "target" else ("Hết bài đăng", "Đã nghe hết")
+        assert out["results"] == [{"text": text, "disabled": mode == "empty"} for text in labels] * 3
 
 
 @pytest.mark.skipif(NODE is None, reason="node not installed")

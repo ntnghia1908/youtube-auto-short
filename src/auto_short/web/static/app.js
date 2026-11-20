@@ -378,15 +378,32 @@ const AutoShort = (() => {
       list.replaceChildren(el("li", { class: "muted", text: "Chưa có bộ kinh nào — dán link playlist ở trên." }));
       return;
     }
+    const nextButtons = [];
     list.replaceChildren(...data.playlists.map((p) => {
       const next = el("button", { class: "btn small", type: "button", text: "Bài đăng tiếp →" });
       next.addEventListener("click", () => openNextPost(p.id, next));
       const listen = el("button", { class: "btn small", type: "button", text: "Nghe tiếp →" });
       listen.addEventListener("click", () => openListenResume(p.id));
+      nextButtons.push({ id: p.id, next, listen });
       return el("li", {}, el("a", { href: "/playlists/" + encodeURIComponent(p.id) },
         el("span", { class: "ep-name", text: p.title || p.id }),
         playlistBadges(p)), next, listen);
     }));
+    for (const { id, next, listen } of nextButtons) {
+      loadNextLabel(id, "post", next);
+      loadNextLabel(id, "listen", listen);
+    }
+  }
+
+  async function loadNextLabel(id, kind, button) {
+    const listening = kind === "listen";
+    try {
+      const result = await api(`/api/playlists/${encodeURIComponent(id)}/next-${kind}`);
+      const item = result[listening ? "item" : "post"];
+      button.textContent = item ? `${listening ? "Nghe" : "Bài đăng"} tiếp${item.code ? " " + item.code : ""} →`
+        : listening ? "Đã nghe hết" : "Hết bài đăng";
+      button.disabled = !item;
+    } catch (_) { /* Keep the default label and let a click retry. */ }
   }
 
   async function openNextPost(id, button) {
@@ -3277,6 +3294,8 @@ const AutoShort = (() => {
     $("#pl-delete").addEventListener("click", deletePlaylist);
     initDownloadQueue();
     loadPlaylist();
+    loadNextLabel(playlistId, "post", $("#pl-next-post"));
+    loadNextLabel(playlistId, "listen", $("#pl-listen-resume"));
     checkDisk();
   }
 
