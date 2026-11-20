@@ -84,6 +84,8 @@ Sau task này:
     - Nút "Nghe tiếp →" gọi route này, rồi mở `/episodes/<episode_id>?resume=1&clip=<clip_id>`. Trang Nghe chọn đúng bài; nếu `localStorage` có vị trí của chính bài đó thì tua tới giây đã lưu, không thì phát từ 0. Dùng chung mọi máy.
   - (3) Trang Nghe (solo, không áp cho room / Yêu thích): một bài phát tới hết (`ended`) thì tự tick "Đã xem" bài đó. Lỗi khi tick không chặn việc phát bài kế.
 
+- **Q9 tự tick trong Nghe chung (Amendment D, HUMAN LEAD 2026-11-20: "Làm luôn cho phận Nghe Chung")**: ở chế độ phòng nghe / xem chung (room), khi bài hiện tại phát tới hết (luồng `ended` của room), tự tick "Đã xem" cho đúng bài đó (episode_id + clip_id theo hàng đợi Nghe), giống solo. Nhiều máy trong phòng cùng gửi tick là chấp nhận được (tick lặp vô hại). Lỗi tick không chặn phòng. Trang Yêu thích vẫn không tự tick.
+
 ## Implementation approach
 
 - `post/schedule.py`:
@@ -112,6 +114,7 @@ Sau task này:
 5. Bộ không mốc: test PST1 cũ PASS không sửa.
 7. Q7: nút "Nghe tiếp →" đọc đúng khóa localStorage của bộ → mở đúng tập; `?resume=1` chọn đúng phần + giây; không có vị trí → thông báo; không `?resume=1` → hành vi cũ.
 8. Q8: `next-listen` trả đúng bài sau bài đã xem cuối (chưa xem → bài đầu; hết → null; 404); nút mở đúng bài (`clip`) + giây nếu có; nghe hết bài (solo) → tick Đã xem; room / Yêu thích không tự tick.
+9. Q9: room — bài phát hết → tick Đã xem đúng bài; tick lỗi không ảnh hưởng phòng; Yêu thích không tick.
 6. Q6: `next-post` trả đúng bài (có mốc, không mốc, hết bài → null, bộ lạ → 404); nút ở trang chủ + trang bộ kinh mở đúng tập + cuộn đúng bài (hash).
 
 ## Required verification
