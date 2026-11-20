@@ -258,7 +258,8 @@ def test_legacy_ui_group_last_and_copy_scroll_skips_backlog():  # AC6
   const firstScroll = scrolled.at(-1) === ui.postsPage.nodes.get("source00001|k01").node;
   await findButton(ui.postsPage.nodes.get("source00001|k01").node, "Sao chép bài").click(); await settle();
   console.log(JSON.stringify({headings, legacyLabel, firstScroll, calls: posted.length,
-    nextVisible: !select("#posts-next").hidden, scrolledButton: scrolled.at(-1) === select("#posts-next"),
+    nextVisible: !select("#posts-next").hidden,
+    scrolledNextUnposted: scrolled.at(-1) === ui.postsPage.nodes.get("source00001|k02").node,
     remaining: ui.postsPage.groups[0].posts.filter(p => !p.posted).map(p => p.clip_id).sort()}));
 })().catch(e => { console.error(e); process.exit(1); });
 """
@@ -268,5 +269,180 @@ def test_legacy_ui_group_last_and_copy_scroll_skips_backlog():  # AC6
     out = json.loads(result.stdout)
     assert out["headings"][-2:] == ["Shorts · Chưa có lịch video", "Shorts · Bài cũ chưa đăng"]
     assert out["legacyLabel"] == "Bài cũ chưa đăng"
-    assert out["firstScroll"] and out["scrolledButton"] and out["nextVisible"]
+    # PST2 Q4: no timed post left -> scroll to the next unposted post in display order (was "Tập kế tiếp").
+    assert out["firstScroll"] and out["scrolledNextUnposted"] and out["nextVisible"]
     assert out["remaining"] == ["k02", "k03"] and out["calls"] == 2
+
+
+def test_anchor_api_roundtrip_tick_and_channel_isolation(web):  # PST2 AC1–3
+    client, svc = web
+    url = f"/api/episodes/{EID}/posts"
+    anchor_url = url + "/anchor"
+    payload = {"code": "T1_S01", "slot_at": "2027-05-30T20:30:00+07:00"}
+    assert client.post(anchor_url, json=payload).status_code == 401
+    login(client)
+    other = {"other-playlist": {"code": "T99_KT01", "slot_at": "2027-06-30T13:30:00Z"}}
+    schedule.write(svc.times_path, schedule.read(svc.times_path), other)
+    before_posts = svc.ctx.posts_path(EID).read_bytes()
+    response = client.post(anchor_url, json=payload)
+    assert response.status_code == 200
+    anchor = response.json()["anchor"]
+    assert anchor == {"code": "T1_S01", "slot_at": "2027-05-30T13:30:00Z",
+                      "slot_label": "Chủ nhật 30/05 20:30"}
+    data = client.get(url).json()
+    assert data["anchor"] == anchor and data["next_episode"] == EID2
+    assert [(p["code"], p["slot_group"], p["slot_at"]) for p in data["posts"]] == [
+        ("T1_S01", "manual", None), ("T1_S02", "scheduled", "2027-05-31T02:00:00Z")]
+    kt = client.get(f"/api/episodes/{EID}.kt/posts").json()
+    assert kt["anchor"] == anchor and kt["posts"][0]["slot_at"] == "2027-05-31T08:00:00Z"
+    assert svc.ctx.posts_path(EID).read_bytes() == before_posts
+    assert client.post(url + "/k02/posted", json={"value": True}).status_code == 200
+    assert schedule.read(svc.times_path)[f"{EID}/k02"]["slot_at"] == "2027-05-31T02:00:00Z"
+    assert client.post(url + "/k01/posted", json={"value": True}).status_code == 200
+    assert "slot_at" not in schedule.read(svc.times_path)[f"{EID}/k01"]
+    assert client.post(url + "/k02/posted", json={"value": False}).status_code == 200
+    assert client.post(url + "/k01/posted", json={"value": False}).status_code == 200
+    assert schedule.read_anchors(svc.times_path)[PID]["code"] == "T1_S01"
+    assert client.post(f"/api/episodes/{EID}.kt/posts/anchor", json={}).json() == {"anchor": None}
+    assert schedule.read_anchors(svc.times_path) == other
+    assert client.get(url).json()["anchor"] is None
+    assert client.get(url).json()["posts"][0]["slot_at"] == "2026-11-19T02:00:00Z"
+
+
+@pytest.mark.parametrize("body", [
+    None, [], "wrong", {"code": "T1_S01"}, {"slot_at": "2027-05-30T13:30:00Z"},
+    {"code": "bad", "slot_at": "2027-05-30T13:30:00Z"},
+    {"code": "T1_S00", "slot_at": "2027-05-30T13:30:00Z"},
+    {"code": "T1_S01", "slot_at": "2027-05-30T20:30:00"},
+    {"code": "T1_S01", "slot_at": "2027-02-30T20:30:00+07:00"},
+    {"code": "T1_S01", "slot_at": None},
+    {"code": "T1_S01", "slot_at": 123},
+    {"code": "T1_S01", "slot_at": "2027-05-30T13:30:00Z", "extra": True},
+])
+def test_anchor_api_invalid_payload_is_400_and_does_not_write(web, body):  # PST2 AC1
+    client, svc = web
+    login(client)
+    before = svc.times_path.read_bytes()
+    assert client.post(f"/api/episodes/{EID}/posts/anchor", json=body).status_code == 400
+    assert svc.times_path.read_bytes() == before
+
+
+def test_anchor_api_requires_website_playlist_and_manual_posts_are_never_next(web):  # PST2 AC1,3
+    client, svc = web
+    login(client)
+    url = f"/api/episodes/{EID}/posts"
+    anchor = {"code": "T99_KT07", "slot_at": "2027-05-30T13:30:00Z"}
+    assert client.post(url + "/anchor", json=anchor).status_code == 200
+    assert client.get(url).json()["next_episode"] is None
+    assert all(p["slot_group"] == "manual" for p in client.get(url).json()["posts"])
+    for doc in svc.ctx.playlists.all():
+        svc.ctx.playlists.path(doc["playlist_id"]).unlink()
+    before = svc.times_path.read_bytes()
+    assert client.post(url + "/anchor", json=anchor).status_code == 400
+    assert svc.times_path.read_bytes() == before
+
+
+@pytest.mark.skipif(NODE is None, reason="node not installed")
+@pytest.mark.parametrize("action", ["copy", "tick"])
+def test_anchor_ui_scroll_by_time_then_display_order_then_next(action):  # PST2 AC3–4
+    script = SCHEDULE_HARNESS.split("(async () => {")[0].replace(
+        '{posts: group.posts, next_episode:', '{posts: group.posts, anchor: group.anchor, next_episode:',
+    ) + r"""
+const anchor = {code: "T1_S01", slot_at: "2027-05-30T13:30:00Z", slot_label: "Chủ nhật 30/05 20:30"};
+for (const g of groups) g.anchor = anchor;
+shortPosts.unshift({...makePost("k03", null, null), slot_group: "manual"});
+shortPosts.unshift({...makePost("k04", null, null), slot_group: "legacy"});
+groups[0].view.shorts = shortPosts.map(p => ({clip_id: p.clip_id, status: "rendered"}));
+async function tick(key) {
+  const card = ui.postsPage.nodes.get(key).node;
+  if (process.argv[4] === "copy") await findButton(card, "Sao chép bài").click();
+  else {
+    const input = card.querySelector(".publish-label").children[0];
+    input.checked = true;
+    await Promise.all(input.listeners.change.map(f => f()));
+  }
+  await settle();
+}
+(async () => {
+  ui.renderPostsPage();
+  const headings = select("#post-groups").children.slice(1).map(s => s.children[0].children[0].textContent);
+  const manualLabel = ui.postsPage.nodes.get("source00001|k03").node.querySelector(".post-slot").textContent;
+  await tick("source00001.kt|k01");
+  const byTime = scrolled.at(-1) === ui.postsPage.nodes.get("source00001|k01").node;
+  await tick("source00001|k01");
+  const byDisplay = scrolled.at(-1) === ui.postsPage.nodes.get("source00001|k02").node;
+  const visibleWithUnknown = !select("#posts-next").hidden;  // PST1 rule kept: no timed post left
+  await tick("source00001|k02");
+  const legacyFallback = scrolled.at(-1) === ui.postsPage.nodes.get("source00001|k04").node;
+  await tick("source00001|k04");
+  console.log(JSON.stringify({headings, manualLabel, byTime, byDisplay, visibleWithUnknown, legacyFallback,
+    nextVisible: !select("#posts-next").hidden, nextScroll: scrolled.at(-1) === select("#posts-next"),
+    manualUnticked: !ui.postsPage.groups[0].posts.find(p => p.clip_id === "k03").posted, calls: posted.length}));
+})().catch(e => { console.error(e); process.exit(1); });
+"""
+    result = subprocess.run([NODE, "-e", script, str(APP_JS), "success", "true", action],
+                            capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stderr
+    out = json.loads(result.stdout)
+    assert out["headings"][-1] == "Shorts · Đã lên lịch tay (≤ T1_S01)"
+    assert out["manualLabel"] == "Đã lên lịch tay"
+    assert all(out[key] for key in ("byTime", "byDisplay", "visibleWithUnknown", "legacyFallback",
+                                    "nextVisible", "nextScroll", "manualUnticked"))
+    assert out["calls"] == 4
+
+
+@pytest.mark.skipif(NODE is None, reason="node not installed")
+def test_anchor_ui_set_vietnam_time_clear_and_error_paths():  # PST2 AC1
+    script = SCHEDULE_HARNESS.split("(async () => {")[0].replace(
+        '{posts: group.posts, next_episode:', '{posts: group.posts, anchor: group.anchor, next_episode:',
+    ).replace('if (url.endsWith("/posted")) {', r"""
+if (url.endsWith("/anchor")) {
+  const payload = JSON.parse(opts.body);
+  anchorCalls.push({url, payload});
+  if (rejectAnchor) return {ok: false, status: 400, json: async () => ({detail: "invalid anchor"})};
+  for (const g of groups) g.anchor = payload.code ? {...payload, slot_label: "Chủ nhật 30/05 20:30"} : null;
+  data = {anchor: groups[0].anchor};
+} else if (url.endsWith("/posted")) {""") + r"""
+const anchorCalls = [];
+let rejectAnchor = false;
+shortPosts[0].code = "T1_S01";
+process.env.TZ = "America/New_York";
+(async () => {
+  ui.renderPostsPage();
+  let card = ui.postsPage.nodes.get("source00001|k01").node;
+  await findButton(card, "Đặt mốc").click();
+  const editor = card.querySelector(".post-anchor-editor");
+  const input = editor.children[1], defaultTime = input.value;
+  input.value = "";
+  await findButton(editor, "Lưu mốc").click();
+  const emptyRejected = anchorCalls.length === 0 && !!editor.children.at(-1).textContent;
+  input.value = "2027-05-30T20:30";
+  rejectAnchor = true;
+  await findButton(editor, "Lưu mốc").click();
+  const failed = !editor.hidden && editor.children.at(-1).textContent === "invalid anchor"
+    && !findButton(editor, "Lưu mốc").disabled;
+  rejectAnchor = false;
+  await findButton(editor, "Lưu mốc").click(); await settle();
+  const summary = select("#post-groups").children[0];
+  const summaryText = summary.children[0].textContent;
+  const clear = findButton(summary, "Xóa mốc");
+  rejectAnchor = true;
+  await clear.click(); await settle();
+  const clearFailed = !clear.disabled && select("#posts-msg").textContent === "invalid anchor";
+  rejectAnchor = false;
+  await clear.click(); await settle();
+  console.log(JSON.stringify({defaultTime, emptyRejected, failed, clearFailed, summaryText, anchorCalls,
+    cleared: ui.postsPage.groups.every(g => !g.anchor), editorHidden: editor.hidden}));
+})().catch(e => { console.error(e); process.exit(1); });
+"""
+    result = subprocess.run([NODE, "-e", script, str(APP_JS), "success", "true"],
+                            capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stderr
+    out = json.loads(result.stdout)
+    assert out["defaultTime"] == "2026-11-19T20:30"
+    assert all(out[key] for key in ("emptyRejected", "failed", "clearFailed", "cleared", "editorHidden"))
+    assert "T1_S01" in out["summaryText"] and "20:30 (giờ VN)" in out["summaryText"]
+    assert out["anchorCalls"] == [
+        {"url": f"/api/episodes/{EID}/posts/anchor", "payload":
+         {"code": "T1_S01", "slot_at": "2027-05-30T20:30:00+07:00"}} for _ in range(2)] + [
+        {"url": f"/api/episodes/{EID}/posts/anchor", "payload": {}} for _ in range(2)]

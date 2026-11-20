@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: IN_PROGRESS
 - Type: CHANGE
 - Change class: S1 — thêm khóa vào file trạng thái nội bộ `post_times.json`, đổi luật xếp giờ PST1 cho bộ có mốc; không đổi schema `posts.json`, không ghi YouTube
 - Owner: HUMAN LEAD
@@ -39,7 +39,7 @@ Sau task này:
   - luật xếp giờ khi có mốc;
   - nhóm "Đã lên lịch tay" cho bài ≤ mốc;
   - sửa cuộn sau khi Đăng / tick;
-  - đặt 3 mốc khi chạy thật (giờ VN): Thập Thiện T35_S06 @ 30/05/2027 20:30; Cảm Ứng Thiên T30_KT07 @ 06/03/2027 15:00; Vô Lượng Thọ T33_S01 @ 11/03/2027 20:30. Địa Tạng: không mốc.
+  - đặt 3 mốc khi chạy thật (giờ VN): Thập Thiện T35_S06 @ 30/05/2027 20:30; Cảm Ứng Thiên T30_KT07 @ 06/03/2027 15:00; Vô Lượng Thọ T33_S03 @ 11/03/2027 20:30 (HUMAN LEAD sửa 2026-11-20: "VLT tôi đăng T33-S03 20:30 11/03/27 nãy tôi nhầm"). Địa Tạng: không mốc.
 - Out of scope:
   - bộ chưa có mốc: giữ nguyên luật PST1 (kể cả P3a);
   - đăng bài post tự động (không có API);
@@ -100,10 +100,26 @@ Không chạm database, security model hay public API contract (route nội bộ
 ## Result
 
 - Main changes:
+  - `post/schedule.py`: `anchors` trong `post_times.json`; `plan(…, anchor)`; nhóm `manual`.
+  - `schedule_view` truyền mốc của bộ.
+  - Route `POST …/posts/anchor`; `GET …/posts` thêm `anchor` và `code`.
+  - Trang Bài đăng: nhóm "Đã lên lịch tay", nút "Đặt mốc" / "Xóa mốc", `scrollToNextPost` theo Q4, cuộn cả sau khi tick tay.
 - Tests:
-- Diff + / − (app, test):
-- Helper mới:
-- Review:
-- Important findings / decisions:
-- Known limitations:
+
+| AC | Test |
+|---|---|
+| 1 | `test_post_schedule.py` (đọc / ghi / kiểm mốc), `test_web_post_schedule.py::test_anchor_ui_set_vietnam_time_clear_and_error_paths` + test API mốc |
+| 2–3 | `test_post_schedule.py` (chuỗi khung sau mốc, sàn `video_at` / `now`, ô đã tick, `manual`, tách bộ) |
+| 4 | `test_web_post_schedule.py::test_anchor_ui_scroll_by_time_then_display_order_then_next[copy/tick]` |
+| 5 | 21 test planner PST1 không sửa |
+
+- Full suite: `pytest -q -n auto` 4744 PASS, 2 skip.
+- Diff + / −: app +168 / −33; test +285 / −2 (Codex), cộng phần ORCHESTRATOR sửa nhỏ.
+- Helper mới: `code_order` (thứ tự Short trước khai thị), `validate_anchor`, `_read_document`, `read_anchors` (giữ `read()` cũ).
+- Review (ORCHESTRATOR):
+  - Trả luật hiện nút "Tập kế tiếp" về như PST1 (hiện khi hết bài có giờ). Codex đã đổi thành "phải đăng hết mọi bài trừ manual", điều contract không yêu cầu.
+  - Sửa 1 assert của test PST1 `test_legacy_ui_group_last_and_copy_scroll_skips_backlog`: hết bài có giờ thì cuộn tới bài chưa đăng kế (k02) thay vì nút cuối trang. Đây là thay đổi do Q4 / "Code bị thay: scrollToNextPost".
+  - Chỉnh assert tương ứng trong test mới.
+- Codex: 1 vòng, 90k token, session `01a1f8fc-d8a1-7071-b0db-117aff72fcca`.
+- Known limitations: LNK1 sync của code cũ (trước PST2) ghi `post_times.json` sẽ xóa `anchors`. 8080 phải chạy code PST2.
 - PR:

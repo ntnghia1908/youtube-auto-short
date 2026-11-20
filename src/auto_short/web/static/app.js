@@ -1749,6 +1749,7 @@ const AutoShort = (() => {
       g.posts = d.posts;
       g.postError = d.post_error;
       g.nextEpisode = d.next_episode;
+      g.anchor = d.anchor;
       g.codex = await api(postsUrlFor(id, "/codex"));
     }
     return g;
@@ -1834,11 +1835,17 @@ const AutoShort = (() => {
   }
 
   function scrollToNextPost() {
-    const pending = postsPage.groups.flatMap((g) => renderedOf(g).map((s) => ({
-      id: g.id + "|" + s.clip_id, post: g.posts.find((p) => p.clip_id === s.clip_id),
-    }))).filter((item) => postSlotGroup(item.post) === "scheduled" && !item.post.posted);
-    pending.sort((a, b) => postTimeOrder(a.post, b.post) || a.id.localeCompare(b.id));
-    const target = pending.length ? (postsPage.nodes.get(pending[0].id) || {}).node : $("#posts-next");
+    const byId = new Map(postsPage.groups.flatMap((g) => renderedOf(g).map((s) => [
+      g.id + "|" + s.clip_id, g.posts.find((p) => p.clip_id === s.clip_id),
+    ])));
+    const pending = (postsPage.order || []).filter((id) => {
+      const p = byId.get(id);
+      return !(p && p.posted) && postSlotGroup(p) !== "manual";
+    });
+    const scheduled = pending.filter((id) => byId.get(id) && byId.get(id).slot_at)
+      .sort((a, b) => postTimeOrder(byId.get(a), byId.get(b)));
+    const id = scheduled[0] || pending[0];
+    const target = id ? (postsPage.nodes.get(id) || {}).node : $("#posts-next");
     if (target && !target.hidden) target.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
@@ -1857,6 +1864,7 @@ const AutoShort = (() => {
     postsKindBar();
     updatePostsHead();
     const root = $("#post-groups");
+    postsPage.order = [];
     const groups = postsPage.groups.filter((g) => renderedOf(g).length);
     if (!groups.length) {
       postsPage.nodes.clear();
@@ -1865,8 +1873,8 @@ const AutoShort = (() => {
       return;
     }
     const seen = new Set();
-    // Keep Shorts / khai thị labels; legacy backlog follows posts without a video schedule.
-    const partitions = ["scheduled", "unscheduled", "legacy"].flatMap((slotGroup) =>
+    // Keep Shorts / khai thị labels; posts covered by the manual anchor go last.
+    const partitions = ["scheduled", "unscheduled", "legacy", "manual"].flatMap((slotGroup) =>
       groups.map((g) => ({ g, slotGroup })));
     const sections = partitions.map(({ g, slotGroup }) => {
       const byClip = new Map(g.posts.map((p) => [p.clip_id, p]));
@@ -1876,8 +1884,9 @@ const AutoShort = (() => {
       const cards = shorts.map((s) => {
         const cur = byClip.get(s.clip_id) || null;
         const id = g.id + "|" + s.clip_id;
+        postsPage.order.push(id);
         seen.add(id);
-        const key = JSON.stringify([cur, s.title && s.title.text, s.video_url, jobActive(g.view.post_job), g.codex]);
+        const key = JSON.stringify([cur, s.title && s.title.text, s.video_url, jobActive(g.view.post_job), g.codex, g.anchor]);
         const old = postsPage.nodes.get(id);
         if (old && old.key === key) return old.node;
         const node = postCard(g, s, cur);
@@ -1896,10 +1905,24 @@ const AutoShort = (() => {
       });
       const head = el("div", { class: "shorts-head" },
         el("h2", { text: slotGroup === "scheduled" ? g.label : g.label + " · " +
-          (slotGroup === "legacy" ? "Bài cũ chưa đăng" : "Chưa có lịch video") }), codexAll,
+          (slotGroup === "manual" ? `Đã lên lịch tay (≤ ${g.anchor.code})` :
+            slotGroup === "legacy" ? "Bài cũ chưa đăng" : "Chưa có lịch video") }), codexAll,
         g.postError ? el("p", { class: "error small", text: "Lỗi đọc bài đăng: " + g.postError }) : null);
       return el("section", { class: "card" }, head, el("div", { class: "posts-list" }, ...cards));
     }).filter(Boolean);
+    const anchored = groups.find((g) => g.anchor);
+    if (anchored) {
+      const clear = el("button", { class: "btn small", type: "button", text: "Xóa mốc" });
+      clear.addEventListener("click", async () => {
+        clear.disabled = true;
+        try {
+          await api(postsUrlFor(anchored.id, "/anchor"), jsonBody("POST", {}));
+          await loadPostsPage();
+        } catch (e) { postsMsg(e.message, "error"); clear.disabled = false; }
+      });
+      sections.unshift(el("section", { class: "card" },
+        el("p", { text: `Mốc đã lên lịch tay: ${anchored.anchor.code} · ${anchored.anchor.slot_label} (giờ VN)` }), clear));
+    }
     for (const id of [...postsPage.nodes.keys()]) if (!seen.has(id)) postsPage.nodes.delete(id);
     root.replaceChildren(...sections);
   }
@@ -2106,8 +2129,36 @@ const AutoShort = (() => {
       s.video_url ? el("a", { class: "btn small", href: s.video_url, target: "_blank", rel: "noopener",
         text: g.view.kind === "khaithi" ? "Xem Khai thị" : "Xem Short" }) : null);
     const slotLabel = el("span", { class: "post-slot" });
-    head.append(slotLabel);
+    const setAnchor = el("button", { class: "btn small", type: "button", text: "Đặt mốc",
+      title: "Bài này là bài cuối đã lên lịch tay" });
+    setAnchor.disabled = !(cur && cur.code);
+    head.append(slotLabel, setAnchor);
+    const anchorEditor = el("div", { class: "post-anchor-editor", hidden: true });
+    setAnchor.addEventListener("click", () => {
+      const input = el("input", { type: "datetime-local", "aria-label": "Ngày giờ mốc (giờ VN)" });
+      // datetime-local has no timezone: fill and submit explicitly in VN, regardless of device timezone.
+      input.value = cur.slot_at ? new Date(new Date(cur.slot_at).getTime() + 7 * 3600000).toISOString().slice(0, 16) : "";
+      const save = el("button", { class: "btn small primary", type: "button", text: "Lưu mốc" });
+      const cancel = el("button", { class: "btn small", type: "button", text: "Hủy" });
+      const msg = el("span", { class: "error small" });
+      cancel.addEventListener("click", () => { anchorEditor.hidden = true; });
+      save.addEventListener("click", async () => {
+        if (!input.value) { msg.textContent = "Nhập ngày giờ VN của bài cuối đã lên lịch tay."; return; }
+        save.disabled = true;
+        try {
+          await api(postsUrlFor(g.id, "/anchor"), jsonBody("POST", {
+            code: cur.code, slot_at: input.value + ":00+07:00",
+          }));
+          await loadPostsPage();
+          anchorEditor.hidden = true;
+        } catch (e) { msg.textContent = e.message; save.disabled = false; }
+      });
+      anchorEditor.replaceChildren(el("p", { class: "small", text: `${cur.code}: bài cuối đã lên lịch tay · giờ VN` }),
+        input, el("div", { class: "edit-actions" }, save, cancel), msg);
+      anchorEditor.hidden = false;
+    });
     card.append(head, el("p", { class: "short-title", text: (s.title && s.title.text ? s.title.text.toUpperCase() : "(không có tiêu đề)") }));
+    card.append(anchorEditor);
     const panel = el("div", { class: "post-panel" });
     card.append(panel);
 
@@ -2121,7 +2172,8 @@ const AutoShort = (() => {
     function render() {
       card.className = "post-card" + (cur && cur.posted ? " post-posted" : "");
       slotLabel.textContent = cur && cur.slot_label ? cur.slot_label + " (giờ VN)" :
-        postSlotGroup(cur) === "legacy" ? "Bài cũ chưa đăng" : "Chưa có lịch video";
+        postSlotGroup(cur) === "manual" ? "Đã lên lịch tay" :
+          postSlotGroup(cur) === "legacy" ? "Bài cũ chưa đăng" : "Chưa có lịch video";
       if (!cur) {
         const busy = jobActive(g.view.post_job);
         const btn = el("button", { class: "btn primary small", type: "button", text: "Soạn bài" });
@@ -2286,6 +2338,7 @@ const AutoShort = (() => {
         changed({ ...cur, posted: r.posted, posted_at: r.posted_at });
         render();
         await loadPostsPage();
+        if (r.posted) scrollToNextPost();
         return;
       } catch (e) {
         input.checked = !input.checked;

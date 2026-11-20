@@ -117,14 +117,16 @@ class PostLinks:
                         targets.append(dict(code=code, episode_id=eid, clip_id=cid, khaithi=kt))
         return targets, orders
 
-    def schedule_view(self, episode_id: str, now: datetime) -> tuple[dict, str | None]:
-        """Plan one channel using only local files. Caller holds ctx.post_lock, also for tick writes."""
+    def schedule_view(self, episode_id: str, now: datetime, *, with_anchor: bool = False) -> tuple:
+        """Plan local files under ctx.post_lock. with_anchor adds playlist id and anchor to the result."""
         owner = ep.hd_owner(episode_id)
         docs = [d for d in self.ctx.playlists.all()
                 if any(e.get("video_id") == owner for e in d["entries"])]
         docs.sort(key=lambda d: (not bool(d.get("link_playlists")), d["playlist_id"]))
         if not docs:
-            return {}, None
+            return ({}, None, None, None) if with_anchor else ({}, None)
+        playlist_id = docs[0]["playlist_id"]
+        anchor = schedule.read_anchors(self.times_path).get(playlist_id)
         targets, orders = self._targets(docs[0])
         by_target = {(t["episode_id"], t["clip_id"]): t for t in targets}
         posts = []
@@ -138,12 +140,12 @@ class PostLinks:
                 if target or post["posted_at"]:
                     # Saved slots stay occupied even if a ticked Short was subsequently deleted.
                     posts.append({**post, "episode_id": eid, "code": target["code"] if target else ""})
-        slots = schedule.plan(posts, schedule.read(self.times_path), now)
+        slots = schedule.plan(posts, schedule.read(self.times_path), now, anchor)
         unposted = {f'{p["episode_id"]}/{p["clip_id"]}': p for p in posts if not p["posted_at"]}
         candidates = [(at, key) for key, at in slots.items() if at and key in unposted
                       and ep.hd_owner(unposted[key]["episode_id"]) != owner]
         next_episode = unposted[min(candidates)[1]]["episode_id"] if candidates else None
-        return slots, next_episode
+        return (slots, next_episode, playlist_id, anchor) if with_anchor else (slots, next_episode)
 
     def sync(self, playlist_id: str) -> dict:
         with self._lock:
