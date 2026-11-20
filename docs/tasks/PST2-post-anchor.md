@@ -13,7 +13,7 @@
 - Authorization mode: task
 - Authorization source: HUMAN LEAD 2026-11-20: "Trang đăng bài mỗi lần Đăng tự cuộn xuống cuối Trang chứ không phải đúng bài tiếp theo và hiện tại chưa hiện ngày giờ đăng cho từng bài" → "Tôi đã lên lịch tới T35-S6 rơi vào ngày 30-5-27 20:30 chỉ cần lên lịch từ đây các bài Phía Trước bỏ qua"
 - Parallel group: —
-- Owned paths: `src/auto_short/post/schedule.py`, `src/auto_short/web/post_links.py` (`schedule_view`, next-post), `src/auto_short/web/routes/playlists.py` (route `next-post`, Amendment A), `src/auto_short/web/static/index.html` + `playlist.html` (nút, Amendment A), `src/auto_short/web/static/listen.js` (`?resume=1`, Amendment B), `src/auto_short/web/routes/episode_edit.py` (route `GET …/posts`, `/posted`, route đặt mốc mới), `src/auto_short/web/static/app.js` (phần trang Bài đăng), `src/auto_short/web/static/style.css` (nếu cần), `tests/test_post_schedule.py`, `tests/test_web_post_schedule.py`, contract này
+- Owned paths: `src/auto_short/post/schedule.py`, `src/auto_short/web/post_links.py` (`schedule_view`, next-post), `src/auto_short/web/routes/playlists.py` (route `next-post`, Amendment A), `src/auto_short/web/static/index.html` + `playlist.html` (nút, Amendment A), `src/auto_short/web/static/listen.js` (`?resume=1`, Amendment B; tự tick, Amendment C), `src/auto_short/web/listen.py` (đọc watched, Amendment C), `tests/test_web_listen*.py` (Amendment C), `src/auto_short/web/routes/episode_edit.py` (route `GET …/posts`, `/posted`, route đặt mốc mới), `src/auto_short/web/static/app.js` (phần trang Bài đăng), `src/auto_short/web/static/style.css` (nếu cần), `tests/test_post_schedule.py`, `tests/test_web_post_schedule.py`, contract này
 - Dependencies: PST1 (đã merge)
 - Base commit / branch: `bbd1df5` / `feature/pst2-post-anchor` (worktree `~/projects/yas-pst2`)
 - Human Lead approval: accepted 2026-11-20 ("Duyệt, CƯT đăng tới T30 kt07 ngày 15:00 06/03/27. VLT tơi T33-S01 20:30 11/3/2027")
@@ -74,6 +74,16 @@ Sau task này:
   - Chưa có vị trí đã lưu: thông báo "Chưa nghe bộ này trên máy này".
   - Không có `?resume=1` thì trang Nghe giữ hành vi cũ, gồm cả nút "Nghe tiếp từ …".
 
+- **Q8 "Nghe tiếp" theo dấu "Đã xem" (Amendment C, thay phần chọn bài của Q7)**:
+  - Nguồn: HUMAN LEAD 2026-11-20: "Chức năng nghe tiếp hiện không đúng lý do vì các bài cũ trước đó không tích đã xem … bài được tích Đã xem của tập sau cùng là tập nào thì lấy mốc ở đó các bài trước đó tích toàn bộ đã xem" → đồng ý đề xuất 1-2-3. Mốc: Cảm Ứng Thiên T36_KT03, Vô Lượng Thọ T37_S09, Thập Thiện hết T41; trong một tập nghe hết Short rồi tới khai thị.
+  - (1) Ops (ORCHESTRATOR, đã làm 2026-11-20): tick "Đã xem" (`watched.json`, route CP8.21) cho mọi bài trước và tại mốc của 3 bộ, theo thứ tự hàng đợi Nghe. Đã tick 972 bài, tất cả trả 200.
+  - (2) Route mới `GET /api/playlists/{id}/next-listen`:
+    - Theo thứ tự `playlist_listen`, tìm bài cuối cùng đã "Đã xem" và trả bài ngay sau nó.
+    - Chưa xem bài nào thì trả bài đầu. Hết bài thì trả `null`. Bộ không tồn tại thì 404.
+    - Kết quả trả về: `{episode_id, clip_id, code}`.
+    - Nút "Nghe tiếp →" gọi route này, rồi mở `/episodes/<episode_id>?resume=1&clip=<clip_id>`. Trang Nghe chọn đúng bài; nếu `localStorage` có vị trí của chính bài đó thì tua tới giây đã lưu, không thì phát từ 0. Dùng chung mọi máy.
+  - (3) Trang Nghe (solo, không áp cho room / Yêu thích): một bài phát tới hết (`ended`) thì tự tick "Đã xem" bài đó. Lỗi khi tick không chặn việc phát bài kế.
+
 ## Implementation approach
 
 - `post/schedule.py`:
@@ -101,6 +111,7 @@ Sau task này:
 4. Q4: trang có bài có giờ → cuộn tới bài đó. Không có → cuộn tới bài chưa đăng kế tiếp. Hết → "Tập kế tiếp".
 5. Bộ không mốc: test PST1 cũ PASS không sửa.
 7. Q7: nút "Nghe tiếp →" đọc đúng khóa localStorage của bộ → mở đúng tập; `?resume=1` chọn đúng phần + giây; không có vị trí → thông báo; không `?resume=1` → hành vi cũ.
+8. Q8: `next-listen` trả đúng bài sau bài đã xem cuối (chưa xem → bài đầu; hết → null; 404); nút mở đúng bài (`clip`) + giây nếu có; nghe hết bài (solo) → tick Đã xem; room / Yêu thích không tự tick.
 6. Q6: `next-post` trả đúng bài (có mốc, không mốc, hết bài → null, bộ lạ → 404); nút ở trang chủ + trang bộ kinh mở đúng tập + cuộn đúng bài (hash).
 
 ## Required verification
