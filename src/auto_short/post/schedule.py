@@ -168,5 +168,6 @@ def slot_fields(slot_at: str | None) -> dict:
     label = None
     if slot_at:
         local = timestamp(slot_at).astimezone(ZONE)
-        label = f"{local:%d/%m %H:%M}"  # PST2: HUMAN LEAD 2026-11-20 bỏ thứ
+        # PST2: HUMAN LEAD 2026-11-20 bỏ thứ, giờ AM / PM như app YouTube.
+        label = f"{local:%d/%m} {local.hour % 12 or 12}:{local:%M} {'AM' if local.hour < 12 else 'PM'}"
     return {"slot_at": slot_at, "slot_label": label}

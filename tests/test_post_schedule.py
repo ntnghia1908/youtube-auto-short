@@ -48,8 +48,8 @@ def test_plan_orders_reserves_only_ticked_slots_and_puts_unknown_last():  # AC2â
     ]
     assert planned["old/k01"] is None and planned["legacy/k01"] is None and repr((posts, times)) == before
     assert schedule.slot_fields(planned["two/k01"]) == {
-        "slot_at": "2026-11-19T08:00:00Z", "slot_label": "19/11 15:00"}
-    assert schedule.slot_fields("2026-11-22T02:00:00Z")["slot_label"] == "22/11 09:00"
+        "slot_at": "2026-11-19T08:00:00Z", "slot_label": "19/11 3:00 PM"}
+    assert schedule.slot_fields("2026-11-22T02:00:00Z")["slot_label"] == "22/11 9:00 AM"
 
 
 @pytest.mark.parametrize("now,first", [

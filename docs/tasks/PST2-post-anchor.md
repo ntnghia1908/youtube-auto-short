@@ -57,7 +57,7 @@ Sau task này:
 - **Q3 bài ≤ mốc**: bài chưa tick có mã ≤ mốc → `slot_group = "manual"`, không giờ, không chiếm khung, không tính vào cuộn / tập kế. Trang hiện chúng ở nhóm cuối "Đã lên lịch tay (≤ T35_S06)".
 - **Q4 cuộn**: sau Đăng (sao chép + tick) hoặc tick tay thì cuộn tới bài chưa đăng kế tiếp **có giờ**. Nếu trang không còn bài có giờ thì cuộn tới bài chưa đăng kế tiếp theo thứ tự hiển thị. Chỉ khi cả trang đã đăng hết mới cuộn tới "Tập kế tiếp →".
 
-- **Q5 nhãn giờ (HUMAN LEAD 2026-11-20: "Với mốc thời gian bỏ thứ đi không cần")**: `slot_label` = `dd/mm HH:MM` (bỏ thứ), cho mọi bài và mốc.
+- **Q5 nhãn giờ (HUMAN LEAD 2026-11-20: "Với mốc thời gian bỏ thứ đi không cần")**: `slot_label` = `dd/mm h:MM AM|PM` (bỏ thứ; HUMAN LEAD sau đó: "Đặt theo giờ am, pm"), cho mọi bài và mốc.
 
 ## Implementation approach
 
