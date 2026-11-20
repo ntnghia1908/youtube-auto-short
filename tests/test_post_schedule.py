@@ -48,8 +48,8 @@ def test_plan_orders_reserves_only_ticked_slots_and_puts_unknown_last():  # AC2�
     ]
     assert planned["old/k01"] is None and planned["legacy/k01"] is None and repr((posts, times)) == before
     assert schedule.slot_fields(planned["two/k01"]) == {
-        "slot_at": "2026-11-19T08:00:00Z", "slot_label": "Thứ 5 19/11 15:00"}
-    assert schedule.slot_fields("2026-11-22T02:00:00Z")["slot_label"] == "Chủ nhật 22/11 09:00"
+        "slot_at": "2026-11-19T08:00:00Z", "slot_label": "19/11 3:00 PM"}
+    assert schedule.slot_fields("2026-11-22T02:00:00Z")["slot_label"] == "22/11 9:00 AM"
 
 
 @pytest.mark.parametrize("now,first", [
@@ -194,3 +194,182 @@ def test_legacy_cutoff_backlog_does_not_delay_new_posts_or_release_saved_ticks(v
         key = f"{eid}/k01"
         assert schedule.slot_group(by_id[eid], times.get(key, {}), slots[key]) == expected
     assert repr((posts, times)) == before
+
+
+# PST2: append-only coverage; the PST1 cases above remain unchanged.
+def test_anchor_file_roundtrip_preserves_times_and_legacy_files(tmp_path):  # AC1
+    file = tmp_path / "post_times.json"
+    assert schedule.read(file) == {} and schedule.read_anchors(file) == {}
+    times = {"episode/k01": {"video_at": None, "slot_at": "2027-05-31T02:00:00Z"}}
+    atomic_write_json(file, {"schema_version": 1, "times": times})
+    assert schedule.read(file) == times and schedule.read_anchors(file) == {}
+    anchors = {PID: {"code": "T35_S06", "slot_at": "2027-05-30T20:30:00+07:00"},
+               PID2: {"code": "T30_KT07", "slot_at": "2027-03-06T15:00:00+07:00"}}
+    schedule.write(file, times, anchors)
+    expected = {pid: {**a, "slot_at": schedule._iso(schedule.timestamp(a["slot_at"]))}
+                for pid, a in anchors.items()}
+    assert schedule.read(file) == times and schedule.read_anchors(file) == expected
+    times["new/k01"] = {"video_at": "2027-06-01T00:00:00Z"}
+    schedule.write(file, times)  # ordinary video-sync / tick writes must retain both anchors
+    assert schedule.read_anchors(file) == expected
+    expected.pop(PID)
+    schedule.write(file, times, expected)
+    assert schedule.read_anchors(file) == expected and schedule.read(file) == times
+    assert read_json_dict(file)["schema_version"] == 1
+
+
+@pytest.mark.parametrize("anchor", [
+    None, [], {}, {"code": None, "slot_at": "2027-05-30T13:30:00Z"},
+    {"code": "T35_S00", "slot_at": "2027-05-30T13:30:00Z"},
+    {"code": "T35_S06_title", "slot_at": "2027-05-30T13:30:00Z"},
+    {"code": "T35_S06", "slot_at": "2027-05-30T20:30:00"},
+    {"code": "T35_S06", "slot_at": "2027-02-30T20:30:00+07:00"},
+    {"code": "T35_S06", "slot_at": 123},
+])
+def test_anchor_file_rejects_invalid_state_without_overwriting(tmp_path, anchor):  # AC1
+    file = tmp_path / "post_times.json"
+    atomic_write_json(file, {"schema_version": 1, "times": {}, "anchors": {PID: anchor}})
+    before = file.read_bytes()
+    with pytest.raises(ValueError):
+        schedule.read(file)
+    with pytest.raises(ValueError):
+        schedule.write(file, {})
+    assert file.read_bytes() == before
+
+
+def test_anchor_sequence_manual_group_and_saved_slots():  # AC2–3,5
+    codes = ["T35_KT01", "T36_S01", "T35_S08", "T35_S06", "T35_S07", "T35_S05", "T34_KT07"]
+    posts = [dict(episode_id=code, clip_id="k01", code=code, posted_at=None) for code in codes]
+    posts.append(dict(episode_id="saved", clip_id="k01", code="T35_S01", posted_at="old tick"))
+    posts.append(dict(episode_id="oldtick", clip_id="k01", code="T35_S02", posted_at="old tick"))
+    times = {"saved/k01": {"slot_at": "2027-05-31T08:00:00Z"},
+             "T35_S07/k01": {"video_at": "2026-11-18T00:00:00Z"},  # P3a replaced
+             "T35_S06/k01": {"slot_at": "2027-05-31T02:00:00Z"}}  # unticked, does not occupy
+    anchor = {"code": "T35_S06", "slot_at": "2027-05-30T20:30:00+07:00"}
+    before = repr((posts, times, anchor))
+    slots = schedule.plan(posts, times, schedule.timestamp("2026-11-20T00:00:00Z"), anchor)
+    assert [slots[f"{c}/k01"] for c in ("T35_S07", "T35_S08", "T35_KT01", "T36_S01")] == [
+        "2027-05-31T02:00:00Z", "2027-05-31T13:30:00Z", "2027-06-01T02:00:00Z", "2027-06-01T08:00:00Z"]
+    assert slots["saved/k01"] == "2027-05-31T08:00:00Z"
+    for post in posts:
+        key = f'{post["episode_id"]}/k01'
+        group = schedule.slot_group(post, times.get(key, {}), slots[key], anchor)
+        if post["code"] in {"T35_S06", "T35_S05", "T34_KT07"}:
+            assert slots[key] is None and group == "manual"
+        elif post["episode_id"] == "oldtick":
+            assert slots[key] is None and group == "unscheduled"
+        else:
+            assert group == "scheduled"
+    assert repr((posts, times, anchor)) == before
+    assert schedule.plan(posts, times, schedule.timestamp("2026-11-20T00:00:00Z")) == schedule.plan(
+        posts, times, schedule.timestamp("2026-11-20T00:00:00Z"), anchor=None)
+
+
+@pytest.mark.parametrize("now,video,expected", [
+    ("2027-03-06T00:00:00Z", None, "2027-03-06T13:30:00Z"),
+    ("2027-03-06T13:20:00Z", None, "2027-03-06T13:30:00Z"),
+    ("2027-03-06T13:20:01Z", None, "2027-03-07T02:00:00Z"),
+    ("2027-03-06T00:00:00Z", "2027-03-08T02:00:01Z", "2027-03-08T08:00:00Z"),
+])
+def test_kt_anchor_numeric_order_and_time_floors(now, video, expected):  # AC2
+    codes = ["T31_KT01", "T30_S99", "T31_S10", "T30_KT07", "T31_S02", "T31_S01"]
+    posts = [dict(episode_id=c, clip_id="k01", code=c, posted_at=None) for c in codes]
+    anchor = {"code": "T30_KT07", "slot_at": "2027-03-06T15:00:00+07:00"}
+    times = {"T31_S01/k01": {"video_at": video}}
+    slots = schedule.plan(posts, times, schedule.timestamp(now), anchor)
+    assert slots["T30_S99/k01"] is None and slots["T30_KT07/k01"] is None
+    assert slots["T31_S01/k01"] == expected
+    after = [slots[f"{c}/k01"] for c in ("T31_S01", "T31_S02", "T31_S10", "T31_KT01")]
+    assert after == sorted(set(after))
+
+
+def test_anchor_schedule_view_uses_selected_playlist_and_sync_keeps_anchor(service):  # AC1–3
+    svc, ctx, _ = service
+    for eid in (EID, EID + ".kt", EID2):
+        seed(ctx, eid, posted=False)
+    doc = ctx.playlists.load(PID2)
+    doc["entries"].append({"video_id": EID})
+    atomic_write_json(ctx.playlists.path(PID2), doc)
+    ctx.playlists.set_link_playlist(PID, SHORTS)
+    anchors = {PID: {"code": "T1_S01", "slot_at": "2027-05-30T13:30:00Z"},
+               PID2: {"code": "T99_KT01", "slot_at": "2027-06-30T13:30:00Z"}}
+    schedule.write(svc.times_path, {}, anchors)
+    with ctx.post_lock:
+        slots, nxt, selected, anchor = svc.schedule_view(
+            EID, schedule.timestamp("2026-11-20T00:00:00Z"), with_anchor=True)
+    assert selected == PID and anchor == anchors[PID]
+    assert slots[f"{EID}/k01"] is None and slots[f"{EID}.kt/k01"] == "2027-05-31T02:00:00Z"
+    assert nxt is None  # EID2 belongs to another playlist, whose posts are all manual
+    svc.sync(PID)
+    assert schedule.read_anchors(svc.times_path) == anchors
+    with ctx.post_lock:
+        other, nxt = svc.schedule_view(EID2, schedule.timestamp("2026-11-20T00:00:00Z"))
+    assert all(slot is None for slot in other.values()) and nxt is None
+
+
+@pytest.mark.parametrize("mode,expected", [
+    ("scheduled", (EID + ".kt", "k01", "T1_KT01", "2026-11-19T02:00:00Z")),
+    ("anchor", (EID, "k02", "T1_S02", "2027-05-31T02:00:00Z")),
+    ("fallback", (EID, "k01", "T1_S01", None)),
+    ("legacy", (EID, "k02", "T1_S02", None)),
+    ("ticked", None), ("manual", None), ("all-legacy", None), ("no-code", None),
+])
+def test_next_post_selects_channel_slot_or_numeric_fallback(service, mode, expected):  # PST2 AC6
+    svc, ctx, _ = service
+    for eid, cid in ((EID, "k02"), (EID, "k01"), (EID + ".kt", "k01"), (EID2, "k01")):
+        seed(ctx, eid, cid, posted=mode == "ticked")
+    times = {f"{EID2}/k01": {"video_at": "2026-11-19T00:00:00Z"}}  # another channel never wins
+    anchors = {}
+    if mode == "scheduled":
+        times[f"{EID}/k01"] = {"video_at": "2026-11-20T00:00:00Z"}
+        times[f"{EID}.kt/k01"] = {"video_at": "2026-11-19T00:00:00Z"}
+    if mode in {"legacy", "all-legacy"}:
+        for eid, cid in ((EID, "k01"), (EID, "k02"), (EID + ".kt", "k01")):
+            if mode == "all-legacy" or cid == "k01":
+                times[f"{eid}/{cid}"] = {"video_at": "2026-11-18T00:00:00Z"}
+    if mode in {"anchor", "manual"}:
+        anchors[PID] = {"code": "T1_S01" if mode == "anchor" else "T99_KT07",
+                        "slot_at": "2027-05-30T13:30:00Z"}
+    if mode == "no-code":
+        for eid in (EID, EID + ".kt"):
+            atomic_write_json(ctx.config.workspace.dir / eid / "titles.json", {"header": {"fields": {}}})
+    schedule.write(svc.times_path, times, anchors)
+    before = svc.times_path.read_bytes(), ctx.posts_path(EID).read_bytes()
+    with ctx.post_lock:
+        result = svc.next_post(PID, schedule.timestamp("2026-11-19T01:50:00Z"))
+        slots, _ = svc.schedule_view(EID, schedule.timestamp("2026-11-19T01:50:00Z"))
+    if expected is None:
+        assert result is None
+    else:
+        eid, clip, code, at = expected
+        assert result == dict(episode_id=eid, clip_id=clip, code=code, **schedule.slot_fields(at))
+        assert result["slot_at"] == slots[f"{eid}/{clip}"]
+    assert (svc.times_path.read_bytes(), ctx.posts_path(EID).read_bytes()) == before
+
+
+def test_next_post_route_lock_missing_playlist_and_read_error(service, monkeypatch):  # PST2 AC6; no TestClient
+    import json
+
+    from auto_short.web.routes import playlists as playlist_routes
+
+    svc, ctx, _ = service
+    ctx.post_links = svc
+    ctx.post_now = lambda: "2026-11-19T01:50:00Z"
+    ctx.playlist_or_404 = ctx.playlists.load
+    router = playlist_routes.build(ctx)
+    endpoint = next(r.endpoint for r in router.routes if r.path == "/api/playlists/{playlist_id}/next-post")
+    seed(ctx, posted=False)
+    original = svc.next_post
+    def locked_next(*args):
+        assert ctx.post_lock.locked()
+        return original(*args)
+    monkeypatch.setattr(svc, "next_post", locked_next)
+    assert endpoint(PID) == {"post": dict(episode_id=EID, clip_id="k01", code="T1_S01",
+                                         slot_at=None, slot_label=None)}
+    assert endpoint("PLunknown001").status_code == 404
+    with ctx.post_lock, pytest.raises(FileNotFoundError):
+        original("PLunknown001", schedule.timestamp(ctx.post_now()))
+    svc.times_path.parent.mkdir(parents=True, exist_ok=True)
+    svc.times_path.write_text('{"schema_version": 9}')
+    response = endpoint(PID)
+    assert response.status_code == 422 and "schema" in json.loads(response.body)["detail"]

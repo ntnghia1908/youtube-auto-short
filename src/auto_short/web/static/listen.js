@@ -149,6 +149,21 @@
       player.render();
     },
   });
+  for (const media of player.audios) media.addEventListener("ended", (event) => {
+    if (!event.isTrusted || favPid || media !== player.media() || !player.active || player.loading
+        || !media.ended || media.seeking) return;
+    let item = currentItem;
+    if (inRoom) {
+      const playing = player.state, entry = playing?.queue?.[playing.index];
+      const url = entry?.url || entry?.video_url;
+      // /watch has no solo list; its queue already carries identity decorated by the watch API.
+      item = url && url === playing.video_url ? all.find((item) => item.video_url === url)
+        || (entry.episode_id && entry.clip_id ? entry : null) : null;
+    }
+    if (!item) return;
+    request("POST", { value: true }, `/api/episodes/${encodeURIComponent(item.episode_id)}/shorts/${encodeURIComponent(item.clip_id)}/watched`)
+      .catch(() => {});
+  }, true); // Capture the completed identity before the player's ended handler advances the queue.
   const roomEnded = (position) => { cancelPause(); roomCommand("ended", { expect_version: rstate.version, position }, true).catch(() => {}); };
   const roomHiddenAdvance = (version) => {
     cancelPause(); rstate = player.state; // Follow the optimistic index while the command is in flight.
@@ -465,16 +480,38 @@
       $("series").textContent = favPid ? `Yêu thích — ${data.title}` : data.title;
       rebuildItems();
       const saved = read(storageKey);
-      const resume = all.find((item) => same(item, saved));
-      const validResume = resume && Number.isFinite(saved.position) && saved.position >= 0;
+      const params = new URLSearchParams(location.search);
+      const requestedResume = !favPid && !inRoom && params.get("resume") === "1";
+      const requestedClip = requestedResume ? params.get("clip") : null;
+      const resume = all.find((item) => requestedClip !== null
+        ? item.episode_id === episodeId && item.clip_id === requestedClip : same(item, saved));
+      const savedPosition = same(resume, saved) && Number.isFinite(saved.position) && saved.position >= 0;
+      const validResume = resume && (requestedClip !== null || savedPosition);
       // Favorites reopen at the saved identity/part, paused; ordinary episode pages keep the resume button.
-      if (favPid && validResume) {
+      if ((favPid || requestedResume) && validResume) {
         if (!items.some((item) => same(item, resume))) {
           filter = "both"; renderFilter(); write("auto-short-listen-filter", filter); rebuildItems();
         }
-        choose(items.findIndex((item) => same(item, resume)), false, saved.position);
+        choose(items.findIndex((item) => same(item, resume)), false, savedPosition ? saved.position : 0, requestedResume);
+        if (requestedResume) {
+          // Seek while paused before trying autoplay, so a blocked play keeps the saved clock intact.
+          const selected = state, media = player.media();
+          const tryPlay = () => {
+            if (state !== selected || inRoom || !player.active) return;
+            // The player's existing media events update solo state on a successful play.
+            media.play().catch(() => {});
+          };
+          if (player.loading) media.addEventListener("loadedmetadata", tryPlay, { once: true });
+          else tryPlay();
+        }
       } else choose(startingIndex());
-      if (validResume) {
+      if (requestedResume) {
+        $("resume").hidden = true;
+        params.delete("resume");
+        params.delete("clip");
+        history.replaceState(history.state, "", location.pathname + (params.size ? `?${params}` : "") + (location.hash || ""));
+      }
+      if (validResume && !requestedResume) {
         const seconds = Math.floor(saved.position);
         $("resume").textContent = `Nghe tiếp từ ${epLabel(resume)} · ${kindLabel(resume)} · ${resume.title || resume.clip_id} (${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")})`;
         $("resume").hidden = false;

@@ -7,7 +7,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Body
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -384,9 +384,11 @@ def build(ctx: WebContext) -> APIRouter:
                 doc, post_error = post_store.empty_posts(episode_id), str(exc)
             try:
                 times = post_schedule.read(ctx.post_links.times_path)
-                slots, next_episode = ctx.post_links.schedule_view(episode_id, post_schedule.timestamp(ctx.post_now()))
+                slots, next_episode, playlist_id, anchor = ctx.post_links.schedule_view(
+                    episode_id, post_schedule.timestamp(ctx.post_now()), with_anchor=True)
             except (ValueError, OSError) as exc:
                 times, slots, next_episode = {}, {}, None
+                playlist_id, anchor = None, None
                 post_error = post_error or str(exc)
         try:
             ep_src = post_source.load(episode_id, ctx.config)
@@ -402,15 +404,44 @@ def build(ctx: WebContext) -> APIRouter:
         hashtags_list = review_hashtags(series, tags)
         posts = [ctx.post_entry_view(e, ep_src=ep_src, title=titles_by_clip.get(e["clip_id"]),
                                   header_fields=header_fields, hashtags_list=hashtags_list) for e in doc["posts"]]
+        prefixes = ep.copy_prefixes(ctx.config, episode_id, ep.render_manifest(ctx.config, episode_id) or {})
         for post in posts:
+            post["code"] = prefixes.get(post["clip_id"], "").rstrip("_")
             key = f'{episode_id}/{post["clip_id"]}'
             slot = slots.get(key)
             post.update(post_schedule.slot_fields(slot))
-            post["slot_group"] = post_schedule.slot_group(post, times.get(key, {}), slot)
+            post["slot_group"] = post_schedule.slot_group(post, times.get(key, {}), slot, anchor)
         response = {"posts": posts, "post_error": post_error}
         if posts or next_episode:
             response["next_episode"] = next_episode
+        if posts or playlist_id:
+            response["anchor"] = {**anchor, **post_schedule.slot_fields(anchor["slot_at"])} if anchor else None
         return response
+
+    @router.post("/api/episodes/{episode_id}/posts/anchor")
+    def api_posts_anchor(episode_id: str, body: Any = Body(default=None)):
+        """Set the episode's website-playlist anchor; an empty object clears it."""
+        if (bad := ctx.episode_or_404(episode_id, error_response=JSONResponse)) is not None:
+            return bad
+        with ctx.post_lock:
+            try:
+                if not isinstance(body, dict) or (body and set(body) != {"code", "slot_at"}):
+                    raise ValueError("cần code + slot_at có múi giờ, hoặc {} để xóa mốc")
+                anchor = post_schedule.validate_anchor(body) if body else None
+                _, _, playlist_id, _ = ctx.post_links.schedule_view(
+                    episode_id, post_schedule.timestamp(ctx.post_now()), with_anchor=True)
+                if not playlist_id:
+                    raise ValueError("tập chưa thuộc bộ nào")
+                times = post_schedule.read(ctx.post_links.times_path)
+                anchors = post_schedule.read_anchors(ctx.post_links.times_path)
+                if anchor:
+                    anchors[playlist_id] = anchor
+                else:
+                    anchors.pop(playlist_id, None)
+                post_schedule.write(ctx.post_links.times_path, times, anchors)
+            except (ValueError, OSError) as exc:
+                return JSONResponse({"detail": str(exc)}, status_code=400)
+        return {"anchor": {**anchor, **post_schedule.slot_fields(anchor["slot_at"])} if anchor else None}
 
     def _post_clips(body: PostComposeIn) -> "list[str] | str | JSONResponse":
         raw = body.clips

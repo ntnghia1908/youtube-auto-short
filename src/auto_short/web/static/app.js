@@ -378,10 +378,53 @@ const AutoShort = (() => {
       list.replaceChildren(el("li", { class: "muted", text: "Chưa có bộ kinh nào — dán link playlist ở trên." }));
       return;
     }
-    list.replaceChildren(...data.playlists.map((p) => el("li", {},
-      el("a", { href: "/playlists/" + encodeURIComponent(p.id) },
+    const nextButtons = [];
+    list.replaceChildren(...data.playlists.map((p) => {
+      const next = el("button", { class: "btn small", type: "button", text: "Bài đăng tiếp →" });
+      next.addEventListener("click", () => openNextPost(p.id, next));
+      const listen = el("button", { class: "btn small", type: "button", text: "Nghe tiếp →" });
+      listen.addEventListener("click", () => openListenResume(p.id));
+      nextButtons.push({ id: p.id, next, listen });
+      return el("li", {}, el("a", { href: "/playlists/" + encodeURIComponent(p.id) },
         el("span", { class: "ep-name", text: p.title || p.id }),
-        playlistBadges(p)))));
+        playlistBadges(p)), next, listen);
+    }));
+    for (const { id, next, listen } of nextButtons) {
+      loadNextLabel(id, "post", next);
+      loadNextLabel(id, "listen", listen);
+    }
+  }
+
+  async function loadNextLabel(id, kind, button) {
+    const listening = kind === "listen";
+    try {
+      const result = await api(`/api/playlists/${encodeURIComponent(id)}/next-${kind}`);
+      const item = result[listening ? "item" : "post"];
+      button.textContent = item ? `${listening ? "Nghe" : "Bài đăng"} tiếp${item.code ? " " + item.code : ""} →`
+        : result.next_unprocessed ? `Chưa xử lý ${result.next_unprocessed.label} →`
+          : listening ? "Đã nghe hết" : "Hết bài đăng";
+      button.disabled = !item && !result.next_unprocessed;
+    } catch (_) { /* Keep the default label and let a click retry. */ }
+  }
+
+  async function openNextPost(id, button) {
+    button.disabled = true;
+    try {
+      const result = await api(`/api/playlists/${encodeURIComponent(id)}/next-post`);
+      if (result.post) location.href = `/episodes/${encodeURIComponent(result.post.episode_id)}/posts#post-${encodeURIComponent(result.post.clip_id)}`;
+      else if (result.next_unprocessed) location.href = `/episodes/${encodeURIComponent(result.next_unprocessed.episode_id)}`;
+      else alert("Hết bài cần đăng");
+    } catch (e) { alert(e.message); }
+    finally { button.disabled = false; }
+  }
+
+  async function openListenResume(id) {
+    try {
+      const result = await api(`/api/playlists/${encodeURIComponent(id)}/next-listen`);
+      if (result.item) location.href = `/episodes/${encodeURIComponent(result.item.episode_id)}?resume=1&clip=${encodeURIComponent(result.item.clip_id)}`;
+      else if (result.next_unprocessed) location.href = `/episodes/${encodeURIComponent(result.next_unprocessed.episode_id)}`;
+      else alert("Đã nghe hết bộ này");
+    } catch (e) { alert(e.message); }
   }
 
   // CP8.31 A3 (was CP8.13 G3 text): coloured badges, same style as the A2 row badges (text + colour). Only
@@ -490,6 +533,7 @@ const AutoShort = (() => {
     // LISTEN1: keep the existing management DOM and handlers intact across tab changes.
     let episodeTab = "listen";
     try { if (localStorage.getItem("auto-short-episode-tab") === "manage") episodeTab = "manage"; } catch (_) { /* Private mode. */ }
+    if (new URLSearchParams(location.search).get("resume") === "1") episodeTab = "listen";
     function selectEpisodeTab(tab) {
       const listening = tab === "listen";
       if (listening) {
@@ -1721,7 +1765,8 @@ const AutoShort = (() => {
     return el("span", { class: "copy-wrap" }, copy, warning);
   }
 
-  const postsPage = { vid: null, groups: [], autoTried: false, timer: null, nodes: new Map(), loaded: false, backlog: null };
+  const postsPage = { vid: null, groups: [], autoTried: false, timer: null, nodes: new Map(), loaded: false,
+    initialScrolled: false, backlog: null };
 
   function renderedOf(g) { return g.view.shorts.filter((s) => s.status === "rendered"); }
 
@@ -1749,6 +1794,7 @@ const AutoShort = (() => {
       g.posts = d.posts;
       g.postError = d.post_error;
       g.nextEpisode = d.next_episode;
+      g.anchor = d.anchor;
       g.codex = await api(postsUrlFor(id, "/codex"));
     }
     return g;
@@ -1834,11 +1880,17 @@ const AutoShort = (() => {
   }
 
   function scrollToNextPost() {
-    const pending = postsPage.groups.flatMap((g) => renderedOf(g).map((s) => ({
-      id: g.id + "|" + s.clip_id, post: g.posts.find((p) => p.clip_id === s.clip_id),
-    }))).filter((item) => postSlotGroup(item.post) === "scheduled" && !item.post.posted);
-    pending.sort((a, b) => postTimeOrder(a.post, b.post) || a.id.localeCompare(b.id));
-    const target = pending.length ? (postsPage.nodes.get(pending[0].id) || {}).node : $("#posts-next");
+    const byId = new Map(postsPage.groups.flatMap((g) => renderedOf(g).map((s) => [
+      g.id + "|" + s.clip_id, g.posts.find((p) => p.clip_id === s.clip_id),
+    ])));
+    const pending = (postsPage.order || []).filter((id) => {
+      const p = byId.get(id);
+      return !(p && p.posted) && postSlotGroup(p) !== "manual";
+    });
+    const scheduled = pending.filter((id) => byId.get(id) && byId.get(id).slot_at)
+      .sort((a, b) => postTimeOrder(byId.get(a), byId.get(b)));
+    const id = scheduled[0] || pending[0];
+    const target = id ? (postsPage.nodes.get(id) || {}).node : $("#posts-next");
     if (target && !target.hidden) target.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
@@ -1857,6 +1909,7 @@ const AutoShort = (() => {
     postsKindBar();
     updatePostsHead();
     const root = $("#post-groups");
+    postsPage.order = [];
     const groups = postsPage.groups.filter((g) => renderedOf(g).length);
     if (!groups.length) {
       postsPage.nodes.clear();
@@ -1865,8 +1918,8 @@ const AutoShort = (() => {
       return;
     }
     const seen = new Set();
-    // Keep Shorts / khai thị labels; legacy backlog follows posts without a video schedule.
-    const partitions = ["scheduled", "unscheduled", "legacy"].flatMap((slotGroup) =>
+    // Keep Shorts / khai thị labels; posts covered by the manual anchor go last.
+    const partitions = ["scheduled", "unscheduled", "legacy", "manual"].flatMap((slotGroup) =>
       groups.map((g) => ({ g, slotGroup })));
     const sections = partitions.map(({ g, slotGroup }) => {
       const byClip = new Map(g.posts.map((p) => [p.clip_id, p]));
@@ -1876,8 +1929,9 @@ const AutoShort = (() => {
       const cards = shorts.map((s) => {
         const cur = byClip.get(s.clip_id) || null;
         const id = g.id + "|" + s.clip_id;
+        postsPage.order.push(id);
         seen.add(id);
-        const key = JSON.stringify([cur, s.title && s.title.text, s.video_url, jobActive(g.view.post_job), g.codex]);
+        const key = JSON.stringify([cur, s.title && s.title.text, s.video_url, jobActive(g.view.post_job), g.codex, g.anchor]);
         const old = postsPage.nodes.get(id);
         if (old && old.key === key) return old.node;
         const node = postCard(g, s, cur);
@@ -1896,12 +1950,33 @@ const AutoShort = (() => {
       });
       const head = el("div", { class: "shorts-head" },
         el("h2", { text: slotGroup === "scheduled" ? g.label : g.label + " · " +
-          (slotGroup === "legacy" ? "Bài cũ chưa đăng" : "Chưa có lịch video") }), codexAll,
+          (slotGroup === "manual" ? `Đã lên lịch tay (≤ ${g.anchor.code})` :
+            slotGroup === "legacy" ? "Bài cũ chưa đăng" : "Chưa có lịch video") }), codexAll,
         g.postError ? el("p", { class: "error small", text: "Lỗi đọc bài đăng: " + g.postError }) : null);
       return el("section", { class: "card" }, head, el("div", { class: "posts-list" }, ...cards));
     }).filter(Boolean);
+    const anchored = groups.find((g) => g.anchor);
+    if (anchored) {
+      const clear = el("button", { class: "btn small", type: "button", text: "Xóa mốc" });
+      clear.addEventListener("click", async () => {
+        clear.disabled = true;
+        try {
+          await api(postsUrlFor(anchored.id, "/anchor"), jsonBody("POST", {}));
+          await loadPostsPage();
+        } catch (e) { postsMsg(e.message, "error"); clear.disabled = false; }
+      });
+      sections.unshift(el("section", { class: "card" },
+        el("p", { text: `Mốc đã lên lịch tay: ${anchored.anchor.code} · ${anchored.anchor.slot_label} (giờ VN)` }), clear));
+    }
     for (const id of [...postsPage.nodes.keys()]) if (!seen.has(id)) postsPage.nodes.delete(id);
     root.replaceChildren(...sections);
+    if (postsPage.loaded && !postsPage.initialScrolled) {
+      postsPage.initialScrolled = true;
+      const clip = location.hash.startsWith("#post-") ? location.hash.slice(6) : "";
+      const target = clip && postsPage.nodes.get((episodeId || postsPage.vid) + "|" + clip);
+      if (target) target.node.scrollIntoView({ behavior: "smooth", block: "start" });
+      else scrollToNextPost();
+    }
   }
 
   async function loadPostsPage() {
@@ -2106,8 +2181,36 @@ const AutoShort = (() => {
       s.video_url ? el("a", { class: "btn small", href: s.video_url, target: "_blank", rel: "noopener",
         text: g.view.kind === "khaithi" ? "Xem Khai thị" : "Xem Short" }) : null);
     const slotLabel = el("span", { class: "post-slot" });
-    head.append(slotLabel);
+    const setAnchor = el("button", { class: "btn small", type: "button", text: "Đặt mốc",
+      title: "Bài này là bài cuối đã lên lịch tay" });
+    setAnchor.disabled = !(cur && cur.code);
+    head.append(slotLabel, setAnchor);
+    const anchorEditor = el("div", { class: "post-anchor-editor", hidden: true });
+    setAnchor.addEventListener("click", () => {
+      const input = el("input", { type: "datetime-local", "aria-label": "Ngày giờ mốc (giờ VN)" });
+      // datetime-local has no timezone: fill and submit explicitly in VN, regardless of device timezone.
+      input.value = cur.slot_at ? new Date(new Date(cur.slot_at).getTime() + 7 * 3600000).toISOString().slice(0, 16) : "";
+      const save = el("button", { class: "btn small primary", type: "button", text: "Lưu mốc" });
+      const cancel = el("button", { class: "btn small", type: "button", text: "Hủy" });
+      const msg = el("span", { class: "error small" });
+      cancel.addEventListener("click", () => { anchorEditor.hidden = true; });
+      save.addEventListener("click", async () => {
+        if (!input.value) { msg.textContent = "Nhập ngày giờ VN của bài cuối đã lên lịch tay."; return; }
+        save.disabled = true;
+        try {
+          await api(postsUrlFor(g.id, "/anchor"), jsonBody("POST", {
+            code: cur.code, slot_at: input.value + ":00+07:00",
+          }));
+          await loadPostsPage();
+          anchorEditor.hidden = true;
+        } catch (e) { msg.textContent = e.message; save.disabled = false; }
+      });
+      anchorEditor.replaceChildren(el("p", { class: "small", text: `${cur.code}: bài cuối đã lên lịch tay · giờ VN` }),
+        input, el("div", { class: "edit-actions" }, save, cancel), msg);
+      anchorEditor.hidden = false;
+    });
     card.append(head, el("p", { class: "short-title", text: (s.title && s.title.text ? s.title.text.toUpperCase() : "(không có tiêu đề)") }));
+    card.append(anchorEditor);
     const panel = el("div", { class: "post-panel" });
     card.append(panel);
 
@@ -2121,7 +2224,8 @@ const AutoShort = (() => {
     function render() {
       card.className = "post-card" + (cur && cur.posted ? " post-posted" : "");
       slotLabel.textContent = cur && cur.slot_label ? cur.slot_label + " (giờ VN)" :
-        postSlotGroup(cur) === "legacy" ? "Bài cũ chưa đăng" : "Chưa có lịch video";
+        postSlotGroup(cur) === "manual" ? "Đã lên lịch tay" :
+          postSlotGroup(cur) === "legacy" ? "Bài cũ chưa đăng" : "Chưa có lịch video";
       if (!cur) {
         const busy = jobActive(g.view.post_job);
         const btn = el("button", { class: "btn primary small", type: "button", text: "Soạn bài" });
@@ -2286,6 +2390,7 @@ const AutoShort = (() => {
         changed({ ...cur, posted: r.posted, posted_at: r.posted_at });
         render();
         await loadPostsPage();
+        if (r.posted) scrollToNextPost();
         return;
       } catch (e) {
         input.checked = !input.checked;
@@ -3168,6 +3273,8 @@ const AutoShort = (() => {
   function initPlaylist() {
     playlistId = decodeURIComponent(location.pathname.split("/").filter(Boolean)[1] || "");
     $("#pl-thumbs").href = `/playlists/${encodeURIComponent(playlistId)}/thumbs`;
+    $("#pl-next-post").addEventListener("click", () => openNextPost(playlistId, $("#pl-next-post")));
+    $("#pl-listen-resume").addEventListener("click", () => openListenResume(playlistId));
     const savedFilter = store("autoShort.plFilter");
     if (PL_FILTERS.includes(savedFilter)) plFilter = savedFilter;
     document.querySelectorAll("#pl-filters [data-filter]").forEach((b) => b.addEventListener("click", () => {
@@ -3190,6 +3297,8 @@ const AutoShort = (() => {
     $("#pl-delete").addEventListener("click", deletePlaylist);
     initDownloadQueue();
     loadPlaylist();
+    loadNextLabel(playlistId, "post", $("#pl-next-post"));
+    loadNextLabel(playlistId, "listen", $("#pl-listen-resume"));
     checkDisk();
   }
 
