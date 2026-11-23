@@ -66,6 +66,17 @@ def build(ctx: WebContext) -> APIRouter:
     @router.get("/api/post-images")
     def api_post_images():
         infos = post_images.list_images(ctx.config.post.image_dir)
+
+        def newest_first(info: post_images.ImageInfo):
+            path = ctx.config.post.image_dir / info.name
+            try:
+                mtime = path.stat().st_mtime
+            except OSError:
+                mtime = 0
+            numeric = path.stem.isdecimal()
+            return (-mtime, not numeric, -int(path.stem) if numeric else 0, info.name)
+
+        infos.sort(key=newest_first)
         used = post_images.usage_counts(Path(ctx.config.workspace.dir))
         sources = _post_image_sources()
         return {"images": [{"name": i.name, "width": i.width, "height": i.height, "bytes": i.bytes,
