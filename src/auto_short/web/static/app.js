@@ -1766,7 +1766,7 @@ const AutoShort = (() => {
   }
 
   const postsPage = { vid: null, groups: [], autoTried: false, timer: null, nodes: new Map(), loaded: false,
-    initialScrolled: false, backlog: null };
+    initialScrolled: false, scrollOnReturn: false, backlog: null };
 
   function renderedOf(g) { return g.view.shorts.filter((s) => s.status === "rendered"); }
 
@@ -1892,6 +1892,21 @@ const AutoShort = (() => {
     const id = scheduled[0] || pending[0];
     const target = id ? (postsPage.nodes.get(id) || {}).node : $("#posts-next");
     if (target && !target.hidden) target.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function requestPostScroll() {
+    // Keep one retry even after a visible scroll: the user may switch apps mid-animation.
+    postsPage.scrollOnReturn = true;
+    if (!document.hidden) scrollToNextPost();
+  }
+
+  function resumePostScroll() {
+    if (document.hidden || !postsPage.scrollOnReturn) return;
+    requestAnimationFrame(() => {
+      if (document.hidden || !postsPage.scrollOnReturn) return;
+      postsPage.scrollOnReturn = false;
+      scrollToNextPost();
+    });
   }
 
   function postsKindBar() {
@@ -2030,6 +2045,7 @@ const AutoShort = (() => {
   }
 
   function initPosts() {
+    document.addEventListener("visibilitychange", resumePostScroll);
     episodeId = decodeURIComponent(location.pathname.split("/").filter(Boolean)[1] || "");
     postsPage.vid = episodeId.endsWith(".kt") ? episodeId.slice(0, -3) : episodeId;
     buildImageLibrary($("#image-dialog .modal-box"));
@@ -2379,7 +2395,7 @@ const AutoShort = (() => {
         changed({ ...cur, posted: r.posted, posted_at: r.posted_at });
         render();
         await loadPostsPage();
-        scrollToNextPost();
+        if (r.posted) requestPostScroll();
       } catch (e) { alert(e.message); }
     }
 
@@ -2390,7 +2406,7 @@ const AutoShort = (() => {
         changed({ ...cur, posted: r.posted, posted_at: r.posted_at });
         render();
         await loadPostsPage();
-        if (r.posted) scrollToNextPost();
+        if (r.posted) requestPostScroll();
         return;
       } catch (e) {
         input.checked = !input.checked;

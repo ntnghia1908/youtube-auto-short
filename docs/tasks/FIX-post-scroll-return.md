@@ -76,11 +76,18 @@ Không chạm database / security model / public API.
 
 ## Result
 
-- Main changes:
+- Main changes: IMPLEMENTER hoàn tất phần được giao. Thêm `postsPage.scrollOnReturn`; copy / tick tay thành công với `r.posted = true` yêu cầu cuộn sau reload. Trang hiện cuộn ngay và giữ một lần thử lại; trang ẩn chỉ giữ cờ. Listener tại `initPosts` cuộn sau một frame khi hiện lại, xóa cờ trước khi cuộn. Không đổi đích cuộn, polling hoặc cuộn ban đầu.
 - Tests:
-- Diff + / − (app, test):
-- Helper mới (đã tìm, lý do không tái dùng):
-- Review:
-- Important findings / decisions:
-- Known limitations:
-- PR:
+  - `PYTHONPATH=/home/ntnghia/projects/yas-scroll/src python -m pytest -q tests/test_web_post_scroll_return.py` — **7 passed in 0.29s**, dùng Python của env `auto-short` qua PATH. Lần đầu với Python mặc định không chạy được vì `No module named pytest`.
+  - `node --check src/auto_short/web/static/app.js` — **PASS** (exit 0).
+  - AC → test:
+    - AC1: `test_return_scroll_lifecycle[hidden]` + hai ca `test_successful_posted_handlers_request_scroll_after_reload` kiểm wiring copy / tick tay.
+    - AC2: `test_return_scroll_lifecycle[visible]`; `[hidden-before-frame]` kiểm chuyển app lần nữa trước frame không làm mất cờ.
+    - AC3: `test_return_scroll_lifecycle[no-tick]`; test wiring kiểm chỉ gọi khi `r.posted`, sau reload và ngoài nhánh lỗi; `test_return_listener_is_only_registered_in_posts_init` kiểm cờ mặc định tắt và listener chỉ ở khởi tạo trang Bài đăng.
+    - AC4: **chưa chạy**, ORCHESTRATOR chạy full suite ngoài sandbox theo contract.
+- Diff + / − (app, test): app **+19 / −3** (`git diff --numstat`); test mới **+84 / −0** (untracked, chưa xuất hiện trong `git diff --numstat`).
+- Helper mới (đã tìm, lý do không tái dùng): `requestPostScroll` đặt cờ và cuộn khi hiện; `resumePostScroll` xử lý visibility / frame và tiêu thụ cờ một lần. Đã tìm bằng `rg -n 'postsPage =|scrollToNextPost|tickPostedAfterCopy|togglePosted|visibilitychange|requestAnimationFrame' src/auto_short/web/static/app.js`; tái dùng `scrollToNextPost` nguyên trạng. Listener ZIP / giữ màn hình sáng hiện có không quản lý cờ cuộn Bài đăng nên không dùng chung.
+- Review: tự kiểm diff theo contract, chỉ sửa owned paths; chờ ORCHESTRATOR review độc lập. Test Node chạy helper thật với trạng thái visibility / hàng frame / lệnh cuộn giả, không thêm dependency.
+- Important findings / decisions: kiểm lại `document.hidden` và cờ trong frame để giữ lần thử lại nếu người dùng chuyển app trước khi frame chạy, đồng thời tránh tiêu thụ cờ hai lần.
+- Known limitations: chưa chạy full suite hoặc manual test điện thoại; không tuyên bố AC4 PASS.
+- PR: không commit / push / PR theo yêu cầu bàn giao.
