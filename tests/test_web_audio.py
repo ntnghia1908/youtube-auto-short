@@ -67,7 +67,8 @@ def test_audio_route_only_audio_range_cache_and_render_version(cfg, short, monke
     calls, run = [], audio_cache._run
 
     def counted(cmd):
-        calls.append(cmd)
+        if cmd[-1].endswith("audio.m4a"):
+            calls.append(cmd)
         return run(cmd)
 
     monkeypatch.setattr(audio_cache, "_run", counted)
@@ -177,7 +178,8 @@ def test_audio_cache_serializes_same_key_and_evicts_oldest(cfg, short, monkeypat
     calls, run = [], audio_cache._run
 
     def counted(cmd):
-        calls.append(cmd)
+        if cmd[-1].endswith("audio.m4a"):
+            calls.append(cmd)
         return run(cmd)
 
     monkeypatch.setattr(audio_cache, "_run", counted)
@@ -197,6 +199,98 @@ def test_audio_cache_failed_extraction_leaves_no_partial(cfg, short):
     short.write_bytes(b"not a video")
     assert audio_route(cfg)(EID, "k01.m4a").status_code == 500
     assert list((Path(cfg.workspace.dir) / "_audio_cache").iterdir()) == []
+
+
+def assert_padded_audio(source, target):
+    def probe(path):
+        return json.loads(subprocess.run(
+            ["ffprobe", "-v", "error", "-show_streams", "-show_format", "-of", "json", str(path)],
+            check=True, capture_output=True, text=True).stdout)
+
+    original, output = probe(source), probe(target)
+    streams = output["streams"]
+    assert [(s["codec_type"], s["codec_name"]) for s in streams] == [("audio", "aac")]
+    assert float(output["format"]["duration"]) - float(original["format"]["duration"]) == pytest.approx(
+        audio_cache.AUDIO_PAD, abs=.08)
+    pcm = subprocess.run(["ffmpeg", "-v", "error", "-i", str(target), "-ac", "1", "-ar", "16000",
+                          "-f", "s16le", "-"], check=True, capture_output=True).stdout
+    samples = array("h", pcm)
+    assert max(abs(v) for v in samples[:int((audio_cache.AUDIO_PAD - .1) * 16000)]) < 30
+    onset = next(i / 16000 for i, value in enumerate(samples) if abs(value) > 1000)
+    assert onset == pytest.approx(audio_cache.AUDIO_PAD, abs=.08)
+    data = target.read_bytes()
+    assert data.index(b"moov") < data.index(b"mdat")
+    return original["streams"][0], streams[0]
+
+
+@pytest.mark.parametrize("rate,channels", [(44100, 1), (48000, 2)])
+def test_audio_concat_copies_aac_and_preserves_format(cfg, short, monkeypatch, rate, channels):
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+                    f"sine=frequency=440:sample_rate={rate}:duration=2", "-ac", str(channels),
+                    "-c:a", "aac", str(short)], check=True)
+    calls, run = [], audio_cache._run
+
+    def counted(cmd):
+        calls.append(cmd)
+        return run(cmd)
+
+    monkeypatch.setattr(audio_cache, "_run", counted)
+    target = audio_cache.cached_audio(cfg, EID, "k01", short)
+    original, output = assert_padded_audio(short, target)
+    assert (output["sample_rate"], output["channels"]) == (original["sample_rate"], original["channels"])
+    source_cmd = next(cmd for cmd in calls if cmd[-1].endswith("source.m4a"))
+    assert source_cmd[source_cmd.index("-c:a") + 1] == "copy"
+    concat_cmd = next(cmd for cmd in calls if "concat" in cmd)
+    assert concat_cmd[concat_cmd.index("-c") + 1] == "copy"
+    assert not any("-af" in cmd for cmd in calls)
+
+
+@pytest.mark.parametrize("failure", ["mp3", "probe", "invalid_probe", "missing_probe", "layout", "pad", "extract", "concat"])
+def test_audio_concat_fallback(cfg, short, monkeypatch, failure):
+    if failure == "mp3":
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=duration=2",
+                        "-c:a", "libmp3lame", str(short)], check=True)
+    calls, run = [], audio_cache._run
+
+    def failing(cmd):
+        calls.append(cmd)
+        if cmd[0] == "ffprobe":
+            if failure == "probe":
+                raise audio_cache.RenderError("ffprobe unavailable")
+            if failure in {"invalid_probe", "missing_probe"}:
+                return SimpleNamespace(returncode=0, stdout="{" if failure == "invalid_probe" else "{}")
+            if failure == "layout":
+                proc = run(cmd)
+                data = json.loads(proc.stdout)
+                for stream in data["streams"]:
+                    stream.pop("channel_layout", None)
+                return SimpleNamespace(returncode=0, stdout=json.dumps(data))
+        broken = ((failure == "pad" and cmd[-1].endswith("pad.m4a"))
+                  or (failure == "extract" and cmd[-1].endswith("source.m4a"))
+                  or (failure == "concat" and "concat" in cmd))
+        if broken:
+            Path(cmd[-1]).write_bytes(b"partial")
+            return SimpleNamespace(returncode=1)
+        return run(cmd)
+
+    monkeypatch.setattr(audio_cache, "_run", failing)
+    target = audio_cache.cached_audio(cfg, EID, "k01", short)
+    assert_padded_audio(short, target)
+    assert any("-af" in cmd for cmd in calls) is (failure != "layout")
+    assert not list(target.parent.glob(".extract-*"))
+
+
+def test_audio_concat_ignores_old_pad_cache(cfg, short):
+    stat = short.stat()
+    version = f"{short.resolve()}:{stat.st_size}:{stat.st_mtime_ns}:{stat.st_ctime_ns}"
+    key = hashlib.sha256(f"{EID}:k01:{version}:aac128-pad{audio_cache.AUDIO_PAD}".encode()).hexdigest()
+    root = Path(cfg.workspace.dir) / "_audio_cache"
+    root.mkdir(parents=True)
+    old = root / f"{EID}.k01.{key}.m4a"
+    old.write_bytes(b"old cache")
+    target = audio_cache.cached_audio(cfg, EID, "k01", short)
+    assert target != old and old.read_bytes() == b"old cache"
+    assert_padded_audio(short, target)
 
 
 def test_audio_route_uses_existing_files_login_boundary(cfg):
