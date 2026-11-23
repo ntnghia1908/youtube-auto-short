@@ -2,7 +2,7 @@
 
 ## Status / Approval
 
-- Status: APPROVED
+- Status: READY
 - Type: BUG
 - Change class: S1 — chỉ JS phía trình duyệt của trang Bài đăng; không đổi API / dữ liệu / dependency
 - Owner: HUMAN LEAD
@@ -72,7 +72,7 @@ Sau khi bấm "Sao chép bài" (tự tick) hoặc tick tay "Đã đăng bài", d
 
 Không chạm database / security model / public API.
 
-- [ ] Điện thoại, 8080 = commit của task: "Sao chép bài" → chuyển ngay sang YouTube → quay lại → trang nằm ở bài kế tiếp; lặp ≥ 5 lần.
+- [x] Điện thoại, 8080 = commit của task: "Sao chép bài" → chuyển ngay sang YouTube → quay lại → trang nằm ở bài kế tiếp; lặp ≥ 5 lần.
 
 ## Result
 
@@ -89,5 +89,6 @@ Không chạm database / security model / public API.
 - Helper mới (đã tìm, lý do không tái dùng): `requestPostScroll` đặt cờ và cuộn khi hiện; `resumePostScroll` xử lý visibility / frame và tiêu thụ cờ một lần. Đã tìm bằng `rg -n 'postsPage =|scrollToNextPost|tickPostedAfterCopy|togglePosted|visibilitychange|requestAnimationFrame' src/auto_short/web/static/app.js`; tái dùng `scrollToNextPost` nguyên trạng. Listener ZIP / giữ màn hình sáng hiện có không quản lý cờ cuộn Bài đăng nên không dùng chung.
 - Review: tự kiểm diff theo contract, chỉ sửa owned paths; chờ ORCHESTRATOR review độc lập. Test Node chạy helper thật với trạng thái visibility / hàng frame / lệnh cuộn giả, không thêm dependency.
 - Important findings / decisions: kiểm lại `document.hidden` và cờ trong frame để giữ lần thử lại nếu người dùng chuyển app trước khi frame chạy, đồng thời tránh tiêu thụ cờ hai lần.
+- ORCHESTRATOR 2026-11-23: review diff OK; full suite `pytest -q -n auto` 4844 passed, 2 skipped (AC4 PASS); 8080 = cc50547 (KTO1 + fix), HUMAN LEAD thử điện thoại: "Được rồi đó pass". Codex 45,7 k tokens, 1 vòng.
 - Known limitations: chưa chạy full suite hoặc manual test điện thoại; không tuyên bố AC4 PASS.
 - PR: không commit / push / PR theo yêu cầu bàn giao.
