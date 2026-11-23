@@ -69,7 +69,7 @@ def test_find_candidates_serve_thumbs_and_add(tcfg):
         again = c.post("/api/post-images/candidates/add", json={"search_id": st["search_id"], "ids": ids[:2]}).json()
         assert again["added"] == [] and len(again["duplicate"]) == 2
         listing = c.get("/api/post-images").json()["images"]
-        assert [i["name"] for i in listing] == ["01.png", "02.png", "03.png"]
+        assert [i["name"] for i in listing] == ["03.png", "02.png", "01.png"]  # mới nhất trước (FIX-image-library-newest-first)
         assert listing[1]["source"] == st["candidates"][0]["url"]
         assert c.post("/api/post-images/candidates/add", json={"search_id": st["search_id"], "ids": []}).status_code == 422
         assert c.post("/api/post-images/candidates/add", json={"search_id": "bad", "ids": ids}).status_code == 404
