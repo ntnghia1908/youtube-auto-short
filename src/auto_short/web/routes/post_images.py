@@ -259,11 +259,15 @@ def build(ctx: WebContext) -> APIRouter:
         return {**_redistribute_view(plan), "applied": True, "backup": backup.name if backup else None}
 
     @router.get("/files/post-images/{name}")
-    def post_image_file(name: str, download: str | None = None):
+    def post_image_file(name: str, download: str | None = None, thumb: str | None = None):
         path = post_images.resolve(ctx.config.post.image_dir, name)
         if path is None:
             return JSONResponse({"detail": "không có ảnh này"}, status_code=404)
         headers = {"Cache-Control": "private, no-cache"}
+        if thumb is not None and download is None:
+            thumbnail = post_images.thumbnail_file(ctx.config.post.image_dir, name)
+            if thumbnail is not None:
+                return FileResponse(thumbnail, media_type="image/jpeg", headers=headers)
         if download is not None:
             headers["Content-Disposition"] = content_disposition(name)
         return FileResponse(path, media_type=post_images.CONTENT_TYPES[Path(name).suffix.lower()], headers=headers)

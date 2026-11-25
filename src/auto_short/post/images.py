@@ -140,6 +140,32 @@ def list_images(image_dir: Path) -> list[ImageInfo]:
     return out
 
 
+def thumbnail_file(image_dir: Path, name: str) -> Path | None:
+    """Cached library JPEG (at most 400 px wide), or None when unavailable.
+
+    Import imgsearch lazily because it imports images. Cache files live outside the
+    library, keyed by the source name, nanosecond mtime and size.
+    """
+    from . import dhash, imgsearch
+
+    path = resolve(image_dir, name)
+    if path is None:
+        return None
+    try:
+        st = path.stat()
+        key = sha256_bytes(f"{name}\0{st.st_mtime_ns}\0{st.st_size}".encode("utf-8"))
+        cached = imgsearch.cache_dir(image_dir) / "library-thumbs" / f"{key}.jpg"
+        if cached.is_file():
+            return cached
+        data = dhash.thumbnail(path.read_bytes(), width=400)
+        if data is None:
+            return None
+        atomic_write_bytes(cached, data)
+        return cached
+    except OSError:
+        return None
+
+
 def find_by_sha256(image_dir: Path, digest: str) -> str | None:
     for info in list_images(image_dir):
         try:

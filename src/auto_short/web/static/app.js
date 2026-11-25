@@ -2564,9 +2564,32 @@ const AutoShort = (() => {
     grid.replaceChildren(...images.map((img) => imageCard(img)));
   }
 
+  function zoomLibraryImage(name) {
+    let dialog = $("#image-library-zoom");
+    if (!dialog) {
+      dialog = el("dialog", { id: "image-library-zoom", "aria-label": "Xem ảnh gốc" });
+      const close = el("button", { class: "btn", type: "button", text: "Đóng" });
+      dialog.append(close, el("img", { alt: "Ảnh gốc phóng to" }));
+      dialog.addEventListener("click", () => dialog.close());
+      // Keep Escape from also closing the image picker underneath; native cancel still closes this dialog.
+      dialog.addEventListener("keydown", (e) => { if (e.key === "Escape") e.stopPropagation(); });
+      document.body.append(dialog);
+    }
+    const big = dialog.querySelector("img");
+    big.removeAttribute("src"); // không hiện ảnh xem lần trước trong lúc ảnh mới đang tải
+    big.src = `/files/post-images/${encodeURIComponent(name)}`;
+    dialog.showModal();
+  }
+
   function imageCard(img) {
     const card = el("div", { class: "img-card" });
-    card.append(el("img", { src: `/files/post-images/${encodeURIComponent(img.name)}`, alt: "", loading: "lazy" }));
+    const image = el("img", { src: `/files/post-images/${encodeURIComponent(img.name)}?thumb=1`, alt: "", loading: "lazy",
+      tabindex: "0", role: "button", "aria-label": "Xem ảnh gốc" });
+    image.addEventListener("click", () => zoomLibraryImage(img.name));
+    image.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); zoomLibraryImage(img.name); }
+    });
+    card.append(image);
     if (imagePickCallback) {
       const pick = el("button", { class: "btn primary small", type: "button", text: "Chọn" });
       pick.addEventListener("click", () => { imagePickCallback(img.name); closeImageDialog(); });
