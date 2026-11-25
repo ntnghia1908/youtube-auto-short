@@ -166,3 +166,34 @@ def test_grid_uses_thumbnails_and_posts_use_originals():
     for owner in ("p", "cur"):
         assert f'src: `/files/post-images/${{encodeURIComponent({owner}.image)}}`' in js
         assert f'href: `/files/post-images/${{encodeURIComponent({owner}.image)}}?download=1`' in js
+
+
+def test_library_zoom_uses_original_in_lazy_modal_without_picking_or_deleting():
+    static = Path(__file__).parents[1] / "src/auto_short/web/static"
+    js = (static / "app.js").read_text(encoding="utf-8")
+    zoom = js.split("  function zoomLibraryImage(name) {", 1)[1].split("  function imageCard(img)", 1)[0]
+    card = js.split("  function imageCard(img) {", 1)[1].split("  async function deleteImageFromLibrary", 1)[0]
+    assert 'let dialog = $("#image-library-zoom")' in zoom
+    assert 'if (!dialog)' in zoom and 'el("dialog", { id: "image-library-zoom"' in zoom
+    assert "document.body.append(dialog)" in zoom and "dialog.showModal()" in zoom
+    assert "big.src = `/files/post-images/${encodeURIComponent(name)}`" in zoom
+    assert zoom.index("big.removeAttribute(\"src\")") < zoom.index("big.src =")
+    assert "?thumb" not in zoom
+    assert 'type: "button", text: "Đóng"' in zoom
+    # Clicks from the image, close button and backdrop all reach the dialog handler.
+    assert 'dialog.addEventListener("click", () => dialog.close())' in zoom
+    assert 'if (e.key === "Escape") e.stopPropagation()' in zoom
+    assert "preventDefault" not in zoom  # Native Escape/cancel remains enabled.
+    assert 'image.addEventListener("click", () => zoomLibraryImage(img.name))' in card
+    assert 'e.key === "Enter" || e.key === " "' in card
+    for action in ("imagePickCallback", "deleteImageFromLibrary", "closeImageDialog"):
+        assert action not in zoom
+    assert 'pick.addEventListener("click", () => { imagePickCallback(img.name); closeImageDialog(); })' in card
+    assert 'del.addEventListener("click", () => deleteImageFromLibrary(img))' in card
+    css = (static / "style.css").read_text(encoding="utf-8")
+    assert '#image-grid .img-card img { cursor: pointer; }' in css
+    dialog_css = css.split("#image-library-zoom {", 1)[1].split("}", 1)[0]
+    image_css = css.split("#image-library-zoom img {", 1)[1].split("}", 1)[0]
+    assert "max-width: 95vw" in dialog_css
+    assert "max-width: 100%" in image_css and "max-height: 90vh" in image_css
+    assert "object-fit: contain" in image_css

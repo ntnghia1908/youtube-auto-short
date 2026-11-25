@@ -10,9 +10,9 @@
 - Orchestrator: claude-code
 - Implementer: codex — ưu tiên Codex (HUMAN LEAD 2026-10-25); quota 5 giờ 21 %, tuần 34 %
 - Authorization mode: task
-- Authorization source: HUMAN LEAD 2026-11-25: "Thư viện ảnh hiện load ảnh rất chậm có cách nào cải thiện?" → đề xuất ảnh thu nhỏ → "Đồng ý"
+- Authorization source: HUMAN LEAD 2026-11-25: "Thư viện ảnh hiện load ảnh rất chậm có cách nào cải thiện?" → đề xuất ảnh thu nhỏ → "Đồng ý"; bổ sung 2026-11-25: "Khi click vào ảnh nhỏ. Thì nên cho xem ảnh lớn."
 - Parallel group: —
-- Owned paths: `src/auto_short/web/routes/post_images.py` (chỉ `post_image_file`), `src/auto_short/post/images.py` (helper ảnh thu nhỏ của thư viện), `src/auto_short/web/static/app.js` (chỉ URL `<img>` trong lưới thư viện, `renderImageGrid`), test mới `tests/test_web_image_library_thumbs.py`, file này
+- Owned paths: `src/auto_short/web/routes/post_images.py` (chỉ `post_image_file`), `src/auto_short/post/images.py` (helper ảnh thu nhỏ của thư viện), `src/auto_short/web/static/app.js` (chỉ `imageCard` / `renderImageGrid` + hàm xem ảnh lớn), `src/auto_short/web/static/style.css` hoặc CSS hiện có của dialog (chỉ khung xem ảnh lớn), `images.html` / `posts.html` nếu cần thẻ `<dialog>`, test mới `tests/test_web_image_library_thumbs.py`, file này
 - Dependencies: none
 - Base commit / branch: `e7b2455` (origin/main) / `fix/image-library-thumbs` (worktree `~/projects/yas-imgthumb`)
 - Human Lead approval: accepted 2026-11-25
@@ -31,6 +31,7 @@ Lưới ảnh (trang Thư viện ảnh và hộp chọn ảnh của bài đăng)
 
 ## Scope
 
+- In scope (bổ sung 2026-11-25): chạm ảnh nhỏ trong lưới → xem ảnh gốc lớn trong một `<dialog>` (chạm / Esc / nút đóng), cả trang Thư viện ảnh lẫn hộp chọn ảnh (dialog chồng trên dialog); nút "Chọn" / "Xóa" giữ nguyên.
 - In scope: `GET /files/post-images/{name}?thumb=1` trả JPEG rộng ≤ 400 px, tạo lần đầu từ ảnh gốc rồi lưu cache trên đĩa; lưới dùng URL `?thumb=1`.
 - Out of scope: ảnh gốc, `list_images` / `next_name` / thứ tự, ảnh trong bài đăng và khung xem ảnh hiện tại của bài (`app.js` ~351, ~2263), ảnh ứng viên, dọn cache tự động, tạo trước hàng loạt.
 
@@ -57,12 +58,13 @@ Lưới ảnh (trang Thư viện ảnh và hộp chọn ảnh của bài đăng)
 4. Tên không hợp lệ / không tồn tại → 404 như cũ; ffmpeg lỗi → ảnh gốc 200.
 5. Không có `thumb` → hành vi cũ (byte gốc, `?download=1` có `Content-Disposition`).
 6. Lưới thư viện dùng `?thumb=1`; ảnh trong bài đăng giữ URL gốc.
-7. Full suite PASS.
+7. Chạm ảnh nhỏ → hiện ảnh gốc (URL không `thumb`) vừa màn hình; đóng được bằng chạm / Esc; không chọn / xóa ảnh khi chỉ xem.
+8. Full suite PASS.
 
 ## Required verification
 
 - `PYTHONPATH=<worktree>/src pytest -q tests/test_web_image_library_thumbs.py tests/test_post_images.py tests/test_web_image_library_page.py tests/test_web_image_library_order.py` (ORCHESTRATOR ngoài sandbox — TestClient).
-- `pytest -q -n auto` (ORCHESTRATOR) — AC7.
+- `pytest -q -n auto` (ORCHESTRATOR) — AC8.
 - Đo trên 8080: kích thước + thời gian một thumbnail thật (lần đầu / lần hai).
 
 ## Manual test checklist (Tech Lead)
@@ -74,7 +76,7 @@ Không chạm database, security model hay public API contract (query tùy chọ
 
 ## Result
 
-- Main changes: `post_images.thumbnail_file` (cache `<image_dir>-candidates/library-thumbs/<sha256(tên, mtime_ns, size)>.jpg`, ≤ 400 px, ghi atomic, lỗi → None); `GET /files/post-images/{name}?thumb=1` trả JPEG đó (có `download` → ảnh gốc; thumbnail lỗi → ảnh gốc); `imageCard` (lưới) dùng `?thumb=1`.
+- Main changes: `post_images.thumbnail_file` (cache `<image_dir>-candidates/library-thumbs/<sha256(tên, mtime_ns, size)>.jpg`, ≤ 400 px, ghi atomic, lỗi → None); `GET /files/post-images/{name}?thumb=1` trả JPEG đó (có `download` → ảnh gốc; thumbnail lỗi → ảnh gốc); `imageCard` (lưới) dùng `?thumb=1`. Vòng 2: chạm ảnh nhỏ → `<dialog id="image-library-zoom">` (tạo lazy, `showModal`) hiện ảnh gốc; đóng bằng nút / chạm / Esc (Esc không đóng luôn hộp chọn ảnh).
 - Tests: `tests/test_web_image_library_thumbs.py`:
 
   | AC | Test |
@@ -85,12 +87,13 @@ Không chạm database, security model hay public API contract (query tùy chọ
   | 4 | tên sai / thiếu → 404; lỗi decode / ghi → ảnh gốc |
   | 5 | byte / header gốc; `download` ưu tiên |
   | 6 | URL lưới có `?thumb=1`, bài đăng giữ URL gốc |
-  | 7 | `pytest -q -n auto`: 4866 passed, 2 skipped (ORCHESTRATOR, 2026-11-25) |
+  | 7 | `test_library_zoom_uses_original_in_lazy_modal_without_picking_or_deleting` (vòng 2) |
+  | 8 | `pytest -q -n auto` vòng 2: 4866 passed, 1 failed (assert AC7 theo chuỗi cũ sau khi ORCHESTRATOR thêm xóa `src` trước khi tải ảnh mới), 2 skipped; sửa assert → chạy lại file đó + `test_web_image_library_page.py`: 30 passed (ORCHESTRATOR, 2026-11-25) |
 
   Targeted (ORCHESTRATOR ngoài sandbox): 43 passed.
-- Diff + / − (app, test): app +32 / −2; test +168 / −0.
+- Diff + / − (app, test): vòng 1 app +32 / −2, test +168 / −0; vòng 2 app +28 / −1 (JS + CSS), test +31 / −0.
 - Helper mới (đã tìm, lý do không tái dùng): `thumbnail_file` — `imgsearch.candidate_file` chỉ đọc thumbnail ứng viên đã tạo sẵn; tái dùng `dhash.thumbnail`, `cache_dir`, `atomic_write_bytes`.
-- Review: ORCHESTRATOR đọc diff; Codex (effort medium, 58 k token, 1 vòng).
+- Review: ORCHESTRATOR đọc diff; Codex (effort medium; vòng 1 58 k token, vòng 2 79 k token); ORCHESTRATOR thêm 1 dòng xóa `src` cũ trong khung xem lớn.
 - Important findings / decisions: đo thật — `833.png` 2,90 MB → 87 KB (lần đầu 0,25 s, cache hit 0,3 ms); `01.jpg` 0,19 MB → 26 KB. Giữ `Cache-Control: private, no-cache` (trình duyệt hỏi lại, nhận 304 nhỏ) — an toàn khi tên ảnh bị dùng lại.
 - Known limitations: thumbnail cũ của ảnh bị thay / xóa không tự dọn (mỗi file ~30–90 KB).
 - PR: #228
