@@ -93,4 +93,4 @@ Không chạm database, security model hay public API contract (query tùy chọ
 - Review: ORCHESTRATOR đọc diff; Codex (effort medium, 58 k token, 1 vòng).
 - Important findings / decisions: đo thật — `833.png` 2,90 MB → 87 KB (lần đầu 0,25 s, cache hit 0,3 ms); `01.jpg` 0,19 MB → 26 KB. Giữ `Cache-Control: private, no-cache` (trình duyệt hỏi lại, nhận 304 nhỏ) — an toàn khi tên ảnh bị dùng lại.
 - Known limitations: thumbnail cũ của ảnh bị thay / xóa không tự dọn (mỗi file ~30–90 KB).
-- PR:
+- PR: #228
