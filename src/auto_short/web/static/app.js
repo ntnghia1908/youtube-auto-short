@@ -2566,7 +2566,7 @@ const AutoShort = (() => {
 
   function imageCard(img) {
     const card = el("div", { class: "img-card" });
-    card.append(el("img", { src: `/files/post-images/${encodeURIComponent(img.name)}`, alt: "", loading: "lazy" }));
+    card.append(el("img", { src: `/files/post-images/${encodeURIComponent(img.name)}?thumb=1`, alt: "", loading: "lazy" }));
     if (imagePickCallback) {
       const pick = el("button", { class: "btn primary small", type: "button", text: "Chọn" });
       pick.addEventListener("click", () => { imagePickCallback(img.name); closeImageDialog(); });
