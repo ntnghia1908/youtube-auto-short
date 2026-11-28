@@ -135,6 +135,7 @@
           }
         });
       }
+      for (const event of ["seeked", "canplay"]) this.video.addEventListener(event, () => this.syncVideo());
       document.addEventListener("visibilitychange", () => this.visibilityChanged());
       window.addEventListener("pagehide", () => {
         this.cancelRecovery(); this.clearProgressChecks();
@@ -310,7 +311,7 @@
       }
       if (!video.readyState || !audio.readyState) return;
       const drift = this.position(audio) - video.currentTime;
-      if (force || Math.abs(drift) > .5) {
+      if (!video.seeking && (force || (video.readyState >= 3 && Math.abs(drift) > .5))) {
         this.arm("seeked", this.position(audio), video); video.currentTime = this.position(audio);
         if (Math.abs(drift) > .5) this.record("video_resync", { drift: Math.round(drift * 1000) / 1000 });
       }

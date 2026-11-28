@@ -619,7 +619,13 @@ function useRoomTransport(auto = true, initial = {}) {
 }
 async function settled() { for (let i = 0; i < 8; i++) await new Promise(setImmediate); }
 async function boot() { eval(fs.readFileSync("src/auto_short/web/static/listen.js", "utf8")); await settled(); }
-async function metadata(media) { for (const current of media ? [media] : [activePlayer.audio, $("video")]) { current.readyState = 1; await current.fire("loadedmetadata"); } await settled(); }
+async function metadata(media) {
+  for (const current of media ? [media] : [activePlayer.audio, $("video")]) {
+    current.readyState = 1; await current.fire("loadedmetadata");
+    if (current === $("video")) { current.readyState = 4; await current.fire("canplay"); }
+  }
+  await settled();
+}
 async function end(media = activePlayer.media()) { media.ended = true; media.paused = true; media.currentTime = media.duration; await media.fire("ended"); }
 async function visibility(hidden) { document.visibilityState = hidden ? "hidden" : "visible"; document.dispatchEvent(new Event("visibilitychange")); await settled(); }
 function titleView(eid, shorts = sourceItems.filter(i => i.episode_id === eid)) {
@@ -980,6 +986,70 @@ assert.ok(!$("title-editor").hidden); assert.equal($("title-editor").firstChild.
 assert.equal(editorInput(), undefined);
 assert.equal(requests.filter(p => p.startsWith("/api/episodes/")).length, count);
 ''')
+
+
+@pytest.mark.parametrize("room", [False, True])
+@pytest.mark.parametrize("mode", ["seeking", "canplay", "seeked", "ready"])
+def test_player_js_video_drift_waits_for_seek_and_data(run_player_js, room, mode):  # FIX-listen-video-seek-loop AC1–3
+    run_player_js(r'''
+sourceItems = [item(1, 1)];
+if (ROOM) useRoomTransport();
+await boot(); await metadata(); await $("play").fire("click"); await settled();
+if (ROOM) { await $("watch").fire("click"); await settled(); await metadata(); }
+const video = $("video"), audio = activePlayer.audio;
+const controls = ROOM ? commands.length : activePlayer.state.version;
+let position = video.currentTime, seeks = 0;
+Object.defineProperty(video, "currentTime", {
+  get: () => position,
+  set: value => { position = value; seeks++; video.seeking = true; }
+});
+video.readyState = MODE === "canplay" || MODE === "seeked" ? 2 : 4;
+video.seeking = false; video.paused = true;
+const plays = video.plays;
+activePlayer.seek(10, audio); audio.playbackRate = 1.25;
+await audio.fire("timeupdate"); await settled();
+assert.equal(video.plays, plays + 1); assert.ok(!audio.paused); assert.ok(!video.paused);
+assert.equal(video.playbackRate, 1.25); assert.ok(video.muted);
+if (MODE === "canplay" || MODE === "seeked") {
+  assert.equal(seeks, 0);
+  for (let n = 0; n < 5; n++) await audio.fire("timeupdate");
+  assert.equal(seeks, 0);
+  video.readyState = 4; await video.fire(MODE); await settled();
+}
+assert.equal(seeks, 1); assert.equal(video.currentTime, 10);
+if (MODE === "seeking") {
+  for (let n = 1; n <= 8; n++) {
+    activePlayer.seek(10 + n, audio); await audio.fire("timeupdate");
+  }
+  activePlayer.syncVideo(true); // Force cannot interrupt an outstanding seek either.
+  assert.equal(seeks, 1);
+  video.seeking = false; await video.fire("seeked"); await settled();
+  assert.equal(seeks, 2); assert.equal(video.currentTime, 18);
+}
+video.seeking = false; await video.fire("seeked"); await audio.fire("timeupdate"); await settled();
+assert.equal(seeks, MODE === "seeking" ? 2 : 1);
+assert.equal(ROOM ? commands.length : activePlayer.state.version, controls);
+const events = [...logBatches.flatMap(b => b.events), ...activePlayer.events];
+assert.equal(events.filter(e => e.type === "video_resync").length, 1);
+'''.replace("ROOM", json.dumps(room)).replace("MODE", json.dumps(mode)))
+
+
+@pytest.mark.parametrize("event", ["loadedmetadata", "visibilitychange"])
+def test_player_js_video_force_seeks_before_canplay(run_player_js, event):  # FIX-listen-video-seek-loop preserved force
+    run_player_js(r'''
+sourceItems = [item(1, 1)];
+await boot(); await metadata();
+const video = $("video"), audio = activePlayer.audio;
+video.readyState = 2; video.seeking = false;
+activePlayer.seek(12, audio);
+if (EVENT === "loadedmetadata") await video.fire(EVENT);
+else await visibility(false);
+assert.equal(video.currentTime, 12);
+video.seeking = true; activePlayer.seek(20, audio);
+if (EVENT === "loadedmetadata") await video.fire(EVENT);
+else await visibility(false);
+assert.equal(video.currentTime, 12);
+'''.replace("EVENT", json.dumps(event)))
 
 
 @pytest.mark.parametrize("room", [False, True])
